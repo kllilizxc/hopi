@@ -4,6 +4,8 @@ import { MODEL_MODES, PERMISSION_MODES } from './modes'
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
 export const ModelModeSchema = z.enum(MODEL_MODES)
 
+export const AgentFlavorSchema = z.enum(['claude', 'codex', 'gemini', 'opencode'])
+
 const MetadataSummarySchema = z.object({
     text: z.string(),
     updatedAt: z.number()
@@ -27,6 +29,8 @@ export const MetadataSchema = z.object({
     os: z.string().optional(),
     summary: MetadataSummarySchema.optional(),
     machineId: z.string().optional(),
+    projectId: z.string().optional(),
+    taskId: z.string().optional(),
     claudeSessionId: z.string().optional(),
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),
@@ -139,6 +143,78 @@ export const SessionSchema = z.object({
 
 export type Session = z.infer<typeof SessionSchema>
 
+export const ProjectSchema = z.object({
+    id: z.string(),
+    namespace: z.string(),
+    machineId: z.string(),
+    name: z.string(),
+    description: z.string().nullable().optional(),
+    defaultWorkspaceId: z.string().nullable().optional(),
+    defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
+    defaultPermissionMode: PermissionModeSchema.nullable().optional(),
+    defaultModelMode: ModelModeSchema.nullable().optional(),
+    autoRunEnabled: z.boolean().optional(),
+    maxRunningSessions: z.number().int().min(1).max(50).optional(),
+    improvementsEnabled: z.boolean().optional(),
+    improvementsMaxGeneratedNew: z.number().int().min(1).max(50).optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    lastImprovementsAt: z.number().nullable().optional(),
+    archivedAt: z.number().nullable().optional()
+})
+
+export type Project = z.infer<typeof ProjectSchema>
+
+export const WorkspaceSchema = z.object({
+    id: z.string(),
+    projectId: z.string(),
+    label: z.string().nullable().optional(),
+    path: z.string(),
+    sort: z.number().int().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number()
+})
+
+export type Workspace = z.infer<typeof WorkspaceSchema>
+
+export const TaskAttachmentSchema = z.object({
+    id: z.string(),
+    filename: z.string(),
+    mimeType: z.string(),
+    size: z.number().int().min(0),
+    dataUrl: z.string(),
+    previewUrl: z.string().optional()
+})
+
+export type TaskAttachment = z.infer<typeof TaskAttachmentSchema>
+
+export const TaskStatusSchema = z.enum(['new', 'planned', 'in_progress', 'in_review', 'blocked', 'finished'])
+export type TaskStatus = z.infer<typeof TaskStatusSchema>
+
+export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
+export type TaskPriority = z.infer<typeof TaskPrioritySchema>
+
+export const TaskSchema = z.object({
+    id: z.string(),
+    projectId: z.string(),
+    title: z.string(),
+    description: z.string().nullable().optional(),
+    status: TaskStatusSchema,
+    priority: TaskPrioritySchema.nullable().optional(),
+    sortKey: z.number().nullable().optional(),
+    activeSessionId: z.string().nullable().optional(),
+    workspaceId: z.string().nullable().optional(),
+    attachments: z.array(TaskAttachmentSchema).nullable().optional(),
+    source: z.enum(['manual', 'improvements_scan']).nullable().optional(),
+    sourceTaskId: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    finishedAt: z.number().nullable().optional(),
+    archivedAt: z.number().nullable().optional()
+})
+
+export type Task = z.infer<typeof TaskSchema>
+
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()
 })
@@ -187,6 +263,54 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             status: z.string(),
             subscriptionId: z.string().optional()
         }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('project-added'),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('project-updated'),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('project-removed'),
+        projectId: z.string()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('workspace-added'),
+        workspaceId: z.string(),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('workspace-updated'),
+        workspaceId: z.string(),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('workspace-removed'),
+        workspaceId: z.string(),
+        projectId: z.string()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('task-added'),
+        taskId: z.string(),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('task-updated'),
+        taskId: z.string(),
+        projectId: z.string(),
+        data: z.unknown().optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('task-removed'),
+        taskId: z.string(),
+        projectId: z.string()
     })
 ])
 

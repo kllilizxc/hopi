@@ -5,9 +5,15 @@ export type {
     AttachmentMetadata,
     DecryptedMessage,
     Metadata,
+    Project,
     Session,
     SyncEvent,
+    Task,
+    TaskAttachment,
+    TaskPriority,
+    TaskStatus,
     TodoItem,
+    Workspace,
     WorktreeMetadata
 } from './schemas'
 

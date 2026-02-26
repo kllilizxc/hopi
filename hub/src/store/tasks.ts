@@ -1,0 +1,276 @@
+import type { Database } from 'bun:sqlite'
+
+import { safeJsonParse } from './json'
+import type { StoredTask } from './types'
+
+type DbTaskRow = {
+    id: string
+    project_id: string
+    title: string
+    description: string | null
+    status: string
+    priority: string | null
+    sort_key: number | null
+    active_session_id: string | null
+    workspace_id: string | null
+    attachments: string | null
+    source: string | null
+    source_task_id: string | null
+    created_at: number
+    updated_at: number
+    finished_at: number | null
+    archived_at: number | null
+}
+
+function toStoredTask(row: DbTaskRow): StoredTask {
+    return {
+        id: row.id,
+        projectId: row.project_id,
+        title: row.title,
+        description: row.description,
+        status: row.status,
+        priority: row.priority,
+        sortKey: row.sort_key,
+        activeSessionId: row.active_session_id,
+        workspaceId: row.workspace_id,
+        attachments: safeJsonParse(row.attachments),
+        source: row.source,
+        sourceTaskId: row.source_task_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        finishedAt: row.finished_at,
+        archivedAt: row.archived_at
+    }
+}
+
+export function getTask(db: Database, taskId: string): StoredTask | null {
+    const row = db.prepare('SELECT * FROM tasks WHERE id = ? LIMIT 1').get(taskId) as DbTaskRow | undefined
+    return row ? toStoredTask(row) : null
+}
+
+export function getTaskByNamespace(db: Database, taskId: string, namespace: string): StoredTask | null {
+    const row = db.prepare(`
+        SELECT t.*
+        FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.id = ? AND p.namespace = ?
+        LIMIT 1
+    `).get(taskId, namespace) as DbTaskRow | undefined
+    return row ? toStoredTask(row) : null
+}
+
+export function listTasksByProject(db: Database, projectId: string, options?: { includeArchived?: boolean }): StoredTask[] {
+    const includeArchived = Boolean(options?.includeArchived)
+    const rows = includeArchived
+        ? db.prepare(
+            'SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC'
+        ).all(projectId) as DbTaskRow[]
+        : db.prepare(
+            'SELECT * FROM tasks WHERE project_id = ? AND archived_at IS NULL ORDER BY updated_at DESC'
+        ).all(projectId) as DbTaskRow[]
+    return rows.map(toStoredTask)
+}
+
+export function listTasksByProjectAndNamespace(
+    db: Database,
+    projectId: string,
+    namespace: string,
+    options?: { includeArchived?: boolean }
+): StoredTask[] {
+    const includeArchived = Boolean(options?.includeArchived)
+    const rows = includeArchived
+        ? db.prepare(`
+            SELECT t.*
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.project_id = ? AND p.namespace = ?
+            ORDER BY t.updated_at DESC
+        `).all(projectId, namespace) as DbTaskRow[]
+        : db.prepare(`
+            SELECT t.*
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.project_id = ? AND p.namespace = ? AND t.archived_at IS NULL
+            ORDER BY t.updated_at DESC
+        `).all(projectId, namespace) as DbTaskRow[]
+    return rows.map(toStoredTask)
+}
+
+export function createTask(
+    db: Database,
+    task: {
+        id: string
+        projectId: string
+        title: string
+        description?: string | null
+        status: string
+        priority?: string | null
+        sortKey?: number | null
+        activeSessionId?: string | null
+        workspaceId?: string | null
+        attachments?: unknown
+        source?: string | null
+        sourceTaskId?: string | null
+    }
+): StoredTask {
+    const now = Date.now()
+    db.prepare(`
+        INSERT INTO tasks (
+            id, project_id, title, description, status, priority,
+            sort_key, active_session_id, workspace_id,
+            attachments, source, source_task_id,
+            created_at, updated_at, finished_at, archived_at
+        ) VALUES (
+            @id, @project_id, @title, @description, @status, @priority,
+            @sort_key, @active_session_id, @workspace_id,
+            @attachments, @source, @source_task_id,
+            @created_at, @updated_at, NULL, NULL
+        )
+    `).run({
+        id: task.id,
+        project_id: task.projectId,
+        title: task.title,
+        description: task.description ?? null,
+        status: task.status,
+        priority: task.priority ?? null,
+        sort_key: task.sortKey ?? null,
+        active_session_id: task.activeSessionId ?? null,
+        workspace_id: task.workspaceId ?? null,
+        attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
+        source: task.source ?? null,
+        source_task_id: task.sourceTaskId ?? null,
+        created_at: now,
+        updated_at: now
+    })
+
+    const stored = getTask(db, task.id)
+    if (!stored) {
+        throw new Error('Failed to create task')
+    }
+    return stored
+}
+
+export function updateTaskByNamespace(
+    db: Database,
+    taskId: string,
+    namespace: string,
+    patch: {
+        title?: string
+        description?: string | null
+        status?: string
+        priority?: string | null
+        sortKey?: number | null
+        activeSessionId?: string | null
+        workspaceId?: string | null
+        attachments?: unknown
+        finishedAt?: number | null
+        archivedAt?: number | null
+    }
+): StoredTask | null {
+    const current = getTaskByNamespace(db, taskId, namespace)
+    if (!current) {
+        return null
+    }
+
+    const next = {
+        ...current,
+        title: patch.title ?? current.title,
+        description: patch.description !== undefined ? patch.description : current.description,
+        status: patch.status ?? current.status,
+        priority: patch.priority !== undefined ? patch.priority : current.priority,
+        sortKey: patch.sortKey !== undefined ? patch.sortKey : current.sortKey,
+        activeSessionId: patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId,
+        workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
+        attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
+        finishedAt: patch.finishedAt !== undefined ? patch.finishedAt : current.finishedAt,
+        archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
+    }
+
+    const now = Date.now()
+    db.prepare(`
+        UPDATE tasks SET
+            title = @title,
+            description = @description,
+            status = @status,
+            priority = @priority,
+            sort_key = @sort_key,
+            active_session_id = @active_session_id,
+            workspace_id = @workspace_id,
+            attachments = @attachments,
+            finished_at = @finished_at,
+            archived_at = @archived_at,
+            updated_at = @updated_at
+        WHERE id = @id AND project_id = @project_id
+    `).run({
+        id: taskId,
+        project_id: current.projectId,
+        title: next.title,
+        description: next.description,
+        status: next.status,
+        priority: next.priority,
+        sort_key: next.sortKey,
+        active_session_id: next.activeSessionId,
+        workspace_id: next.workspaceId,
+        attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
+        finished_at: next.finishedAt,
+        archived_at: next.archivedAt,
+        updated_at: now
+    })
+
+    return getTaskByNamespace(db, taskId, namespace)
+}
+
+export function archiveTaskByNamespace(db: Database, taskId: string, namespace: string): boolean {
+    const now = Date.now()
+    const result = db.prepare(`
+        UPDATE tasks
+        SET archived_at = ?, updated_at = ?
+        WHERE id = ?
+            AND archived_at IS NULL
+            AND project_id IN (SELECT id FROM projects WHERE namespace = ?)
+    `).run(now, now, taskId, namespace)
+    return result.changes > 0
+}
+
+export function countGeneratedNewTasks(db: Database, projectId: string, namespace: string): number {
+    const row = db.prepare(`
+        SELECT COUNT(1) AS count
+        FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.project_id = ?
+            AND p.namespace = ?
+            AND t.status = 'new'
+            AND t.archived_at IS NULL
+            AND t.source = 'improvements_scan'
+    `).get(projectId, namespace) as { count: number } | undefined
+    return row?.count ?? 0
+}
+
+export function listPlannedTasksByProjectAndNamespace(
+    db: Database,
+    projectId: string,
+    namespace: string,
+    options?: { limit?: number }
+): StoredTask[] {
+    const safeLimit = Number.isFinite(options?.limit)
+        ? Math.max(1, Math.min(200, options?.limit as number))
+        : 50
+
+    const rows = db.prepare(`
+        SELECT t.*
+        FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        WHERE t.project_id = ?
+            AND p.namespace = ?
+            AND t.status = 'planned'
+            AND t.archived_at IS NULL
+            AND t.active_session_id IS NULL
+        ORDER BY
+            (t.sort_key IS NULL) ASC,
+            t.sort_key ASC,
+            t.created_at ASC
+        LIMIT ?
+    `).all(projectId, namespace, safeLimit) as DbTaskRow[]
+
+    return rows.map(toStoredTask)
+}

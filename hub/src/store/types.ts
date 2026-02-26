@@ -56,6 +56,55 @@ export type StoredPushSubscription = {
     createdAt: number
 }
 
+export type StoredProject = {
+    id: string
+    namespace: string
+    machineId: string
+    name: string
+    description: string | null
+    defaultWorkspaceId: string | null
+    defaultAgentFlavor: string | null
+    defaultPermissionMode: string | null
+    defaultModelMode: string | null
+    autoRunEnabled: boolean
+    maxRunningSessions: number
+    improvementsEnabled: boolean
+    improvementsMaxGeneratedNew: number
+    lastImprovementsAt: number | null
+    createdAt: number
+    updatedAt: number
+    archivedAt: number | null
+}
+
+export type StoredWorkspace = {
+    id: string
+    projectId: string
+    label: string | null
+    path: string
+    sort: number | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredTask = {
+    id: string
+    projectId: string
+    title: string
+    description: string | null
+    status: string
+    priority: string | null
+    sortKey: number | null
+    activeSessionId: string | null
+    workspaceId: string | null
+    attachments: unknown | null
+    source: string | null
+    sourceTaskId: string | null
+    createdAt: number
+    updatedAt: number
+    finishedAt: number | null
+    archivedAt: number | null
+}
+
 export type VersionedUpdateResult<T> =
     | { result: 'success'; version: number; value: T }
     | { result: 'version-mismatch'; version: number; value: T }

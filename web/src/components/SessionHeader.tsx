@@ -1,4 +1,6 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
@@ -7,6 +9,10 @@ import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useTranslation } from '@/lib/use-translation'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { queryKeys } from '@/lib/query-keys'
+import { useToast } from '@/lib/toast-context'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -20,6 +26,190 @@ function getSessionTitle(session: Session): string {
         return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
     }
     return session.id.slice(0, 8)
+}
+
+function ImportSessionAsTaskDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    api: ApiClient | null
+    session: Session
+    suggestedTitle: string
+}) {
+    const { t } = useTranslation()
+    const navigate = useNavigate()
+    const queryClient = useQueryClient()
+    const { addToast } = useToast()
+    const [projectId, setProjectId] = useState<string>('')
+    const [title, setTitle] = useState(props.suggestedTitle)
+    const [isPending, setIsPending] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    const machineId = props.session.metadata?.machineId ?? null
+
+    useEffect(() => {
+        if (!props.isOpen) {
+            setProjectId('')
+            setError(null)
+            setIsPending(false)
+            return
+        }
+
+        setTitle(props.suggestedTitle)
+        setError(null)
+    }, [props.isOpen, props.suggestedTitle])
+
+    const projectsQuery = useQuery({
+        queryKey: [...queryKeys.projects, 'active'],
+        queryFn: async () => {
+            if (!props.api) {
+                throw new Error('API unavailable')
+            }
+            return await props.api.getProjects()
+        },
+        enabled: Boolean(props.isOpen && props.api)
+    })
+
+    const projects = projectsQuery.data?.projects ?? []
+    const filteredProjects = machineId
+        ? projects.filter((p) => p.machineId === machineId && !p.archivedAt)
+        : projects.filter((p) => !p.archivedAt)
+
+    useEffect(() => {
+        if (!props.isOpen) return
+        if (projectId) return
+        if (filteredProjects.length !== 1) return
+        setProjectId(filteredProjects[0].id)
+    }, [props.isOpen, projectId, filteredProjects])
+
+    const canConfirm = Boolean(props.api && projectId && title.trim() && !isPending)
+
+    const handleConfirm = async () => {
+        if (!props.api || !canConfirm) return
+        setIsPending(true)
+        setError(null)
+        try {
+            const createdTask = await props.api.createProjectTask(projectId, {
+                title: title.trim(),
+                status: 'in_progress',
+                sortKey: Date.now()
+            })
+            await props.api.attachTaskSession(createdTask.task.id, props.session.id)
+
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.task(createdTask.task.id) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.session(props.session.id) })
+
+            addToast({
+                title: t('session.import.toastTitle'),
+                body: createdTask.task.title,
+                sessionId: props.session.id,
+                url: ''
+            })
+            props.onClose()
+            navigate({
+                to: '/projects/$projectId/tasks/$taskId/chat',
+                params: { projectId, taskId: createdTask.task.id }
+            })
+        } catch (err) {
+            const message = err instanceof Error ? err.message : t('dialog.error.default')
+            setError(message)
+        } finally {
+            setIsPending(false)
+        }
+    }
+
+    return (
+        <Dialog
+            open={props.isOpen}
+            onOpenChange={(open) => {
+                if (!open) {
+                    props.onClose()
+                }
+            }}
+        >
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{t('session.import.title')}</DialogTitle>
+                    <DialogDescription>{t('session.import.description')}</DialogDescription>
+                </DialogHeader>
+
+                <div className="mt-4 space-y-3">
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('session.import.project')}
+                        </label>
+                        {projectsQuery.isLoading ? (
+                            <div className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm text-[var(--app-hint)]">
+                                {t('loading')}
+                            </div>
+                        ) : filteredProjects.length === 0 ? (
+                            <div className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-sm text-[var(--app-hint)] space-y-3">
+                                <div>{t('session.import.noProjects')}</div>
+                                <div className="flex justify-end">
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            props.onClose()
+                                            navigate({ to: '/projects' })
+                                        }}
+                                    >
+                                        {t('session.import.goToProjects')}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <select
+                                value={projectId}
+                                onChange={(e) => setProjectId(e.target.value)}
+                                disabled={isPending}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            >
+                                <option value="">{t('session.import.selectProject')}</option>
+                                {filteredProjects.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('session.import.taskTitle')}
+                        </label>
+                        <input
+                            type="text"
+                            value={title}
+                            onChange={(e) => setTitle(e.target.value)}
+                            disabled={isPending}
+                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                        />
+                    </div>
+
+                    {projectsQuery.error ? (
+                        <div className="text-sm text-red-600">
+                            {projectsQuery.error instanceof Error ? projectsQuery.error.message : t('dialog.error.default')}
+                        </div>
+                    ) : null}
+
+                    {error ? (
+                        <div className="text-sm text-red-600">{error}</div>
+                    ) : null}
+                </div>
+
+                <div className="mt-5 flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={props.onClose} disabled={isPending}>
+                        {t('button.cancel')}
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={handleConfirm} disabled={!canConfirm}>
+                        {isPending ? t('session.import.importing') : t('session.import.confirm')}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
 }
 
 function FilesIcon(props: { className?: string }) {
@@ -67,9 +257,11 @@ export function SessionHeader(props: {
     onSessionDeleted?: () => void
 }) {
     const { t } = useTranslation()
+    const navigate = useNavigate()
     const { session, api, onSessionDeleted } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
+    const taskLink = session.metadata?.projectId && session.metadata?.taskId
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -78,6 +270,7 @@ export function SessionHeader(props: {
     const [renameOpen, setRenameOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
+    const [importOpen, setImportOpen] = useState(false)
 
     const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
@@ -158,6 +351,20 @@ export function SessionHeader(props: {
                         </button>
                     ) : null}
 
+                    {taskLink ? (
+                        <button
+                            type="button"
+                            onClick={() => navigate({
+                                to: '/projects/$projectId/tasks/$taskId/chat',
+                                params: { projectId: session.metadata!.projectId!, taskId: session.metadata!.taskId! }
+                            })}
+                            className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-subtle-bg)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title={t('session.backToTask')}
+                        >
+                            {t('session.backToTask')}
+                        </button>
+                    ) : null}
+
                     <button
                         type="button"
                         onClick={handleMenuToggle}
@@ -178,6 +385,7 @@ export function SessionHeader(props: {
                 isOpen={menuOpen}
                 onClose={() => setMenuOpen(false)}
                 sessionActive={session.active}
+                onImportAsTask={!taskLink ? () => setImportOpen(true) : undefined}
                 onRename={() => setRenameOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
@@ -215,6 +423,14 @@ export function SessionHeader(props: {
                 onConfirm={handleDelete}
                 isPending={isPending}
                 destructive
+            />
+
+            <ImportSessionAsTaskDialog
+                isOpen={importOpen}
+                onClose={() => setImportOpen(false)}
+                api={api}
+                session={session}
+                suggestedTitle={title}
             />
         </>
     )

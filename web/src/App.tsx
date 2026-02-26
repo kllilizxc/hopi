@@ -99,7 +99,7 @@ function AppInner() {
         const backButton = tg?.BackButton
         if (!backButton) return
 
-        if (pathname === '/' || pathname === '/sessions') {
+        if (pathname === '/' || pathname === '/projects' || pathname === '/sessions') {
             backButton.offClick(goBack)
             backButton.hide()
             return

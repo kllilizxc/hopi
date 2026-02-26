@@ -5,30 +5,42 @@ import { dirname } from 'node:path'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
+import { ProjectStore } from './projectStore'
 import { SessionStore } from './sessionStore'
+import { TaskStore } from './taskStore'
 import { UserStore } from './userStore'
+import { WorkspaceStore } from './workspaceStore'
 
 export type {
     StoredMachine,
     StoredMessage,
+    StoredProject,
     StoredPushSubscription,
     StoredSession,
+    StoredTask,
     StoredUser,
+    StoredWorkspace,
     VersionedUpdateResult
 } from './types'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
 export { PushStore } from './pushStore'
+export { ProjectStore } from './projectStore'
 export { SessionStore } from './sessionStore'
+export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
+export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 3
+const SCHEMA_VERSION: number = 4
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
     'messages',
     'users',
-    'push_subscriptions'
+    'push_subscriptions',
+    'projects',
+    'workspaces',
+    'tasks'
 ] as const
 
 export class Store {
@@ -38,6 +50,9 @@ export class Store {
     readonly sessions: SessionStore
     readonly machines: MachineStore
     readonly messages: MessageStore
+    readonly projects: ProjectStore
+    readonly workspaces: WorkspaceStore
+    readonly tasks: TaskStore
     readonly users: UserStore
     readonly push: PushStore
 
@@ -79,6 +94,9 @@ export class Store {
         this.sessions = new SessionStore(this.db)
         this.machines = new MachineStore(this.db)
         this.messages = new MessageStore(this.db)
+        this.projects = new ProjectStore(this.db)
+        this.workspaces = new WorkspaceStore(this.db)
+        this.tasks = new TaskStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
     }
@@ -106,6 +124,12 @@ export class Store {
 
         if (currentVersion === 2 && SCHEMA_VERSION === 3) {
             this.migrateFromV2ToV3()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 3 && SCHEMA_VERSION === 4) {
+            this.migrateFromV3ToV4()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -187,6 +211,68 @@ export class Store {
                 UNIQUE(namespace, endpoint)
             );
             CREATE INDEX IF NOT EXISTS idx_push_subscriptions_namespace ON push_subscriptions(namespace);
+
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                default_workspace_id TEXT,
+                default_agent_flavor TEXT,
+                default_permission_mode TEXT,
+                default_model_mode TEXT,
+                auto_run_enabled INTEGER NOT NULL DEFAULT 0,
+                max_running_sessions INTEGER NOT NULL DEFAULT 5,
+                improvements_enabled INTEGER NOT NULL DEFAULT 0,
+                improvements_max_generated_new INTEGER NOT NULL DEFAULT 5,
+                last_improvements_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_projects_namespace ON projects(namespace);
+            CREATE INDEX IF NOT EXISTS idx_projects_namespace_archived ON projects(namespace, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_projects_machine ON projects(machine_id);
+
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                label TEXT,
+                path TEXT NOT NULL,
+                sort INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_project_path ON workspaces(project_id, path);
+            CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                priority TEXT,
+                sort_key REAL,
+                active_session_id TEXT,
+                workspace_id TEXT,
+                attachments TEXT,
+                source TEXT,
+                source_task_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_archived ON tasks(project_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, status, sort_key);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_source_status ON tasks(project_id, source, status);
         `)
     }
 
@@ -278,6 +364,10 @@ export class Store {
 
     private migrateFromV2ToV3(): void {
         return
+    }
+
+    private migrateFromV3ToV4(): void {
+        this.createSchema()
     }
 
     private getMachineColumnNames(): Set<string> {

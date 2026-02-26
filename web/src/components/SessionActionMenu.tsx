@@ -16,6 +16,7 @@ type SessionActionMenuProps = {
     onRename: () => void
     onArchive: () => void
     onDelete: () => void
+    onImportAsTask?: () => void
     anchorPoint: { x: number; y: number }
     menuId?: string
 }
@@ -84,6 +85,27 @@ function TrashIcon(props: { className?: string }) {
     )
 }
 
+function ImportIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M12 3v12" />
+            <path d="m16 11-4 4-4-4" />
+            <path d="M21 21H3" />
+        </svg>
+    )
+}
+
 type MenuPosition = {
     top: number
     left: number
@@ -99,6 +121,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
         onRename,
         onArchive,
         onDelete,
+        onImportAsTask,
         anchorPoint,
         menuId
     } = props
@@ -121,6 +144,12 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
     const handleDelete = () => {
         onClose()
         onDelete()
+    }
+
+    const handleImport = () => {
+        if (!onImportAsTask) return
+        onClose()
+        onImportAsTask()
     }
 
     const updatePosition = useCallback(() => {
@@ -229,6 +258,18 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                 aria-labelledby={headingId}
                 className="flex flex-col gap-1"
             >
+                {onImportAsTask ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={handleImport}
+                    >
+                        <ImportIcon className="text-[var(--app-hint)]" />
+                        {t('session.action.importTask')}
+                    </button>
+                ) : null}
+
                 <button
                     type="button"
                     role="menuitem"

@@ -11,14 +11,21 @@ import type {
     MessagesResponse,
     ModelMode,
     PermissionMode,
+    ProjectResponse,
+    ProjectsResponse,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
     PushVapidPublicKeyResponse,
     SlashCommandsResponse,
     SkillsResponse,
     SpawnResponse,
+    TaskResponse,
+    TaskStartSessionResponse,
+    TasksResponse,
     UploadFileResponse,
     VisibilityPayload,
+    WorkspaceResponse,
+    WorkspacesResponse,
     SessionResponse,
     SessionsResponse
 } from '@/types/api'
@@ -158,6 +165,171 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getProjects(options?: { includeArchived?: boolean }): Promise<ProjectsResponse> {
+        const params = new URLSearchParams()
+        if (options?.includeArchived) {
+            params.set('includeArchived', 'true')
+        }
+        const qs = params.toString()
+        return await this.request<ProjectsResponse>(`/api/projects${qs ? `?${qs}` : ''}`)
+    }
+
+    async getProject(projectId: string): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`)
+    }
+
+    async createProject(payload: {
+        machineId: string
+        name: string
+        description?: string
+        defaultWorkspaceId?: string
+        defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        defaultPermissionMode?: PermissionMode
+        defaultModelMode?: ModelMode
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        improvementsEnabled?: boolean
+        improvementsMaxGeneratedNew?: number
+    }): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>('/api/projects', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateProject(projectId: string, patch: {
+        name?: string
+        description?: string | null
+        defaultWorkspaceId?: string | null
+        defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
+        defaultPermissionMode?: PermissionMode | null
+        defaultModelMode?: ModelMode | null
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        improvementsEnabled?: boolean
+        improvementsMaxGeneratedNew?: number
+    }): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async archiveProject(projectId: string): Promise<void> {
+        await this.request(`/api/projects/${encodeURIComponent(projectId)}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async listProjectWorkspaces(projectId: string): Promise<WorkspacesResponse> {
+        return await this.request<WorkspacesResponse>(`/api/projects/${encodeURIComponent(projectId)}/workspaces`)
+    }
+
+    async createProjectWorkspaces(projectId: string, workspaces: Array<{ path: string; label?: string }>): Promise<WorkspacesResponse> {
+        return await this.request<WorkspacesResponse>(`/api/projects/${encodeURIComponent(projectId)}/workspaces`, {
+            method: 'POST',
+            body: JSON.stringify({ workspaces })
+        })
+    }
+
+    async updateWorkspace(workspaceId: string, patch: { path?: string; label?: string | null; sort?: number | null }): Promise<WorkspaceResponse> {
+        return await this.request<WorkspaceResponse>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async deleteWorkspace(workspaceId: string): Promise<void> {
+        await this.request(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+    }
+
+    async listProjectTasks(projectId: string, options?: { includeArchived?: boolean }): Promise<TasksResponse> {
+        const params = new URLSearchParams()
+        if (options?.includeArchived) {
+            params.set('includeArchived', 'true')
+        }
+        const qs = params.toString()
+        return await this.request<TasksResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ''}`)
+    }
+
+    async createProjectTask(projectId: string, payload: {
+        title: string
+        description?: string
+        status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        priority?: 'high' | 'medium' | 'low'
+        workspaceId?: string
+        sortKey?: number
+        attachments?: Array<{
+            id: string
+            filename: string
+            mimeType: string
+            size: number
+            dataUrl: string
+            previewUrl?: string
+        }>
+    }): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getTask(taskId: string): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`)
+    }
+
+    async updateTask(taskId: string, patch: {
+        title?: string
+        description?: string | null
+        status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        priority?: 'high' | 'medium' | 'low' | null
+        workspaceId?: string | null
+        sortKey?: number | null
+        activeSessionId?: string | null
+        attachments?: Array<{
+            id: string
+            filename: string
+            mimeType: string
+            size: number
+            dataUrl: string
+            previewUrl?: string
+        }>
+    }): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async archiveTask(taskId: string): Promise<void> {
+        await this.request(`/api/tasks/${encodeURIComponent(taskId)}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async attachTaskSession(taskId: string, sessionId: string): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}/attach-session`, {
+            method: 'POST',
+            body: JSON.stringify({ sessionId })
+        })
+    }
+
+    async startTaskSession(taskId: string, payload?: {
+        workspaceId?: string
+        agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        model?: string
+        yolo?: boolean
+        permissionMode?: PermissionMode
+        modelMode?: ModelMode
+    }): Promise<TaskStartSessionResponse> {
+        return await this.request<TaskStartSessionResponse>(`/api/tasks/${encodeURIComponent(taskId)}/start-session`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {

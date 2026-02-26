@@ -30,6 +30,16 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+import ProjectsPage, {
+    ProjectOverviewPage,
+    ProjectSettingsPage,
+    ProjectsIndexPage,
+    TaskChatPage,
+    TaskDiffsPage,
+    TaskDetailPage,
+    TaskFilesPage,
+    TaskTerminalPage,
+} from '@/routes/projects'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
@@ -389,7 +399,73 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
-    component: () => <Navigate to="/sessions" replace />,
+    component: () => <Navigate to="/projects" replace />,
+})
+
+const projectsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/projects',
+    component: ProjectsPage,
+})
+
+const projectsIndexRoute = createRoute({
+    getParentRoute: () => projectsRoute,
+    path: '/',
+    component: ProjectsIndexPage,
+})
+
+const projectDetailRoute = createRoute({
+    getParentRoute: () => projectsRoute,
+    path: '$projectId',
+    component: () => <Outlet />,
+})
+
+const projectDetailIndexRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: '/',
+    component: ProjectOverviewPage,
+})
+
+const projectTaskRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'tasks/$taskId',
+    component: () => <Outlet />,
+})
+
+const projectSettingsRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'settings',
+    component: ProjectSettingsPage,
+})
+
+const projectTaskIndexRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: '/',
+    component: TaskDetailPage,
+})
+
+const projectTaskChatRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'chat',
+    component: TaskChatPage,
+})
+
+const projectTaskTerminalRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'terminal',
+    component: TaskTerminalPage,
+})
+
+const projectTaskDiffsRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'diffs',
+    component: TaskDiffsPage,
+})
+
+const projectTaskFilesRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'files',
+    component: TaskFilesPage,
 })
 
 const sessionsRoute = createRoute({
@@ -482,6 +558,20 @@ const settingsRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
     indexRoute,
+    projectsRoute.addChildren([
+        projectsIndexRoute,
+        projectDetailRoute.addChildren([
+            projectDetailIndexRoute,
+            projectSettingsRoute,
+            projectTaskRoute.addChildren([
+                projectTaskIndexRoute,
+                projectTaskChatRoute,
+                projectTaskTerminalRoute,
+                projectTaskDiffsRoute,
+                projectTaskFilesRoute,
+            ]),
+        ])
+    ]),
     sessionsRoute.addChildren([
         sessionsIndexRoute,
         newSessionRoute,

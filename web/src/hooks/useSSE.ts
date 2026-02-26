@@ -147,6 +147,25 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.machines })
             }
 
+            if (event.type === 'project-added' || event.type === 'project-updated' || event.type === 'project-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+                if ('projectId' in event) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.project(event.projectId) })
+                }
+            }
+
+            if (event.type === 'workspace-added' || event.type === 'workspace-updated' || event.type === 'workspace-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces(event.projectId) })
+            }
+
+            if (event.type === 'task-added' || event.type === 'task-updated' || event.type === 'task-removed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(event.projectId) })
+                if ('taskId' in event) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.task(event.taskId) })
+                }
+            }
+
             onEventRef.current(event)
         }
 

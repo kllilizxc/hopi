@@ -178,9 +178,9 @@ function QuickKeyButton(props: {
     )
 }
 
-export default function TerminalPage() {
+export function SessionTerminal(props: { sessionId: string; onBack?: () => void; embedded?: boolean }) {
     const { t } = useTranslation()
-    const { sessionId } = useParams({ from: '/sessions/$sessionId/terminal' })
+    const sessionId = props.sessionId
     const { api, token, baseUrl } = useAppContext()
     const goBack = useAppGoBack()
     const { session } = useSession(api, sessionId)
@@ -409,22 +409,24 @@ export default function TerminalPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
-                        <BackIcon />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">Terminal</div>
-                        <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
+            {props.embedded ? null : (
+                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+                    <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
+                        <button
+                            type="button"
+                            onClick={props.onBack ?? goBack}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        >
+                            <BackIcon />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                            <div className="truncate font-semibold">Terminal</div>
+                            <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
+                        </div>
+                        <ConnectionIndicator status={status} />
                     </div>
-                    <ConnectionIndicator status={status} />
                 </div>
-            </div>
+            )}
 
             {session.active ? null : (
                 <div className="px-3 pt-3">
@@ -544,4 +546,9 @@ export default function TerminalPage() {
             </Dialog>
         </div>
     )
+}
+
+export default function TerminalPage() {
+    const { sessionId } = useParams({ from: '/sessions/$sessionId/terminal' })
+    return <SessionTerminal sessionId={sessionId} />
 }

@@ -15,6 +15,7 @@ import type { SSEManager } from '../sse/sseManager'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
+import { AutoRunScheduler } from './autoRunScheduler'
 import {
     RpcGateway,
     type RpcCommandResponse,
@@ -25,6 +26,7 @@ import {
     type RpcUploadFileResponse
 } from './rpcGateway'
 import { SessionCache } from './sessionCache'
+import { TaskAutomation } from './taskAutomation'
 
 export type { Session, SyncEvent } from '@hapi/protocol/types'
 export type { Machine } from './machineCache'
@@ -48,6 +50,8 @@ export class SyncEngine {
     private readonly machineCache: MachineCache
     private readonly messageService: MessageService
     private readonly rpcGateway: RpcGateway
+    private readonly taskAutomation: TaskAutomation
+    private readonly autoRunScheduler: AutoRunScheduler
     private inactivityTimer: NodeJS.Timeout | null = null
 
     constructor(
@@ -61,8 +65,16 @@ export class SyncEngine {
         this.machineCache = new MachineCache(store, this.eventPublisher)
         this.messageService = new MessageService(store, io, this.eventPublisher)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
+        this.taskAutomation = new TaskAutomation(store, this)
+        this.autoRunScheduler = new AutoRunScheduler(store, this)
+        this.eventPublisher.subscribe((event) => this.taskAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.autoRunScheduler.handleEvent(event))
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+    }
+
+    requestAutoRunTick(namespace: string, projectId: string): void {
+        this.autoRunScheduler.requestTick(namespace, projectId, { delayMs: 0 })
     }
 
     stop(): void {

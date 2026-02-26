@@ -1,20 +1,30 @@
 import type {
+    Project,
+    Task,
     DecryptedMessage as ProtocolDecryptedMessage,
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
+    Workspace,
     WorktreeMetadata
 } from '@hapi/protocol/types'
 
 export type {
     AgentState,
     AttachmentMetadata,
+    AgentFlavor,
     ModelMode,
     PermissionMode,
+    Project,
     Session,
     SessionSummary,
     SessionSummaryMetadata,
+    Task,
+    TaskAttachment,
+    TaskPriority,
+    TaskStatus,
     TodoItem,
+    Workspace,
     WorktreeMetadata
 } from '@hapi/protocol/types'
 
@@ -61,6 +71,13 @@ export type AuthResponse = {
 
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
+export type ProjectsResponse = { projects: Array<Project & { workspaceCount: number }> }
+export type ProjectResponse = { project: Project & { workspaceCount: number } }
+export type WorkspacesResponse = { workspaces: Workspace[] }
+export type WorkspaceResponse = { workspace: Workspace }
+export type TasksResponse = { tasks: Task[] }
+export type TaskResponse = { task: Task }
+export type TaskStartSessionResponse = { task: Task; sessionId: string }
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {

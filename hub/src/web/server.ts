@@ -19,6 +19,9 @@ import { createGitRoutes } from './routes/git'
 import { createCliRoutes } from './routes/cli'
 import { createPushRoutes } from './routes/push'
 import { createVoiceRoutes } from './routes/voice'
+import { createProjectsRoutes } from './routes/projects'
+import { createWorkspacesRoutes } from './routes/workspaces'
+import { createTasksRoutes } from './routes/tasks'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -97,6 +100,9 @@ function createWebApp(options: {
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createPushRoutes(options.store, options.vapidPublicKey))
     app.route('/api', createVoiceRoutes())
+    app.route('/api', createProjectsRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createWorkspacesRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createTasksRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
 
     // Skip static serving in relay mode, show helpful message on root
     if (options.relayMode) {
