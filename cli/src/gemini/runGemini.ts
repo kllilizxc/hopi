@@ -106,7 +106,7 @@ export async function runGemini(opts: {
             permissionMode: currentPermissionMode,
             model: resolvedModel
         };
-        messageQueue.push(formattedText, mode);
+        messageQueue.push(formattedText, mode, message.localKey ?? null);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {

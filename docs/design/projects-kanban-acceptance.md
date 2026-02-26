@@ -84,8 +84,8 @@ Columns:
 - Planned
 - In Progress
 - In Review
-- Blocked
 - Finished
+- Blocked
 
 - [x] Board renders all columns (desktop: horizontal scroll ok)
     - Accept: counts per column visible

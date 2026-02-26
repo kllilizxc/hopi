@@ -19,6 +19,7 @@ import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
+import type { PermissionMode } from '@hapi/protocol/types';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -133,6 +134,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const appServerClient = this.appServerClient;
         const appServerEventConverter = useAppServer ? new AppServerEventConverter() : null;
 
+        // Turn correlation (ready → prompt localKey) for hub-side task automation.
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let trackTurnOutput = false;
+
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (trackTurnOutput) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
+
         const normalizeCommand = (value: unknown): string | undefined => {
             if (typeof value === 'string') {
                 const trimmed = value.trim();
@@ -176,45 +190,50 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
         };
 
-        const permissionHandler = new CodexPermissionHandler(session.client, {
-            onRequest: ({ id, toolName, input }) => {
-                const inputRecord = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-                const message = typeof inputRecord.message === 'string' ? inputRecord.message : undefined;
-                const rawCommand = inputRecord.command;
-                const command = Array.isArray(rawCommand)
-                    ? rawCommand.filter((part): part is string => typeof part === 'string').join(' ')
-                    : typeof rawCommand === 'string'
-                        ? rawCommand
-                        : undefined;
-                const cwdValue = inputRecord.cwd;
-                const cwd = typeof cwdValue === 'string' && cwdValue.trim().length > 0 ? cwdValue : undefined;
+        const permissionHandler = new CodexPermissionHandler(
+            session.client,
+            () => session.getPermissionMode() as PermissionMode | undefined,
+            {
+                onRequest: ({ id, toolName, input }) => {
+                    const inputRecord = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+                    const message = typeof inputRecord.message === 'string' ? inputRecord.message : undefined;
+                    const rawCommand = inputRecord.command;
+                    const command = Array.isArray(rawCommand)
+                        ? rawCommand.filter((part): part is string => typeof part === 'string').join(' ')
+                        : typeof rawCommand === 'string'
+                            ? rawCommand
+                            : undefined;
+                    const cwdValue = inputRecord.cwd;
+                    const cwd = typeof cwdValue === 'string' && cwdValue.trim().length > 0 ? cwdValue : undefined;
 
-                session.sendCodexMessage({
-                    type: 'tool-call',
-                    name: 'CodexPermission',
-                    callId: id,
-                    input: {
-                        tool: toolName,
-                        message,
-                        command,
-                        cwd
-                    },
-                    id: randomUUID()
-                });
-            },
-            onComplete: ({ id, decision, reason, approved }) => {
-                session.sendCodexMessage({
-                    type: 'tool-call-result',
-                    callId: id,
-                    output: {
-                        decision,
-                        reason
-                    },
-                    is_error: !approved,
-                    id: randomUUID()
-                });
+                    session.sendCodexMessage({
+                        type: 'tool-call',
+                        name: 'CodexPermission',
+                        callId: id,
+                        input: {
+                            tool: toolName,
+                            message,
+                            command,
+                            cwd
+                        },
+                        id: randomUUID()
+                    });
+                },
+                onComplete: ({ id, decision, reason, approved }) => {
+                    session.sendCodexMessage({
+                        type: 'tool-call-result',
+                        callId: id,
+                        output: {
+                            decision,
+                            reason
+                        },
+                        is_error: !approved,
+                        id: randomUUID()
+                    });
+                }
             }
-        });
+        );
+        session.setPermissionHandler(permissionHandler);
         const reasoningProcessor = new ReasoningProcessor((message) => {
             session.sendCodexMessage(message);
         });
@@ -347,6 +366,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     logger.debug('thinking completed');
                     session.onThinkingChange(false);
                 }
+                trackTurnOutput = false;
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
             }
@@ -562,7 +582,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         }
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         const syncSessionId = () => {
@@ -587,7 +611,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         let wasCreated = false;
         let currentModeHash: string | null = null;
-        let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
+        let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; localKey: string | null } | null = null;
         let first = true;
 
         clearReadyAfterTurnTimer = () => {
@@ -614,7 +638,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         while (!this.shouldExit) {
             logActiveHandles('loop-top');
-            let message: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = pending;
+            let message: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; localKey: string | null } | null = pending;
             pending = null;
             if (!message) {
                 const waitSignal = this.abortController.signal;
@@ -651,6 +675,9 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
             messageBuffer.addMessage(message.message, 'user');
             currentModeHash = message.hash;
+            activeTurnLocalKey = message.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            trackTurnOutput = true;
 
             try {
                 if (!wasCreated) {
@@ -806,6 +833,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         shouldExit: this.shouldExit,
                         sendReady
                     });
+                    trackTurnOutput = false;
                 }
                 logActiveHandles('after-turn');
             }

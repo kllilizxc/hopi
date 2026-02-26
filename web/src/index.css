@@ -43,6 +43,37 @@
     --app-badge-error-text: #b91c1c;
     --app-badge-error-border: rgba(239, 68, 68, 0.3);
 
+    /* Kanban status colors (light) - softer + gradient-ready */
+    --app-kanban-new: #4f46e5; /* indigo */
+    --app-kanban-new-2: #6366f1; /* indigo */
+    --app-kanban-new-bg: rgba(79, 70, 229, 0.10);
+    --app-kanban-new-bg-2: rgba(99, 102, 241, 0.06);
+
+    --app-kanban-planned: #8b5cf6; /* violet */
+    --app-kanban-planned-2: #a78bfa; /* violet */
+    --app-kanban-planned-bg: rgba(139, 92, 246, 0.10);
+    --app-kanban-planned-bg-2: rgba(167, 139, 250, 0.06);
+
+    --app-kanban-in-progress: #f59e0b; /* amber */
+    --app-kanban-in-progress-2: #fbbf24; /* amber */
+    --app-kanban-in-progress-bg: rgba(245, 158, 11, 0.10);
+    --app-kanban-in-progress-bg-2: rgba(251, 191, 36, 0.06);
+
+    --app-kanban-in-review: #06b6d4; /* cyan */
+    --app-kanban-in-review-2: #22d3ee; /* cyan */
+    --app-kanban-in-review-bg: rgba(6, 182, 212, 0.10);
+    --app-kanban-in-review-bg-2: rgba(34, 211, 238, 0.06);
+
+    --app-kanban-blocked: #f43f5e; /* rose */
+    --app-kanban-blocked-2: #fb7185; /* rose */
+    --app-kanban-blocked-bg: rgba(244, 63, 94, 0.10);
+    --app-kanban-blocked-bg-2: rgba(251, 113, 133, 0.06);
+
+    --app-kanban-finished: #22c55e; /* green */
+    --app-kanban-finished-2: #4ade80; /* green */
+    --app-kanban-finished-bg: rgba(34, 197, 94, 0.10);
+    --app-kanban-finished-bg-2: rgba(74, 222, 128, 0.06);
+
     --app-font-scale: 1;
 }
 
@@ -87,6 +118,37 @@
     --app-badge-error-bg: rgba(248, 113, 113, 0.2);
     --app-badge-error-text: #fca5a5;
     --app-badge-error-border: rgba(248, 113, 113, 0.35);
+
+    /* Kanban status colors (dark) - softer + gradient-ready */
+    --app-kanban-new: #818cf8; /* indigo */
+    --app-kanban-new-2: #a5b4fc; /* indigo */
+    --app-kanban-new-bg: rgba(129, 140, 248, 0.16);
+    --app-kanban-new-bg-2: rgba(165, 180, 252, 0.10);
+
+    --app-kanban-planned: #a78bfa; /* violet */
+    --app-kanban-planned-2: #c4b5fd; /* violet */
+    --app-kanban-planned-bg: rgba(167, 139, 250, 0.16);
+    --app-kanban-planned-bg-2: rgba(196, 181, 253, 0.10);
+
+    --app-kanban-in-progress: #fbbf24; /* amber */
+    --app-kanban-in-progress-2: #fcd34d; /* amber */
+    --app-kanban-in-progress-bg: rgba(251, 191, 36, 0.16);
+    --app-kanban-in-progress-bg-2: rgba(252, 211, 77, 0.10);
+
+    --app-kanban-in-review: #22d3ee; /* cyan */
+    --app-kanban-in-review-2: #67e8f9; /* cyan */
+    --app-kanban-in-review-bg: rgba(34, 211, 238, 0.16);
+    --app-kanban-in-review-bg-2: rgba(103, 232, 249, 0.10);
+
+    --app-kanban-blocked: #fb7185; /* rose */
+    --app-kanban-blocked-2: #fda4af; /* rose */
+    --app-kanban-blocked-bg: rgba(251, 113, 133, 0.16);
+    --app-kanban-blocked-bg-2: rgba(253, 164, 175, 0.10);
+
+    --app-kanban-finished: #4ade80; /* green */
+    --app-kanban-finished-2: #86efac; /* green */
+    --app-kanban-finished-bg: rgba(74, 222, 128, 0.16);
+    --app-kanban-finished-bg-2: rgba(134, 239, 172, 0.10);
 }
 
 html {
@@ -263,6 +325,30 @@ html[data-theme="dark"] .shiki span {
 
 .animate-bounce-in {
   animation: bounce-in 0.3s ease-out;
+}
+
+/* Chat assistant typing indicator - breathing dots */
+@keyframes hapi-typing-breathe {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0) scale(0.85);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-1px) scale(1);
+  }
+}
+
+.hapi-typing-dot {
+  animation: hapi-typing-breathe 1.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hapi-typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */

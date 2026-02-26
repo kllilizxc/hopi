@@ -47,7 +47,7 @@ export async function runAgentSession(opts: {
 
     session.onUserMessage((message) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, {});
+        messageQueue.push(formattedText, {}, message.localKey ?? null);
     });
 
     const backend: AgentBackend = AgentRegistry.create(opts.agentType);
@@ -74,6 +74,8 @@ export async function runAgentSession(opts: {
     let thinking = false;
     let shouldExit = false;
     let waitAbortController: AbortController | null = null;
+    let activeTurnLocalKey: string | null = null;
+    let activeTurnHasAssistantReply = false;
 
     session.keepAlive(thinking, 'remote');
     const keepAliveInterval = setInterval(() => {
@@ -81,7 +83,11 @@ export async function runAgentSession(opts: {
     }, 2000);
 
     const sendReady = () => {
-        session.sendSessionEvent({ type: 'ready' });
+        session.sendSessionEvent({
+            type: 'ready',
+            forLocalKey: activeTurnLocalKey ?? undefined,
+            hasAssistantReply: activeTurnHasAssistantReply
+        });
     };
 
     const handleAbort = async () => {
@@ -90,6 +96,7 @@ export async function runAgentSession(opts: {
         await permissionAdapter.cancelAll('User aborted');
         thinking = false;
         session.keepAlive(thinking, 'remote');
+        activeTurnHasAssistantReply = false;
         sendReady();
         if (waitAbortController) {
             waitAbortController.abort();
@@ -123,6 +130,9 @@ export async function runAgentSession(opts: {
                 continue;
             }
 
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+
             const promptContent: PromptContent[] = [{
                 type: 'text',
                 text: batch.message
@@ -135,6 +145,7 @@ export async function runAgentSession(opts: {
                 await backend.prompt(agentSessionId, promptContent, (message) => {
                     const converted = convertAgentMessage(message);
                     if (converted) {
+                        activeTurnHasAssistantReply = true;
                         session.sendCodexMessage(converted);
                     }
                 });

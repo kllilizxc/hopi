@@ -106,6 +106,17 @@ export function getMessagesAfter(
     return rows.map(toStoredMessage)
 }
 
+export function getMessageByLocalId(
+    db: Database,
+    sessionId: string,
+    localId: string
+): StoredMessage | null {
+    const row = db.prepare(
+        'SELECT * FROM messages WHERE session_id = ? AND local_id = ? LIMIT 1'
+    ).get(sessionId, localId) as DbMessageRow | undefined
+    return row ? toStoredMessage(row) : null
+}
+
 export function getMaxSeq(db: Database, sessionId: string): number {
     const row = db.prepare(
         'SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM messages WHERE session_id = ?'

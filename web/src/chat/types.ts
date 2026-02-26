@@ -13,7 +13,7 @@ export type AgentEvent =
     | { type: 'message'; message: string }
     | { type: 'title-changed'; title: string }
     | { type: 'limit-reached'; endsAt: number }
-    | { type: 'ready' }
+    | { type: 'ready'; forLocalKey?: string; hasAssistantReply?: boolean }
     | { type: 'api-error'; retryAttempt: number; maxRetries: number; error: unknown }
     | { type: 'turn-duration'; durationMs: number }
     | { type: 'microcompact'; trigger: string; preTokens: number; tokensSaved: number }

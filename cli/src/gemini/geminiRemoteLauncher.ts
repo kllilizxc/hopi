@@ -43,6 +43,17 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     protected async runMainLoop(): Promise<void> {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
+
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (turnInFlight) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
 
         const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
         this.happyServer = happyServer;
@@ -87,7 +98,11 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
         });
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         while (!this.shouldExit) {
@@ -101,6 +116,9 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
             this.applyDisplayMode(batch.mode.permissionMode, batch.mode.model);
             messageBuffer.addMessage(batch.message, 'user');
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            turnInFlight = true;
 
             const promptContent: PromptContent[] = [{
                 type: 'text',
@@ -122,6 +140,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
                 messageBuffer.addMessage('Gemini prompt failed', 'status');
             } finally {
                 session.onThinkingChange(false);
+                turnInFlight = false;
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
                     sendReady();

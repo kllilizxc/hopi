@@ -534,7 +534,7 @@ function TaskDetailsPanel(props: {
                                     disabled={isUpdatingTask}
                                     className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 >
-                                    {(['new', 'planned', 'in_progress', 'in_review', 'blocked', 'finished'] as TaskStatus[]).map((s) => (
+                                    {(['new', 'planned', 'in_progress', 'in_review', 'finished', 'blocked'] as TaskStatus[]).map((s) => (
                                         <option key={s} value={s}>
                                             {s}
                                         </option>
@@ -832,6 +832,10 @@ export function TaskWorkbench(props: {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [navigate, props.projectId, props.taskId, props.tab])
 
+    const handleBackToProject = useCallback(() => {
+        void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
+    }, [navigate, props.projectId])
+
     const projectDefaults = useMemo(() => {
         const agent = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
         const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
@@ -858,49 +862,19 @@ export function TaskWorkbench(props: {
     const headerTitle = task.title
     const headerSubtitle = project.name
 
+    const showWorkbenchHeader = props.tab === 'task'
+
     return (
         <div className="h-full flex flex-col">
-            <WorkbenchHeader
-                title={headerTitle}
-                subtitle={headerSubtitle}
-                onBack={handleBack}
-                onCopyLink={() => void copy(window.location.href)}
-                copied={copied}
-            />
-
-            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                <div className="flex gap-2 overflow-x-auto">
-                    <TabButton
-                        label={t('projects.workbench.tab.task')}
-                        active={props.tab === 'task'}
-                        onClick={() => void navigate({ to: '/projects/$projectId/tasks/$taskId', params: { projectId: props.projectId, taskId: props.taskId } })}
-                    />
-                    <TabButton
-                        label={t('projects.workbench.tab.chat')}
-                        active={props.tab === 'chat'}
-                        disabled={!hasSession}
-                        onClick={() => void navigate({ to: '/projects/$projectId/tasks/$taskId/chat', params: { projectId: props.projectId, taskId: props.taskId } })}
-                    />
-                    <TabButton
-                        label={t('projects.workbench.tab.terminal')}
-                        active={props.tab === 'terminal'}
-                        disabled={!hasSession}
-                        onClick={() => void navigate({ to: '/projects/$projectId/tasks/$taskId/terminal', params: { projectId: props.projectId, taskId: props.taskId } })}
-                    />
-                    <TabButton
-                        label={t('projects.workbench.tab.diffs')}
-                        active={props.tab === 'diffs'}
-                        disabled={!hasSession}
-                        onClick={() => void navigate({ to: '/projects/$projectId/tasks/$taskId/diffs', params: { projectId: props.projectId, taskId: props.taskId } })}
-                    />
-                    <TabButton
-                        label={t('projects.workbench.tab.files')}
-                        active={props.tab === 'files'}
-                        disabled={!hasSession}
-                        onClick={() => void navigate({ to: '/projects/$projectId/tasks/$taskId/files', params: { projectId: props.projectId, taskId: props.taskId } })}
-                    />
-                </div>
-            </div>
+            {showWorkbenchHeader ? (
+                <WorkbenchHeader
+                    title={headerTitle}
+                    subtitle={headerSubtitle}
+                    onBack={handleBack}
+                    onCopyLink={() => void copy(window.location.href)}
+                    copied={copied}
+                />
+            ) : null}
 
             <div className="flex-1 min-h-0">
                 {props.tab === 'task' ? (
@@ -915,7 +889,7 @@ export function TaskWorkbench(props: {
                     />
                 ) : props.tab === 'chat' ? (
                     sessionId ? (
-                        <TaskSessionChat api={api} sessionId={sessionId} onBack={handleBack} />
+                        <TaskSessionChat api={api} sessionId={sessionId} onBack={handleBackToProject} />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                             {t('projects.workbench.noSession')}
@@ -923,7 +897,7 @@ export function TaskWorkbench(props: {
                     )
                 ) : props.tab === 'terminal' ? (
                     sessionId ? (
-                        <SessionTerminal sessionId={sessionId} embedded />
+                        <SessionTerminal sessionId={sessionId} onBack={handleBack} />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                             {t('projects.workbench.noSession')}
@@ -931,7 +905,7 @@ export function TaskWorkbench(props: {
                     )
                 ) : props.tab === 'diffs' ? (
                     sessionId ? (
-                        <TaskSessionDiffs api={api} sessionId={sessionId} />
+                        <TaskSessionDiffs api={api} sessionId={sessionId} onBack={handleBack} />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                             {t('projects.workbench.noSession')}
@@ -939,7 +913,7 @@ export function TaskWorkbench(props: {
                     )
                 ) : props.tab === 'files' ? (
                     sessionId ? (
-                        <TaskSessionFiles api={api} sessionId={sessionId} />
+                        <TaskSessionFiles api={api} sessionId={sessionId} onBack={handleBack} />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                             {t('projects.workbench.noSession')}

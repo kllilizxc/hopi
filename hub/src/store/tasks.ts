@@ -59,6 +59,33 @@ export function getTaskByNamespace(db: Database, taskId: string, namespace: stri
     return row ? toStoredTask(row) : null
 }
 
+export function listTasksByActiveSessionIdAndNamespace(
+    db: Database,
+    activeSessionId: string,
+    namespace: string,
+    options?: { includeArchived?: boolean }
+): StoredTask[] {
+    const includeArchived = Boolean(options?.includeArchived)
+
+    const rows = includeArchived
+        ? db.prepare(`
+            SELECT t.*
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.active_session_id = ? AND p.namespace = ?
+            ORDER BY t.updated_at DESC
+        `).all(activeSessionId, namespace) as DbTaskRow[]
+        : db.prepare(`
+            SELECT t.*
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.active_session_id = ? AND p.namespace = ? AND t.archived_at IS NULL
+            ORDER BY t.updated_at DESC
+        `).all(activeSessionId, namespace) as DbTaskRow[]
+
+    return rows.map(toStoredTask)
+}
+
 export function listTasksByProject(db: Database, projectId: string, options?: { includeArchived?: boolean }): StoredTask[] {
     const includeArchived = Boolean(options?.includeArchived)
     const rows = includeArchived

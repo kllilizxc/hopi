@@ -262,7 +262,7 @@ export class SessionCache {
     }
 
     async deleteSession(sessionId: string): Promise<void> {
-        const session = this.sessions.get(sessionId)
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
         if (!session) {
             throw new Error('Session not found')
         }
@@ -270,6 +270,8 @@ export class SessionCache {
         if (session.active) {
             throw new Error('Cannot delete active session')
         }
+
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(sessionId, session.namespace, { includeArchived: true })
 
         const deleted = this.store.sessions.deleteSession(sessionId, session.namespace)
         if (!deleted) {
@@ -281,6 +283,21 @@ export class SessionCache {
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
 
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
+
+        for (const task of linkedTasks) {
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, session.namespace, { activeSessionId: null })
+            if (!updated) {
+                continue
+            }
+
+            this.publisher.emit({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace: session.namespace,
+                data: { taskId: updated.id, activeSessionId: null }
+            })
+        }
     }
 
     async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
@@ -258,10 +258,21 @@ export function SessionHeader(props: {
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
+    const matchRoute = useMatchRoute()
     const { session, api, onSessionDeleted } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
-    const taskLink = session.metadata?.projectId && session.metadata?.taskId
+
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const taskParamsFromRoute = taskRouteMatch
+        ? { projectId: taskRouteMatch.projectId, taskId: taskRouteMatch.taskId }
+        : null
+
+    const taskParamsFromMetadata = session.metadata?.projectId && session.metadata?.taskId
+        ? { projectId: session.metadata.projectId, taskId: session.metadata.taskId }
+        : null
+
+    const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -355,13 +366,13 @@ export function SessionHeader(props: {
                         <button
                             type="button"
                             onClick={() => navigate({
-                                to: '/projects/$projectId/tasks/$taskId/chat',
-                                params: { projectId: session.metadata!.projectId!, taskId: session.metadata!.taskId! }
+                                to: '/projects/$projectId/tasks/$taskId',
+                                params: { projectId: taskLink.projectId, taskId: taskLink.taskId }
                             })}
                             className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-subtle-bg)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
-                            title={t('session.backToTask')}
+                            title={t('projects.workbench.tab.task')}
                         >
-                            {t('session.backToTask')}
+                            {t('projects.workbench.tab.task')}
                         </button>
                     ) : null}
 

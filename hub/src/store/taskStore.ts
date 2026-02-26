@@ -7,6 +7,7 @@ import {
     createTask,
     getTask,
     getTaskByNamespace,
+    listTasksByActiveSessionIdAndNamespace,
     listPlannedTasksByProjectAndNamespace,
     listTasksByProject,
     listTasksByProjectAndNamespace,
@@ -26,6 +27,10 @@ export class TaskStore {
 
     getTaskByNamespace(taskId: string, namespace: string): StoredTask | null {
         return getTaskByNamespace(this.db, taskId, namespace)
+    }
+
+    listTasksByActiveSessionIdAndNamespace(activeSessionId: string, namespace: string, options?: { includeArchived?: boolean }): StoredTask[] {
+        return listTasksByActiveSessionIdAndNamespace(this.db, activeSessionId, namespace, options)
     }
 
     listTasksByProject(projectId: string, options?: { includeArchived?: boolean }): StoredTask[] {

@@ -88,7 +88,7 @@ export async function runOpencode(opts: {
         const mode: OpencodeMode = {
             permissionMode: currentPermissionMode
         };
-        messageQueue.push(formattedText, mode);
+        messageQueue.push(formattedText, mode, message.localKey ?? null);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {

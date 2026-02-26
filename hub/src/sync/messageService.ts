@@ -81,6 +81,9 @@ export class MessageService {
                 text: payload.text,
                 attachments: payload.attachments
             },
+            // Correlation id for downstream clients (CLI) to map "ready" events back to the prompt.
+            // Mirrors the message localId stored in the DB.
+            localKey: payload.localId ?? undefined,
             meta: {
                 sentFrom
             }

@@ -118,4 +118,47 @@ describe('SSEManager namespace filtering', () => {
         expect(received).toHaveLength(1)
         expect(received[0]?.id).toBe('visible')
     })
+
+    it('delivers message-received to all subscriptions in a namespace', () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const receivedAll: SyncEvent[] = []
+        const receivedOther: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'all',
+            namespace: 'alpha',
+            all: true,
+            send: (event) => {
+                receivedAll.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'other',
+            namespace: 'alpha',
+            all: false,
+            sessionId: 's-other',
+            send: (event) => {
+                receivedOther.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.broadcast({
+            type: 'message-received',
+            sessionId: 's1',
+            namespace: 'alpha',
+            message: {
+                id: 'm1',
+                seq: 1,
+                localId: null,
+                content: { role: 'assistant', content: { type: 'text', text: 'hello' } },
+                createdAt: Date.now()
+            }
+        })
+
+        expect(receivedAll.map((event) => event.type)).toEqual(['message-received'])
+        expect(receivedOther).toHaveLength(0)
+    })
 })

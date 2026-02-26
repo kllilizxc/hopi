@@ -39,6 +39,19 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     protected async runMainLoop(): Promise<void> {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
+
+        // Track whether the agent produced any non-event output for the current turn.
+        // Used to decide task automation transitions without scanning message history.
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (turnInFlight) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
 
         const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
         this.happyServer = happyServer;
@@ -98,7 +111,11 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         });
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         while (!this.shouldExit) {
@@ -113,6 +130,9 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
 
             this.applyDisplayMode(batch.mode.permissionMode);
             messageBuffer.addMessage(batch.message, 'user');
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            turnInFlight = true;
 
             // Inject title instructions on first prompt
             let messageText = batch.message;
@@ -141,6 +161,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
                 messageBuffer.addMessage('OpenCode prompt failed', 'status');
             } finally {
                 session.onThinkingChange(false);
+                turnInFlight = false;
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
                     sendReady();

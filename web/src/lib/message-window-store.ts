@@ -388,6 +388,10 @@ export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMes
     if (incoming.length === 0) {
         return
     }
+    const subs = listeners.get(sessionId)
+    if (!subs || subs.size === 0) {
+        return
+    }
     updateState(sessionId, (prev) => {
         if (prev.atBottom) {
             const merged = mergeMessages(prev.messages, incoming)

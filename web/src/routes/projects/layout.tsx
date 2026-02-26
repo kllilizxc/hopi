@@ -5,6 +5,7 @@ import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
+import { BackIcon, ProjectIcon, SessionIcon } from '@/components/icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,10 +25,15 @@ function TopBar(props: {
     title: string
     left?: React.ReactNode
     right?: React.ReactNode
+    fullWidth?: boolean
 }) {
     return (
         <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-            <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
+            <div
+                className={`w-full flex items-center justify-between gap-3 px-3 py-2 ${
+                    props.fullWidth ? '' : 'mx-auto max-w-content'
+                }`}
+            >
                 <div className="flex items-center gap-2 min-w-0">
                     {props.left}
                     <div className="text-sm font-semibold truncate">{props.title}</div>
@@ -209,7 +215,8 @@ function ProjectsListPanel(props: {
                         <Button type="button" variant="secondary" onClick={props.onGoToSettings}>
                             {t('projects.actions.settings')}
                         </Button>
-                        <Button type="button" variant="secondary" onClick={props.onGoToSessions}>
+                        <Button type="button" variant="secondary" onClick={props.onGoToSessions} className="gap-2">
+                            <SessionIcon className="h-4 w-4" />
                             {t('projects.actions.sessions')}
                         </Button>
                         <Button type="button" variant="secondary" onClick={props.onOpenCreate}>
@@ -314,17 +321,26 @@ function ProjectBoardPanel(props: {
         <div className="flex h-full min-h-0 flex-col">
             <TopBar
                 title={project?.name ?? t('projects.board.title')}
+                fullWidth
                 left={
-                    <Button type="button" variant="secondary" onClick={props.onBackToProjects}>
-                        {t('projects.actions.back')}
-                    </Button>
+                    <button
+                        type="button"
+                        onClick={props.onBackToProjects}
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        aria-label={t('projects.actions.back')}
+                        title={t('projects.actions.back')}
+                    >
+                        <BackIcon className="h-5 w-5" />
+                    </button>
                 }
                 right={
                     <>
-                        <Button type="button" variant="secondary" onClick={props.onOpenSettings}>
+                        <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
+                            <ProjectIcon className="h-4 w-4" />
                             {t('projects.actions.projectSettings')}
                         </Button>
-                        <Button type="button" variant="secondary" onClick={props.onGoToSessions}>
+                        <Button type="button" variant="secondary" onClick={props.onGoToSessions} className="gap-2">
+                            <SessionIcon className="h-4 w-4" />
                             {t('projects.actions.sessions')}
                         </Button>
                     </>
@@ -356,6 +372,7 @@ export default function ProjectsPage() {
 
     const isProjectsIndex = pathname === '/projects' || pathname === '/projects/'
     const shouldShowLeftOnMobile = isProjectsIndex || (!isTaskRoute && !isProjectSettingsRoute)
+    const shouldShowRightPanel = isTaskRoute || isProjectSettingsRoute
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
@@ -382,7 +399,7 @@ export default function ProjectsPage() {
     return (
         <div className="flex h-full min-h-0">
             <div
-                className={`${shouldShowLeftOnMobile ? 'flex' : 'hidden lg:flex'} w-full lg:w-[520px] xl:w-[620px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}
+                className={`${shouldShowLeftOnMobile ? 'flex' : 'hidden lg:flex'} min-w-0 w-full flex-col bg-[var(--app-bg)] lg:flex-1 lg:w-auto lg:border-r lg:border-[var(--app-divider)]`}
             >
                 {selectedProjectId ? (
                     <ProjectBoardPanel
@@ -401,10 +418,18 @@ export default function ProjectsPage() {
                 )}
             </div>
 
-            <div className={`${shouldShowLeftOnMobile ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
-                <div className="flex-1 min-h-0">
-                    <Outlet />
-                </div>
+            <div
+                className={`${shouldShowRightPanel ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-all duration-200 ease-out lg:flex-none lg:w-full ${
+                    shouldShowRightPanel
+                        ? 'lg:max-w-content lg:opacity-100 lg:translate-x-0'
+                        : 'lg:max-w-[0px] lg:opacity-0 lg:translate-x-2 lg:pointer-events-none'
+                }`}
+            >
+                {shouldShowRightPanel ? (
+                    <div className="flex-1 min-h-0">
+                        <Outlet />
+                    </div>
+                ) : null}
             </div>
 
             <CreateProjectDialog

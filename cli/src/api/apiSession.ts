@@ -419,6 +419,8 @@ export class ApiSessionClient extends EventEmitter {
         mode: SessionPermissionMode
     } | {
         type: 'ready'
+        forLocalKey?: string
+        hasAssistantReply?: boolean
     }, id?: string): void {
         const content = {
             role: 'agent',

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import { LoadingState } from '@/components/LoadingState'
+import { BackIcon } from '@/components/icons'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
 import { useSession } from '@/hooks/queries/useSession'
 import { useTranslation } from '@/lib/use-translation'
@@ -12,7 +13,7 @@ function getRootLabel(path: string | null | undefined, fallback: string): string
     return parts[parts.length - 1] ?? fallback
 }
 
-export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: string }) {
+export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: string; onBack?: () => void }) {
     const { t } = useTranslation()
     const { session, isLoading, error } = useSession(props.api, props.sessionId)
     const [openPath, setOpenPath] = useState<string | null>(null)
@@ -50,10 +51,25 @@ export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: stri
 
     return (
         <div className="h-full flex flex-col">
-            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                <div className="text-sm font-semibold">{t('projects.files.title')}</div>
-                <div className="text-xs text-[var(--app-hint)] truncate">
-                    {session?.metadata?.path ?? props.sessionId}
+            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
+                <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-2">
+                    {props.onBack ? (
+                        <button
+                            type="button"
+                            onClick={props.onBack}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label={t('projects.files.back')}
+                            title={t('projects.files.back')}
+                        >
+                            <BackIcon className="h-5 w-5" />
+                        </button>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold truncate">{t('projects.files.title')}</div>
+                        <div className="text-xs text-[var(--app-hint)] truncate">
+                            {session?.metadata?.path ?? props.sessionId}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -70,4 +86,3 @@ export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: stri
         </div>
     )
 }
-

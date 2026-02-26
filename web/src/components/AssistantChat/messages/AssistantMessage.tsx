@@ -4,6 +4,7 @@ import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import { useTranslation } from '@/lib/use-translation'
 
 const TOOL_COMPONENTS = {
     Fallback: HappyToolMessage
@@ -16,7 +17,29 @@ const MESSAGE_PART_COMPONENTS = {
     tools: TOOL_COMPONENTS
 } as const
 
+function AssistantTypingIndicator() {
+    const { t } = useTranslation()
+    const label = t('misc.loading')
+
+    return (
+        <div
+            className="w-fit max-w-[92%] rounded-xl bg-[var(--app-subtle-bg)] px-3 py-2 text-[var(--app-hint)]"
+            role="status"
+            aria-label={label}
+            aria-live="polite"
+        >
+            <span className="sr-only">{label}</span>
+            <div className="flex items-center gap-1" aria-hidden="true">
+                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '0ms' }} />
+                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '150ms' }} />
+                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '300ms' }} />
+            </div>
+        </div>
+    )
+}
+
 export function HappyAssistantMessage() {
+    const showTypingIndicator = useAssistantState(({ message }) => message.isLast && message.status?.type === 'running')
     const isCliOutput = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.kind === 'cli-output'
@@ -39,6 +62,11 @@ export function HappyAssistantMessage() {
         return (
             <MessagePrimitive.Root className="px-1 min-w-0 max-w-full overflow-x-hidden">
                 <CliOutputBlock text={cliText} />
+                {showTypingIndicator ? (
+                    <div className="mt-2">
+                        <AssistantTypingIndicator />
+                    </div>
+                ) : null}
             </MessagePrimitive.Root>
         )
     }
@@ -46,6 +74,11 @@ export function HappyAssistantMessage() {
     return (
         <MessagePrimitive.Root className={rootClass}>
             <MessagePrimitive.Content components={MESSAGE_PART_COMPONENTS} />
+            {showTypingIndicator ? (
+                <div className="mt-2">
+                    <AssistantTypingIndicator />
+                </div>
+            ) : null}
         </MessagePrimitive.Root>
     )
 }

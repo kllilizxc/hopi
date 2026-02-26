@@ -3,6 +3,7 @@ import type { ApiClient } from '@/api/client'
 import type { GitFileStatus } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
 import { LoadingState } from '@/components/LoadingState'
+import { BackIcon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useTranslation } from '@/lib/use-translation'
@@ -94,7 +95,7 @@ function GitFileRow(props: {
     )
 }
 
-export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: string }) {
+export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: string; onBack?: () => void }) {
     const { t } = useTranslation()
     const { status: gitStatus, error, isLoading, refetch } = useGitStatusFiles(props.api, props.sessionId)
     const [openFile, setOpenFile] = useState<{ path: string; staged?: boolean } | null>(null)
@@ -123,16 +124,31 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
 
     return (
         <div className="h-full flex flex-col">
-            <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">{t('projects.diffs.title')}</div>
-                    <div className="text-xs text-[var(--app-hint)] truncate">
-                        {gitStatus?.branch ? t('projects.diffs.branch', { name: gitStatus.branch }) : t('projects.diffs.noBranch')}
+            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
+                <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                        {props.onBack ? (
+                            <button
+                                type="button"
+                                onClick={props.onBack}
+                                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                                aria-label={t('projects.files.back')}
+                                title={t('projects.files.back')}
+                            >
+                                <BackIcon className="h-5 w-5" />
+                            </button>
+                        ) : null}
+                        <div className="min-w-0">
+                            <div className="text-sm font-semibold truncate">{t('projects.diffs.title')}</div>
+                            <div className="text-xs text-[var(--app-hint)] truncate">
+                                {gitStatus?.branch ? t('projects.diffs.branch', { name: gitStatus.branch }) : t('projects.diffs.noBranch')}
+                            </div>
+                        </div>
                     </div>
+                    <Button type="button" variant="secondary" onClick={() => void refetch()}>
+                        {t('projects.diffs.refresh')}
+                    </Button>
                 </div>
-                <Button type="button" variant="secondary" onClick={() => void refetch()}>
-                    {t('projects.diffs.refresh')}
-                </Button>
             </div>
 
             {error ? (
@@ -191,4 +207,3 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         </div>
     )
 }
-

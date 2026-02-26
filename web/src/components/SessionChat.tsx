@@ -18,6 +18,64 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 
+function getMessageSentFrom(meta: unknown): string | null {
+    if (!meta || typeof meta !== 'object') return null
+    const sentFrom = (meta as { sentFrom?: unknown }).sentFrom
+    return typeof sentFrom === 'string' ? sentFrom : null
+}
+
+function shouldTreatSessionAsRunningFallback(session: Session, normalized: NormalizedMessage[]): boolean {
+    if (!session.active) return false
+    if (session.thinking) return true
+
+    const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+    if (hasPendingRequests) {
+        return false
+    }
+
+    const metadata = session.metadata
+    const isRunnerSession = metadata?.startedBy === 'runner'
+        || metadata?.startedFromRunner === true
+        || typeof metadata?.taskId === 'string'
+
+    if (!isRunnerSession) {
+        return false
+    }
+
+    let lastPromptAt: number | null = null
+    let lastReadyAt: number | null = null
+
+    for (const msg of normalized) {
+        if (msg.role === 'user') {
+            const sentFrom = getMessageSentFrom(msg.meta)
+            if (sentFrom !== 'cli') {
+                if (lastPromptAt === null || msg.createdAt > lastPromptAt) {
+                    lastPromptAt = msg.createdAt
+                }
+            }
+            continue
+        }
+
+        if (msg.role === 'event' && msg.content.type === 'ready') {
+            if (lastReadyAt === null || msg.createdAt > lastReadyAt) {
+                lastReadyAt = msg.createdAt
+            }
+        }
+    }
+
+    if (lastPromptAt === null) {
+        return false
+    }
+
+    if (lastReadyAt !== null && lastReadyAt > lastPromptAt) {
+        return false
+    }
+
+    const MAX_FALLBACK_MS = 15 * 60 * 1000
+    const ageMs = Date.now() - lastPromptAt
+    return ageMs >= 0 && ageMs < MAX_FALLBACK_MS
+}
+
 export function SessionChat(props: {
     api: ApiClient
     session: Session
@@ -254,6 +312,9 @@ export function SessionChat(props: {
         return createAttachmentAdapter(props.api, props.session.id)
     }, [props.api, props.session.id, props.session.active])
 
+    const effectiveIsRunning = props.session.thinking
+        || shouldTreatSessionAsRunningFallback(props.session, normalizedMessages)
+
     const runtime = useHappyRuntime({
         session: props.session,
         blocks: reconciled.blocks,
@@ -261,7 +322,8 @@ export function SessionChat(props: {
         onSendMessage: handleSend,
         onAbort: handleAbort,
         attachmentAdapter,
-        allowSendWhenInactive: true
+        allowSendWhenInactive: true,
+        isRunning: effectiveIsRunning
     })
 
     return (
@@ -313,7 +375,7 @@ export function SessionChat(props: {
                         agentFlavor={agentFlavor}
                         active={props.session.active}
                         allowSendWhenInactive
-                        thinking={props.session.thinking}
+                        thinking={effectiveIsRunning}
                         agentState={props.session.agentState}
                         contextSize={reduced.latestUsage?.contextSize}
                         controlledByUser={props.session.agentState?.controlledByUser === true}

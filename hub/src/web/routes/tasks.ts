@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
-import type { Session } from '../../sync/syncEngine'
 import { runImprovementsScan, selectLatestActiveProjectSession } from '../../sync/improvementsScan'
+import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import type { WebAppEnv } from '../middleware/auth'
 
@@ -205,18 +205,6 @@ function validateAttachments(attachments: Array<z.infer<typeof taskAttachmentSch
     return { ok: true }
 }
 
-function mergeMetadataForTask(session: Session, patch: { projectId: string; taskId: string; name?: string }): unknown {
-    const current = session.metadata && typeof session.metadata === 'object'
-        ? session.metadata as Record<string, unknown>
-        : {}
-    return {
-        ...current,
-        projectId: patch.projectId,
-        taskId: patch.taskId,
-        name: patch.name ?? current.name
-    }
-}
-
 export function createTasksRoutes(options: {
     store: Store
     getSyncEngine: () => SyncEngine | null
@@ -399,20 +387,15 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Task not found' }, 404)
         }
 
-        const session = engine.getSession(access.sessionId)
-        if (session) {
-            const nextMetadata = mergeMetadataForTask(session, { projectId: updated.projectId, taskId: updated.id, name: updated.title })
-            const result = options.store.sessions.updateSessionMetadata(
-                access.sessionId,
-                nextMetadata,
-                session.metadataVersion,
-                namespace,
-                { touchUpdatedAt: false }
-            )
-            if (result.result !== 'error') {
-                engine.handleRealtimeEvent({ type: 'session-updated', sessionId: access.sessionId, namespace, data: { sessionId: access.sessionId } })
-            }
-        }
+        setSessionTaskLink({
+            store: options.store,
+            engine,
+            sessionId: access.sessionId,
+            namespace,
+            projectId: updated.projectId,
+            taskId: updated.id,
+            name: updated.title
+        })
 
         engine.handleRealtimeEvent({ type: 'task-updated', taskId, projectId: updated.projectId, namespace, data: { taskId, activeSessionId: access.sessionId } })
 

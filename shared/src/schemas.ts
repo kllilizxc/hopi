@@ -188,7 +188,7 @@ export const TaskAttachmentSchema = z.object({
 
 export type TaskAttachment = z.infer<typeof TaskAttachmentSchema>
 
-export const TaskStatusSchema = z.enum(['new', 'planned', 'in_progress', 'in_review', 'blocked', 'finished'])
+export const TaskStatusSchema = z.enum(['new', 'planned', 'in_progress', 'in_review', 'finished', 'blocked'])
 export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])

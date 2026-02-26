@@ -86,6 +86,31 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
 
+        // Turn correlation (ready → prompt localKey) for hub-side task automation.
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
+
+        const isPlainClaudeUserTextMessage = (body: unknown): boolean => {
+            if (!body || typeof body !== 'object') return false;
+            const record = body as { type?: unknown; message?: unknown; isSidechain?: unknown; isMeta?: unknown };
+            if (record.type !== 'user') return false;
+            if (record.isSidechain === true) return false;
+            if (record.isMeta === true) return false;
+            const message = record.message;
+            if (!message || typeof message !== 'object') return false;
+            const content = (message as { content?: unknown }).content;
+            return typeof content === 'string';
+        };
+
+        const originalSendClaudeSessionMessage = session.client.sendClaudeSessionMessage.bind(session.client);
+        session.client.sendClaudeSessionMessage = (body: any) => {
+            if (turnInFlight && !isPlainClaudeUserTextMessage(body)) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendClaudeSessionMessage(body);
+        };
+
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbortRequest(),
             onSwitch: () => this.handleSwitchRequest()
@@ -270,6 +295,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
             let pending: {
                 message: string;
                 mode: EnhancedMode;
+                hash: string;
+                isolate: boolean;
+                localKey: string | null;
             } | null = null;
 
             let previousSessionId: string | null = null;
@@ -310,6 +338,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 let p = pending;
                                 pending = null;
                                 permissionHandler.handleModeChange(p.mode.permissionMode);
+                                activeTurnLocalKey = p.localKey ?? null;
+                                activeTurnHasAssistantReply = false;
+                                turnInFlight = true;
                                 return p;
                             }
 
@@ -324,6 +355,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 modeHash = msg.hash;
                                 mode = msg.mode;
                                 permissionHandler.handleModeChange(mode.permissionMode);
+                                activeTurnLocalKey = msg.localKey ?? null;
+                                activeTurnHasAssistantReply = false;
+                                turnInFlight = true;
                                 return {
                                     message: msg.message,
                                     mode: msg.mode
@@ -349,7 +383,12 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         },
                         onReady: () => {
                             if (!pending && session.queue.size() === 0) {
-                                session.client.sendSessionEvent({ type: 'ready' });
+                                session.client.sendSessionEvent({
+                                    type: 'ready',
+                                    forLocalKey: activeTurnLocalKey ?? undefined,
+                                    hasAssistantReply: activeTurnHasAssistantReply
+                                });
+                                turnInFlight = false;
                             }
                         },
                         signal: controller.signal,
@@ -368,6 +407,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     }
                 } finally {
                     logger.debug('[remote]: launch finally');
+                    turnInFlight = false;
 
                     for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
                         const converted = sdkToLogConverter.generateInterruptedToolResult(toolCallId, parentToolCallId);

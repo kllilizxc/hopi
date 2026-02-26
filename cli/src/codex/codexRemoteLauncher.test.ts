@@ -118,6 +118,11 @@ function createSessionStub() {
         codexArgs: undefined,
         codexCliOverrides: undefined,
         sessionId: null as string | null,
+        permissionMode: 'default' as EnhancedMode['permissionMode'],
+        getPermissionMode() {
+            return session.permissionMode;
+        },
+        setPermissionHandler(_handler: unknown) {},
         thinking: false,
         onThinkingChange(nextThinking: boolean) {
             session.thinking = nextThinking;

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { GitCommandResponse } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
-import { CopyIcon, CheckIcon } from '@/components/icons'
+import { BackIcon, CopyIcon, CheckIcon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { queryKeys } from '@/lib/query-keys'
@@ -173,9 +173,15 @@ export function SessionFileViewer(props: {
     return (
         <div className="h-full flex flex-col">
             <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-3">
-                <Button type="button" variant="secondary" onClick={props.onBack}>
-                    {t('projects.files.back')}
-                </Button>
+                <button
+                    type="button"
+                    onClick={props.onBack}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                    aria-label={t('projects.files.back')}
+                    title={t('projects.files.back')}
+                >
+                    <BackIcon className="h-5 w-5" />
+                </button>
                 <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold">{fileName}</div>
                     <div className="truncate text-[10px] text-[var(--app-hint)]">{props.filePath}</div>
@@ -259,4 +265,3 @@ export function SessionFileViewer(props: {
         </div>
     )
 }
-

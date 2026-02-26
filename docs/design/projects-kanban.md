@@ -8,7 +8,7 @@ Status: planning draft
 Replace primary navigation: `Session list → Session chat` with:
 
 1. Project list (create/select)
-2. Project board (Kanban: New / Planned / In Progress / In Review / Blocked / Finished)
+2. Project board (Kanban: New / Planned / In Progress / In Review / Finished / Blocked)
 3. Task card detail (edit, move, assign)
 4. Task chat view (only if task has working session)
 

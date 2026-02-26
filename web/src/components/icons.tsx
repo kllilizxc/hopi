@@ -60,3 +60,27 @@ export function CheckIcon(props: IconProps) {
         2
     )
 }
+
+export function BackIcon(props: IconProps) {
+    return createIcon(
+        <polyline points="15 18 9 12 15 6" />,
+        props,
+        2
+    )
+}
+
+export function ProjectIcon(props: IconProps) {
+    return createIcon(
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+        props,
+        1.8
+    )
+}
+
+export function SessionIcon(props: IconProps) {
+    return createIcon(
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+        props,
+        1.8
+    )
+}

@@ -71,6 +71,18 @@ export class SSEManager {
     }
 
     async sendToast(namespace: string, event: Extract<SyncEvent, { type: 'toast' }>): Promise<number> {
+        try {
+            const title = event.data.title?.trim() ?? ''
+            const body = event.data.body?.trim() ?? ''
+            const base = title && body ? `${title} — ${body}` : (title || body || '(empty)')
+            console.info('[Toast]', base, {
+                namespace,
+                sessionId: event.data.sessionId,
+                url: event.data.url
+            })
+        } catch {
+        }
+
         const deliveries: Array<Promise<{ id: string; ok: boolean }>> = []
         for (const connection of this.connections.values()) {
             if (connection.namespace !== namespace) {
@@ -105,6 +117,20 @@ export class SSEManager {
     }
 
     broadcast(event: SyncEvent): void {
+        if (event.type === 'toast') {
+            try {
+                const title = event.data.title?.trim() ?? ''
+                const body = event.data.body?.trim() ?? ''
+                const base = title && body ? `${title} — ${body}` : (title || body || '(empty)')
+                console.info('[Toast]', base, {
+                    namespace: event.namespace ?? '(missing-namespace)',
+                    sessionId: event.data.sessionId,
+                    url: event.data.url
+                })
+            } catch {
+            }
+        }
+
         for (const connection of this.connections.values()) {
             if (!this.shouldSend(connection, event)) {
                 continue
@@ -148,19 +174,20 @@ export class SSEManager {
     }
 
     private shouldSend(connection: SSEConnection, event: SyncEvent): boolean {
-        if (event.type !== 'connection-changed') {
-            const eventNamespace = event.namespace
-            if (!eventNamespace || eventNamespace !== connection.namespace) {
-                return false
-            }
+        if (event.type === 'connection-changed') {
+            return true
+        }
+
+        const eventNamespace = event.namespace
+        if (!eventNamespace || eventNamespace !== connection.namespace) {
+            return false
         }
 
         if (event.type === 'message-received') {
+            if (connection.all) {
+                return true
+            }
             return connection.sessionId === event.sessionId
-        }
-
-        if (event.type === 'connection-changed') {
-            return true
         }
 
         if (connection.all) {

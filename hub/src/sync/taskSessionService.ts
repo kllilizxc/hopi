@@ -3,23 +3,11 @@ import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hapi/
 import { z } from 'zod'
 import type { Store, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
-import type { Session } from './syncEngine'
+import { setSessionTaskLink } from './sessionTaskLink'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
     return comma < 0 ? dataUrl : dataUrl.slice(comma + 1)
-}
-
-function mergeMetadataForTask(session: Session, patch: { projectId: string; taskId: string; name?: string }): unknown {
-    const current = session.metadata && typeof session.metadata === 'object'
-        ? session.metadata as Record<string, unknown>
-        : {}
-    return {
-        ...current,
-        projectId: patch.projectId,
-        taskId: patch.taskId,
-        name: patch.name ?? current.name
-    }
 }
 
 export type StartSessionOverrides = {
@@ -92,21 +80,15 @@ export async function startSessionFromTask(options: {
     if (!becameActive) {
         return { ok: false, error: 'Session failed to become active' }
     }
-
-    const session = options.engine.getSessionByNamespace(spawn.sessionId, options.namespace)
-    if (session) {
-        const nextMetadata = mergeMetadataForTask(session, { projectId: project.id, taskId: task.id, name: task.title })
-        const metaResult = options.store.sessions.updateSessionMetadata(
-            spawn.sessionId,
-            nextMetadata,
-            session.metadataVersion,
-            options.namespace,
-            { touchUpdatedAt: false }
-        )
-        if (metaResult.result !== 'error') {
-            options.engine.handleRealtimeEvent({ type: 'session-updated', sessionId: spawn.sessionId, namespace: options.namespace, data: { sessionId: spawn.sessionId } })
-        }
-    }
+    setSessionTaskLink({
+        store: options.store,
+        engine: options.engine,
+        sessionId: spawn.sessionId,
+        namespace: options.namespace,
+        projectId: project.id,
+        taskId: task.id,
+        name: task.title
+    })
 
     const permissionMode = overrides.permissionMode
         ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
@@ -173,9 +155,15 @@ export async function startSessionFromTask(options: {
     }
 
     const kickoffText = (() => {
+        const title = (updatedTask.title ?? '').trim()
         const desc = (updatedTask.description ?? '').trim()
+
+        if (title && desc) {
+            return `Task: ${title}\n\nDescription:\n${desc}`
+        }
         if (desc) return desc
-        return `Task: ${updatedTask.title}`
+        if (title) return `Task: ${title}`
+        return 'Task'
     })()
 
     try {
