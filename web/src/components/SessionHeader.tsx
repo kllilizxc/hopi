@@ -435,7 +435,7 @@ export function SessionHeader(props: {
                         <button
                             type="button"
                             onClick={() => navigate({
-                                to: '/projects/$projectId/tasks/$taskId',
+                                to: '/projects/$projectId/tasks/$taskId/task',
                                 params: { projectId: taskLink.projectId, taskId: taskLink.taskId }
                             })}
                             className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-subtle-bg)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"

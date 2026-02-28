@@ -75,6 +75,10 @@
     --app-kanban-finished-bg-2: rgba(74, 222, 128, 0.06);
 
     --app-font-scale: 1;
+    --app-scrollbar-size: 6px;
+    --app-scrollbar-track: transparent;
+    --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
+    --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
 }
 
 [data-theme="dark"] {
@@ -149,6 +153,8 @@
     --app-kanban-finished-2: #86efac; /* green */
     --app-kanban-finished-bg: rgba(74, 222, 128, 0.16);
     --app-kanban-finished-bg-2: rgba(134, 239, 172, 0.10);
+    --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
+    --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
 }
 
 html {
@@ -174,6 +180,33 @@ body {
 
 #root {
     height: 100%;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+    width: var(--app-scrollbar-size);
+    height: var(--app-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+    background: var(--app-scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--app-scrollbar-thumb);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--app-scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -858,6 +858,7 @@ export function TaskWorkbench(props: {
     projectId: string
     taskId: string
     tab: TaskWorkbenchTab
+    forceTask?: boolean
 }) {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -869,8 +870,16 @@ export function TaskWorkbench(props: {
 
     const sessionId = task?.activeSessionId ?? null
     const hasSession = Boolean(sessionId)
+    const activeTab: TaskWorkbenchTab = props.forceTask ? 'task' : (props.tab === 'task' && hasSession ? 'chat' : props.tab)
 
     const handleBack = useCallback(() => {
+        if (props.forceTask) {
+            void navigate({
+                to: '/projects/$projectId/tasks/$taskId',
+                params: { projectId: props.projectId, taskId: props.taskId }
+            })
+            return
+        }
         if (props.tab !== 'task') {
             void navigate({
                 to: '/projects/$projectId/tasks/$taskId',
@@ -911,7 +920,7 @@ export function TaskWorkbench(props: {
     const headerTitle = task.title
     const headerSubtitle = project.name
 
-    const showWorkbenchHeader = props.tab === 'task'
+    const showWorkbenchHeader = activeTab === 'task'
 
     return (
         <div className="h-full flex flex-col">
@@ -926,7 +935,7 @@ export function TaskWorkbench(props: {
             ) : null}
 
             <div className="flex-1 min-h-0">
-                {props.tab === 'task' ? (
+                {activeTab === 'task' ? (
                     <TaskDetailsPanel
                         projectId={props.projectId}
                         taskId={props.taskId}
@@ -936,7 +945,7 @@ export function TaskWorkbench(props: {
                         projectMachineId={project.machineId}
                         projectDefaults={projectDefaults}
                     />
-                ) : props.tab === 'chat' ? (
+                ) : activeTab === 'chat' ? (
                     sessionId ? (
                         <TaskSessionChat
                             api={api}
@@ -960,7 +969,7 @@ export function TaskWorkbench(props: {
                             {t('projects.workbench.noSession')}
                         </div>
                     )
-                ) : props.tab === 'terminal' ? (
+                ) : activeTab === 'terminal' ? (
                     sessionId ? (
                         <SessionTerminal sessionId={sessionId} onBack={handleBack} />
                     ) : (
@@ -968,7 +977,7 @@ export function TaskWorkbench(props: {
                             {t('projects.workbench.noSession')}
                         </div>
                     )
-                ) : props.tab === 'diffs' ? (
+                ) : activeTab === 'diffs' ? (
                     sessionId ? (
                         <TaskSessionDiffs api={api} sessionId={sessionId} onBack={handleBack} />
                     ) : (
@@ -976,7 +985,7 @@ export function TaskWorkbench(props: {
                             {t('projects.workbench.noSession')}
                         </div>
                     )
-                ) : props.tab === 'files' ? (
+                ) : activeTab === 'files' ? (
                     sessionId ? (
                         <TaskSessionFiles api={api} sessionId={sessionId} onBack={handleBack} />
                     ) : (

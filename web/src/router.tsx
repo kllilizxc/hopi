@@ -35,6 +35,7 @@ import ProjectsPage, {
     ProjectSettingsPage,
     ProjectsIndexPage,
     TaskChatPage,
+    TaskPanelPage,
     TaskDiffsPage,
     TaskDetailPage,
     TaskFilesPage,
@@ -446,6 +447,12 @@ const projectTaskIndexRoute = createRoute({
     component: TaskDetailPage,
 })
 
+const projectTaskPanelRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'task',
+    component: TaskPanelPage,
+})
+
 const projectTaskChatRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'chat',
@@ -568,6 +575,7 @@ export const routeTree = rootRoute.addChildren([
             projectSettingsRoute,
             projectTaskRoute.addChildren([
                 projectTaskIndexRoute,
+                projectTaskPanelRoute,
                 projectTaskChatRoute,
                 projectTaskTerminalRoute,
                 projectTaskDiffsRoute,
