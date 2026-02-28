@@ -559,12 +559,24 @@ export function createTasksRoutes(options: {
         }
 
         const mergedAt = Date.now()
+        const statusChangingToFinished = task.status === 'in_review'
         const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
             worktreeMergedAt: mergedAt,
-            worktreeMergeCommit: result.commitHash ?? null
+            worktreeMergeCommit: result.commitHash ?? null,
+            status: statusChangingToFinished ? 'finished' : undefined,
+            finishedAt: statusChangingToFinished ? mergedAt : undefined
         })
         if (!updatedTask) {
             return c.json({ error: 'Task not found' }, 404)
+        }
+
+        if (statusChangingToFinished) {
+            void handleTaskMovedToFinished({
+                store: options.store,
+                engine,
+                namespace,
+                taskId
+            })
         }
 
         engine.handleRealtimeEvent({
