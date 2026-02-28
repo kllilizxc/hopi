@@ -8,12 +8,14 @@ describe('appServerConfig', () => {
     it('applies CLI overrides when permission mode is default', () => {
         const params = buildThreadStartParams({
             mode: { permissionMode: 'default' },
+            cwd: '/tmp/worktree',
             mcpServers,
             cliOverrides: { sandbox: 'danger-full-access', approvalPolicy: 'never' }
         });
 
         expect(params.sandbox).toBe('danger-full-access');
         expect(params.approvalPolicy).toBe('never');
+        expect(params.cwd).toBe('/tmp/worktree');
         expect(params.baseInstructions).toBe(codexSystemPrompt);
         expect(params.developerInstructions).toBe(codexSystemPrompt);
         expect(params.config).toEqual({
@@ -58,10 +60,12 @@ describe('appServerConfig', () => {
         const params = buildTurnStartParams({
             threadId: 'thread-1',
             message: 'hello',
+            cwd: '/tmp/worktree',
             mode: { permissionMode: 'read-only', model: 'o3' }
         });
 
         expect(params.threadId).toBe('thread-1');
+        expect(params.cwd).toBe('/tmp/worktree');
         expect(params.input).toEqual([{ type: 'text', text: 'hello' }]);
         expect(params.approvalPolicy).toBe('never');
         expect(params.sandboxPolicy).toEqual({ type: 'readOnly' });

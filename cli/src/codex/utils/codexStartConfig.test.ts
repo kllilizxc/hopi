@@ -10,10 +10,12 @@ describe('buildCodexStartConfig', () => {
             message: 'hello',
             mode: { permissionMode: 'default' },
             first: true,
+            cwd: '/tmp/worktree',
             mcpServers,
             cliOverrides: { sandbox: 'danger-full-access', approvalPolicy: 'never' }
         });
 
+        expect(config.cwd).toBe('/tmp/worktree');
         expect(config.sandbox).toBe('danger-full-access');
         expect(config['approval-policy']).toBe('never');
         expect(config.config).toEqual({

@@ -24,8 +24,24 @@ export type ToastProps = React.HTMLAttributes<HTMLDivElement> &
 }
 
 export function Toast({ title, body, onClose, className, variant, ...props }: ToastProps) {
-    const handleClose = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const closedFromPointerRef = React.useRef(false)
+
+    const handleCloseClick = (event: React.MouseEvent<HTMLButtonElement>) => {
         event.stopPropagation()
+        event.preventDefault()
+
+        if (closedFromPointerRef.current) {
+            closedFromPointerRef.current = false
+            return
+        }
+
+        onClose?.()
+    }
+
+    const handleClosePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+        event.stopPropagation()
+        event.preventDefault()
+        closedFromPointerRef.current = true
         onClose?.()
     }
 
@@ -39,8 +55,9 @@ export function Toast({ title, body, onClose, className, variant, ...props }: To
                 {onClose ? (
                     <button
                         type="button"
-                        className="text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
-                        onClick={handleClose}
+                        className="-m-1 rounded p-1 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
+                        onClick={handleCloseClick}
+                        onPointerUp={handleClosePointerUp}
                         aria-label="Dismiss"
                     >
                         x

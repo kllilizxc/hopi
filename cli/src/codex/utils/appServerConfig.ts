@@ -75,6 +75,7 @@ function buildMcpServerConfig(mcpServers: McpServersConfig): Record<string, unkn
 export function buildThreadStartParams(args: {
     mode: EnhancedMode;
     mcpServers: McpServersConfig;
+    cwd?: string;
     cliOverrides?: CodexCliOverrides;
     baseInstructions?: string;
     developerInstructions?: string;
@@ -104,6 +105,10 @@ export function buildThreadStartParams(args: {
         ...(Object.keys(configWithInstructions).length > 0 ? { config: configWithInstructions } : {})
     };
 
+    if (args.cwd) {
+        params.cwd = args.cwd;
+    }
+
     if (args.mode.model) {
         params.model = args.mode.model;
     }
@@ -114,6 +119,7 @@ export function buildThreadStartParams(args: {
 export function buildTurnStartParams(args: {
     threadId: string;
     message: string;
+    cwd?: string;
     mode?: EnhancedMode;
     cliOverrides?: CodexCliOverrides;
     overrides?: {
@@ -126,6 +132,10 @@ export function buildTurnStartParams(args: {
         threadId: args.threadId,
         input: [{ type: 'text', text: args.message }]
     };
+
+    if (args.cwd) {
+        params.cwd = args.cwd;
+    }
 
     const allowCliOverrides = args.mode?.permissionMode === 'default';
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;

@@ -31,6 +31,7 @@ export function buildCodexStartConfig(args: {
     message: string;
     mode: EnhancedMode;
     first: boolean;
+    cwd?: string;
     mcpServers: Record<string, { command: string; args: string[] }>;
     cliOverrides?: CodexCliOverrides;
     developerInstructions?: string;
@@ -56,6 +57,10 @@ export function buildCodexStartConfig(args: {
         'approval-policy': resolvedApprovalPolicy,
         config
     };
+
+    if (args.cwd) {
+        startConfig.cwd = args.cwd;
+    }
 
     if (args.mode.model) {
         startConfig.model = args.mode.model;
