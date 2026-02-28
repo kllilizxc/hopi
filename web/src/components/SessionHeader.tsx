@@ -1,18 +1,12 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
-import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
-import { SessionActionMenu } from '@/components/SessionActionMenu'
-import { RenameSessionDialog } from '@/components/RenameSessionDialog'
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 
 function getSessionTitle(session: Session): string {
@@ -27,190 +21,6 @@ function getSessionTitle(session: Session): string {
         return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
     }
     return session.id.slice(0, 8)
-}
-
-function ImportSessionAsTaskDialog(props: {
-    isOpen: boolean
-    onClose: () => void
-    api: ApiClient | null
-    session: Session
-    suggestedTitle: string
-}) {
-    const { t } = useTranslation()
-    const navigate = useNavigate()
-    const queryClient = useQueryClient()
-    const { addToast } = useToast()
-    const [projectId, setProjectId] = useState<string>('')
-    const [title, setTitle] = useState(props.suggestedTitle)
-    const [isPending, setIsPending] = useState(false)
-    const [error, setError] = useState<string | null>(null)
-
-    const machineId = props.session.metadata?.machineId ?? null
-
-    useEffect(() => {
-        if (!props.isOpen) {
-            setProjectId('')
-            setError(null)
-            setIsPending(false)
-            return
-        }
-
-        setTitle(props.suggestedTitle)
-        setError(null)
-    }, [props.isOpen, props.suggestedTitle])
-
-    const projectsQuery = useQuery({
-        queryKey: [...queryKeys.projects, 'active'],
-        queryFn: async () => {
-            if (!props.api) {
-                throw new Error('API unavailable')
-            }
-            return await props.api.getProjects()
-        },
-        enabled: Boolean(props.isOpen && props.api)
-    })
-
-    const projects = projectsQuery.data?.projects ?? []
-    const filteredProjects = machineId
-        ? projects.filter((p) => p.machineId === machineId && !p.archivedAt)
-        : projects.filter((p) => !p.archivedAt)
-
-    useEffect(() => {
-        if (!props.isOpen) return
-        if (projectId) return
-        if (filteredProjects.length !== 1) return
-        setProjectId(filteredProjects[0].id)
-    }, [props.isOpen, projectId, filteredProjects])
-
-    const canConfirm = Boolean(props.api && projectId && title.trim() && !isPending)
-
-    const handleConfirm = async () => {
-        if (!props.api || !canConfirm) return
-        setIsPending(true)
-        setError(null)
-        try {
-            const createdTask = await props.api.createProjectTask(projectId, {
-                title: title.trim(),
-                status: 'in_progress',
-                sortKey: Date.now()
-            })
-            await props.api.attachTaskSession(createdTask.task.id, props.session.id)
-
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(projectId) })
-            void queryClient.invalidateQueries({ queryKey: queryKeys.task(createdTask.task.id) })
-            void queryClient.invalidateQueries({ queryKey: queryKeys.session(props.session.id) })
-
-            addToast({
-                title: t('session.import.toastTitle'),
-                body: createdTask.task.title,
-                sessionId: props.session.id,
-                url: ''
-            })
-            props.onClose()
-            navigate({
-                to: '/projects/$projectId/tasks/$taskId/chat',
-                params: { projectId, taskId: createdTask.task.id }
-            })
-        } catch (err) {
-            const message = err instanceof Error ? err.message : t('dialog.error.default')
-            setError(message)
-        } finally {
-            setIsPending(false)
-        }
-    }
-
-    return (
-        <Dialog
-            open={props.isOpen}
-            onOpenChange={(open) => {
-                if (!open) {
-                    props.onClose()
-                }
-            }}
-        >
-            <DialogContent className="max-w-md">
-                <DialogHeader>
-                    <DialogTitle>{t('session.import.title')}</DialogTitle>
-                    <DialogDescription>{t('session.import.description')}</DialogDescription>
-                </DialogHeader>
-
-                <div className="mt-4 space-y-3">
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('session.import.project')}
-                        </label>
-                        {projectsQuery.isLoading ? (
-                            <div className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm text-[var(--app-hint)]">
-                                {t('loading')}
-                            </div>
-                        ) : filteredProjects.length === 0 ? (
-                            <div className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-sm text-[var(--app-hint)] space-y-3">
-                                <div>{t('session.import.noProjects')}</div>
-                                <div className="flex justify-end">
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        onClick={() => {
-                                            props.onClose()
-                                            navigate({ to: '/projects' })
-                                        }}
-                                    >
-                                        {t('session.import.goToProjects')}
-                                    </Button>
-                                </div>
-                            </div>
-                        ) : (
-                            <select
-                                value={projectId}
-                                onChange={(e) => setProjectId(e.target.value)}
-                                disabled={isPending}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            >
-                                <option value="">{t('session.import.selectProject')}</option>
-                                {filteredProjects.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                        {p.name}
-                                    </option>
-                                ))}
-                            </select>
-                        )}
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('session.import.taskTitle')}
-                        </label>
-                        <input
-                            type="text"
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                            disabled={isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        />
-                    </div>
-
-                    {projectsQuery.error ? (
-                        <div className="text-sm text-red-600">
-                            {projectsQuery.error instanceof Error ? projectsQuery.error.message : t('dialog.error.default')}
-                        </div>
-                    ) : null}
-
-                    {error ? (
-                        <div className="text-sm text-red-600">{error}</div>
-                    ) : null}
-                </div>
-
-                <div className="mt-5 flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={props.onClose} disabled={isPending}>
-                        {t('button.cancel')}
-                    </Button>
-                    <Button type="button" variant="secondary" onClick={handleConfirm} disabled={!canConfirm}>
-                        {isPending ? t('session.import.importing') : t('session.import.confirm')}
-                    </Button>
-                </div>
-            </DialogContent>
-        </Dialog>
-    )
 }
 
 function MergeWorktreeDialog(props: {
@@ -288,23 +98,6 @@ function FilesIcon(props: { className?: string }) {
     )
 }
 
-function MoreVerticalIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className={props.className}
-        >
-            <circle cx="12" cy="5" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="12" cy="19" r="2" />
-        </svg>
-    )
-}
-
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
@@ -315,7 +108,7 @@ export function SessionHeader(props: {
     const { t } = useTranslation()
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
-    const { session, api, onSessionDeleted } = props
+    const { session, api } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
 
@@ -330,34 +123,7 @@ export function SessionHeader(props: {
 
     const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
 
-    const [menuOpen, setMenuOpen] = useState(false)
-    const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
-    const menuId = useId()
-    const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
-    const [renameOpen, setRenameOpen] = useState(false)
-    const [archiveOpen, setArchiveOpen] = useState(false)
-    const [deleteOpen, setDeleteOpen] = useState(false)
-    const [importOpen, setImportOpen] = useState(false)
     const [mergeOpen, setMergeOpen] = useState(false)
-
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
-        api,
-        session.id,
-        session.metadata?.flavor ?? null
-    )
-
-    const handleDelete = async () => {
-        await deleteSession()
-        onSessionDeleted?.()
-    }
-
-    const handleMenuToggle = () => {
-        if (!menuOpen && menuAnchorRef.current) {
-            const rect = menuAnchorRef.current.getBoundingClientRect()
-            setMenuAnchorPoint({ x: rect.right, y: rect.bottom })
-        }
-        setMenuOpen((open) => !open)
-    }
 
     // In Telegram, don't render header (Telegram provides its own)
     if (isTelegramApp()) {
@@ -444,74 +210,8 @@ export function SessionHeader(props: {
                             {t('projects.workbench.tab.task')}
                         </button>
                     ) : null}
-
-                    <button
-                        type="button"
-                        onClick={handleMenuToggle}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        ref={menuAnchorRef}
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen}
-                        aria-controls={menuOpen ? menuId : undefined}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        title={t('session.more')}
-                    >
-                        <MoreVerticalIcon />
-                    </button>
                 </div>
             </div>
-
-            <SessionActionMenu
-                isOpen={menuOpen}
-                onClose={() => setMenuOpen(false)}
-                sessionActive={session.active}
-                onImportAsTask={!taskLink ? () => setImportOpen(true) : undefined}
-                onRename={() => setRenameOpen(true)}
-                onArchive={() => setArchiveOpen(true)}
-                onDelete={() => setDeleteOpen(true)}
-                anchorPoint={menuAnchorPoint}
-                menuId={menuId}
-            />
-
-            <RenameSessionDialog
-                isOpen={renameOpen}
-                onClose={() => setRenameOpen(false)}
-                currentName={title}
-                onRename={renameSession}
-                isPending={isPending}
-            />
-
-            <ConfirmDialog
-                isOpen={archiveOpen}
-                onClose={() => setArchiveOpen(false)}
-                title={t('dialog.archive.title')}
-                description={t('dialog.archive.description', { name: title })}
-                confirmLabel={t('dialog.archive.confirm')}
-                confirmingLabel={t('dialog.archive.confirming')}
-                onConfirm={archiveSession}
-                isPending={isPending}
-                destructive
-            />
-
-            <ConfirmDialog
-                isOpen={deleteOpen}
-                onClose={() => setDeleteOpen(false)}
-                title={t('dialog.delete.title')}
-                description={t('dialog.delete.description', { name: title })}
-                confirmLabel={t('dialog.delete.confirm')}
-                confirmingLabel={t('dialog.delete.confirming')}
-                onConfirm={handleDelete}
-                isPending={isPending}
-                destructive
-            />
-
-            <ImportSessionAsTaskDialog
-                isOpen={importOpen}
-                onClose={() => setImportOpen(false)}
-                api={api}
-                session={session}
-                suggestedTitle={title}
-            />
 
             {worktreeBranch && taskLink ? (
                 <MergeWorktreeDialog
