@@ -212,9 +212,27 @@ async function handleTaskMovedToFinished(options: {
         }
     }
 
-    if (task.activeSessionId) {
+    const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (!latestTask || latestTask.archivedAt || latestTask.status !== 'finished') {
+        return
+    }
+
+    if (project.improvementsEnabled) {
+        const archived = options.store.tasks.archiveTaskByNamespace(latestTask.id, options.namespace)
+        if (archived) {
+            options.engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId: latestTask.id,
+                projectId: latestTask.projectId,
+                namespace: options.namespace,
+                data: { taskId: latestTask.id, archived: true }
+            })
+        }
+    }
+
+    if (latestTask.activeSessionId) {
         try {
-            await options.engine.archiveSession(task.activeSessionId)
+            await options.engine.archiveSession(latestTask.activeSessionId)
         } catch {
         }
     }

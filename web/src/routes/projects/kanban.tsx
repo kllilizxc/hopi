@@ -721,6 +721,18 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 >
                                     {colTasks.map((task, index) => {
                                         const isDragging = dragState?.taskId === task.id
+                                        const useArchiveStyle = task.status === 'finished'
+                                        const cardBackground = useArchiveStyle
+                                            ? [
+                                                'radial-gradient(150% 120% at 0% 0%, var(--app-kanban-archive-bg) 0%, transparent 64%)',
+                                                'radial-gradient(140% 120% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 62%)',
+                                                'var(--app-bg)'
+                                            ].join(', ')
+                                            : [
+                                                'radial-gradient(140% 120% at 0% 0%, var(--kanban-wash-1) 0%, transparent 62%)',
+                                                'radial-gradient(130% 110% at 100% 0%, var(--kanban-wash-2) 0%, transparent 58%)',
+                                                'var(--app-bg)'
+                                            ].join(', ')
 
                                         return (
                                             <div key={task.id} className="relative">
@@ -837,15 +849,15 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                         event.preventDefault()
                                                         setMenuState({ taskId: task.id, anchorPoint: { x: event.clientX, y: event.clientY } })
                                                     }}
-                                                    className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset ring-[var(--app-divider)] transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] hover:ring-[var(--kanban-wash-1)] cursor-pointer ${
+                                                    className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${
+                                                        useArchiveStyle
+                                                            ? 'border border-dashed border-[var(--app-kanban-archive-border)] ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
+                                                            : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
+                                                    } ${
                                                         isDragging ? 'opacity-60' : ''
                                                     }`}
                                                     style={{
-                                                        background: [
-                                                            'radial-gradient(140% 120% at 0% 0%, var(--kanban-wash-1) 0%, transparent 62%)',
-                                                            'radial-gradient(130% 110% at 100% 0%, var(--kanban-wash-2) 0%, transparent 58%)',
-                                                            'var(--app-bg)'
-                                                        ].join(', ')
+                                                        background: cardBackground
                                                     }}
                                                 >
                                                     <div className="flex items-start justify-between gap-2">
