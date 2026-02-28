@@ -555,7 +555,20 @@ export function createTasksRoutes(options: {
         }
 
         const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
-        const result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
+        let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
+        try {
+            result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const lowered = message.toLowerCase()
+            const status = lowered.includes('timed out')
+                ? 504
+                : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
+                    ? 503
+                    : 500
+            return c.json({ error: message }, status)
+        }
+
         if (!result.success) {
             const status = getMergeWorktreeErrorStatus(result)
             const payload: {
