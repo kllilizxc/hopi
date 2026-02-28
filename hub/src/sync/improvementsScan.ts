@@ -23,6 +23,62 @@ export type ImprovementsSuggestion = {
     workspaceLabel?: string
 }
 
+function normalizeLocaleTag(raw: string | undefined): string | null {
+    if (!raw) return null
+
+    let value = raw.trim()
+    if (!value) return null
+
+    if (value.includes(':')) {
+        value = value.split(':')[0] ?? value
+    }
+    value = value.split('.')[0] ?? value
+    value = value.split('@')[0] ?? value
+    value = value.replace(/_/g, '-')
+
+    if (!value) return null
+    const lowered = value.toLowerCase()
+    if (lowered === 'c' || lowered === 'posix') {
+        return null
+    }
+
+    try {
+        const [canonical] = Intl.getCanonicalLocales(value)
+        return canonical ?? null
+    } catch {
+        return null
+    }
+}
+
+function resolvePromptLocale(options: {
+    store: Store
+    targetSessionId: string
+}): string {
+    const session = options.store.sessions.getSession(options.targetSessionId)
+    if (session && isObject(session.metadata)) {
+        const metadataLocale = typeof session.metadata.locale === 'string'
+            ? session.metadata.locale
+            : (typeof session.metadata.language === 'string' ? session.metadata.language : undefined)
+        const parsed = normalizeLocaleTag(metadataLocale)
+        if (parsed) {
+            return parsed
+        }
+    }
+
+    const envLocale = normalizeLocaleTag(
+        process.env.LC_ALL
+        ?? process.env.LC_MESSAGES
+        ?? process.env.LANGUAGE
+        ?? process.env.LANG
+    )
+    if (envLocale) {
+        return envLocale
+    }
+
+    const fallbackLocale = normalizeLocaleTag(Intl.DateTimeFormat().resolvedOptions().locale)
+    return fallbackLocale ?? 'en'
+}
+
 function normalizeTitle(value: string): string {
     return value
         .trim()
@@ -63,6 +119,7 @@ function buildImprovementsPrompt(options: {
     finishedTask: Pick<StoredTask, 'title' | 'description'>
     workspaces: StoredWorkspace[]
     maxSuggestions: number
+    locale: string
 }): string {
     const workspaceLines = options.workspaces.length > 0
         ? options.workspaces.map((ws) => {
@@ -86,6 +143,7 @@ function buildImprovementsPrompt(options: {
         workspaceLines,
         '',
         `Task: Suggest up to ${options.maxSuggestions} follow-up improvement tasks.`,
+        `- Use the system language for this session (${options.locale}) in task titles/descriptions.`,
         '- Do NOT run tools, commands, or code edits.',
         '- Do NOT include markdown fences.',
         '- Output STRICT JSON ONLY: a JSON array of objects.',
@@ -301,6 +359,10 @@ export async function runImprovementsScan(options: {
     | { ok: true; createdTaskIds: string[] }
     | { ok: false; error: string; rawAssistantText?: string }
 > {
+    const locale = resolvePromptLocale({
+        store: options.store,
+        targetSessionId: options.targetSessionId
+    })
     const workspaces = options.store.workspaces.listWorkspacesByProject(options.project.id)
     const prompt = buildImprovementsPrompt({
         projectName: options.project.name,
@@ -309,7 +371,8 @@ export async function runImprovementsScan(options: {
             description: options.finishedTask.description
         },
         workspaces,
-        maxSuggestions: options.maxToCreate
+        maxSuggestions: options.maxToCreate,
+        locale
     })
 
     const latest = options.store.messages.getMessages(options.targetSessionId, 1)

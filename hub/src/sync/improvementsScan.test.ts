@@ -8,10 +8,18 @@ import type { SyncEngine } from './syncEngine'
 function createActiveProjectSession(store: Store, options: {
     namespace: string
     projectId: string
+    locale?: string
 }): { sessionId: string; session: Session } {
+    const metadata = {
+        path: '/tmp',
+        host: 'test',
+        projectId: options.projectId,
+        ...(options.locale ? { locale: options.locale } : {})
+    }
+
     const stored = store.sessions.getOrCreateSession(
         'scan-session',
-        { path: '/tmp', host: 'test', projectId: options.projectId },
+        metadata,
         null,
         options.namespace
     )
@@ -25,11 +33,7 @@ function createActiveProjectSession(store: Store, options: {
         updatedAt: now,
         active: true,
         activeAt: now,
-        metadata: {
-            path: '/tmp',
-            host: 'test',
-            projectId: options.projectId
-        },
+        metadata,
         metadataVersion: 1,
         agentState: null,
         agentStateVersion: 1,
@@ -202,5 +206,73 @@ describe('runImprovementsScan', () => {
         expect(created?.title).toBe('优化归档卡片可读性')
         expect(created?.status).toBe('new')
         expect(created?.source).toBe('improvements_scan')
+    })
+
+    it('adds session locale instruction to improvements prompt', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-3'
+        let capturedPrompt = ''
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'HOPI'
+        })
+
+        const finishedTask = store.tasks.createTask({
+            id: 'task-finished-3',
+            projectId,
+            title: 'Finalize release notes',
+            status: 'finished',
+            sortKey: 1
+        })
+
+        const { sessionId, session } = createActiveProjectSession(store, {
+            namespace,
+            projectId,
+            locale: 'zh_CN.UTF-8'
+        })
+
+        const engine = {
+            async sendMessage(sid: string, payload: { text: string; localId?: string | null }) {
+                capturedPrompt = payload.text
+                store.messages.addMessage(sid, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'message',
+                            message: '[]'
+                        }
+                    }
+                })
+            },
+            getSessionByNamespace(sid: string, ns: string) {
+                return sid === sessionId && ns === namespace ? session : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? [session] : []
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const result = await runImprovementsScan({
+            store,
+            engine,
+            namespace,
+            project: {
+                id: projectId,
+                name: 'HOPI',
+                improvementsMaxGeneratedNew: 5
+            },
+            finishedTask,
+            targetSessionId: sessionId,
+            maxToCreate: 5
+        })
+
+        expect(result.ok).toBe(true)
+        expect(capturedPrompt).toContain('system language for this session (zh-CN)')
     })
 })
