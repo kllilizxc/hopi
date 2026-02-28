@@ -75,6 +75,10 @@ export default {
   'projects.tasks.created': 'Task created',
   'projects.tasks.createFailed': 'Task create failed',
   'projects.tasks.moveFailed': 'Move failed',
+  'projects.tasks.generated': 'Auto-generated',
+  'projects.tasks.approve': 'Approve',
+  'projects.tasks.reject': 'Reject',
+  'projects.tasks.rejectFailed': 'Reject failed',
 
   'projects.workbench.tab.task': 'Task',
   'projects.workbench.tab.chat': 'Chat',

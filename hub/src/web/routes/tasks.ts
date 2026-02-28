@@ -414,6 +414,33 @@ export function createTasksRoutes(options: {
         return c.json({ ok: true })
     })
 
+    app.delete('/tasks/:taskId', (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const existing = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        if (!existing) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+        if (existing.source !== 'improvements_scan' || existing.status !== 'new') {
+            return c.json({ error: 'Only auto-generated new tasks can be rejected' }, 409)
+        }
+
+        const ok = options.store.tasks.deleteTaskByNamespace(taskId, namespace)
+        if (!ok) {
+            return c.json({ error: 'Failed to delete task' }, 500)
+        }
+
+        const engine = options.getSyncEngine()
+        engine?.handleRealtimeEvent({
+            type: 'task-removed',
+            taskId,
+            projectId: existing.projectId,
+            namespace
+        })
+
+        return c.json({ ok: true })
+    })
+
     app.post('/tasks/:taskId/attach-session', async (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')

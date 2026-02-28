@@ -75,6 +75,10 @@ export default {
   'projects.tasks.created': '已创建任务',
   'projects.tasks.createFailed': '创建任务失败',
   'projects.tasks.moveFailed': '移动失败',
+  'projects.tasks.generated': '自动生成',
+  'projects.tasks.approve': '批准',
+  'projects.tasks.reject': '拒绝',
+  'projects.tasks.rejectFailed': '拒绝失败',
 
   'projects.workbench.tab.task': '任务',
   'projects.workbench.tab.chat': '聊天',

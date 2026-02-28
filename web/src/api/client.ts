@@ -319,6 +319,12 @@ export class ApiClient {
         })
     }
 
+    async deleteTask(taskId: string): Promise<void> {
+        await this.request(`/api/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'DELETE'
+        })
+    }
+
     async archiveTask(taskId: string): Promise<void> {
         await this.request(`/api/tasks/${encodeURIComponent(taskId)}/archive`, {
             method: 'POST',

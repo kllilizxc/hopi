@@ -5,6 +5,7 @@ import {
     archiveTaskByNamespace,
     countGeneratedNewTasks,
     createTask,
+    deleteTaskByNamespace,
     getTask,
     getTaskByNamespace,
     listTasksByActiveSessionIdAndNamespace,
@@ -87,6 +88,10 @@ export class TaskStore {
 
     archiveTaskByNamespace(taskId: string, namespace: string): boolean {
         return archiveTaskByNamespace(this.db, taskId, namespace)
+    }
+
+    deleteTaskByNamespace(taskId: string, namespace: string): boolean {
+        return deleteTaskByNamespace(this.db, taskId, namespace)
     }
 
     countGeneratedNewTasks(projectId: string, namespace: string): number {

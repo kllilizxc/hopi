@@ -285,6 +285,15 @@ export function archiveTaskByNamespace(db: Database, taskId: string, namespace: 
     return result.changes > 0
 }
 
+export function deleteTaskByNamespace(db: Database, taskId: string, namespace: string): boolean {
+    const result = db.prepare(`
+        DELETE FROM tasks
+        WHERE id = ?
+            AND project_id IN (SELECT id FROM projects WHERE namespace = ?)
+    `).run(taskId, namespace)
+    return result.changes > 0
+}
+
 export function countGeneratedNewTasks(db: Database, projectId: string, namespace: string): number {
     const row = db.prepare(`
         SELECT COUNT(1) AS count

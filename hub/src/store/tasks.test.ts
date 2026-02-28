@@ -32,4 +32,40 @@ describe('Task store worktree merge fields', () => {
         expect(updated?.worktreeMergedAt).toBeNull()
         expect(updated?.worktreeMergeCommit).toBeNull()
     })
+
+    it('deletes task only inside matching namespace', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-default',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Default Project'
+        })
+        store.projects.createProject({
+            id: 'project-other',
+            namespace: 'other',
+            machineId: 'machine-1',
+            name: 'Other Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-default',
+            projectId: 'project-default',
+            title: 'Task Default',
+            status: 'new'
+        })
+        store.tasks.createTask({
+            id: 'task-other',
+            projectId: 'project-other',
+            title: 'Task Other',
+            status: 'new'
+        })
+
+        expect(store.tasks.deleteTaskByNamespace('task-default', 'other')).toBe(false)
+        expect(store.tasks.getTaskByNamespace('task-default', 'default')).not.toBeNull()
+
+        expect(store.tasks.deleteTaskByNamespace('task-default', 'default')).toBe(true)
+        expect(store.tasks.getTaskByNamespace('task-default', 'default')).toBeNull()
+        expect(store.tasks.getTaskByNamespace('task-other', 'other')).not.toBeNull()
+    })
 })

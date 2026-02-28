@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
@@ -291,12 +292,14 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { t } = useTranslation()
     const { tasks, isLoading, error } = useTasks(api, props.projectId)
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
+    const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskTitle, setNewTaskTitle] = useState('')
     const [newTaskDescription, setNewTaskDescription] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
+    const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -432,6 +435,33 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     useEffect(() => {
         moveTaskRef.current = moveTask
     }, [moveTask])
+
+    const handleApproveGeneratedTask = useCallback(async (taskId: string) => {
+        if (pendingGeneratedActionTaskId) return
+        setPendingGeneratedActionTaskId(taskId)
+        try {
+            await moveTask(taskId, 'planned', 0)
+        } finally {
+            setPendingGeneratedActionTaskId((current) => current === taskId ? null : current)
+        }
+    }, [moveTask, pendingGeneratedActionTaskId])
+
+    const handleRejectGeneratedTask = useCallback(async (taskId: string) => {
+        if (pendingGeneratedActionTaskId) return
+        setPendingGeneratedActionTaskId(taskId)
+        try {
+            await deleteTask({ taskId, projectId: props.projectId })
+        } catch (error) {
+            addToast({
+                title: t('projects.tasks.rejectFailed'),
+                body: error instanceof Error ? error.message : 'Failed to reject task',
+                sessionId: '',
+                url: ''
+            })
+        } finally {
+            setPendingGeneratedActionTaskId((current) => current === taskId ? null : current)
+        }
+    }, [pendingGeneratedActionTaskId, deleteTask, props.projectId, addToast, t])
 
     const handleCreateTask = useCallback(async (title: string, description?: string, priority?: TaskPriority | null) => {
         const trimmed = title.trim()
@@ -721,6 +751,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 >
                                     {colTasks.map((task, index) => {
                                         const isDragging = dragState?.taskId === task.id
+                                        const isGeneratedNew = task.source === 'improvements_scan' && task.status === 'new'
+                                        const isGeneratedActionPending = pendingGeneratedActionTaskId === task.id
                                         const useArchiveStyle = task.status === 'finished'
                                         const cardBackground = useArchiveStyle
                                             ? [
@@ -865,7 +897,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             <div className="text-sm font-medium break-words leading-snug">
                                                                 {task.title}
                                                             </div>
-                                                            {(task.activeSessionId || task.priority) ? (
+                                                            {(task.activeSessionId || task.priority || isGeneratedNew) ? (
                                                                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                                                     {task.activeSessionId ? (
                                                                         <div className="text-[10px] text-[var(--app-hint)]">
@@ -877,6 +909,41 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                                             {t(getTaskPriorityLabelKey(task.priority))}
                                                                         </span>
                                                                     ) : null}
+                                                                    {isGeneratedNew ? (
+                                                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]">
+                                                                            {t('projects.tasks.generated')}
+                                                                        </span>
+                                                                    ) : null}
+                                                                </div>
+                                                            ) : null}
+                                                            {isGeneratedNew ? (
+                                                                <div className="mt-2 flex items-center gap-1.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        draggable={false}
+                                                                        className="rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-2 py-1 text-[11px] font-medium text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
+                                                                        onClick={(event) => {
+                                                                            event.preventDefault()
+                                                                            event.stopPropagation()
+                                                                            void handleApproveGeneratedTask(task.id)
+                                                                        }}
+                                                                        disabled={isGeneratedActionPending}
+                                                                    >
+                                                                        {t('projects.tasks.approve')}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        draggable={false}
+                                                                        className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] px-2 py-1 text-[11px] font-medium text-[var(--app-badge-error-text)] hover:opacity-90 disabled:opacity-50"
+                                                                        onClick={(event) => {
+                                                                            event.preventDefault()
+                                                                            event.stopPropagation()
+                                                                            void handleRejectGeneratedTask(task.id)
+                                                                        }}
+                                                                        disabled={isGeneratedActionPending}
+                                                                    >
+                                                                        {t('projects.tasks.reject')}
+                                                                    </button>
                                                                 </div>
                                                             ) : null}
                                                         </div>
