@@ -278,6 +278,76 @@ describe('runImprovementsScan', () => {
         expect(capturedPrompt).toContain('Focus on necessary, high-impact follow-ups only; fewer is better.')
     })
 
+    it('prefers request locale override over session metadata locale', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-locale-override'
+        let capturedPrompt = ''
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'HOPI'
+        })
+
+        const finishedTask = store.tasks.createTask({
+            id: 'task-finished-locale-override',
+            projectId,
+            title: 'Complete polish pass',
+            status: 'finished',
+            sortKey: 1
+        })
+
+        const { sessionId, session } = createActiveProjectSession(store, {
+            namespace,
+            projectId,
+            locale: 'en-US'
+        })
+
+        const engine = {
+            async sendMessage(sid: string, payload: { text: string; localId?: string | null }) {
+                capturedPrompt = payload.text
+                store.messages.addMessage(sid, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'message',
+                            message: '[]'
+                        }
+                    }
+                })
+            },
+            getSessionByNamespace(sid: string, ns: string) {
+                return sid === sessionId && ns === namespace ? session : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? [session] : []
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const result = await runImprovementsScan({
+            store,
+            engine,
+            namespace,
+            project: {
+                id: projectId,
+                name: 'HOPI',
+                improvementsMaxGeneratedNew: 5
+            },
+            finishedTask,
+            targetSessionId: sessionId,
+            maxToCreate: 5,
+            preferredLocale: 'zh-CN'
+        })
+
+        expect(result.ok).toBe(true)
+        expect(capturedPrompt).toContain('system language for this session (zh-CN)')
+        expect(capturedPrompt).not.toContain('system language for this session (en-US)')
+    })
+
     it('caps created tasks to 3 even when the scan asks for more', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

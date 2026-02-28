@@ -41,6 +41,21 @@ type ErrorPayload = {
     error?: unknown
 }
 
+function getStoredLocale(): string | null {
+    const storage = typeof globalThis === 'object' ? globalThis.localStorage : undefined
+    if (!storage) {
+        return null
+    }
+
+    try {
+        const raw = storage.getItem('hapi-lang')
+        const value = raw?.trim()
+        return value && value.length > 0 ? value : null
+    } catch {
+        return null
+    }
+}
+
 function parseErrorCode(bodyText: string): string | undefined {
     try {
         const parsed = JSON.parse(bodyText) as ErrorPayload
@@ -101,6 +116,12 @@ export class ApiClient {
             : (liveToken ?? this.token)
         if (authToken) {
             headers.set('authorization', `Bearer ${authToken}`)
+        }
+        if (!headers.has('x-hapi-locale')) {
+            const locale = getStoredLocale()
+            if (locale) {
+                headers.set('x-hapi-locale', locale)
+            }
         }
         if (init?.body !== undefined && !headers.has('content-type')) {
             headers.set('content-type', 'application/json')

@@ -108,11 +108,21 @@ function getMergeWorktreeErrorStatus(result: {
     return 500
 }
 
+function resolveRequestLocale(rawLocale: string | undefined): string | undefined {
+    const trimmed = rawLocale?.trim()
+    if (!trimmed) {
+        return undefined
+    }
+
+    return trimmed.split(',')[0]?.split(';')[0]?.trim() || undefined
+}
+
 async function handleTaskMovedToFinished(options: {
     store: Store
     engine: SyncEngine
     namespace: string
     taskId: string
+    preferredLocale?: string
 }): Promise<void> {
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!task || task.status !== 'finished' || task.archivedAt) {
@@ -175,7 +185,8 @@ async function handleTaskMovedToFinished(options: {
                     },
                     finishedTask: task,
                     targetSessionId,
-                    maxToCreate: remaining
+                    maxToCreate: remaining,
+                    preferredLocale: options.preferredLocale
                 })
 
                 options.store.projects.updateProject(project.id, options.namespace, {
@@ -336,6 +347,11 @@ export function createTasksRoutes(options: {
     app.patch('/tasks/:taskId', async (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
+        const preferredLocale = resolveRequestLocale(
+            c.req.header('x-hapi-locale')
+            ?? c.req.header('accept-language')
+            ?? undefined
+        )
         const existing = options.store.tasks.getTaskByNamespace(taskId, namespace)
         if (!existing) {
             return c.json({ error: 'Task not found' }, 404)
@@ -380,7 +396,8 @@ export function createTasksRoutes(options: {
                 store: options.store,
                 engine,
                 namespace,
-                taskId
+                taskId,
+                preferredLocale
             })
         }
 
@@ -528,6 +545,11 @@ export function createTasksRoutes(options: {
     app.post('/tasks/:taskId/worktree/merge', async (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
+        const preferredLocale = resolveRequestLocale(
+            c.req.header('x-hapi-locale')
+            ?? c.req.header('accept-language')
+            ?? undefined
+        )
         const json = await c.req.json().catch(() => null)
         const parsed = mergeWorktreeSchema.safeParse(json ?? {})
         if (!parsed.success) {
@@ -633,7 +655,8 @@ export function createTasksRoutes(options: {
                 store: options.store,
                 engine,
                 namespace,
-                taskId
+                taskId,
+                preferredLocale
             })
         }
 

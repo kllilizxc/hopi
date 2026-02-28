@@ -54,7 +54,13 @@ function normalizeLocaleTag(raw: string | undefined): string | null {
 function resolvePromptLocale(options: {
     store: Store
     targetSessionId: string
+    preferredLocale?: string
 }): string {
+    const preferredLocale = normalizeLocaleTag(options.preferredLocale)
+    if (preferredLocale) {
+        return preferredLocale
+    }
+
     const session = options.store.sessions.getSession(options.targetSessionId)
     if (session && isObject(session.metadata)) {
         const metadataLocale = typeof session.metadata.locale === 'string'
@@ -357,6 +363,7 @@ export async function runImprovementsScan(options: {
     finishedTask: StoredTask
     targetSessionId: string
     maxToCreate: number
+    preferredLocale?: string
 }): Promise<
     | { ok: true; createdTaskIds: string[] }
     | { ok: false; error: string; rawAssistantText?: string }
@@ -368,7 +375,8 @@ export async function runImprovementsScan(options: {
 
     const locale = resolvePromptLocale({
         store: options.store,
-        targetSessionId: options.targetSessionId
+        targetSessionId: options.targetSessionId,
+        preferredLocale: options.preferredLocale
     })
     const workspaces = options.store.workspaces.listWorkspacesByProject(options.project.id)
     const prompt = buildImprovementsPrompt({
