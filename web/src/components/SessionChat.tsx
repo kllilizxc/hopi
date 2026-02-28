@@ -104,6 +104,7 @@ export function SessionChat(props: {
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
+    const [ignoreRunningFallback, setIgnoreRunningFallback] = useState(false)
     const agentFlavor = props.session.metadata?.flavor ?? null
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
@@ -207,7 +208,15 @@ export function SessionChat(props: {
     useEffect(() => {
         normalizedCacheRef.current.clear()
         blocksByIdRef.current.clear()
+        setIgnoreRunningFallback(false)
     }, [props.session.id])
+
+    useEffect(() => {
+        if (!props.session.thinking) {
+            return
+        }
+        setIgnoreRunningFallback(false)
+    }, [props.session.thinking])
 
     const normalizedMessages: NormalizedMessage[] = useMemo(() => {
         // Clear caches immediately when session changes (before useEffect runs)
@@ -278,8 +287,14 @@ export function SessionChat(props: {
 
     // Abort handler
     const handleAbort = useCallback(async () => {
-        await abortSession()
-        props.onRefresh()
+        setIgnoreRunningFallback(true)
+        try {
+            await abortSession()
+            props.onRefresh()
+        } catch (error) {
+            setIgnoreRunningFallback(false)
+            throw error
+        }
     }, [abortSession, props.onRefresh])
 
     // Switch to remote handler
@@ -307,6 +322,7 @@ export function SessionChat(props: {
     }, [navigate, props.onViewTerminal])
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
+        setIgnoreRunningFallback(false)
         props.onSend(text, attachments)
         setForceScrollToken((token) => token + 1)
     }, [props.onSend])
@@ -319,7 +335,7 @@ export function SessionChat(props: {
     }, [props.api, props.session.id, props.session.active])
 
     const effectiveIsRunning = props.session.thinking
-        || shouldTreatSessionAsRunningFallback(props.session, normalizedMessages)
+        || (!ignoreRunningFallback && shouldTreatSessionAsRunningFallback(props.session, normalizedMessages))
 
     const runtime = useHappyRuntime({
         session: props.session,
