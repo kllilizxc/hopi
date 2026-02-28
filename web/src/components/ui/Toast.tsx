@@ -96,8 +96,7 @@ export function Toast({ title, body, onClose, className, variant, ...props }: To
 
     return (
         <div className={cn(toastVariants({ variant }), className)} role="status" {...props}>
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[var(--app-link)] via-[var(--app-button)] to-[var(--app-link)]" />
-            <div className="flex items-start gap-3 p-4 pt-5">
+            <div className="flex items-start gap-3 p-4">
                 <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-secondary-bg)] text-sm font-semibold text-[var(--app-link)]">
                     !
                 </div>
