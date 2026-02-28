@@ -34,6 +34,47 @@ export type SessionBootstrapResult = {
     workingDirectory: string
 }
 
+function normalizeLocaleTag(raw: string | undefined): string | undefined {
+    if (!raw) return undefined
+
+    let value = raw.trim()
+    if (!value) return undefined
+
+    if (value.includes(':')) {
+        value = value.split(':')[0] ?? value
+    }
+    value = value.split('.')[0] ?? value
+    value = value.split('@')[0] ?? value
+    value = value.replace(/_/g, '-')
+
+    if (!value) return undefined
+    const lowered = value.toLowerCase()
+    if (lowered === 'c' || lowered === 'posix') {
+        return undefined
+    }
+
+    try {
+        const [canonical] = Intl.getCanonicalLocales(value)
+        return canonical
+    } catch {
+        return undefined
+    }
+}
+
+function resolveSystemLocale(): string | undefined {
+    const envLocale = normalizeLocaleTag(
+        process.env.LC_ALL
+        ?? process.env.LC_MESSAGES
+        ?? process.env.LANGUAGE
+        ?? process.env.LANG
+    )
+    if (envLocale) {
+        return envLocale
+    }
+
+    return normalizeLocaleTag(Intl.DateTimeFormat().resolvedOptions().locale)
+}
+
 export function buildMachineMetadata(): MachineMetadata {
     return {
         host: process.env.HAPI_HOSTNAME || os.hostname(),
@@ -61,6 +102,7 @@ export function buildSessionMetadata(options: {
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),
+        locale: resolveSystemLocale(),
         machineId: options.machineId,
         homeDir: os.homedir(),
         happyHomeDir: configuration.happyHomeDir,
