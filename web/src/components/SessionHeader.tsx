@@ -108,10 +108,33 @@ function FilesIcon(props: { className?: string }) {
     )
 }
 
+function DiffIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M5 4v6h6" />
+            <path d="M19 20v-6h-6" />
+            <path d="M5 10a7 7 0 0 1 12-4.9l.5.5" />
+            <path d="M19 14a7 7 0 0 1-12 4.9l-.5-.5" />
+        </svg>
+    )
+}
+
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
     onViewFiles?: () => void
+    onViewDiffs?: () => void
     api: ApiClient | null
     onSessionDeleted?: () => void
 }) {
@@ -206,6 +229,17 @@ export function SessionHeader(props: {
                             title={t('session.title')}
                         >
                             <FilesIcon />
+                        </button>
+                    ) : null}
+
+                    {props.onViewDiffs ? (
+                        <button
+                            type="button"
+                            onClick={props.onViewDiffs}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            title={t('projects.workbench.tab.diffs')}
+                        >
+                            <DiffIcon />
                         </button>
                     ) : null}
 

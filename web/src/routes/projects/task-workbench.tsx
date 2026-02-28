@@ -957,6 +957,12 @@ export function TaskWorkbench(props: {
                                     params: { projectId: props.projectId, taskId: props.taskId }
                                 })
                             }}
+                            onViewDiffs={() => {
+                                void navigate({
+                                    to: '/projects/$projectId/tasks/$taskId/diffs',
+                                    params: { projectId: props.projectId, taskId: props.taskId }
+                                })
+                            }}
                             onViewTerminal={() => {
                                 void navigate({
                                     to: '/projects/$projectId/tasks/$taskId/terminal',

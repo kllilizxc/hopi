@@ -96,6 +96,7 @@ export function SessionChat(props: {
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     onViewFiles?: () => void
+    onViewDiffs?: () => void
     onViewTerminal?: () => void
 }) {
     const { haptic } = usePlatform()
@@ -321,6 +322,15 @@ export function SessionChat(props: {
         navigate({ to: '/projects' })
     }, [navigate, props.onViewTerminal])
 
+    const handleViewDiffs = useCallback(() => {
+        if (props.onViewDiffs) {
+            props.onViewDiffs()
+            return
+        }
+        // Legacy sessions UI no longer used; send users to project UI instead.
+        navigate({ to: '/projects' })
+    }, [navigate, props.onViewDiffs])
+
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
         setIgnoreRunningFallback(false)
         props.onSend(text, attachments)
@@ -354,6 +364,7 @@ export function SessionChat(props: {
                 session={props.session}
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
+                onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
                 api={props.api}
                 onSessionDeleted={props.onBack}
             />

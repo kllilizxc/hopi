@@ -17,6 +17,7 @@ export function TaskSessionChat(props: {
     sessionId: string
     onBack: () => void
     onViewFiles?: () => void
+    onViewDiffs?: () => void
     onViewTerminal?: () => void
 }) {
     const { t } = useTranslation()
@@ -140,6 +141,7 @@ export function TaskSessionChat(props: {
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
             onViewFiles={props.onViewFiles}
+            onViewDiffs={props.onViewDiffs}
             onViewTerminal={props.onViewTerminal}
         />
     )
