@@ -7,19 +7,23 @@ export function useAppGoBack(): () => void {
     const pathname = useLocation({ select: (location) => location.pathname })
 
     return useCallback(() => {
-        // Use explicit path navigation for consistent behavior across all environments
-        if (pathname === '/settings') {
-            navigate({ to: '/projects' })
+        if (pathname.startsWith('/sessions/')) {
+            const normalizedPath = pathname.replace(/\/+$/, '')
+            const match = normalizedPath.match(/^\/sessions\/([^/]+)(?:\/.+)?$/)
+            const sessionId = match?.[1] ?? null
+            if (!sessionId || sessionId === 'new') {
+                navigate({ to: '/sessions' })
+                return
+            }
+            const hasNestedSessionRoute = normalizedPath.split('/').length > 3
+            if (hasNestedSessionRoute) {
+                navigate({ to: '/sessions/$sessionId', params: { sessionId } })
+                return
+            }
+            navigate({ to: '/sessions' })
             return
         }
 
-        // Legacy sessions UI deprecated; route back to project UI.
-        if (pathname.startsWith('/sessions')) {
-            navigate({ to: '/projects' })
-            return
-        }
-
-        // Fallback to history.back() for other cases
         router.history.back()
     }, [navigate, pathname, router])
 }

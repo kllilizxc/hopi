@@ -27,8 +27,12 @@ export function ToastContainer() {
                             void navigate({ to: toast.url })
                             return
                         }
-                        // Sessions UI deprecated; default to project UI.
-                        void navigate({ to: '/projects' })
+                        if (toast.sessionId) {
+                            void navigate({
+                                to: '/sessions/$sessionId',
+                                params: { sessionId: toast.sessionId },
+                            })
+                        }
                     }}
                     onClose={() => removeToast(toast.id)}
                 />

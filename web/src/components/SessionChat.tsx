@@ -309,18 +309,22 @@ export function SessionChat(props: {
             props.onViewFiles()
             return
         }
-        // Legacy sessions UI no longer used; send users to project UI instead.
-        navigate({ to: '/projects' })
-    }, [navigate, props.onViewFiles])
+        navigate({
+            to: '/sessions/$sessionId/files',
+            params: { sessionId: props.session.id },
+        })
+    }, [navigate, props.onViewFiles, props.session.id])
 
     const handleViewTerminal = useCallback(() => {
         if (props.onViewTerminal) {
             props.onViewTerminal()
             return
         }
-        // Legacy sessions UI no longer used; send users to project UI instead.
-        navigate({ to: '/projects' })
-    }, [navigate, props.onViewTerminal])
+        navigate({
+            to: '/sessions/$sessionId/terminal',
+            params: { sessionId: props.session.id },
+        })
+    }, [navigate, props.onViewTerminal, props.session.id])
 
     const handleViewDiffs = useCallback(() => {
         if (props.onViewDiffs) {
