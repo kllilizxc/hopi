@@ -214,6 +214,12 @@ export class SSEManager {
             return true
         }
 
+        // Session-scoped streams still need project/task/workspace updates so task cards
+        // and board state stay fresh while users are inside a specific session route.
+        if (event.type.startsWith('project-') || event.type.startsWith('workspace-') || event.type.startsWith('task-')) {
+            return true
+        }
+
         return false
     }
 }

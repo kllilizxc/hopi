@@ -196,6 +196,11 @@ function AppInner() {
         }
         const invalidations = [
             queryClient.invalidateQueries({ queryKey: queryKeys.sessions }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
+            queryClient.invalidateQueries({ queryKey: ['project'] }),
+            queryClient.invalidateQueries({ queryKey: ['workspaces'] }),
+            queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+            queryClient.invalidateQueries({ queryKey: ['task'] }),
             ...(selectedSessionId ? [
                 queryClient.invalidateQueries({ queryKey: queryKeys.session(selectedSessionId) })
             ] : [])

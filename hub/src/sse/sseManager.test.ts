@@ -16,7 +16,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 receivedAlpha.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -26,7 +26,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 receivedBeta.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.broadcast({ type: 'session-updated', sessionId: 's1', namespace: 'alpha' })
@@ -46,7 +46,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push({ id: 'alpha', event })
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -56,7 +56,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push({ id: 'beta', event })
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.broadcast({ type: 'connection-changed', data: { status: 'connected' } })
@@ -77,7 +77,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push({ id: 'visible', event })
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -88,7 +88,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push({ id: 'hidden', event })
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -99,7 +99,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push({ id: 'other', event })
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         const toastEvent: Extract<SyncEvent, { type: 'toast' }> = {
@@ -131,7 +131,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 receivedAll.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -142,7 +142,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 receivedOther.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.broadcast({
@@ -173,7 +173,7 @@ describe('SSEManager namespace filtering', () => {
             send: () => {
                 throw new Error('broken-stream')
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -183,7 +183,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         expect(() => {
@@ -209,7 +209,7 @@ describe('SSEManager namespace filtering', () => {
             send: () => {
                 throw new Error('broken-stream')
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         manager.subscribe({
@@ -220,7 +220,7 @@ describe('SSEManager namespace filtering', () => {
             send: (event) => {
                 received.push(event)
             },
-            sendHeartbeat: () => {}
+            sendHeartbeat: () => { }
         })
 
         const delivered = await manager.sendToast('alpha', {
@@ -235,5 +235,48 @@ describe('SSEManager namespace filtering', () => {
 
         expect(delivered).toBe(1)
         expect(received).toHaveLength(1)
+    })
+
+    it('delivers task/project/workspace updates to session-scoped subscriptions', () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const receivedSessionScoped: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'session-scoped',
+            namespace: 'alpha',
+            all: false,
+            sessionId: 's1',
+            send: (event) => {
+                receivedSessionScoped.push(event)
+            },
+            sendHeartbeat: () => { }
+        })
+
+        manager.broadcast({
+            type: 'task-updated',
+            taskId: 't1',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { taskId: 't1' }
+        })
+        manager.broadcast({
+            type: 'project-updated',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { projectId: 'p1' }
+        })
+        manager.broadcast({
+            type: 'workspace-updated',
+            workspaceId: 'w1',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { workspaceId: 'w1' }
+        })
+
+        expect(receivedSessionScoped.map((event) => event.type)).toEqual([
+            'task-updated',
+            'project-updated',
+            'workspace-updated'
+        ])
     })
 })
