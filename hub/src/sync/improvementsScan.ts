@@ -100,20 +100,67 @@ function buildImprovementsPrompt(options: {
     ].join('\n')
 }
 
+function extractTextFromClaudeOutput(content: Record<string, unknown>): string | null {
+    if (content.type !== 'output') return null
+
+    const data = isObject(content.data) ? content.data : null
+    if (!data) return null
+
+    if (data.type === 'text' && typeof data.text === 'string' && data.text.trim().length > 0) {
+        return data.text
+    }
+
+    if (data.type !== 'assistant') return null
+
+    const message = isObject(data.message) ? data.message : null
+    if (!message) return null
+
+    const modelContent = message.content
+    if (typeof modelContent === 'string' && modelContent.trim().length > 0) {
+        return modelContent
+    }
+
+    if (!Array.isArray(modelContent)) return null
+
+    const chunks: string[] = []
+    for (const block of modelContent) {
+        if (!isObject(block)) continue
+        if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
+            chunks.push(block.text)
+        }
+    }
+
+    return chunks.length > 0 ? chunks.join('\n') : null
+}
+
+function extractTextFromCodex(content: Record<string, unknown>): string | null {
+    if (content.type !== 'codex') return null
+    const data = isObject(content.data) ? content.data : null
+    if (!data) return null
+    if (data.type === 'message' && typeof data.message === 'string' && data.message.trim().length > 0) {
+        return data.message
+    }
+    return null
+}
+
 function extractAssistantText(message: DecryptedMessage): string | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
-    if (!record || record.role !== 'assistant') return null
+    if (!record || (record.role !== 'assistant' && record.role !== 'agent')) return null
 
     const content = record.content
     if (typeof content === 'string') {
         return content
     }
 
-    if (isObject(content) && typeof content.text === 'string') {
+    if (!isObject(content)) {
+        return null
+    }
+
+    if (typeof content.text === 'string' && content.text.trim().length > 0) {
         return content.text
     }
 
-    return null
+    return extractTextFromClaudeOutput(content) ?? extractTextFromCodex(content)
 }
 
 function tryParseJsonArray(raw: string): unknown[] | null {
@@ -202,8 +249,14 @@ async function waitForAssistantCompletion(options: {
 
         const stored = options.store.messages.getMessagesAfter(options.sessionId, options.afterSeq, 200)
         for (const msg of stored) {
-            const record = unwrapRoleWrappedRecordEnvelope(msg.content)
-            if (record?.role === 'assistant') {
+            const candidate: DecryptedMessage = {
+                id: msg.id,
+                seq: msg.seq,
+                localId: msg.localId,
+                content: msg.content,
+                createdAt: msg.createdAt
+            }
+            if (extractAssistantText(candidate)) {
                 lastAssistant = {
                     id: msg.id,
                     seq: msg.seq,
