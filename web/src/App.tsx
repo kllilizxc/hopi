@@ -15,6 +15,7 @@ import { AppContextProvider } from '@/lib/app-context'
 import { fetchLatestMessages, getActiveMessageWindowSessionIds } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
+import { I18nProvider } from '@/lib/i18n-context'
 import { VoiceProvider } from '@/lib/voice-context'
 import { requireHubUrlForLogin } from '@/lib/runtime-config'
 import { LoginPrompt } from '@/components/LoginPrompt'
@@ -34,9 +35,11 @@ const REQUIRE_SERVER_URL = requireHubUrlForLogin()
 
 export function App() {
     return (
-        <ToastProvider>
-            <AppInner />
-        </ToastProvider>
+        <I18nProvider>
+            <ToastProvider>
+                <AppInner />
+            </ToastProvider>
+        </I18nProvider>
     )
 }
 
