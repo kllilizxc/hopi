@@ -594,10 +594,6 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         const created = await handleCreateTask(newTaskTitle, newTaskDescription, newTaskPriority || null)
         if (created) {
             setCreateOpen(false)
-            void navigate({
-                to: '/projects/$projectId/tasks/$taskId',
-                params: { projectId: props.projectId, taskId: created.id }
-            })
         }
     }
 
