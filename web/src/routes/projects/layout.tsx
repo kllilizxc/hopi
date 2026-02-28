@@ -406,13 +406,13 @@ export default function ProjectsPage() {
                             projectId={selectedProjectId}
                             onBackToProjects={() => navigate({ to: '/projects' })}
                             onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
-                            onGoToSessions={() => navigate({ to: '/projects' })}
+                            onGoToSessions={() => navigate({ to: '/sessions' })}
                         />
                 ) : (
                     <ProjectsListPanel
                         onSelectProject={(projectId) => navigate({ to: '/projects/$projectId', params: { projectId } })}
                         onOpenCreate={() => setCreateOpen(true)}
-                        onGoToSessions={() => navigate({ to: '/projects' })}
+                        onGoToSessions={() => navigate({ to: '/sessions' })}
                         onGoToSettings={() => navigate({ to: '/settings' })}
                     />
                 )}
