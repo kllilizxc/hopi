@@ -143,6 +143,16 @@ export async function startSessionFromTask(options: {
         return { ok: false, error: 'Task not found' }
     }
 
+    // Broadcast immediately after status/link persistence so UI does not wait on
+    // attachment upload or kickoff message delivery.
+    options.engine.handleRealtimeEvent({
+        type: 'task-updated',
+        taskId: updatedTask.id,
+        projectId: updatedTask.projectId,
+        namespace: options.namespace,
+        data: { taskId: updatedTask.id, activeSessionId: spawn.sessionId }
+    })
+
     const uploadedAttachments: Array<{
         id: string
         filename: string
@@ -200,14 +210,6 @@ export async function startSessionFromTask(options: {
         })
     } catch {
     }
-
-    options.engine.handleRealtimeEvent({
-        type: 'task-updated',
-        taskId: updatedTask.id,
-        projectId: updatedTask.projectId,
-        namespace: options.namespace,
-        data: { taskId: updatedTask.id, activeSessionId: spawn.sessionId }
-    })
 
     return { ok: true, task: updatedTask, sessionId: spawn.sessionId }
 }
