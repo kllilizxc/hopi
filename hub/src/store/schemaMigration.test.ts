@@ -7,7 +7,7 @@ import { Store } from './index'
 
 const createdPaths: string[] = []
 
-function createLegacyV5DbMissingProjectWorktreeColumns(path: string): void {
+function createLegacyV5DbMissingWorktreeColumns(path: string): void {
     const db = new Database(path, { create: true, readwrite: true, strict: true })
     db.exec('PRAGMA user_version = 5')
     db.exec(`
@@ -124,6 +124,9 @@ function createLegacyV5DbMissingProjectWorktreeColumns(path: string): void {
     db.prepare(
         'INSERT INTO projects (id, namespace, machine_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
     ).run('p1', 'default', 'm1', 'Project', now, now)
+    db.prepare(
+        'INSERT INTO tasks (id, project_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('t1', 'p1', 'Task', 'new', now, now)
     db.close()
 }
 
@@ -141,10 +144,10 @@ afterEach(() => {
 })
 
 describe('Store schema migration safety', () => {
-    it('adds missing project worktree columns even when user_version is already 5', () => {
+    it('adds missing worktree columns even when user_version is already 5', () => {
         const path = join(tmpdir(), `hapi-schema-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
         createdPaths.push(path)
-        createLegacyV5DbMissingProjectWorktreeColumns(path)
+        createLegacyV5DbMissingWorktreeColumns(path)
 
         const store = new Store(path)
         const updated = store.projects.updateProject('p1', 'default', {
@@ -160,6 +163,13 @@ describe('Store schema migration safety', () => {
         expect(updated?.worktreeTargetBranch).toBe('main')
         expect(updated?.worktreeAutoCommitMode).toBe('per_conversation')
         expect(updated?.worktreeCleanupAfterMerge).toBe(true)
+
+        const updatedTask = store.tasks.updateTaskByNamespace('t1', 'default', {
+            worktreeMergedAt: Date.now(),
+            worktreeMergeCommit: 'abc123'
+        })
+        expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
+        expect(updatedTask?.worktreeMergeCommit).toBe('abc123')
 
         ;(store as unknown as { db: Database }).db.close()
     })

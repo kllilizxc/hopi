@@ -218,6 +218,8 @@ export const TaskSchema = z.object({
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
     source: z.enum(['manual', 'improvements_scan']).nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),
+    worktreeMergedAt: z.number().nullable().optional(),
+    worktreeMergeCommit: z.string().nullable().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     finishedAt: z.number().nullable().optional(),

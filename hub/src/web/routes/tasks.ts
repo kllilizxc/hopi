@@ -493,6 +493,14 @@ export function createTasksRoutes(options: {
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
+        if (task.worktreeMergedAt) {
+            return c.json({
+                ok: true,
+                commitHash: task.worktreeMergeCommit ?? null,
+                skippedReason: 'already_merged',
+                mergedAt: task.worktreeMergedAt
+            })
+        }
         if (!task.activeSessionId) {
             return c.json({ error: 'Task has no active session' }, 400)
         }
@@ -550,10 +558,28 @@ export function createTasksRoutes(options: {
             return c.json(payload, status)
         }
 
+        const mergedAt = Date.now()
+        const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: result.commitHash ?? null
+        })
+        if (!updatedTask) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
+        engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId,
+            projectId: updatedTask.projectId,
+            namespace,
+            data: { taskId, worktreeMergedAt: updatedTask.worktreeMergedAt }
+        })
+
         return c.json({
             ok: true,
             commitHash: result.commitHash ?? null,
-            skippedReason: result.skippedReason ?? null
+            skippedReason: result.skippedReason ?? null,
+            mergedAt: updatedTask.worktreeMergedAt
         })
     })
 

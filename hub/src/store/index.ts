@@ -300,6 +300,8 @@ export class Store {
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
+                worktree_merged_at INTEGER,
+                worktree_merge_commit TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 finished_at INTEGER,
@@ -432,6 +434,17 @@ export class Store {
         }
         if (!columns.has('worktree_cleanup_after_merge')) {
             this.db.exec('ALTER TABLE projects ADD COLUMN worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0')
+        }
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v4 to v5 migration.')
+        }
+        if (!taskColumns.has('worktree_merged_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN worktree_merged_at INTEGER')
+        }
+        if (!taskColumns.has('worktree_merge_commit')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN worktree_merge_commit TEXT')
         }
     }
 

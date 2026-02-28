@@ -58,6 +58,8 @@ export class TaskStore {
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        worktreeMergedAt?: number | null
+        worktreeMergeCommit?: string | null
     }): StoredTask {
         return createTask(this.db, task)
     }
@@ -74,6 +76,8 @@ export class TaskStore {
             activeSessionId?: string | null
             workspaceId?: string | null
             attachments?: unknown
+            worktreeMergedAt?: number | null
+            worktreeMergeCommit?: string | null
             finishedAt?: number | null
             archivedAt?: number | null
         }

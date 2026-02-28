@@ -16,6 +16,8 @@ type DbTaskRow = {
     attachments: string | null
     source: string | null
     source_task_id: string | null
+    worktree_merged_at: number | null
+    worktree_merge_commit: string | null
     created_at: number
     updated_at: number
     finished_at: number | null
@@ -36,6 +38,8 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
+        worktreeMergedAt: row.worktree_merged_at,
+        worktreeMergeCommit: row.worktree_merge_commit,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         finishedAt: row.finished_at,
@@ -138,6 +142,8 @@ export function createTask(
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        worktreeMergedAt?: number | null
+        worktreeMergeCommit?: string | null
     }
 ): StoredTask {
     const now = Date.now()
@@ -145,12 +151,12 @@ export function createTask(
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id,
-            attachments, source, source_task_id,
+            attachments, source, source_task_id, worktree_merged_at, worktree_merge_commit,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id,
-            @attachments, @source, @source_task_id,
+            @attachments, @source, @source_task_id, @worktree_merged_at, @worktree_merge_commit,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -166,6 +172,8 @@ export function createTask(
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
+        worktree_merged_at: task.worktreeMergedAt ?? null,
+        worktree_merge_commit: task.worktreeMergeCommit ?? null,
         created_at: now,
         updated_at: now
     })
@@ -190,6 +198,8 @@ export function updateTaskByNamespace(
         activeSessionId?: string | null
         workspaceId?: string | null
         attachments?: unknown
+        worktreeMergedAt?: number | null
+        worktreeMergeCommit?: string | null
         finishedAt?: number | null
         archivedAt?: number | null
     }
@@ -198,6 +208,8 @@ export function updateTaskByNamespace(
     if (!current) {
         return null
     }
+
+    const activeSessionChanged = patch.activeSessionId !== undefined && patch.activeSessionId !== current.activeSessionId
 
     const next = {
         ...current,
@@ -209,6 +221,16 @@ export function updateTaskByNamespace(
         activeSessionId: patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId,
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
+        worktreeMergedAt: activeSessionChanged
+            ? null
+            : patch.worktreeMergedAt !== undefined
+                ? patch.worktreeMergedAt
+                : current.worktreeMergedAt,
+        worktreeMergeCommit: activeSessionChanged
+            ? null
+            : patch.worktreeMergeCommit !== undefined
+                ? patch.worktreeMergeCommit
+                : current.worktreeMergeCommit,
         finishedAt: patch.finishedAt !== undefined ? patch.finishedAt : current.finishedAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
@@ -224,6 +246,8 @@ export function updateTaskByNamespace(
             active_session_id = @active_session_id,
             workspace_id = @workspace_id,
             attachments = @attachments,
+            worktree_merged_at = @worktree_merged_at,
+            worktree_merge_commit = @worktree_merge_commit,
             finished_at = @finished_at,
             archived_at = @archived_at,
             updated_at = @updated_at
@@ -239,6 +263,8 @@ export function updateTaskByNamespace(
         active_session_id: next.activeSessionId,
         workspace_id: next.workspaceId,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
+        worktree_merged_at: next.worktreeMergedAt,
+        worktree_merge_commit: next.worktreeMergeCommit,
         finished_at: next.finishedAt,
         archived_at: next.archivedAt,
         updated_at: now

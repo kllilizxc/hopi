@@ -4,6 +4,7 @@ import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
+import { useTask } from '@/hooks/queries/useTask'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -30,10 +31,19 @@ function MergeWorktreeDialog(props: {
     taskId: string
     sourceBranch: string
 }) {
-    const { t } = useTranslation()
     const { addToast } = useToast()
     const { mergeTaskWorktree, isPending } = useMergeTaskWorktree(props.api)
     const [error, setError] = useState<string | null>(null)
+
+    const formatSkippedReason = (reason: string) => {
+        if (reason === 'already_merged') {
+            return 'Task already merged'
+        }
+        if (reason === 'no_changes') {
+            return 'No changes to merge'
+        }
+        return reason
+    }
 
     const handleConfirm = async () => {
         if (!props.api) return
@@ -41,7 +51,7 @@ function MergeWorktreeDialog(props: {
         try {
             const res = await mergeTaskWorktree({ taskId: props.taskId })
             if (res.skippedReason) {
-                addToast({ title: 'Merge skipped', body: res.skippedReason, sessionId: '', url: '' })
+                addToast({ title: 'Merge skipped', body: formatSkippedReason(res.skippedReason), sessionId: '', url: '' })
             } else {
                 addToast({ title: 'Merged successfully', body: res.commitHash ?? '', sessionId: '', url: '' })
             }
@@ -122,6 +132,8 @@ export function SessionHeader(props: {
         : null
 
     const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
+    const { task } = useTask(api, taskLink?.taskId ?? null)
+    const isTaskMerged = Boolean(task?.worktreeMergedAt)
 
     const [mergeOpen, setMergeOpen] = useState(false)
 
@@ -178,11 +190,11 @@ export function SessionHeader(props: {
                         <button
                             type="button"
                             onClick={() => setMergeOpen(true)}
-                            disabled={session.thinking}
+                            disabled={session.thinking || isTaskMerged}
                             className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-link)] text-[var(--app-bg)] hover:opacity-90 transition-colors disabled:opacity-50"
                             title={t('Merge Worktree')}
                         >
-                            {session.thinking ? 'Agent thinking...' : 'Merge'}
+                            {isTaskMerged ? 'Merged' : session.thinking ? 'Agent thinking...' : 'Merge'}
                         </button>
                     ) : null}
 
