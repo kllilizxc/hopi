@@ -279,4 +279,47 @@ describe('SSEManager namespace filtering', () => {
             'workspace-updated'
         ])
     })
+
+    it('delivers task/project/workspace updates to session-scoped subscriptions', () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const receivedSessionScoped: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'session-scoped',
+            namespace: 'alpha',
+            all: false,
+            sessionId: 's1',
+            send: (event) => {
+                receivedSessionScoped.push(event)
+            },
+            sendHeartbeat: () => { }
+        })
+
+        manager.broadcast({
+            type: 'task-updated',
+            taskId: 't1',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { taskId: 't1' }
+        })
+        manager.broadcast({
+            type: 'project-updated',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { projectId: 'p1' }
+        })
+        manager.broadcast({
+            type: 'workspace-updated',
+            workspaceId: 'w1',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { workspaceId: 'w1' }
+        })
+
+        expect(receivedSessionScoped.map((event) => event.type)).toEqual([
+            'task-updated',
+            'project-updated',
+            'workspace-updated'
+        ])
+    })
 })
