@@ -7,6 +7,7 @@ import type { Store, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
 
 export const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
+const MAX_IMPROVEMENTS_PER_SCAN = 3
 
 const suggestionSchema = z.object({
     title: z.string().min(1).max(255),
@@ -153,6 +154,7 @@ function buildImprovementsPrompt(options: {
         '',
         'Rules:',
         '- Return an empty array [] if no good suggestions.',
+        '- Focus on necessary, high-impact follow-ups only; fewer is better.',
         '- Keep titles short and actionable.',
         '- No duplicates.'
     ].join('\n')
@@ -359,6 +361,11 @@ export async function runImprovementsScan(options: {
     | { ok: true; createdTaskIds: string[] }
     | { ok: false; error: string; rawAssistantText?: string }
 > {
+    const maxSuggestions = Math.max(0, Math.min(options.maxToCreate, MAX_IMPROVEMENTS_PER_SCAN))
+    if (maxSuggestions <= 0) {
+        return { ok: true, createdTaskIds: [] }
+    }
+
     const locale = resolvePromptLocale({
         store: options.store,
         targetSessionId: options.targetSessionId
@@ -371,7 +378,7 @@ export async function runImprovementsScan(options: {
             description: options.finishedTask.description
         },
         workspaces,
-        maxSuggestions: options.maxToCreate,
+        maxSuggestions,
         locale
     })
 
@@ -423,7 +430,7 @@ export async function runImprovementsScan(options: {
     const seenTitles: Set<string> = new Set()
 
     for (const suggestion of suggestions) {
-        if (createdTaskIds.length >= options.maxToCreate) {
+        if (createdTaskIds.length >= maxSuggestions) {
             break
         }
 

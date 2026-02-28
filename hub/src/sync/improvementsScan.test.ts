@@ -274,5 +274,77 @@ describe('runImprovementsScan', () => {
 
         expect(result.ok).toBe(true)
         expect(capturedPrompt).toContain('system language for this session (zh-CN)')
+        expect(capturedPrompt).toContain('Suggest up to 3 follow-up improvement tasks.')
+        expect(capturedPrompt).toContain('Focus on necessary, high-impact follow-ups only; fewer is better.')
+    })
+
+    it('caps created tasks to 3 even when the scan asks for more', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-4'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'HOPI'
+        })
+
+        const finishedTask = store.tasks.createTask({
+            id: 'task-finished-4',
+            projectId,
+            title: 'Ship baseline refactor',
+            status: 'finished',
+            sortKey: 1
+        })
+
+        const { sessionId, session } = createActiveProjectSession(store, { namespace, projectId })
+
+        const engine = {
+            async sendMessage(sid: string, _payload: { text: string; localId?: string | null }) {
+                store.messages.addMessage(sid, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'message',
+                            message: JSON.stringify([
+                                { title: 'Task A' },
+                                { title: 'Task B' },
+                                { title: 'Task C' },
+                                { title: 'Task D' },
+                                { title: 'Task E' }
+                            ])
+                        }
+                    }
+                })
+            },
+            getSessionByNamespace(sid: string, ns: string) {
+                return sid === sessionId && ns === namespace ? session : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? [session] : []
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const result = await runImprovementsScan({
+            store,
+            engine,
+            namespace,
+            project: {
+                id: projectId,
+                name: 'HOPI',
+                improvementsMaxGeneratedNew: 10
+            },
+            finishedTask,
+            targetSessionId: sessionId,
+            maxToCreate: 10
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+
+        expect(result.createdTaskIds.length).toBe(3)
     })
 })
