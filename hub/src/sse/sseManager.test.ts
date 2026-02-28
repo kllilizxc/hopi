@@ -161,4 +161,79 @@ describe('SSEManager namespace filtering', () => {
         expect(receivedAll.map((event) => event.type)).toEqual(['message-received'])
         expect(receivedOther).toHaveLength(0)
     })
+
+    it('keeps broadcasting when one subscriber throws synchronously', () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const received: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'broken',
+            namespace: 'alpha',
+            all: true,
+            send: () => {
+                throw new Error('broken-stream')
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'healthy',
+            namespace: 'alpha',
+            all: true,
+            send: (event) => {
+                received.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        expect(() => {
+            manager.broadcast({ type: 'session-updated', sessionId: 's1', namespace: 'alpha' })
+        }).not.toThrow()
+        expect(received).toHaveLength(1)
+
+        expect(() => {
+            manager.broadcast({ type: 'session-updated', sessionId: 's1', namespace: 'alpha' })
+        }).not.toThrow()
+        expect(received).toHaveLength(2)
+    })
+
+    it('sendToast ignores subscribers that throw synchronously', async () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const received: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'broken',
+            namespace: 'alpha',
+            all: true,
+            visibility: 'visible',
+            send: () => {
+                throw new Error('broken-stream')
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'healthy',
+            namespace: 'alpha',
+            all: true,
+            visibility: 'visible',
+            send: (event) => {
+                received.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        const delivered = await manager.sendToast('alpha', {
+            type: 'toast',
+            data: {
+                title: 'Done',
+                body: 'Merged',
+                sessionId: '',
+                url: ''
+            }
+        })
+
+        expect(delivered).toBe(1)
+        expect(received).toHaveLength(1)
+    })
 })

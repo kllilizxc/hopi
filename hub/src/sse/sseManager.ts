@@ -92,11 +92,15 @@ export class SSEManager {
                 continue
             }
 
-            deliveries.push(
-                Promise.resolve(connection.send(event))
-                    .then(() => ({ id: connection.id, ok: true }))
-                    .catch(() => ({ id: connection.id, ok: false }))
-            )
+            try {
+                deliveries.push(
+                    Promise.resolve(connection.send(event))
+                        .then(() => ({ id: connection.id, ok: true }))
+                        .catch(() => ({ id: connection.id, ok: false }))
+                )
+            } catch {
+                deliveries.push(Promise.resolve({ id: connection.id, ok: false }))
+            }
         }
 
         if (deliveries.length === 0) {
@@ -136,9 +140,13 @@ export class SSEManager {
                 continue
             }
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            try {
+                void Promise.resolve(connection.send(event)).catch(() => {
+                    this.unsubscribe(connection.id)
+                })
+            } catch {
                 this.unsubscribe(connection.id)
-            })
+            }
         }
     }
 
@@ -157,9 +165,13 @@ export class SSEManager {
 
         this.heartbeatTimer = setInterval(() => {
             for (const connection of this.connections.values()) {
-                void Promise.resolve(connection.sendHeartbeat()).catch(() => {
+                try {
+                    void Promise.resolve(connection.sendHeartbeat()).catch(() => {
+                        this.unsubscribe(connection.id)
+                    })
+                } catch {
                     this.unsubscribe(connection.id)
-                })
+                }
             }
         }, this.heartbeatMs)
     }
