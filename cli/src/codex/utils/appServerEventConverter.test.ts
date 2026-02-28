@@ -9,6 +9,22 @@ describe('AppServerEventConverter', () => {
         expect(events).toEqual([{ type: 'thread_started', thread_id: 'thread-1' }]);
     });
 
+    it('maps thread/status/changed systemError to task_failed', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('turn/started', { turn: { id: 'turn-1' } });
+        const events = converter.handleNotification('thread/status/changed', {
+            threadId: 'thread-1',
+            status: { type: 'systemError' }
+        });
+
+        expect(events).toEqual([{
+            type: 'task_failed',
+            turn_id: 'turn-1',
+            error: 'Codex thread entered systemError state'
+        }]);
+    });
+
     it('maps thread/resumed', () => {
         const converter = new AppServerEventConverter();
         const events = converter.handleNotification('thread/resumed', { thread: { id: 'thread-2' } });
@@ -82,6 +98,74 @@ describe('AppServerEventConverter', () => {
             command: 'ls',
             output: 'ok',
             exit_code: 0
+        }]);
+    });
+
+    it('buffers fileChange output deltas into patch_apply_end', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'call-1', type: 'fileChange', success: true }
+        });
+        expect(started).toEqual([{
+            type: 'patch_apply_begin',
+            call_id: 'call-1'
+        }]);
+
+        converter.handleNotification('item/fileChange/outputDelta', { itemId: 'call-1', delta: 'Success!' });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'call-1', type: 'fileChange', success: true }
+        });
+
+        expect(completed).toEqual([{
+            type: 'patch_apply_end',
+            call_id: 'call-1',
+            stdout: 'Success!',
+            success: true
+        }]);
+    });
+
+    it('maps mcpToolCall items', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: {
+                id: 'call-1',
+                type: 'mcpToolCall',
+                server: 'hapi',
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            }
+        });
+        expect(started).toEqual([{
+            type: 'mcp_tool_call_begin',
+            call_id: 'call-1',
+            invocation: {
+                server: 'hapi',
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            }
+        }]);
+
+        const completed = converter.handleNotification('item/completed', {
+            item: {
+                id: 'call-1',
+                type: 'mcpToolCall',
+                server: 'hapi',
+                tool: 'change_title',
+                arguments: { title: 'hello' },
+                result: { ok: true }
+            }
+        });
+        expect(completed).toEqual([{
+            type: 'mcp_tool_call_end',
+            call_id: 'call-1',
+            invocation: {
+                server: 'hapi',
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            },
+            result: { ok: true }
         }]);
     });
 

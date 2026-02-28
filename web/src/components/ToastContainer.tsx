@@ -23,16 +23,12 @@ export function ToastContainer() {
                     className="cursor-pointer"
                     onClick={() => {
                         removeToast(toast.id)
-                        if (toast.sessionId) {
-                            void navigate({
-                                to: '/sessions/$sessionId',
-                                params: { sessionId: toast.sessionId }
-                            })
-                            return
-                        }
                         if (toast.url) {
                             void navigate({ to: toast.url })
+                            return
                         }
+                        // Sessions UI deprecated; default to project UI.
+                        void navigate({ to: '/projects' })
                     }}
                     onClose={() => removeToast(toast.id)}
                 />

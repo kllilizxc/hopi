@@ -429,6 +429,10 @@ export function ProjectSettingsPage() {
     const [defaultAgentFlavor, setDefaultAgentFlavor] = useState<AgentFlavor>('claude')
     const [defaultPermissionMode, setDefaultPermissionMode] = useState<PermissionMode>('default')
     const [defaultModelMode, setDefaultModelMode] = useState<ModelMode>('default')
+    const [defaultSessionType, setDefaultSessionType] = useState<'simple' | 'worktree'>('simple')
+    const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
+    const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
+    const [worktreeCleanupAfterMerge, setWorktreeCleanupAfterMerge] = useState(false)
     const [autoRunEnabled, setAutoRunEnabled] = useState(false)
     const [maxRunningSessions, setMaxRunningSessions] = useState(5)
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
@@ -446,6 +450,10 @@ export function ProjectSettingsPage() {
         setDefaultAgentFlavor((project.defaultAgentFlavor as AgentFlavor | null) ?? 'claude')
         setDefaultPermissionMode((project.defaultPermissionMode as PermissionMode | null) ?? 'default')
         setDefaultModelMode((project.defaultModelMode as ModelMode | null) ?? 'default')
+        setDefaultSessionType(project.defaultSessionType === 'worktree' ? 'worktree' : 'simple')
+        setWorktreeTargetBranch(project.worktreeTargetBranch ?? '')
+        setWorktreeAutoCommitMode(project.worktreeAutoCommitMode === 'per_conversation' ? 'per_conversation' : 'off')
+        setWorktreeCleanupAfterMerge(Boolean(project.worktreeCleanupAfterMerge))
         setAutoRunEnabled(Boolean(project.autoRunEnabled))
         setMaxRunningSessions(project.maxRunningSessions ?? 5)
         setImprovementsEnabled(Boolean(project.improvementsEnabled))
@@ -514,6 +522,10 @@ export function ProjectSettingsPage() {
                 defaultAgentFlavor,
                 defaultPermissionMode,
                 defaultModelMode: defaultAgentFlavor === 'claude' ? defaultModelMode : null,
+                defaultSessionType,
+                worktreeTargetBranch: worktreeTargetBranch.trim() ? worktreeTargetBranch.trim() : null,
+                worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : 'off',
+                worktreeCleanupAfterMerge,
                 autoRunEnabled,
                 maxRunningSessions,
                 improvementsEnabled,
@@ -531,6 +543,10 @@ export function ProjectSettingsPage() {
         defaultAgentFlavor,
         defaultPermissionMode,
         defaultModelMode,
+        defaultSessionType,
+        worktreeTargetBranch,
+        worktreeAutoCommitMode,
+        worktreeCleanupAfterMerge,
         autoRunEnabled,
         maxRunningSessions,
         improvementsEnabled,
@@ -795,6 +811,63 @@ export function ProjectSettingsPage() {
                                     />
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <div className="text-sm font-semibold">{t('projects.worktree.title')}</div>
+
+                            <label className="flex items-center gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    checked={defaultSessionType === 'worktree'}
+                                    onChange={(e) => {
+                                        const enabled = e.target.checked
+                                        setDefaultSessionType(enabled ? 'worktree' : 'simple')
+                                        if (!enabled) {
+                                            setWorktreeAutoCommitMode('off')
+                                        }
+                                    }}
+                                    disabled={isPending}
+                                />
+                                {t('projects.worktree.enable')}
+                            </label>
+
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.worktree.targetBranch')}</label>
+                                    <input
+                                        type="text"
+                                        value={worktreeTargetBranch}
+                                        onChange={(e) => setWorktreeTargetBranch(e.target.value)}
+                                        disabled={isPending || defaultSessionType !== 'worktree'}
+                                        placeholder={t('projects.worktree.targetBranchPlaceholder')}
+                                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                    />
+                                    <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.targetBranchHint')}</div>
+                                </div>
+                            </div>
+
+                            <label className="flex items-center gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    checked={worktreeAutoCommitMode === 'per_conversation'}
+                                    onChange={(e) => setWorktreeAutoCommitMode(e.target.checked ? 'per_conversation' : 'off')}
+                                    disabled={isPending || defaultSessionType !== 'worktree'}
+                                />
+                                {t('projects.worktree.autoCommit')}
+                            </label>
+                            <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.autoCommitHint')}</div>
+
+                            <label className="flex items-center gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    checked={worktreeCleanupAfterMerge}
+                                    onChange={(e) => setWorktreeCleanupAfterMerge(e.target.checked)}
+                                    disabled={isPending || defaultSessionType !== 'worktree'}
+                                />
+                                {t('projects.worktree.cleanup')}
+                            </label>
+                            <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.cleanupHint')}</div>
                         </div>
                     </section>
 

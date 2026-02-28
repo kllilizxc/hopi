@@ -12,7 +12,7 @@ import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
-import { fetchLatestMessages } from '@/lib/message-window-store'
+import { fetchLatestMessages, getActiveMessageWindowSessionIds } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
@@ -200,10 +200,14 @@ function AppInner() {
                 queryClient.invalidateQueries({ queryKey: queryKeys.session(selectedSessionId) })
             ] : [])
         ]
-        const refreshMessages = (selectedSessionId && api)
-            ? fetchLatestMessages(api, selectedSessionId)
-            : Promise.resolve()
-        Promise.all([...invalidations, refreshMessages])
+        const messageWindowSessionIds = new Set(getActiveMessageWindowSessionIds())
+        if (selectedSessionId) {
+            messageWindowSessionIds.add(selectedSessionId)
+        }
+        const refreshMessages = api
+            ? Array.from(messageWindowSessionIds).map((sessionId) => fetchLatestMessages(api, sessionId))
+            : []
+        Promise.all([...invalidations, ...refreshMessages])
             .catch((error) => {
                 console.error('Failed to invalidate queries on SSE connect:', error)
             })

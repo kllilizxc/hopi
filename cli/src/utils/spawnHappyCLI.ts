@@ -26,10 +26,12 @@
  */
 
 import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
-import { join } from 'node:path';
+import { join, isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isBunCompiled, projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
+import { HAPI_CLI_WORKING_DIRECTORY_ENV } from '@/utils/workingDirectory';
 
 /**
  * Resolve the TypeScript entrypoint for development mode.
@@ -46,6 +48,18 @@ function resolveEntrypoint(projectRoot: string): string {
 export interface HappyCliCommand {
   command: string;
   args: string[];
+}
+
+function normalizeCwd(cwd: string | URL | undefined): string | null {
+  if (!cwd) {
+    return null;
+  }
+
+  if (cwd instanceof URL) {
+    return fileURLToPath(cwd);
+  }
+
+  return isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
 }
 
 export function getHappyCliCommand(args: string[]): HappyCliCommand {
@@ -94,6 +108,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   logger.debug(`[SPAWN HAPI CLI] Spawning: ${fullCommand} in ${directory}`);
   
   const { command: spawnCommand, args: spawnArgs } = getHappyCliCommand(args);
+  const spawnOptions: SpawnOptions = { ...options };
 
   // Sanity check that the entrypoint path exists
   if (!isBunCompiled()) {
@@ -103,7 +118,24 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
       logger.debug(`[SPAWN HAPI CLI] ${errorMessage}`);
       throw new Error(errorMessage);
     }
+
+    // In Bun dev mode, aliases like @/* are resolved from the process cwd.
+    // Keep spawn cwd at CLI project root so aliases resolve, and pass through the
+    // intended session cwd for the child process to apply at runtime.
+    const isBunRuntime = Boolean((process.versions as Record<string, string | undefined>).bun);
+    const targetCwd = normalizeCwd(options.cwd);
+    if (isBunRuntime && targetCwd) {
+      const projectRoot = projectPath();
+      if (targetCwd !== projectRoot) {
+        spawnOptions.cwd = projectRoot;
+        spawnOptions.env = {
+          ...process.env,
+          ...(options.env || {}),
+          [HAPI_CLI_WORKING_DIRECTORY_ENV]: targetCwd
+        };
+      }
+    }
   }
   
-  return spawn(spawnCommand, spawnArgs, options);
+  return spawn(spawnCommand, spawnArgs, spawnOptions);
 }

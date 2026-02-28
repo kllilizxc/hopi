@@ -11,7 +11,6 @@ export const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const suggestionSchema = z.object({
     title: z.string().min(1).max(255),
     description: z.string().max(200_000).optional(),
-    notes: z.string().max(200_000).optional(),
     workspacePath: z.string().min(1).max(4096).optional(),
     workspaceLabel: z.string().min(1).max(255).optional(),
     workspace: z.string().min(1).max(4096).optional(),
@@ -81,7 +80,7 @@ function buildImprovementsPrompt(options: {
         '',
         'We just marked this task as Finished:',
         `Title: ${options.finishedTask.title}`,
-        taskDescription ? `Notes:\n${taskDescription}` : 'Notes: (none)',
+        taskDescription ? `Description:\n${taskDescription}` : 'Description: (none)',
         '',
         'Workspaces (directories):',
         workspaceLines,
@@ -169,7 +168,7 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
         const title = parsed.data.title.trim()
         if (!title) continue
 
-        const description = (parsed.data.description ?? parsed.data.notes)?.trim()
+        const description = parsed.data.description?.trim()
         const workspacePath = (parsed.data.workspacePath ?? parsed.data.workspace)?.trim()
         const workspaceLabel = parsed.data.workspaceLabel?.trim()
 

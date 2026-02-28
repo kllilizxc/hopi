@@ -11,6 +11,7 @@ import { configuration } from '@/configuration'
 import { logger } from '@/ui/logger'
 import { runtimePath } from '@/projectPath'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
 import packageJson from '../../package.json'
 
 export type SessionStartedBy = 'runner' | 'terminal'
@@ -101,7 +102,7 @@ async function reportSessionStarted(sessionId: string, metadata: Metadata): Prom
 }
 
 export async function bootstrapSession(options: SessionBootstrapOptions): Promise<SessionBootstrapResult> {
-    const workingDirectory = options.workingDirectory ?? process.cwd()
+    const workingDirectory = options.workingDirectory ?? resolveCliWorkingDirectory()
     const startedBy = options.startedBy ?? 'terminal'
     const sessionTag = options.tag ?? randomUUID()
     const agentState = options.agentState === undefined ? {} : options.agentState

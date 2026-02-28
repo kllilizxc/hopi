@@ -12,6 +12,10 @@ type DbProjectRow = {
     default_agent_flavor: string | null
     default_permission_mode: string | null
     default_model_mode: string | null
+    default_session_type?: string | null
+    worktree_target_branch?: string | null
+    worktree_auto_commit_mode?: string | null
+    worktree_cleanup_after_merge?: number
     auto_run_enabled: number
     max_running_sessions: number
     improvements_enabled: number
@@ -33,6 +37,18 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         defaultAgentFlavor: row.default_agent_flavor,
         defaultPermissionMode: row.default_permission_mode,
         defaultModelMode: row.default_model_mode,
+        defaultSessionType: row.default_session_type === 'worktree'
+            ? 'worktree'
+            : row.default_session_type === 'simple'
+                ? 'simple'
+                : null,
+        worktreeTargetBranch: row.worktree_target_branch ?? null,
+        worktreeAutoCommitMode: row.worktree_auto_commit_mode === 'per_conversation'
+            ? 'per_conversation'
+            : row.worktree_auto_commit_mode === 'off'
+                ? 'off'
+                : null,
+        worktreeCleanupAfterMerge: Boolean(row.worktree_cleanup_after_merge ?? 0),
         autoRunEnabled: Boolean(row.auto_run_enabled),
         maxRunningSessions: row.max_running_sessions,
         improvementsEnabled: Boolean(row.improvements_enabled),
@@ -56,6 +72,10 @@ export function createProject(
         defaultAgentFlavor?: string | null
         defaultPermissionMode?: string | null
         defaultModelMode?: string | null
+        defaultSessionType?: 'simple' | 'worktree' | null
+        worktreeTargetBranch?: string | null
+        worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
+        worktreeCleanupAfterMerge?: boolean
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
@@ -68,6 +88,7 @@ export function createProject(
             id, namespace, machine_id,
             name, description, default_workspace_id,
             default_agent_flavor, default_permission_mode, default_model_mode,
+            default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
             auto_run_enabled, max_running_sessions,
             improvements_enabled, improvements_max_generated_new,
             created_at, updated_at, archived_at
@@ -75,6 +96,7 @@ export function createProject(
             @id, @namespace, @machine_id,
             @name, @description, @default_workspace_id,
             @default_agent_flavor, @default_permission_mode, @default_model_mode,
+            @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
             @auto_run_enabled, @max_running_sessions,
             @improvements_enabled, @improvements_max_generated_new,
             @created_at, @updated_at, NULL
@@ -89,6 +111,10 @@ export function createProject(
         default_agent_flavor: project.defaultAgentFlavor ?? null,
         default_permission_mode: project.defaultPermissionMode ?? null,
         default_model_mode: project.defaultModelMode ?? null,
+        default_session_type: project.defaultSessionType ?? 'simple',
+        worktree_target_branch: project.worktreeTargetBranch ?? null,
+        worktree_auto_commit_mode: project.worktreeAutoCommitMode ?? 'off',
+        worktree_cleanup_after_merge: project.worktreeCleanupAfterMerge ? 1 : 0,
         auto_run_enabled: project.autoRunEnabled ? 1 : 0,
         max_running_sessions: project.maxRunningSessions ?? 5,
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
@@ -143,6 +169,10 @@ export function updateProject(
         defaultAgentFlavor?: string | null
         defaultPermissionMode?: string | null
         defaultModelMode?: string | null
+        defaultSessionType?: 'simple' | 'worktree' | null
+        worktreeTargetBranch?: string | null
+        worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
+        worktreeCleanupAfterMerge?: boolean
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
@@ -164,6 +194,10 @@ export function updateProject(
         defaultAgentFlavor: patch.defaultAgentFlavor !== undefined ? patch.defaultAgentFlavor : current.defaultAgentFlavor,
         defaultPermissionMode: patch.defaultPermissionMode !== undefined ? patch.defaultPermissionMode : current.defaultPermissionMode,
         defaultModelMode: patch.defaultModelMode !== undefined ? patch.defaultModelMode : current.defaultModelMode,
+        defaultSessionType: patch.defaultSessionType !== undefined ? patch.defaultSessionType : current.defaultSessionType,
+        worktreeTargetBranch: patch.worktreeTargetBranch !== undefined ? patch.worktreeTargetBranch : current.worktreeTargetBranch,
+        worktreeAutoCommitMode: patch.worktreeAutoCommitMode !== undefined ? patch.worktreeAutoCommitMode : current.worktreeAutoCommitMode,
+        worktreeCleanupAfterMerge: patch.worktreeCleanupAfterMerge !== undefined ? patch.worktreeCleanupAfterMerge : current.worktreeCleanupAfterMerge,
         autoRunEnabled: patch.autoRunEnabled !== undefined ? patch.autoRunEnabled : current.autoRunEnabled,
         maxRunningSessions: patch.maxRunningSessions ?? current.maxRunningSessions,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
@@ -181,6 +215,10 @@ export function updateProject(
             default_agent_flavor = @default_agent_flavor,
             default_permission_mode = @default_permission_mode,
             default_model_mode = @default_model_mode,
+            default_session_type = @default_session_type,
+            worktree_target_branch = @worktree_target_branch,
+            worktree_auto_commit_mode = @worktree_auto_commit_mode,
+            worktree_cleanup_after_merge = @worktree_cleanup_after_merge,
             auto_run_enabled = @auto_run_enabled,
             max_running_sessions = @max_running_sessions,
             improvements_enabled = @improvements_enabled,
@@ -198,6 +236,10 @@ export function updateProject(
         default_agent_flavor: next.defaultAgentFlavor,
         default_permission_mode: next.defaultPermissionMode,
         default_model_mode: next.defaultModelMode,
+        default_session_type: next.defaultSessionType ?? 'simple',
+        worktree_target_branch: next.worktreeTargetBranch,
+        worktree_auto_commit_mode: next.worktreeAutoCommitMode ?? 'off',
+        worktree_cleanup_after_merge: next.worktreeCleanupAfterMerge ? 1 : 0,
         auto_run_enabled: next.autoRunEnabled ? 1 : 0,
         max_running_sessions: next.maxRunningSessions,
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
@@ -217,4 +259,3 @@ export function archiveProject(db: Database, projectId: string, namespace: strin
     ).run(now, now, projectId, namespace)
     return result.changes > 0
 }
-

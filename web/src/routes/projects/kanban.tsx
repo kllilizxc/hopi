@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import type { Task, TaskStatus, TasksResponse } from '@/types/api'
+import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -12,22 +12,9 @@ import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useTasks } from '@/hooks/queries/useTasks'
+import { KANBAN_COLUMNS } from '@/lib/task-status'
 
-type ColumnDef = {
-    status: TaskStatus
-    titleKey: string
-}
-
-const COLUMNS: ColumnDef[] = [
-    { status: 'new', titleKey: 'projects.columns.new' },
-    { status: 'planned', titleKey: 'projects.columns.planned' },
-    { status: 'in_progress', titleKey: 'projects.columns.inProgress' },
-    { status: 'in_review', titleKey: 'projects.columns.inReview' },
-    { status: 'finished', titleKey: 'projects.columns.finished' },
-    { status: 'blocked', titleKey: 'projects.columns.blocked' },
-]
-
-const TASK_STATUS_VALUES: TaskStatus[] = COLUMNS.map((col) => col.status)
+const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
 function asTaskStatus(value: string | undefined): TaskStatus | null {
     if (!value) return null
@@ -35,6 +22,25 @@ function asTaskStatus(value: string | undefined): TaskStatus | null {
         return value as TaskStatus
     }
     return null
+}
+
+function getTaskPriorityLabelKey(priority: TaskPriority): string {
+    return `projects.task.priority.${priority}`
+}
+
+function getTaskPriorityClass(priority: TaskPriority): string {
+    switch (priority) {
+        case 'high':
+            return 'border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[var(--app-badge-error-text)]'
+        case 'medium':
+            return 'border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]'
+        case 'low':
+            return 'border-[var(--app-border)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)]'
+        default: {
+            const _exhaustive: never = priority
+            return _exhaustive
+        }
+    }
 }
 
 type KanbanStatusTheme = {
@@ -232,7 +238,7 @@ function TaskMoveMenu(props: {
                 {t('projects.tasks.moveTo')}
             </div>
             <div className="flex flex-col gap-1">
-                {COLUMNS.map((col) => {
+                {KANBAN_COLUMNS.map((col) => {
                     const theme = getKanbanStatusTheme(col.status)
                     const isCurrent = col.status === props.currentStatus
 
@@ -290,6 +296,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskTitle, setNewTaskTitle] = useState('')
     const [newTaskDescription, setNewTaskDescription] = useState('')
+    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -351,6 +358,11 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
             finished: sortTasksInColumn(grouped.finished),
         }
     }, [tasks])
+
+    const columnsRef = useRef(columns)
+    useEffect(() => {
+        columnsRef.current = columns
+    }, [columns])
 
     const applyOptimisticTasks = useCallback((nextTasks: Task[]) => {
         queryClient.setQueryData<TasksResponse>(queryKeys.tasks(props.projectId), (prev) => {
@@ -416,7 +428,12 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         }
     }, [tasksById, columns, updateTask, addToast, t, queryClient, applyOptimisticTasks, tasks, props.projectId])
 
-    const handleCreateTask = useCallback(async (title: string, description?: string) => {
+    const moveTaskRef = useRef(moveTask)
+    useEffect(() => {
+        moveTaskRef.current = moveTask
+    }, [moveTask])
+
+    const handleCreateTask = useCallback(async (title: string, description?: string, priority?: TaskPriority | null) => {
         const trimmed = title.trim()
         if (!trimmed) return
 
@@ -431,6 +448,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 projectId: props.projectId,
                 title: trimmed,
                 description: description?.trim() ? description.trim() : undefined,
+                priority: priority ?? undefined,
                 status: 'new',
                 sortKey
             })
@@ -447,14 +465,133 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         }
     }, [createTask, props.projectId, addToast, t, columns.new])
 
+    const computeDropTargetFromPoint = useCallback((clientX: number, clientY: number): DropTarget | null => {
+        const hit = document.elementFromPoint(clientX, clientY)
+        if (!hit || !(hit instanceof HTMLElement)) return null
+
+        const cardEl = hit.closest('[data-kanban-task-id]') as HTMLElement | null
+        const columnEl = hit.closest('[data-kanban-column-status]') as HTMLElement | null
+        const status = asTaskStatus(columnEl?.dataset.kanbanColumnStatus)
+        if (!status) return null
+
+        if (cardEl) {
+            const indexValue = cardEl.dataset.kanbanTaskIndex
+            const index = indexValue ? Number.parseInt(indexValue, 10) : Number.NaN
+            if (!Number.isFinite(index)) {
+                return { status, index: columnsRef.current[status].length }
+            }
+            const rect = cardEl.getBoundingClientRect()
+            const before = clientY < rect.top + rect.height / 2
+            return { status, index: before ? index : index + 1 }
+        }
+
+        return { status, index: columnsRef.current[status].length }
+    }, [])
+
+    const handleBoardAutoScroll = useCallback((clientX: number) => {
+        const el = boardScrollRef.current
+        if (!el) return
+        const rect = el.getBoundingClientRect()
+        const edge = 80
+        const speed = 24
+        if (clientX < rect.left + edge) {
+            el.scrollLeft -= speed
+        } else if (clientX > rect.right - edge) {
+            el.scrollLeft += speed
+        }
+    }, [])
+
+    const clearTouchDrag = useCallback(() => {
+        const state = touchDragRef.current
+        if (state?.longPressTimer) {
+            clearTimeout(state.longPressTimer)
+        }
+        touchDragRef.current = null
+    }, [])
+
+    const clearTouchListeners = useCallback(() => {
+        touchCleanupRef.current?.()
+        touchCleanupRef.current = null
+    }, [])
+
+    const beginTouchDrag = useCallback((taskId: string, fromStatus: TaskStatus, touchId: number, initialTarget: DropTarget) => {
+        setDragStateSynced({ taskId, fromStatus })
+        setDropTargetSynced(initialTarget)
+
+        const handleTouchMove = (event: TouchEvent) => {
+            const touch = Array.from(event.touches).find((t) => t.identifier === touchId)
+            if (!touch) return
+
+            event.preventDefault()
+            handleBoardAutoScroll(touch.clientX)
+
+            const target = computeDropTargetFromPoint(touch.clientX, touch.clientY)
+            setDropTargetSynced(target)
+        }
+
+        const finish = (options: { shouldMove: boolean }) => {
+            clearTouchListeners()
+            clearTouchDrag()
+
+            if (options.shouldMove) {
+                const drag = dragStateRef.current
+                const target = dropTargetRef.current
+                if (drag && target) {
+                    const isSameSpot = target.status === initialTarget.status && target.index === initialTarget.index
+                    if (!isSameSpot) {
+                        void moveTaskRef.current(drag.taskId, target.status, target.index)
+                    }
+                }
+            }
+
+            setDragStateSynced(null)
+            setDropTargetSynced(null)
+            suppressClickRef.current = true
+        }
+
+        const handleTouchEnd = (event: TouchEvent) => {
+            const ended = Array.from(event.changedTouches).some((t) => t.identifier === touchId)
+            if (!ended) return
+
+            event.preventDefault()
+            finish({ shouldMove: true })
+        }
+
+        const handleTouchCancel = (event: TouchEvent) => {
+            const canceled = Array.from(event.changedTouches).some((t) => t.identifier === touchId)
+            if (!canceled) return
+
+            finish({ shouldMove: false })
+        }
+
+        document.addEventListener('touchmove', handleTouchMove, { passive: false })
+        document.addEventListener('touchend', handleTouchEnd, { passive: false })
+        document.addEventListener('touchcancel', handleTouchCancel, { passive: false })
+
+        touchCleanupRef.current = () => {
+            document.removeEventListener('touchmove', handleTouchMove)
+            document.removeEventListener('touchend', handleTouchEnd)
+            document.removeEventListener('touchcancel', handleTouchCancel)
+        }
+    }, [
+        clearTouchDrag,
+        clearTouchListeners,
+        computeDropTargetFromPoint,
+        handleBoardAutoScroll,
+        setDragStateSynced,
+        setDropTargetSynced
+    ])
+
     const openCreateModal = () => {
         setNewTaskTitle('')
         setNewTaskDescription('')
+        setNewTaskPriority('')
         setCreateOpen(true)
     }
 
     const handleCreateModal = async () => {
-        const created = await handleCreateTask(newTaskTitle, newTaskDescription)
+        if (isCreatingTask || !newTaskTitle.trim()) return
+        const created = await handleCreateTask(newTaskTitle, newTaskDescription, newTaskPriority || null)
         if (created) {
             setCreateOpen(false)
             void navigate({
@@ -477,6 +614,13 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
             el.scrollLeft += speed
         }
     }, [dragState])
+
+    useEffect(() => {
+        return () => {
+            clearTouchListeners()
+            clearTouchDrag()
+        }
+    }, [clearTouchDrag, clearTouchListeners])
 
     if (isLoading) {
         return (
@@ -502,7 +646,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 onDragOver={handleBoardDragOver}
             >
                 <div className="h-full flex gap-3 p-3">
-                    {COLUMNS.map((col) => {
+                    {KANBAN_COLUMNS.map((col) => {
                         const colTasks = columns[col.status]
                         const theme = getKanbanStatusTheme(col.status)
                         const columnStyle = {
@@ -523,18 +667,25 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 key={col.status}
                                 className={columnClass}
                                 style={columnStyle}
+                                data-kanban-column-status={col.status}
                                 onDragOver={(event) => {
                                     event.preventDefault()
                                     if (!dragState) return
                                     if (event.target !== event.currentTarget) return
-                                    setDropTarget({ status: col.status, index: colTasks.length })
+                                    setDropTargetSynced({ status: col.status, index: colTasks.length })
                                 }}
                                 onDrop={() => {
-                                    if (!dragState) return
-                                    const target = dropTarget?.status === col.status ? dropTarget : { status: col.status, index: colTasks.length }
-                                    void moveTask(dragState.taskId, target.status, target.index)
-                                    setDragState(null)
-                                    setDropTarget(null)
+                                    const drag = dragStateRef.current
+                                    if (!drag) return
+
+                                    const targetFromHover = dropTargetRef.current
+                                    const target = targetFromHover?.status === col.status
+                                        ? targetFromHover
+                                        : { status: col.status, index: colTasks.length }
+
+                                    void moveTask(drag.taskId, target.status, target.index)
+                                    setDragStateSynced(null)
+                                    setDropTargetSynced(null)
                                 }}
                             >
                                 <div
@@ -569,7 +720,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                         event.preventDefault()
                                         if (!dragState) return
                                         if (event.target !== event.currentTarget) return
-                                        setDropTarget({ status: col.status, index: colTasks.length })
+                                        setDropTargetSynced({ status: col.status, index: colTasks.length })
                                     }}
                                 >
                                     {colTasks.map((task, index) => {
@@ -579,14 +730,17 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                             <div key={task.id} className="relative">
                                                 <div
                                                     draggable
+                                                    data-kanban-task-id={task.id}
+                                                    data-kanban-task-index={index}
+                                                    data-kanban-column-status={col.status}
                                                     onDragStart={(event) => {
                                                         event.dataTransfer.setData('text/plain', task.id)
-                                                        setDragState({ taskId: task.id, fromStatus: task.status })
-                                                        setDropTarget({ status: task.status, index })
+                                                        setDragStateSynced({ taskId: task.id, fromStatus: task.status })
+                                                        setDropTargetSynced({ status: task.status, index })
                                                     }}
                                                     onDragEnd={() => {
-                                                        setDragState(null)
-                                                        setDropTarget(null)
+                                                        setDragStateSynced(null)
+                                                        setDropTargetSynced(null)
                                                     }}
                                                     onDragOver={(event) => {
                                                         event.preventDefault()
@@ -594,12 +748,16 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                         if (!dragState) return
                                                         const rect = event.currentTarget.getBoundingClientRect()
                                                         const before = event.clientY < rect.top + rect.height / 2
-                                                        setDropTarget({
+                                                        setDropTargetSynced({
                                                             status: col.status,
                                                             index: before ? index : index + 1
                                                         })
                                                     }}
                                                     onDoubleClick={() => {
+                                                        if (suppressClickRef.current) {
+                                                            suppressClickRef.current = false
+                                                            return
+                                                        }
                                                         const to = task.activeSessionId
                                                             ? '/projects/$projectId/tasks/$taskId/chat'
                                                             : '/projects/$projectId/tasks/$taskId'
@@ -609,6 +767,10 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                         })
                                                     }}
                                                     onClick={() => {
+                                                        if (suppressClickRef.current) {
+                                                            suppressClickRef.current = false
+                                                            return
+                                                        }
                                                         const to = task.activeSessionId
                                                             ? '/projects/$projectId/tasks/$taskId/chat'
                                                             : '/projects/$projectId/tasks/$taskId'
@@ -616,6 +778,64 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             to,
                                                             params: { projectId: props.projectId, taskId: task.id }
                                                         })
+                                                    }}
+                                                    onTouchStart={(event) => {
+                                                        if (event.touches.length !== 1) return
+                                                        if (dragStateRef.current) return
+                                                        if (touchDragRef.current) return
+
+                                                        const target = event.target as HTMLElement
+                                                        if (target.closest('button')) return
+
+                                                        const touch = event.touches[0]
+                                                        const touchId = touch.identifier
+
+                                                        const timer = setTimeout(() => {
+                                                            const state = touchDragRef.current
+                                                            if (!state) return
+                                                            if (state.touchId !== touchId) return
+                                                            state.dragStarted = true
+                                                            beginTouchDrag(task.id, task.status, touchId, { status: col.status, index })
+                                                        }, 180)
+
+                                                        touchDragRef.current = {
+                                                            taskId: task.id,
+                                                            touchId,
+                                                            startX: touch.clientX,
+                                                            startY: touch.clientY,
+                                                            longPressTimer: timer,
+                                                            dragStarted: false
+                                                        }
+                                                    }}
+                                                    onTouchMove={(event) => {
+                                                        const state = touchDragRef.current
+                                                        if (!state) return
+                                                        if (state.taskId !== task.id) return
+                                                        if (state.dragStarted) return
+
+                                                        const touch = Array.from(event.touches).find((t) => t.identifier === state.touchId)
+                                                        if (!touch) return
+
+                                                        const dx = touch.clientX - state.startX
+                                                        const dy = touch.clientY - state.startY
+                                                        const distance = Math.hypot(dx, dy)
+                                                        if (distance < 10) return
+
+                                                        clearTouchDrag()
+                                                    }}
+                                                    onTouchEnd={() => {
+                                                        const state = touchDragRef.current
+                                                        if (!state) return
+                                                        if (state.taskId !== task.id) return
+                                                        if (state.dragStarted) return
+                                                        clearTouchDrag()
+                                                    }}
+                                                    onTouchCancel={() => {
+                                                        const state = touchDragRef.current
+                                                        if (!state) return
+                                                        if (state.taskId !== task.id) return
+                                                        if (state.dragStarted) return
+                                                        clearTouchDrag()
                                                     }}
                                                     onContextMenu={(event) => {
                                                         event.preventDefault()
@@ -637,9 +857,18 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             <div className="text-sm font-medium break-words leading-snug">
                                                                 {task.title}
                                                             </div>
-                                                            {task.activeSessionId ? (
-                                                                <div className="mt-1 text-[10px] text-[var(--app-hint)]">
-                                                                    {t('projects.tasks.hasSession')}
+                                                            {(task.activeSessionId || task.priority) ? (
+                                                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                                                    {task.activeSessionId ? (
+                                                                        <div className="text-[10px] text-[var(--app-hint)]">
+                                                                            {t('projects.tasks.hasSession')}
+                                                                        </div>
+                                                                    ) : null}
+                                                                    {task.priority ? (
+                                                                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getTaskPriorityClass(task.priority)}`}>
+                                                                            {t(getTaskPriorityLabelKey(task.priority))}
+                                                                        </span>
+                                                                    ) : null}
                                                                 </div>
                                                             ) : null}
                                                         </div>
@@ -682,41 +911,65 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                         <DialogDescription>{t('projects.tasks.createHint')}</DialogDescription>
                     </DialogHeader>
 
-                    <div className="mt-4 space-y-3">
-                        <div className="space-y-1.5">
-                            <label className="text-xs font-medium text-[var(--app-hint)]">
-                                {t('projects.tasks.title')}
-                            </label>
-                            <input
-                                type="text"
-                                value={newTaskTitle}
-                                onChange={(e) => setNewTaskTitle(e.target.value)}
-                                disabled={isCreatingTask}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            />
+                    <form
+                        className="mt-4"
+                        onSubmit={(event) => {
+                            event.preventDefault()
+                            void handleCreateModal()
+                        }}
+                    >
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('projects.tasks.title')}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newTaskTitle}
+                                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                                    disabled={isCreatingTask}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('projects.tasks.description')}
+                                </label>
+                                <textarea
+                                    value={newTaskDescription}
+                                    onChange={(e) => setNewTaskDescription(e.target.value)}
+                                    disabled={isCreatingTask}
+                                    rows={4}
+                                    className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('projects.task.priority')}
+                                </label>
+                                <select
+                                    value={newTaskPriority}
+                                    onChange={(e) => setNewTaskPriority((e.target.value as TaskPriority) || '')}
+                                    disabled={isCreatingTask}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                >
+                                    <option value="">{t('projects.task.priority.none')}</option>
+                                    <option value="high">{t('projects.task.priority.high')}</option>
+                                    <option value="medium">{t('projects.task.priority.medium')}</option>
+                                    <option value="low">{t('projects.task.priority.low')}</option>
+                                </select>
+                            </div>
                         </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs font-medium text-[var(--app-hint)]">
-                                {t('projects.tasks.notes')}
-                            </label>
-                            <textarea
-                                value={newTaskDescription}
-                                onChange={(e) => setNewTaskDescription(e.target.value)}
-                                disabled={isCreatingTask}
-                                rows={4}
-                                className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            />
-                        </div>
-                    </div>
 
-                    <div className="mt-5 flex justify-end gap-2">
-                        <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)} disabled={isCreatingTask}>
-                            {t('button.cancel')}
-                        </Button>
-                        <Button type="button" variant="secondary" onClick={handleCreateModal} disabled={isCreatingTask || !newTaskTitle.trim()}>
-                            {isCreatingTask ? t('projects.tasks.creating') : t('projects.tasks.create')}
-                        </Button>
-                    </div>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)} disabled={isCreatingTask}>
+                                {t('button.cancel')}
+                            </Button>
+                            <Button type="submit" variant="secondary" disabled={isCreatingTask || !newTaskTitle.trim()}>
+                                {isCreatingTask ? t('projects.tasks.creating') : t('projects.tasks.create')}
+                            </Button>
+                        </div>
+                    </form>
                 </DialogContent>
             </Dialog>
 

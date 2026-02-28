@@ -127,6 +127,7 @@ export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
     private readonly reasoningBuffers = new Map<string, string>();
     private readonly commandOutputBuffers = new Map<string, string>();
+    private readonly fileChangeOutputBuffers = new Map<string, string>();
     private readonly commandMeta = new Map<string, Record<string, unknown>>();
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
     private readonly completedAgentMessageItems = new Set<string>();
@@ -135,6 +136,22 @@ export class AppServerEventConverter {
     private readonly lastAgentMessageDeltaByItemId = new Map<string, string>();
     private readonly lastReasoningDeltaByItemId = new Map<string, string>();
     private readonly lastCommandOutputDeltaByItemId = new Map<string, string>();
+    private readonly lastFileChangeOutputDeltaByItemId = new Map<string, string>();
+    private lastTurnId: string | null = null;
+
+    private trackTurnId(paramsRecord: Record<string, unknown>): void {
+        const direct = asString(paramsRecord.turnId ?? paramsRecord.turn_id);
+        if (direct) {
+            this.lastTurnId = direct;
+            return;
+        }
+
+        const turn = asRecord(paramsRecord.turn);
+        const turnId = turn ? asString(turn.turnId ?? turn.turn_id ?? turn.id) : null;
+        if (turnId) {
+            this.lastTurnId = turnId;
+        }
+    }
 
     private handleWrappedCodexEvent(paramsRecord: Record<string, unknown>): ConvertedEvent[] | null {
         const msg = asRecord(paramsRecord.msg);
@@ -225,7 +242,8 @@ export class AppServerEventConverter {
                 return [];
             }
             const error = asString(msg.message ?? msg.reason ?? errorRecord?.message);
-            return error ? [{ type: 'task_failed', error }] : [];
+            const turnId = asString(msg.turn_id ?? msg.turnId) ?? this.lastTurnId;
+            return error ? [{ type: 'task_failed', ...(turnId ? { turn_id: turnId } : {}), error }] : [];
         }
 
         if (
@@ -248,12 +266,28 @@ export class AppServerEventConverter {
     handleNotification(method: string, params: unknown): ConvertedEvent[] {
         const events: ConvertedEvent[] = [];
         const paramsRecord = asRecord(params) ?? {};
+        this.trackTurnId(paramsRecord);
 
         if (method.startsWith('codex/event/')) {
             return this.handleWrappedCodexEvent(paramsRecord) ?? events;
         }
 
         if (method === 'account/rateLimits/updated' || method === 'turn/plan/updated' || method === 'thread/compacted') {
+            return events;
+        }
+
+        if (method === 'thread/status/changed') {
+            const status = asRecord(paramsRecord.status) ?? {};
+            const statusType = asString(status.type);
+            if (statusType && statusType.toLowerCase() === 'systemerror') {
+                const turnId = asString(paramsRecord.turnId ?? paramsRecord.turn_id) ?? this.lastTurnId;
+                const message = asString(status.message ?? status.reason ?? status.error) ?? 'Codex thread entered systemError state';
+                events.push({
+                    type: 'task_failed',
+                    ...(turnId ? { turn_id: turnId } : {}),
+                    error: message
+                });
+            }
             return events;
         }
 
@@ -313,7 +347,8 @@ export class AppServerEventConverter {
             if (willRetry) return events;
             const message = asString(paramsRecord.message) ?? asString(asRecord(paramsRecord.error)?.message);
             if (message) {
-                events.push({ type: 'task_failed', error: message });
+                const turnId = asString(paramsRecord.turnId ?? paramsRecord.turn_id) ?? this.lastTurnId;
+                events.push({ type: 'task_failed', ...(turnId ? { turn_id: turnId } : {}), error: message });
             }
             return events;
         }
@@ -363,6 +398,21 @@ export class AppServerEventConverter {
             return events;
         }
 
+        if (method === 'item/fileChange/outputDelta') {
+            const itemId = extractItemId(paramsRecord);
+            const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.output ?? paramsRecord.stdout);
+            if (itemId && delta) {
+                const lastDelta = this.lastFileChangeOutputDeltaByItemId.get(itemId);
+                if (lastDelta === delta) {
+                    return events;
+                }
+                this.lastFileChangeOutputDeltaByItemId.set(itemId, delta);
+                const prev = this.fileChangeOutputBuffers.get(itemId) ?? '';
+                this.fileChangeOutputBuffers.set(itemId, prev + delta);
+            }
+            return events;
+        }
+
         if (method === 'item/commandExecution/outputDelta') {
             const itemId = extractItemId(paramsRecord);
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.output ?? paramsRecord.stdout);
@@ -386,6 +436,10 @@ export class AppServerEventConverter {
             const itemId = extractItemId(paramsRecord) ?? asString(item.id ?? item.itemId ?? item.item_id);
 
             if (!itemType || !itemId) {
+                return events;
+            }
+
+            if (itemType === 'usermessage') {
                 return events;
             }
 
@@ -418,6 +472,25 @@ export class AppServerEventConverter {
                     }
                     this.lastReasoningDeltaByItemId.delete(itemId);
                 }
+                return events;
+            }
+
+            if (itemType === 'mcptoolcall') {
+                const invocation: Record<string, unknown> = {
+                    server: asString(item.server ?? item.server_name ?? item.serverName),
+                    tool: asString(item.tool ?? item.tool_name ?? item.toolName),
+                    arguments: item.arguments ?? item.input ?? item.params ?? {}
+                };
+
+                if (method === 'item/started') {
+                    events.push({ type: 'mcp_tool_call_begin', call_id: itemId, invocation });
+                }
+
+                if (method === 'item/completed') {
+                    const result = item.result ?? item.output ?? item.response ?? null;
+                    events.push({ type: 'mcp_tool_call_end', call_id: itemId, invocation, result });
+                }
+
                 return events;
             }
 
@@ -468,6 +541,8 @@ export class AppServerEventConverter {
 
             if (itemType === 'filechange') {
                 if (method === 'item/started') {
+                    this.fileChangeOutputBuffers.delete(itemId);
+                    this.lastFileChangeOutputDeltaByItemId.delete(itemId);
                     const changes = extractChanges(item.changes ?? item.change ?? item.diff);
                     const autoApproved = asBoolean(item.autoApproved ?? item.auto_approved);
                     const meta: Record<string, unknown> = {};
@@ -484,7 +559,7 @@ export class AppServerEventConverter {
 
                 if (method === 'item/completed') {
                     const meta = this.fileChangeMeta.get(itemId) ?? {};
-                    const stdout = asString(item.stdout ?? item.output);
+                    const stdout = asString(item.stdout ?? item.output) ?? this.fileChangeOutputBuffers.get(itemId);
                     const stderr = asString(item.stderr);
                     const success = asBoolean(item.success ?? item.ok ?? item.applied ?? item.status === 'completed');
 
@@ -498,6 +573,8 @@ export class AppServerEventConverter {
                     });
 
                     this.fileChangeMeta.delete(itemId);
+                    this.fileChangeOutputBuffers.delete(itemId);
+                    this.lastFileChangeOutputDeltaByItemId.delete(itemId);
                 }
 
                 return events;
@@ -512,6 +589,7 @@ export class AppServerEventConverter {
         this.agentMessageBuffers.clear();
         this.reasoningBuffers.clear();
         this.commandOutputBuffers.clear();
+        this.fileChangeOutputBuffers.clear();
         this.commandMeta.clear();
         this.fileChangeMeta.clear();
         this.completedAgentMessageItems.clear();
@@ -520,5 +598,7 @@ export class AppServerEventConverter {
         this.lastAgentMessageDeltaByItemId.clear();
         this.lastReasoningDeltaByItemId.clear();
         this.lastCommandOutputDeltaByItemId.clear();
+        this.lastFileChangeOutputDeltaByItemId.clear();
+        this.lastTurnId = null;
     }
 }

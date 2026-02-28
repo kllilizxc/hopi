@@ -11,25 +11,8 @@ import { queryClient } from './lib/query-client'
 import { createAppRouter } from './router'
 import { I18nProvider } from './lib/i18n-context'
 
-function getStartParam(): string | null {
-    const query = new URLSearchParams(window.location.search)
-    const fromQuery = query.get('startapp') || query.get('tgWebAppStartParam')
-    if (fromQuery) return fromQuery
-
-    return getTelegramWebApp()?.initDataUnsafe?.start_param ?? null
-}
-
-function getDeepLinkedSessionId(): string | null {
-    const startParam = getStartParam()
-    if (startParam?.startsWith('session_')) {
-        return startParam.slice('session_'.length)
-    }
-    return null
-}
-
 function getInitialPath(): string {
-    const sessionId = getDeepLinkedSessionId()
-    return sessionId ? `/sessions/${sessionId}` : '/sessions'
+    return '/projects'
 }
 
 async function bootstrap() {

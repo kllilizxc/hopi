@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hapi/protocol/schemas'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -14,6 +14,10 @@ const createProjectSchema = z.object({
     defaultAgentFlavor: AgentFlavorSchema.optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultModelMode: ModelModeSchema.optional(),
+    defaultSessionType: SessionTypeSchema.optional(),
+    worktreeTargetBranch: z.string().max(255).optional(),
+    worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.optional(),
+    worktreeCleanupAfterMerge: z.boolean().optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
@@ -28,6 +32,10 @@ const updateProjectSchema = z.object({
     defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
     defaultPermissionMode: PermissionModeSchema.nullable().optional(),
     defaultModelMode: ModelModeSchema.nullable().optional(),
+    defaultSessionType: SessionTypeSchema.nullable().optional(),
+    worktreeTargetBranch: z.string().max(255).nullable().optional(),
+    worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.nullable().optional(),
+    worktreeCleanupAfterMerge: z.boolean().optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
@@ -78,6 +86,10 @@ export function createProjectsRoutes(options: {
             defaultAgentFlavor: parsed.data.defaultAgentFlavor ?? null,
             defaultPermissionMode: parsed.data.defaultPermissionMode ?? null,
             defaultModelMode: parsed.data.defaultModelMode ?? null,
+            defaultSessionType: parsed.data.defaultSessionType ?? null,
+            worktreeTargetBranch: parsed.data.worktreeTargetBranch ?? null,
+            worktreeAutoCommitMode: parsed.data.worktreeAutoCommitMode ?? null,
+            worktreeCleanupAfterMerge: parsed.data.worktreeCleanupAfterMerge,
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
@@ -127,6 +139,10 @@ export function createProjectsRoutes(options: {
             defaultAgentFlavor: parsed.data.defaultAgentFlavor,
             defaultPermissionMode: parsed.data.defaultPermissionMode,
             defaultModelMode: parsed.data.defaultModelMode,
+            defaultSessionType: parsed.data.defaultSessionType,
+            worktreeTargetBranch: parsed.data.worktreeTargetBranch,
+            worktreeAutoCommitMode: parsed.data.worktreeAutoCommitMode,
+            worktreeCleanupAfterMerge: parsed.data.worktreeCleanupAfterMerge,
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,

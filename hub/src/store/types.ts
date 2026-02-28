@@ -66,6 +66,10 @@ export type StoredProject = {
     defaultAgentFlavor: string | null
     defaultPermissionMode: string | null
     defaultModelMode: string | null
+    defaultSessionType: 'simple' | 'worktree' | null
+    worktreeTargetBranch: string | null
+    worktreeAutoCommitMode: 'off' | 'per_conversation' | null
+    worktreeCleanupAfterMerge: boolean
     autoRunEnabled: boolean
     maxRunningSessions: number
     improvementsEnabled: boolean

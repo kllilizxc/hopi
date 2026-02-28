@@ -473,7 +473,8 @@ const projectTaskFilesRoute = createRoute({
 const sessionsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions',
-    component: SessionsPage,
+    // Legacy sessions UI deprecated; keep route only to redirect old links.
+    component: () => <Navigate to="/projects" replace />,
 })
 
 const sessionsIndexRoute = createRoute({

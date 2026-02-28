@@ -95,6 +95,8 @@ export function SessionChat(props: {
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
+    onViewFiles?: () => void
+    onViewTerminal?: () => void
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
@@ -287,18 +289,22 @@ export function SessionChat(props: {
     }, [switchSession, props.onRefresh])
 
     const handleViewFiles = useCallback(() => {
-        navigate({
-            to: '/sessions/$sessionId/files',
-            params: { sessionId: props.session.id }
-        })
-    }, [navigate, props.session.id])
+        if (props.onViewFiles) {
+            props.onViewFiles()
+            return
+        }
+        // Legacy sessions UI no longer used; send users to project UI instead.
+        navigate({ to: '/projects' })
+    }, [navigate, props.onViewFiles])
 
     const handleViewTerminal = useCallback(() => {
-        navigate({
-            to: '/sessions/$sessionId/terminal',
-            params: { sessionId: props.session.id }
-        })
-    }, [navigate, props.session.id])
+        if (props.onViewTerminal) {
+            props.onViewTerminal()
+            return
+        }
+        // Legacy sessions UI no longer used; send users to project UI instead.
+        navigate({ to: '/projects' })
+    }, [navigate, props.onViewTerminal])
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
         props.onSend(text, attachments)

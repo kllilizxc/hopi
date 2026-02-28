@@ -68,6 +68,46 @@ const startSessionSchema = z.object({
     modelMode: ModelModeSchema.optional()
 })
 
+const mergeWorktreeSchema = z.object({
+    targetBranch: z.string().min(1).optional()
+})
+
+function getMergeWorktreeErrorStatus(result: {
+    error?: string
+    conflictFiles?: string[]
+}): 400 | 409 | 500 | 504 {
+    const conflictFiles = result.conflictFiles ?? []
+    if (conflictFiles.length > 0) {
+        return 409
+    }
+
+    const error = (result.error ?? '').toLowerCase()
+    if (!error) {
+        return 500
+    }
+
+    if (error.includes('uncommitted changes') || error.includes('merge conflict')) {
+        return 409
+    }
+
+    if (error.includes('target branch') && error.includes('not found')) {
+        return 400
+    }
+    if (error.includes('worktree branch') && error.includes('not found')) {
+        return 400
+    }
+
+    if (error.includes('required')) {
+        return 400
+    }
+
+    if (error.includes('timed out')) {
+        return 504
+    }
+
+    return 500
+}
+
 async function handleTaskMovedToFinished(options: {
     store: Store
     engine: SyncEngine
@@ -427,15 +467,94 @@ export function createTasksRoutes(options: {
         if (!result.ok) {
             const status = result.error === 'Task not found'
                 ? 404
-                : result.error === 'Project not found' || result.error === 'Workspace not found'
+                : result.error === 'Project not found' || result.error === 'Workspace not found' || result.error === 'Machine not found'
                     ? 404
                     : result.error === 'No workspace selected'
                         ? 400
+                        : result.error.startsWith('Runner offline')
+                            ? 503
                         : 500
             return c.json({ error: result.error }, status)
         }
 
         return c.json({ task: result.task, sessionId: result.sessionId })
+    })
+
+    app.post('/tasks/:taskId/worktree/merge', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const json = await c.req.json().catch(() => null)
+        const parsed = mergeWorktreeSchema.safeParse(json ?? {})
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        if (!task) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+        if (!task.activeSessionId) {
+            return c.json({ error: 'Task has no active session' }, 400)
+        }
+
+        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const targetBranch = parsed.data.targetBranch
+            ?? project.worktreeTargetBranch
+            ?? ''
+        if (!targetBranch) {
+            return c.json({ error: 'Target branch not configured' }, 400)
+        }
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const access = engine.resolveSessionAccess(task.activeSessionId, namespace)
+        if (!access.ok) {
+            return c.json({ error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found' }, access.reason === 'access-denied' ? 403 : 404)
+        }
+
+        const session = access.session
+        if (!session.metadata?.worktree) {
+            return c.json({ error: 'Session is not a worktree session' }, 400)
+        }
+
+        if (session.thinking) {
+            return c.json({ error: 'Session is busy' }, 409)
+        }
+
+        const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
+        const result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
+        if (!result.success) {
+            const status = getMergeWorktreeErrorStatus(result)
+            const payload: {
+                error: string
+                conflictFiles: string[]
+                stdout?: string
+                stderr?: string
+            } = {
+                error: result.error ?? 'Merge failed',
+                conflictFiles: result.conflictFiles ?? []
+            }
+
+            if (status >= 500) {
+                payload.stdout = result.stdout
+                payload.stderr = result.stderr
+            }
+
+            return c.json(payload, status)
+        }
+
+        return c.json({
+            ok: true,
+            commitHash: result.commitHash ?? null,
+            skippedReason: result.skippedReason ?? null
+        })
     })
 
     return app

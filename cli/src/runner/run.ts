@@ -126,7 +126,8 @@ export async function startRunner(): Promise<void> {
     const pidToTrackedSession = new Map<number, TrackedSession>();
 
     // Session spawning awaiter system
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    // Maps spawned child PID -> resolver for spawn result (success via webhook, error via exit/timeout)
+    const pidToAwaiter = new Map<number, (result: SpawnSessionResult) => void>();
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
@@ -157,7 +158,10 @@ export async function startRunner(): Promise<void> {
         const awaiter = pidToAwaiter.get(pid);
         if (awaiter) {
           pidToAwaiter.delete(pid);
-          awaiter(existingSession);
+          awaiter({
+            type: 'success',
+            sessionId
+          });
           logger.debug(`[RUNNER RUN] Resolved session awaiter for PID ${pid}`);
         }
       } else if (!existingSession) {
@@ -348,6 +352,7 @@ export async function startRunner(): Promise<void> {
 
         // sessionId reserved for future use
         const MAX_TAIL_CHARS = 4000;
+        let stdoutTail = '';
         let stderrTail = '';
         const appendTail = (current: string, chunk: Buffer | string): string => {
           const text = chunk.toString();
@@ -356,6 +361,25 @@ export async function startRunner(): Promise<void> {
           }
           const combined = current + text;
           return combined.length > MAX_TAIL_CHARS ? combined.slice(-MAX_TAIL_CHARS) : combined;
+        };
+        const buildOutputTailSuffix = (): string => {
+          const stdoutTrimmed = stdoutTail.trim();
+          const stderrTrimmed = stderrTail.trim();
+          const parts: string[] = [];
+          if (stdoutTrimmed) {
+            parts.push(`Child stdout tail:\n${stdoutTrimmed}`);
+          }
+          if (stderrTrimmed) {
+            parts.push(`Child stderr tail:\n${stderrTrimmed}`);
+          }
+          return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : '';
+        };
+        const logStdoutTail = () => {
+          const trimmed = stdoutTail.trim();
+          if (!trimmed) {
+            return;
+          }
+          logger.debug('[RUNNER RUN] Child stdout tail', trimmed);
         };
         const logStderrTail = () => {
           const trimmed = stderrTail.trim();
@@ -377,6 +401,9 @@ export async function startRunner(): Promise<void> {
 
         happyProcess.stderr?.on('data', (data) => {
           stderrTail = appendTail(stderrTail, data);
+        });
+        happyProcess.stdout?.on('data', (data) => {
+          stdoutTail = appendTail(stdoutTail, data);
         });
 
         if (!happyProcess.pid) {
@@ -401,46 +428,72 @@ export async function startRunner(): Promise<void> {
 
         pidToTrackedSession.set(pid, trackedSession);
 
-        happyProcess.on('exit', (code, signal) => {
-          logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
-          if (code !== 0 || signal) {
-            logStderrTail();
-          }
-          onChildExited(pid);
-        });
-
-        happyProcess.on('error', (error) => {
-          logger.debug(`[RUNNER RUN] Child process error:`, error);
-          onChildExited(pid);
-        });
-
         // Wait for webhook to populate session with happySessionId
         logger.debug(`[RUNNER RUN] Waiting for session webhook for PID ${pid}`);
 
-        const spawnResult = await new Promise<SpawnSessionResult>((resolve) => {
+        const spawnResultPromise = new Promise<SpawnSessionResult>((resolve) => {
+          let done = false;
+          const finish = (result: SpawnSessionResult) => {
+            if (done) {
+              return;
+            }
+            done = true;
+            resolve(result);
+          };
+
           // Set timeout for webhook
           const timeout = setTimeout(() => {
             pidToAwaiter.delete(pid);
             logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
+            logStdoutTail();
             logStderrTail();
-            resolve({
+            finish({
               type: 'error',
-              errorMessage: `Session webhook timeout for PID ${pid}`
+              errorMessage: `Session webhook timeout for PID ${pid}${buildOutputTailSuffix()}`
             });
             // 15 second timeout - I have seen timeouts on 10 seconds
             // even though session was still created successfully in ~2 more seconds
           }, 15_000);
 
-          // Register awaiter
-          pidToAwaiter.set(pid, (completedSession) => {
+          pidToAwaiter.set(pid, (result) => {
             clearTimeout(timeout);
-            logger.debug(`[RUNNER RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
-            resolve({
-              type: 'success',
-              sessionId: completedSession.happySessionId!
-            });
+            finish(result);
           });
         });
+
+        happyProcess.on('exit', (code, signal) => {
+          logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
+          if (code !== 0 || signal) {
+            logStdoutTail();
+            logStderrTail();
+          }
+
+          const awaiter = pidToAwaiter.get(pid);
+          if (awaiter) {
+            pidToAwaiter.delete(pid);
+            awaiter({
+              type: 'error',
+              errorMessage: `Session exited before webhook for PID ${pid} (code ${code ?? 'null'}, signal ${signal ?? 'null'})${buildOutputTailSuffix()}`
+            });
+          }
+
+          onChildExited(pid);
+        });
+
+        happyProcess.on('error', (error) => {
+          logger.debug(`[RUNNER RUN] Child process error:`, error);
+          const awaiter = pidToAwaiter.get(pid);
+          if (awaiter) {
+            pidToAwaiter.delete(pid);
+            awaiter({
+              type: 'error',
+              errorMessage: `Child process error before webhook for PID ${pid}: ${error instanceof Error ? error.message : String(error)}${buildOutputTailSuffix()}`
+            });
+          }
+          onChildExited(pid);
+        });
+
+        const spawnResult = await spawnResultPromise;
         if (spawnResult.type !== 'success') {
           await maybeCleanupWorktree('spawn-error');
         }

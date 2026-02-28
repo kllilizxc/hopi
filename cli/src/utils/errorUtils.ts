@@ -33,7 +33,41 @@ export function apiValidationError(message: string, response: AxiosResponse): Er
  * Extract structured error information from an unknown error
  */
 export function extractErrorInfo(error: unknown): ErrorInfo {
-    const message = error instanceof Error ? error.message : 'Unknown error'
+    const resolveMessage = (value: unknown): string => {
+        if (value instanceof Error) {
+            return value.message || value.name || 'Unknown error'
+        }
+
+        if (typeof value === 'string') {
+            return value
+        }
+
+        if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+            return String(value)
+        }
+
+        if (typeof value === 'object' && value !== null) {
+            const record = value as Record<string, unknown>
+            if (typeof record.message === 'string' && record.message.trim().length > 0) {
+                return record.message
+            }
+            if (typeof record.error === 'string' && record.error.trim().length > 0) {
+                return record.error
+            }
+
+            try {
+                const serialized = JSON.stringify(value)
+                if (serialized && serialized !== '{}') {
+                    return serialized
+                }
+            } catch {
+            }
+        }
+
+        return 'Unknown error'
+    }
+
+    const message = resolveMessage(error)
     const messageLower = message.toLowerCase()
 
     if (typeof error !== 'object' || error === null) {

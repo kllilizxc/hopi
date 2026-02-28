@@ -141,6 +141,7 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
 export class TaskAutomation {
     private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
+    private readonly autoCommitInFlightBySessionId: Set<string> = new Set()
 
     constructor(
         private readonly store: Store,
@@ -165,6 +166,7 @@ export class TaskAutomation {
         if (event.type === 'session-removed' && event.sessionId) {
             this.lastActiveBySessionId.delete(event.sessionId)
             this.lastThinkingBySessionId.delete(event.sessionId)
+            this.autoCommitInFlightBySessionId.delete(event.sessionId)
             return
         }
 
@@ -231,8 +233,89 @@ export class TaskAutomation {
             if (!handled) {
                 this.tryFlipToInReview(sessionId)
             }
+            this.maybeAutoCommitWorktreeFromReady(sessionId, message)
             return
         }
+    }
+
+    private maybeAutoCommitWorktreeFromReady(sessionId: string, readyMessage: DecryptedMessage): void {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return
+
+        const task = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!task) return
+        if (task.archivedAt) return
+        if (task.status === 'finished') return
+
+        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
+        if (!project) return
+        if (project.worktreeAutoCommitMode !== 'per_conversation') return
+
+        const session = this.engine.getSession(sessionId)
+        if (!session?.metadata?.worktree) return
+
+        if (this.autoCommitInFlightBySessionId.has(sessionId)) {
+            return
+        }
+
+        const shouldCommit = (() => {
+            const details = getReadyEventDetails(readyMessage)
+            if (details?.forLocalKey) {
+                const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
+                if (!storedPrompt) return false
+                const prompt: DecryptedMessage = {
+                    id: storedPrompt.id,
+                    seq: storedPrompt.seq,
+                    localId: storedPrompt.localId,
+                    content: storedPrompt.content,
+                    createdAt: storedPrompt.createdAt
+                }
+                return isAutomationPromptMessage(prompt)
+            }
+
+            const scan = this.scanForLatestPromptAndReady(sessionId)
+            if (!scan) return false
+            if (scan.readySeq !== readyMessage.seq) return false
+            return true
+        })()
+
+        if (!shouldCommit) return
+
+        const taskIdPrefix = task.id.slice(0, 8)
+        const title = task.title.trim() || 'Task'
+        const commitMessage = `HAPI: task ${taskIdPrefix} — ${title}`.slice(0, 180)
+
+        this.autoCommitInFlightBySessionId.add(sessionId)
+        void this.engine.gitAutocommitWorktree(sessionId, { message: commitMessage })
+            .then((result) => {
+                if (!result.success) {
+                    this.engine.handleRealtimeEvent({
+                        type: 'toast',
+                        namespace: linked.namespace,
+                        data: {
+                            title: 'Worktree auto-commit failed',
+                            body: result.error ?? 'Unknown error',
+                            sessionId,
+                            url: ''
+                        }
+                    })
+                }
+            })
+            .catch((error) => {
+                this.engine.handleRealtimeEvent({
+                    type: 'toast',
+                    namespace: linked.namespace,
+                    data: {
+                        title: 'Worktree auto-commit failed',
+                        body: error instanceof Error ? error.message : String(error),
+                        sessionId,
+                        url: ''
+                    }
+                })
+            })
+            .finally(() => {
+                this.autoCommitInFlightBySessionId.delete(sessionId)
+            })
     }
 
     private tryFlipToInReviewFromReady(sessionId: string, readyMessage: DecryptedMessage): boolean {
@@ -246,16 +329,6 @@ export class TaskAutomation {
 
         const details = getReadyEventDetails(readyMessage)
         if (!details) return false
-
-        // Explicit signal from the CLI: no assistant output for this turn → don't flip.
-        if (details.hasAssistantReply === false) {
-            return true
-        }
-
-        // Missing/legacy clients: fall back to history scan.
-        if (details.hasAssistantReply === null) {
-            return false
-        }
 
         // Correlation missing: fall back.
         if (!details.forLocalKey) {

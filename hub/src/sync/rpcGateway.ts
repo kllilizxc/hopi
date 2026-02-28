@@ -44,6 +44,26 @@ export type RpcPathExistsResponse = {
     exists: Record<string, boolean>
 }
 
+export type RpcGitAutocommitWorktreeResponse = {
+    success: boolean
+    commitHash?: string
+    skippedReason?: 'clean'
+    stdout?: string
+    stderr?: string
+    error?: string
+}
+
+export type RpcGitMergeWorktreeResponse = {
+    success: boolean
+    commitHash?: string
+    skippedReason?: 'no_changes'
+    conflictFiles?: string[]
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -127,10 +147,26 @@ export class RpcGateway {
                 if (obj.type === 'error' && typeof obj.errorMessage === 'string') {
                     return { type: 'error', message: obj.errorMessage }
                 }
+                if (obj.type === 'requestToApproveDirectoryCreation' && typeof obj.directory === 'string') {
+                    return {
+                        type: 'error',
+                        message: `Directory does not exist: ${obj.directory}`
+                    }
+                }
+                if (typeof obj.error === 'string') {
+                    return { type: 'error', message: obj.error }
+                }
             }
             return { type: 'error', message: 'Unexpected spawn result' }
         } catch (error) {
-            return { type: 'error', message: error instanceof Error ? error.message : String(error) }
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')) {
+                return {
+                    type: 'error',
+                    message: 'Runner offline or not connected. Start it on the machine and try again: hapi runner start'
+                }
+            }
+            return { type: 'error', message }
         }
     }
 
@@ -162,6 +198,14 @@ export class RpcGateway {
 
     async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-file', options) as RpcCommandResponse
+    }
+
+    async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-autocommit-worktree', options) as RpcGitAutocommitWorktreeResponse
+    }
+
+    async gitMergeWorktree(sessionId: string, options: { targetBranch: string; commitMessage: string }): Promise<RpcGitMergeWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-merge-worktree', options) as RpcGitMergeWorktreeResponse
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {

@@ -402,17 +402,17 @@ export default function ProjectsPage() {
                 className={`${shouldShowLeftOnMobile ? 'flex' : 'hidden lg:flex'} min-w-0 w-full flex-col bg-[var(--app-bg)] lg:flex-1 lg:w-auto lg:border-r lg:border-[var(--app-divider)]`}
             >
                 {selectedProjectId ? (
-                    <ProjectBoardPanel
-                        projectId={selectedProjectId}
-                        onBackToProjects={() => navigate({ to: '/projects' })}
-                        onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
-                        onGoToSessions={() => navigate({ to: '/sessions' })}
-                    />
+                        <ProjectBoardPanel
+                            projectId={selectedProjectId}
+                            onBackToProjects={() => navigate({ to: '/projects' })}
+                            onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
+                            onGoToSessions={() => navigate({ to: '/projects' })}
+                        />
                 ) : (
                     <ProjectsListPanel
                         onSelectProject={(projectId) => navigate({ to: '/projects/$projectId', params: { projectId } })}
                         onOpenCreate={() => setCreateOpen(true)}
-                        onGoToSessions={() => navigate({ to: '/sessions' })}
+                        onGoToSessions={() => navigate({ to: '/projects' })}
                         onGoToSettings={() => navigate({ to: '/settings' })}
                     />
                 )}

@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 4
+const SCHEMA_VERSION: number = 5
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -107,11 +107,14 @@ export class Store {
             if (this.hasAnyUserTables()) {
                 this.migrateLegacySchemaIfNeeded()
                 this.createSchema()
+                // Existing tables may predate PRAGMA user_version and miss newer columns.
+                this.ensureLatestSchemaColumns()
                 this.setUserVersion(SCHEMA_VERSION)
                 return
             }
 
             this.createSchema()
+            this.ensureLatestSchemaColumns()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -134,10 +137,42 @@ export class Store {
             return
         }
 
+        if (currentVersion === 4 && SCHEMA_VERSION === 5) {
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 3 && SCHEMA_VERSION === 5) {
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 2 && SCHEMA_VERSION === 5) {
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 1 && SCHEMA_VERSION === 5) {
+            this.migrateFromV1ToV2()
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(currentVersion)
         }
 
+        // Be defensive for installs that were force-versioned without all columns present.
+        this.ensureLatestSchemaColumns()
         this.assertRequiredTablesPresent()
     }
 
@@ -222,6 +257,10 @@ export class Store {
                 default_agent_flavor TEXT,
                 default_permission_mode TEXT,
                 default_model_mode TEXT,
+                default_session_type TEXT NOT NULL DEFAULT 'simple',
+                worktree_target_branch TEXT,
+                worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off',
+                worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0,
                 auto_run_enabled INTEGER NOT NULL DEFAULT 0,
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
@@ -370,8 +409,38 @@ export class Store {
         this.createSchema()
     }
 
+    private ensureLatestSchemaColumns(): void {
+        if (SCHEMA_VERSION >= 5) {
+            this.migrateFromV4ToV5()
+        }
+    }
+
+    private migrateFromV4ToV5(): void {
+        const columns = this.getColumnNames('projects')
+        if (columns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v4 to v5 migration.')
+        }
+
+        if (!columns.has('default_session_type')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN default_session_type TEXT NOT NULL DEFAULT 'simple'")
+        }
+        if (!columns.has('worktree_target_branch')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN worktree_target_branch TEXT')
+        }
+        if (!columns.has('worktree_auto_commit_mode')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off'")
+        }
+        if (!columns.has('worktree_cleanup_after_merge')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0')
+        }
+    }
+
     private getMachineColumnNames(): Set<string> {
-        const rows = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
+        return this.getColumnNames('machines')
+    }
+
+    private getColumnNames(tableName: string): Set<string> {
+        const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
     }
 

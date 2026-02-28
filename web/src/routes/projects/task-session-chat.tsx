@@ -16,6 +16,8 @@ export function TaskSessionChat(props: {
     api: ApiClient | null
     sessionId: string
     onBack: () => void
+    onViewFiles?: () => void
+    onViewTerminal?: () => void
 }) {
     const { t } = useTranslation()
     const queryClient = useQueryClient()
@@ -137,7 +139,8 @@ export function TaskSessionChat(props: {
             onAtBottomChange={setAtBottom}
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
+            onViewFiles={props.onViewFiles}
+            onViewTerminal={props.onViewTerminal}
         />
     )
 }
-

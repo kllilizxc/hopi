@@ -12,6 +12,10 @@ type UpdateProjectInput = {
         defaultAgentFlavor?: AgentFlavor | null
         defaultPermissionMode?: PermissionMode | null
         defaultModelMode?: ModelMode | null
+        defaultSessionType?: 'simple' | 'worktree' | null
+        worktreeTargetBranch?: string | null
+        worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
+        worktreeCleanupAfterMerge?: boolean
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean

@@ -5,6 +5,7 @@ import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -212,6 +213,61 @@ function ImportSessionAsTaskDialog(props: {
     )
 }
 
+function MergeWorktreeDialog(props: {
+    isOpen: boolean
+    onClose: () => void
+    api: ApiClient | null
+    taskId: string
+    sourceBranch: string
+}) {
+    const { t } = useTranslation()
+    const { addToast } = useToast()
+    const { mergeTaskWorktree, isPending } = useMergeTaskWorktree(props.api)
+    const [error, setError] = useState<string | null>(null)
+
+    const handleConfirm = async () => {
+        if (!props.api) return
+        setError(null)
+        try {
+            const res = await mergeTaskWorktree({ taskId: props.taskId })
+            if (res.skippedReason) {
+                addToast({ title: 'Merge skipped', body: res.skippedReason, sessionId: '', url: '' })
+            } else {
+                addToast({ title: 'Merged successfully', body: res.commitHash ?? '', sessionId: '', url: '' })
+            }
+            props.onClose()
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err))
+        }
+    }
+
+    return (
+        <Dialog open={props.isOpen} onOpenChange={(open) => !open && props.onClose()}>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Merge Worktree</DialogTitle>
+                    <DialogDescription>
+                        Merge changes from {props.sourceBranch} into the target branch.
+                    </DialogDescription>
+                </DialogHeader>
+
+                {error ? (
+                    <div className="mt-4 text-sm text-red-600">{error}</div>
+                ) : null}
+
+                <div className="mt-5 flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={props.onClose} disabled={isPending}>
+                        Cancel
+                    </Button>
+                    <Button type="button" variant="default" onClick={handleConfirm} disabled={isPending}>
+                        {isPending ? 'Merging...' : 'Merge to Target Branch'}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
 function FilesIcon(props: { className?: string }) {
     return (
         <svg
@@ -282,6 +338,7 @@ export function SessionHeader(props: {
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
+    const [mergeOpen, setMergeOpen] = useState(false)
 
     const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
@@ -350,6 +407,18 @@ export function SessionHeader(props: {
                             ) : null}
                         </div>
                     </div>
+
+                    {worktreeBranch && taskLink ? (
+                        <button
+                            type="button"
+                            onClick={() => setMergeOpen(true)}
+                            disabled={session.thinking}
+                            className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-link)] text-[var(--app-bg)] hover:opacity-90 transition-colors disabled:opacity-50"
+                            title={t('Merge Worktree')}
+                        >
+                            {session.thinking ? 'Agent thinking...' : 'Merge'}
+                        </button>
+                    ) : null}
 
                     {props.onViewFiles ? (
                         <button
@@ -443,6 +512,16 @@ export function SessionHeader(props: {
                 session={session}
                 suggestedTitle={title}
             />
+
+            {worktreeBranch && taskLink ? (
+                <MergeWorktreeDialog
+                    isOpen={mergeOpen}
+                    onClose={() => setMergeOpen(false)}
+                    api={api}
+                    taskId={taskLink.taskId}
+                    sourceBranch={worktreeBranch}
+                />
+            ) : null}
         </>
     )
 }

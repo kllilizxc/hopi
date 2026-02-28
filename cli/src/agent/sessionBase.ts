@@ -56,7 +56,8 @@ export class AgentSessionBase<Mode> {
 
         this.client.keepAlive(this.thinking, this.mode, this.getKeepAliveRuntime());
         this.keepAliveInterval = setInterval(() => {
-            this.client.keepAlive(this.thinking, this.mode, this.getKeepAliveRuntime());
+            // Periodic keep-alive: best-effort. Transitions (thinking/mode changes) use non-volatile emits.
+            this.client.keepAlive(this.thinking, this.mode, this.getKeepAliveRuntime(), { volatile: true });
         }, 2000);
 
     }

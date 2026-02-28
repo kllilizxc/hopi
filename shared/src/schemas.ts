@@ -1,10 +1,17 @@
 import { z } from 'zod'
 import { MODEL_MODES, PERMISSION_MODES } from './modes'
+import { TASK_STATUS_ORDER } from './tasks'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
 export const ModelModeSchema = z.enum(MODEL_MODES)
 
 export const AgentFlavorSchema = z.enum(['claude', 'codex', 'gemini', 'opencode'])
+
+export const SessionTypeSchema = z.enum(['simple', 'worktree'])
+export type SessionType = z.infer<typeof SessionTypeSchema>
+
+export const WorktreeAutoCommitModeSchema = z.enum(['off', 'per_conversation'])
+export type WorktreeAutoCommitMode = z.infer<typeof WorktreeAutoCommitModeSchema>
 
 const MetadataSummarySchema = z.object({
     text: z.string(),
@@ -153,6 +160,10 @@ export const ProjectSchema = z.object({
     defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
     defaultPermissionMode: PermissionModeSchema.nullable().optional(),
     defaultModelMode: ModelModeSchema.nullable().optional(),
+    defaultSessionType: SessionTypeSchema.nullable().optional(),
+    worktreeTargetBranch: z.string().nullable().optional(),
+    worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.nullable().optional(),
+    worktreeCleanupAfterMerge: z.boolean().optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
@@ -188,7 +199,7 @@ export const TaskAttachmentSchema = z.object({
 
 export type TaskAttachment = z.infer<typeof TaskAttachmentSchema>
 
-export const TaskStatusSchema = z.enum(['new', 'planned', 'in_progress', 'in_review', 'finished', 'blocked'])
+export const TaskStatusSchema = z.enum(TASK_STATUS_ORDER)
 export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])

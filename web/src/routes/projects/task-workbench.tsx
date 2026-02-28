@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { getPermissionModeOptionsForFlavor } from '@hapi/protocol'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskStatus, Workspace } from '@/types/api'
+import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
+import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
@@ -31,6 +33,25 @@ import { SessionTerminal } from '@/routes/sessions/terminal'
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 
 type TaskWorkbenchTab = 'task' | 'chat' | 'terminal' | 'diffs' | 'files'
+
+function getTaskPriorityLabelKey(priority: TaskPriority): string {
+    return `projects.task.priority.${priority}`
+}
+
+function getTaskPriorityBadgeVariant(priority: TaskPriority): 'default' | 'warning' | 'destructive' {
+    switch (priority) {
+        case 'high':
+            return 'destructive'
+        case 'medium':
+            return 'warning'
+        case 'low':
+            return 'default'
+        default: {
+            const _exhaustive: never = priority
+            return _exhaustive
+        }
+    }
+}
 
 function BackIcon(props: { className?: string }) {
     return (
@@ -393,6 +414,7 @@ function TaskDetailsPanel(props: {
     const [title, setTitle] = useState(props.task.title)
     const [description, setDescription] = useState(props.task.description ?? '')
     const [status, setStatus] = useState<TaskStatus>(props.task.status)
+    const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [attachments, setAttachments] = useState<TaskAttachment[]>(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     const [attachmentsBusy, setAttachmentsBusy] = useState(false)
@@ -405,9 +427,10 @@ function TaskDetailsPanel(props: {
         setTitle(props.task.title)
         setDescription(props.task.description ?? '')
         setStatus(props.task.status)
+        setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
-    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.workspaceId, props.task.attachments])
+    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.attachments])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
@@ -505,6 +528,11 @@ function TaskDetailsPanel(props: {
                                 />
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
                                     <Badge variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Badge>
+                                    {props.task.priority ? (
+                                        <Badge variant={getTaskPriorityBadgeVariant(props.task.priority)}>
+                                            {t(getTaskPriorityLabelKey(props.task.priority))}
+                                        </Badge>
+                                    ) : null}
                                     {sessionId ? <Badge variant="success">{t('projects.task.sessionLinked')}</Badge> : <Badge variant="warning">{t('projects.task.noSession')}</Badge>}
                                 </div>
                             </div>
@@ -519,7 +547,7 @@ function TaskDetailsPanel(props: {
                             </button>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.status')}
@@ -534,11 +562,32 @@ function TaskDetailsPanel(props: {
                                     disabled={isUpdatingTask}
                                     className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 >
-                                    {(['new', 'planned', 'in_progress', 'in_review', 'finished', 'blocked'] as TaskStatus[]).map((s) => (
+                                    {TASK_STATUS_ORDER.map((s) => (
                                         <option key={s} value={s}>
-                                            {s}
+                                            {t(TASK_STATUS_TITLE_KEY_BY_STATUS[s])}
                                         </option>
                                     ))}
+                                </select>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('projects.task.priority')}
+                                </label>
+                                <select
+                                    value={priority}
+                                    onChange={(e) => {
+                                        const next = (e.target.value as TaskPriority) || ''
+                                        setPriority(next)
+                                        void savePatch({ priority: next || null })
+                                    }}
+                                    disabled={isUpdatingTask}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                >
+                                    <option value="">{t('projects.task.priority.none')}</option>
+                                    <option value="high">{t('projects.task.priority.high')}</option>
+                                    <option value="medium">{t('projects.task.priority.medium')}</option>
+                                    <option value="low">{t('projects.task.priority.low')}</option>
                                 </select>
                             </div>
 
@@ -570,7 +619,7 @@ function TaskDetailsPanel(props: {
 
                         <div className="space-y-1.5">
                             <label className="text-xs font-medium text-[var(--app-hint)]">
-                                {t('projects.task.notes')}
+                                {t('projects.task.description')}
                             </label>
                             <textarea
                                 value={description}
@@ -889,7 +938,23 @@ export function TaskWorkbench(props: {
                     />
                 ) : props.tab === 'chat' ? (
                     sessionId ? (
-                        <TaskSessionChat api={api} sessionId={sessionId} onBack={handleBackToProject} />
+                        <TaskSessionChat
+                            api={api}
+                            sessionId={sessionId}
+                            onBack={handleBackToProject}
+                            onViewFiles={() => {
+                                void navigate({
+                                    to: '/projects/$projectId/tasks/$taskId/files',
+                                    params: { projectId: props.projectId, taskId: props.taskId }
+                                })
+                            }}
+                            onViewTerminal={() => {
+                                void navigate({
+                                    to: '/projects/$projectId/tasks/$taskId/terminal',
+                                    params: { projectId: props.projectId, taskId: props.taskId }
+                                })
+                            }}
+                        />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                             {t('projects.workbench.noSession')}

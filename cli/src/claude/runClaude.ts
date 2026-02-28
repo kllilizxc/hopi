@@ -17,6 +17,7 @@ import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } f
 import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol';
 import { ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
 export interface StartOptions {
     model?: string
@@ -29,7 +30,7 @@ export interface StartOptions {
 }
 
 export async function runClaude(options: StartOptions = {}): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveCliWorkingDirectory();
     const startedBy = options.startedBy ?? 'terminal';
 
     // Log environment info at startup

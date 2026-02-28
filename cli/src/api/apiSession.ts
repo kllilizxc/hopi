@@ -85,13 +85,24 @@ export class ApiSessionClient extends EventEmitter {
             autoConnect: false
         })
 
+        const emitTerminalEvent = (
+            event: 'terminal:ready' | 'terminal:output' | 'terminal:exit' | 'terminal:error',
+            payload: Record<string, unknown>
+        ): void => {
+            // Socket.IO buffers emits while disconnected; drop live terminal events to avoid stale replay.
+            if (!this.socket.connected) {
+                return
+            }
+            this.socket.emit(event, payload as never)
+        }
+
         this.terminalManager = new TerminalManager({
             sessionId: this.sessionId,
             getSessionPath: () => this.metadata?.path ?? null,
-            onReady: (payload) => this.socket.emit('terminal:ready', payload),
-            onOutput: (payload) => this.socket.emit('terminal:output', payload),
-            onExit: (payload) => this.socket.emit('terminal:exit', payload),
-            onError: (payload) => this.socket.emit('terminal:error', payload)
+            onReady: (payload) => emitTerminalEvent('terminal:ready', payload),
+            onOutput: (payload) => emitTerminalEvent('terminal:output', payload),
+            onExit: (payload) => emitTerminalEvent('terminal:exit', payload),
+            onError: (payload) => emitTerminalEvent('terminal:error', payload)
         })
 
         this.socket.on('connect', () => {
@@ -116,7 +127,11 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
             this.rpcHandlerManager.onSocketDisconnect()
-            this.terminalManager.closeAll()
+            // Keep terminal subprocesses alive across transient transport drops.
+            // They are explicitly closed in close(), and on terminal:close events from hub.
+            if (reason === 'io client disconnect' || reason === 'io server disconnect') {
+                this.terminalManager.closeAll()
+            }
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
@@ -440,9 +455,19 @@ export class ApiSessionClient extends EventEmitter {
     keepAlive(
         thinking: boolean,
         mode: 'local' | 'remote',
-        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode }
+        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode },
+        options?: { volatile?: boolean }
     ): void {
-        this.socket.volatile.emit('session-alive', {
+        const volatile = options?.volatile === true
+
+        // Avoid buffering keep-alive events while disconnected.
+        // (Socket.IO will queue non-volatile emits in-memory and flush on reconnect; keepAlive is frequent.)
+        if (!this.socket.connected) {
+            return
+        }
+
+        const emitter = volatile ? this.socket.volatile : this.socket
+        emitter.emit('session-alive', {
             sid: this.sessionId,
             time: Date.now(),
             thinking,

@@ -195,6 +195,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
     const connectOnceRef = useRef(false)
     const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null)
     const modifierStateRef = useRef<ModifierState>({ ctrl: false, alt: false })
+    const lastPrintedExitRef = useRef<{ code: number | null; signal: string | null; at: number } | null>(null)
     const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null)
     const [ctrlActive, setCtrlActive] = useState(false)
     const [altActive, setAltActive] = useState(false)
@@ -224,9 +225,24 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
 
     useEffect(() => {
         onExit((code, signal) => {
-            setExitInfo({ code, signal })
-            terminalRef.current?.write(`\r\n[process exited${code !== null ? ` with code ${code}` : ''}]`)
-            connectOnceRef.current = false
+            const isSigtermExit = code === null && signal === 'SIGTERM'
+            setExitInfo(isSigtermExit ? null : { code, signal })
+            const shouldPrintExit = !isSigtermExit
+            const now = Date.now()
+            const lastPrinted = lastPrintedExitRef.current
+            const isDuplicate =
+                lastPrinted &&
+                lastPrinted.code === code &&
+                lastPrinted.signal === signal &&
+                now - lastPrinted.at < 1000
+
+            if (shouldPrintExit && !isDuplicate) {
+                terminalRef.current?.write(`\r\n[process exited${code !== null ? ` with code ${code}` : ''}]`)
+                lastPrintedExitRef.current = { code, signal, at: now }
+            }
+
+            // Stop resize-driven reconnect loops after terminal has definitively exited.
+            connectOnceRef.current = true
         })
     }, [onExit])
 
@@ -293,6 +309,23 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
     }, [session?.active, connect])
 
     useEffect(() => {
+        if (!session?.active || terminalState.status !== 'connected') {
+            return
+        }
+
+        const interval = setInterval(() => {
+            const size = lastSizeRef.current
+            if (!size) {
+                return
+            }
+            // Heartbeat via no-op resize keeps hub/CLI idle timers from terminating an actively viewed terminal.
+            resize(size.cols, size.rows)
+        }, 3_000)
+
+        return () => clearInterval(interval)
+    }, [session?.active, terminalState.status, resize])
+
+    useEffect(() => {
         connectOnceRef.current = false
         setExitInfo(null)
         disconnect()
@@ -315,13 +348,17 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
 
     useEffect(() => {
         if (terminalState.status === 'error') {
-            connectOnceRef.current = false
+            const shouldReconnect =
+                terminalState.error !== 'Terminal exited.' &&
+                !terminalState.error.startsWith('Session is inactive') &&
+                !terminalState.error.startsWith('Too many terminals open')
+            connectOnceRef.current = !shouldReconnect
             return
         }
         if (terminalState.status === 'connecting' || terminalState.status === 'connected') {
             setExitInfo(null)
         }
-    }, [terminalState.status])
+    }, [terminalState])
 
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const writePlainInput = useCallback((text: string) => {

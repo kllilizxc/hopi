@@ -71,7 +71,32 @@ export async function startSessionFromTask(options: {
 
     const yolo = Boolean(overrides.yolo)
 
-    const spawn = await options.engine.spawnSession(project.machineId, workspace.path, agent, model, yolo, 'simple')
+    const sessionType = project.defaultSessionType === 'worktree' ? 'worktree' : 'simple'
+    const worktreeName = sessionType === 'worktree'
+        ? `task-${task.id.slice(0, 8)}-${task.title}`.slice(0, 80)
+        : undefined
+
+    const machine = options.engine.getMachineByNamespace(project.machineId, options.namespace)
+    if (!machine) {
+        return { ok: false, error: 'Machine not found' }
+    }
+
+    const runnerSeemsOnline = machine.active || (() => {
+        if (!machine.runnerState || typeof machine.runnerState !== 'object') {
+            return false
+        }
+        const status = (machine.runnerState as Record<string, unknown>).status
+        return status === 'running'
+    })()
+
+    if (!runnerSeemsOnline) {
+        return {
+            ok: false,
+            error: 'Runner offline or not connected. Start it on the machine and try again: hapi runner start'
+        }
+    }
+
+    const spawn = await options.engine.spawnSession(project.machineId, workspace.path, agent, model, yolo, sessionType, worktreeName)
     if (spawn.type !== 'success') {
         return { ok: false, error: spawn.message }
     }

@@ -21,6 +21,7 @@ import type {
     SpawnResponse,
     TaskResponse,
     TaskStartSessionResponse,
+    TaskWorktreeMergeResponse,
     TasksResponse,
     UploadFileResponse,
     VisibilityPayload,
@@ -123,7 +124,13 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            throw new Error(`HTTP ${res.status} ${res.statusText}: ${body}`)
+            const code = parseErrorCode(body)
+            const detail = code
+                ? `: ${code}`
+                : body
+                    ? `: ${body}`
+                    : ''
+            throw new ApiError(`HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
         }
 
         return await res.json() as T
@@ -188,6 +195,10 @@ export class ApiClient {
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         defaultPermissionMode?: PermissionMode
         defaultModelMode?: ModelMode
+        defaultSessionType?: 'simple' | 'worktree'
+        worktreeTargetBranch?: string
+        worktreeAutoCommitMode?: 'off' | 'per_conversation'
+        worktreeCleanupAfterMerge?: boolean
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
@@ -206,6 +217,10 @@ export class ApiClient {
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         defaultPermissionMode?: PermissionMode | null
         defaultModelMode?: ModelMode | null
+        defaultSessionType?: 'simple' | 'worktree' | null
+        worktreeTargetBranch?: string | null
+        worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
+        worktreeCleanupAfterMerge?: boolean
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
@@ -327,6 +342,13 @@ export class ApiClient {
         modelMode?: ModelMode
     }): Promise<TaskStartSessionResponse> {
         return await this.request<TaskStartSessionResponse>(`/api/tasks/${encodeURIComponent(taskId)}/start-session`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async mergeTaskWorktree(taskId: string, payload?: { targetBranch?: string }): Promise<TaskWorktreeMergeResponse> {
+        return await this.request<TaskWorktreeMergeResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`, {
             method: 'POST',
             body: JSON.stringify(payload ?? {})
         })

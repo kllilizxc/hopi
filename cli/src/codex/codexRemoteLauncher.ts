@@ -339,6 +339,13 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             } else if (msgType === 'task_failed') {
                 const error = asString(msg.error);
                 messageBuffer.addMessage(error ? `Task failed: ${error}` : 'Task failed', 'status');
+                if (!activeTurnHasAssistantReply) {
+                    session.sendCodexMessage({
+                        type: 'message',
+                        message: error ? `Task failed: ${error}` : 'Task failed. Check logs for details.',
+                        id: randomUUID()
+                    });
+                }
                 if (!useAppServer) {
                     sendReady();
                 }

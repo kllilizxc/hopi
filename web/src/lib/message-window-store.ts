@@ -38,6 +38,10 @@ const states = new Map<string, InternalState>()
 const listeners = new Map<string, Set<() => void>>()
 const pendingVisibilityCacheBySession = new Map<string, Map<string, PendingVisibilityCacheEntry>>()
 
+export function getActiveMessageWindowSessionIds(): string[] {
+    return Array.from(listeners.keys())
+}
+
 function getPendingVisibilityCache(sessionId: string): Map<string, PendingVisibilityCacheEntry> {
     const existing = pendingVisibilityCacheBySession.get(sessionId)
     if (existing) {

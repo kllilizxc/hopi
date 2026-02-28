@@ -20,6 +20,8 @@ import {
     RpcGateway,
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
+    type RpcGitAutocommitWorktreeResponse,
+    type RpcGitMergeWorktreeResponse,
     type RpcListDirectoryResponse,
     type RpcPathExistsResponse,
     type RpcReadFileResponse,
@@ -34,6 +36,8 @@ export type { SyncEventListener } from './eventPublisher'
 export type {
     RpcCommandResponse,
     RpcDeleteUploadResponse,
+    RpcGitAutocommitWorktreeResponse,
+    RpcGitMergeWorktreeResponse,
     RpcListDirectoryResponse,
     RpcPathExistsResponse,
     RpcReadFileResponse,
@@ -436,6 +440,14 @@ export class SyncEngine {
 
     async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
         return await this.rpcGateway.getGitDiffFile(sessionId, options)
+    }
+
+    async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
+        return await this.rpcGateway.gitAutocommitWorktree(sessionId, options)
+    }
+
+    async gitMergeWorktree(sessionId: string, options: { targetBranch: string; commitMessage: string }): Promise<RpcGitMergeWorktreeResponse> {
+        return await this.rpcGateway.gitMergeWorktree(sessionId, options)
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
