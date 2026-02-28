@@ -851,7 +851,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                     }}
                                                     className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${
                                                         useArchiveStyle
-                                                            ? 'border border-dashed border-[var(--app-kanban-archive-border)] ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
+                                                            ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
                                                             : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
                                                     } ${
                                                         isDragging ? 'opacity-60' : ''

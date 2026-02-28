@@ -74,10 +74,10 @@
     --app-kanban-finished-bg: rgba(34, 197, 94, 0.10);
     --app-kanban-finished-bg-2: rgba(74, 222, 128, 0.06);
 
-    --app-kanban-archive: #ea580c; /* orange */
-    --app-kanban-archive-bg: rgba(249, 115, 22, 0.18);
-    --app-kanban-archive-bg-2: rgba(251, 146, 60, 0.12);
-    --app-kanban-archive-border: rgba(249, 115, 22, 0.34);
+    --app-kanban-archive: #6b7280; /* gray */
+    --app-kanban-archive-bg: rgba(107, 114, 128, 0.16);
+    --app-kanban-archive-bg-2: rgba(156, 163, 175, 0.1);
+    --app-kanban-archive-border: rgba(107, 114, 128, 0.28);
 
     --app-font-scale: 1;
     --app-scrollbar-size: 6px;
@@ -159,10 +159,10 @@
     --app-kanban-finished-bg: rgba(74, 222, 128, 0.16);
     --app-kanban-finished-bg-2: rgba(134, 239, 172, 0.10);
 
-    --app-kanban-archive: #fb923c; /* orange */
-    --app-kanban-archive-bg: rgba(251, 146, 60, 0.24);
-    --app-kanban-archive-bg-2: rgba(253, 186, 116, 0.14);
-    --app-kanban-archive-border: rgba(251, 146, 60, 0.45);
+    --app-kanban-archive: #9ca3af; /* gray */
+    --app-kanban-archive-bg: rgba(156, 163, 175, 0.2);
+    --app-kanban-archive-bg-2: rgba(209, 213, 219, 0.12);
+    --app-kanban-archive-border: rgba(156, 163, 175, 0.36);
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
 }
