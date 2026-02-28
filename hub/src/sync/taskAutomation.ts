@@ -84,9 +84,13 @@ function isAssistantReplyMessage(message: DecryptedMessage): boolean {
 }
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
-    if (getMessageRole(message) !== 'user') return false
-    if (isImprovementsScanLocalId(message.localId)) return false
+    if (!isTaskProgressPromptMessage(message)) return false
     return getMessageSentFrom(message) !== 'cli'
+}
+
+function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
+    if (getMessageRole(message) !== 'user') return false
+    return !isImprovementsScanLocalId(message.localId)
 }
 
 type LinkedTask = {
@@ -205,15 +209,21 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        if (isAutomationPromptMessage(message)) {
+        if (isTaskProgressPromptMessage(message)) {
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
-            if (current.status === 'finished') return
+            const shouldMoveToInProgress = current.status !== 'in_progress'
+            const shouldResetMergeState = current.worktreeMergedAt !== null
+                || current.worktreeMergeCommit !== null
+                || current.finishedAt !== null
 
-            if (current.status !== 'in_progress') {
+            if (shouldMoveToInProgress || shouldResetMergeState) {
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                    status: 'in_progress'
+                    status: 'in_progress',
+                    worktreeMergedAt: null,
+                    worktreeMergeCommit: null,
+                    finishedAt: null
                 })
                 if (updated) {
                     this.engine.handleRealtimeEvent({
@@ -273,7 +283,7 @@ export class TaskAutomation {
                 return isAutomationPromptMessage(prompt)
             }
 
-            const scan = this.scanForLatestPromptAndReady(sessionId)
+            const scan = this.scanForLatestPromptAndReady(sessionId, isAutomationPromptMessage)
             if (!scan) return false
             if (scan.readySeq !== readyMessage.seq) return false
             return true
@@ -348,8 +358,8 @@ export class TaskAutomation {
             createdAt: storedPrompt.createdAt
         }
 
-        // Only flip for "automation prompts" (webapp / telegram), not local CLI prompts.
-        if (!isAutomationPromptMessage(prompt)) {
+        // Ignore internal improvements-scan prompts when deriving task progress.
+        if (!isTaskProgressPromptMessage(prompt)) {
             return true
         }
 
@@ -378,7 +388,7 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_progress') return
 
-        const scanResult = this.scanForLatestPromptAndReady(sessionId)
+        const scanResult = this.scanForLatestPromptAndReady(sessionId, isTaskProgressPromptMessage)
         if (!scanResult) return
         if (!scanResult.hasAssistantReply) return
 
@@ -396,7 +406,10 @@ export class TaskAutomation {
         }
     }
 
-    private scanForLatestPromptAndReady(sessionId: string): {
+    private scanForLatestPromptAndReady(
+        sessionId: string,
+        isPromptMessage: (message: DecryptedMessage) => boolean
+    ): {
         promptSeq: number
         readySeq: number
         hasAssistantReply: boolean
@@ -406,7 +419,7 @@ export class TaskAutomation {
          * Long turns (streaming output / many tool calls) can push the prompt outside the last 200 messages,
          * causing lastPromptIndex to be -1 and blocking the flip.
          *
-         * Strategy: page backwards from the end until we find the latest ready + the latest automation prompt.
+         * Strategy: page backwards from the end until we find the latest ready + the latest tracked prompt.
          * While paging between ready → prompt, track whether any assistant reply happened.
          */
 
@@ -438,7 +451,7 @@ export class TaskAutomation {
                     continue
                 }
 
-                if (promptSeq === null && isAutomationPromptMessage(msg)) {
+                if (promptSeq === null && isPromptMessage(msg)) {
                     promptSeq = msg.seq
                     break
                 }

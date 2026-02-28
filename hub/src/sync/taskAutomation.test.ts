@@ -579,4 +579,78 @@ describe('TaskAutomation', () => {
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
     })
+
+    it('moves finished task back to in_progress on follow-up prompt and clears merge markers', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        const mergedAt = Date.now() - 1_000
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'finished',
+            activeSessionId: sessionId,
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'abc123'
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, { finishedAt: mergedAt })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'continue this task' },
+            meta: { sentFrom: 'cli' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('in_progress')
+        expect(afterPrompt?.worktreeMergedAt).toBeNull()
+        expect(afterPrompt?.worktreeMergeCommit).toBeNull()
+        expect(afterPrompt?.finishedAt).toBeNull()
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'output', data: { type: 'text', text: 'working' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
+    })
 })
