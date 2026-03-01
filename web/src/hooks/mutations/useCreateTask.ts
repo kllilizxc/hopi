@@ -19,6 +19,7 @@ type CreateTaskInput = {
     status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
     priority?: 'high' | 'medium' | 'low'
     workspaceId?: string
+    agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     sortKey?: number
     attachments?: TaskAttachmentInput[]
 }
@@ -41,6 +42,7 @@ export function useCreateTask(api: ApiClient | null): {
                 status: input.status,
                 priority: input.priority,
                 workspaceId: input.workspaceId,
+                agentFlavor: input.agentFlavor,
                 sortKey: input.sortKey,
                 attachments: input.attachments
             })
@@ -57,4 +59,3 @@ export function useCreateTask(api: ApiClient | null): {
         error: mutation.error instanceof Error ? mutation.error.message : mutation.error ? 'Failed to create task' : null,
     }
 }
-

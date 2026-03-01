@@ -100,6 +100,7 @@ export type StoredTask = {
     sortKey: number | null
     activeSessionId: string | null
     workspaceId: string | null
+    agentFlavor: string | null
     attachments: unknown | null
     source: string | null
     sourceTaskId: string | null

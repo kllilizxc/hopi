@@ -5,6 +5,7 @@ import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
 import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
+import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
@@ -34,6 +35,7 @@ import { BackIcon, CopyIcon } from '@/assets/icons'
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 
 type TaskWorkbenchTab = 'task' | 'chat' | 'terminal' | 'diffs' | 'files'
+const TASK_AGENT_OPTIONS: AgentType[] = ['claude', 'codex', 'gemini', 'opencode']
 
 function getTaskPriorityLabelKey(priority: TaskPriority): string {
     return `projects.task.priority.${priority}`
@@ -87,6 +89,7 @@ function StartSessionDialog(props: {
     projectId: string
     taskId: string
     machineId: string
+    taskAgentFlavor: AgentType | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
@@ -103,7 +106,7 @@ function StartSessionDialog(props: {
     const { startTaskSession, isPending, error } = useStartTaskSession(api)
 
     const initialWorkspaceId = props.taskWorkspaceId ?? props.defaultWorkspaceId ?? props.workspaces[0]?.id ?? ''
-    const initialAgent = props.projectDefaults.agent
+    const initialAgent = props.taskAgentFlavor ?? props.projectDefaults.agent
     const initialModel = (() => {
         const mode = props.projectDefaults.modelMode
         if (initialAgent === 'claude' && (mode === 'sonnet' || mode === 'opus')) {
@@ -378,6 +381,7 @@ function TaskDetailsPanel(props: {
     const [status, setStatus] = useState<TaskStatus>(props.task.status)
     const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
+    const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
     const [attachments, setAttachments] = useState<TaskAttachment[]>(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     const [attachmentsBusy, setAttachmentsBusy] = useState(false)
     const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -391,8 +395,9 @@ function TaskDetailsPanel(props: {
         setStatus(props.task.status)
         setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
+        setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
-    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.attachments])
+    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.attachments])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
@@ -468,6 +473,7 @@ function TaskDetailsPanel(props: {
     }, [props.task.workspaceId, props.projectDefaultWorkspaceId, props.workspaces, t])
 
     const sessionId = props.task.activeSessionId ?? null
+    const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
 
     return (
         <div className="h-full flex flex-col">
@@ -490,6 +496,7 @@ function TaskDetailsPanel(props: {
                                 />
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
                                     <Badge variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Badge>
+                                    <Badge variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Badge>
                                     {props.task.priority ? (
                                         <Badge variant={getTaskPriorityBadgeVariant(props.task.priority)}>
                                             {t(getTaskPriorityLabelKey(props.task.priority))}
@@ -509,7 +516,7 @@ function TaskDetailsPanel(props: {
                             </button>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.status')}
@@ -573,6 +580,31 @@ function TaskDetailsPanel(props: {
                                     {props.workspaces.map((ws) => (
                                         <option key={ws.id} value={ws.id}>
                                             {(ws.label ?? ws.path) || ws.id}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('newSession.agent')}
+                                </label>
+                                <select
+                                    value={agentFlavor}
+                                    onChange={(e) => {
+                                        const value = e.target.value as AgentType | ''
+                                        setAgentFlavor(value)
+                                        void savePatch({ agentFlavor: value || null })
+                                    }}
+                                    disabled={isUpdatingTask}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                >
+                                    <option value="">
+                                        {t('projects.task.agent.projectDefault')}
+                                    </option>
+                                    {TASK_AGENT_OPTIONS.map((agent) => (
+                                        <option key={agent} value={agent}>
+                                            {getAgentFlavorLabel(agent)}
                                         </option>
                                     ))}
                                 </select>
@@ -713,6 +745,7 @@ function TaskDetailsPanel(props: {
                 projectId={props.projectId}
                 taskId={props.taskId}
                 machineId={props.projectMachineId}
+                taskAgentFlavor={agentFlavor || null}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}

@@ -217,6 +217,7 @@ export const TaskSchema = z.object({
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().nullable().optional(),
     workspaceId: z.string().nullable().optional(),
+    agentFlavor: AgentFlavorSchema.nullable().optional(),
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
     source: z.enum(['manual', 'improvements_scan']).nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),

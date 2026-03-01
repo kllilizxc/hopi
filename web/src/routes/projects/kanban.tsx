@@ -12,9 +12,13 @@ import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
+import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { TaskCardMenuIcon } from '@/assets/icons'
+import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
+import { AgentSelector } from '@/components/NewSession/AgentSelector'
+import type { AgentType } from '@/components/NewSession/types'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
@@ -281,6 +285,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const navigate = useNavigate()
     const { addToast } = useToast()
     const { t } = useTranslation()
+    const { project } = useProject(api, props.projectId)
     const { tasks, isLoading, error } = useTasks(api, props.projectId)
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
     const { deleteTask } = useDeleteTask(api)
@@ -289,8 +294,10 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskDraft, setNewTaskDraft] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
+    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>('claude')
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
     const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
+    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -454,7 +461,12 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         }
     }, [pendingGeneratedActionTaskId, deleteTask, props.projectId, addToast, t])
 
-    const handleCreateTask = useCallback(async (title: string, description?: string, priority?: TaskPriority | null) => {
+    const handleCreateTask = useCallback(async (
+        title: string,
+        description?: string,
+        priority?: TaskPriority | null,
+        agentFlavor?: AgentType
+    ) => {
         const trimmed = title.trim()
         if (!trimmed) return
 
@@ -471,6 +483,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 description: description?.trim() ? description.trim() : undefined,
                 priority: priority ?? undefined,
                 status: 'new',
+                agentFlavor: agentFlavor ?? defaultTaskAgent,
                 sortKey
             })
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
@@ -484,7 +497,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
             })
             return null
         }
-    }, [createTask, props.projectId, addToast, t, columns.new])
+    }, [createTask, props.projectId, addToast, t, columns.new, defaultTaskAgent])
 
     const computeDropTargetFromPoint = useCallback((clientX: number, clientY: number): DropTarget | null => {
         const hit = document.elementFromPoint(clientX, clientY)
@@ -606,12 +619,18 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const openCreateModal = () => {
         setNewTaskDraft('')
         setNewTaskPriority('')
+        setNewTaskAgent(defaultTaskAgent)
         setCreateOpen(true)
     }
 
     const handleCreateModal = async () => {
         if (isCreatingTask || !parsedNewTaskDraft.title) return
-        const created = await handleCreateTask(parsedNewTaskDraft.title, parsedNewTaskDraft.description, newTaskPriority || null)
+        const created = await handleCreateTask(
+            parsedNewTaskDraft.title,
+            parsedNewTaskDraft.description,
+            newTaskPriority || null,
+            newTaskAgent
+        )
         if (created) {
             setCreateOpen(false)
         }
@@ -743,6 +762,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                         const isDragging = dragState?.taskId === task.id
                                         const isGeneratedNew = task.source === 'improvements_scan' && task.status === 'new'
                                         const isGeneratedActionPending = pendingGeneratedActionTaskId === task.id
+                                        const cardAgentFlavor: AgentType = (task.agentFlavor as AgentType | null) ?? defaultTaskAgent
+                                        const usesProjectDefaultAgent = !task.agentFlavor
                                         const useArchiveStyle = task.status === 'finished'
                                         const cardBackground = useArchiveStyle
                                             ? [
@@ -871,13 +892,11 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                         event.preventDefault()
                                                         setMenuState({ taskId: task.id, anchorPoint: { x: event.clientX, y: event.clientY } })
                                                     }}
-                                                    className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${
-                                                        useArchiveStyle
+                                                    className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
                                                             ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
                                                             : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
-                                                    } ${
-                                                        isDragging ? 'opacity-60' : ''
-                                                    }`}
+                                                        } ${isDragging ? 'opacity-60' : ''
+                                                        }`}
                                                     style={{
                                                         background: cardBackground
                                                     }}
@@ -887,25 +906,27 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             <div className="text-sm font-medium break-words leading-snug">
                                                                 {task.title}
                                                             </div>
-                                                            {(task.activeSessionId || task.priority || isGeneratedNew) ? (
-                                                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                                                    {task.activeSessionId ? (
-                                                                        <div className="text-[10px] text-[var(--app-hint)]">
-                                                                            {t('projects.tasks.hasSession')}
-                                                                        </div>
-                                                                    ) : null}
-                                                                    {task.priority ? (
-                                                                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getTaskPriorityClass(task.priority)}`}>
-                                                                            {t(getTaskPriorityLabelKey(task.priority))}
-                                                                        </span>
-                                                                    ) : null}
-                                                                    {isGeneratedNew ? (
-                                                                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]">
-                                                                            {t('projects.tasks.generated')}
-                                                                        </span>
-                                                                    ) : null}
-                                                                </div>
-                                                            ) : null}
+                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                                                {task.activeSessionId ? (
+                                                                    <div className="text-[10px] text-[var(--app-hint)]">
+                                                                        {t('projects.tasks.hasSession')}
+                                                                    </div>
+                                                                ) : null}
+                                                                <span className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--app-fg)]">
+                                                                    {getAgentFlavorLabel(cardAgentFlavor)}
+                                                                    {usesProjectDefaultAgent ? ` · ${t('projects.task.agent.projectDefault')}` : ''}
+                                                                </span>
+                                                                {task.priority ? (
+                                                                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getTaskPriorityClass(task.priority)}`}>
+                                                                        {t(getTaskPriorityLabelKey(task.priority))}
+                                                                    </span>
+                                                                ) : null}
+                                                                {isGeneratedNew ? (
+                                                                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]">
+                                                                        {t('projects.tasks.generated')}
+                                                                    </span>
+                                                                ) : null}
+                                                            </div>
                                                             {isGeneratedNew ? (
                                                                 <div className="mt-2 flex items-center gap-1.5">
                                                                     <button
@@ -1013,6 +1034,11 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                     <option value="low">{t('projects.task.priority.low')}</option>
                                 </select>
                             </div>
+                            <AgentSelector
+                                agent={newTaskAgent}
+                                isDisabled={isCreatingTask}
+                                onAgentChange={setNewTaskAgent}
+                            />
                         </div>
 
                         <div className="mt-5 flex justify-end gap-2">

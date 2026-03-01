@@ -56,6 +56,7 @@ export class TaskStore {
         sortKey?: number | null
         activeSessionId?: string | null
         workspaceId?: string | null
+        agentFlavor?: string | null
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
@@ -76,6 +77,7 @@ export class TaskStore {
             sortKey?: number | null
             activeSessionId?: string | null
             workspaceId?: string | null
+            agentFlavor?: string | null
             attachments?: unknown
             worktreeMergedAt?: number | null
             worktreeMergeCommit?: string | null

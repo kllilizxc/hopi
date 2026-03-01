@@ -20,6 +20,7 @@ type UpdateTaskInput = {
         status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
+        agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: TaskAttachmentInput[]
@@ -53,4 +54,3 @@ export function useUpdateTask(api: ApiClient | null): {
         error: mutation.error instanceof Error ? mutation.error.message : mutation.error ? 'Failed to update task' : null,
     }
 }
-

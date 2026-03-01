@@ -108,6 +108,7 @@ export default {
   'projects.task.workspace.label': 'Workspace',
   'projects.task.workspace.none': 'No workspace selected',
   'projects.task.workspace.projectDefault': 'Project default',
+  'projects.task.agent.projectDefault': 'Project default',
 
   'projects.task.attachments.title': 'Attachments',
   'projects.task.attachments.budget': '{used} / {max}',

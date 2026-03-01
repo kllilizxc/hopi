@@ -9,3 +9,18 @@ export function isClaudeFlavor(flavor?: string | null): boolean {
 export function isKnownFlavor(flavor?: string | null): boolean {
     return isClaudeFlavor(flavor) || isCodexFamilyFlavor(flavor)
 }
+
+export function getAgentFlavorLabel(flavor?: string | null): string {
+    switch (flavor) {
+        case 'claude':
+            return 'Claude'
+        case 'codex':
+            return 'Codex'
+        case 'gemini':
+            return 'Gemini'
+        case 'opencode':
+            return 'OpenCode'
+        default:
+            return 'Unknown'
+    }
+}

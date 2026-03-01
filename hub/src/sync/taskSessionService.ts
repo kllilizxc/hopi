@@ -56,6 +56,7 @@ export async function startSessionFromTask(options: {
     }
 
     const agent = overrides.agent
+        ?? (task.agentFlavor as z.infer<typeof AgentFlavorSchema> | undefined)
         ?? (project.defaultAgentFlavor as z.infer<typeof AgentFlavorSchema> | undefined)
         ?? 'claude'
 

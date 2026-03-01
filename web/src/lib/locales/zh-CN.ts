@@ -108,6 +108,7 @@ export default {
   'projects.task.workspace.label': '工作区',
   'projects.task.workspace.none': '未选择工作区',
   'projects.task.workspace.projectDefault': '项目默认',
+  'projects.task.agent.projectDefault': '项目默认',
 
   'projects.task.attachments.title': '附件',
   'projects.task.attachments.budget': '{used} / {max}',

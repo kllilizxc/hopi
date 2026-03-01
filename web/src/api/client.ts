@@ -297,6 +297,7 @@ export class ApiClient {
         status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
         priority?: 'high' | 'medium' | 'low'
         workspaceId?: string
+        agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         sortKey?: number
         attachments?: Array<{
             id: string
@@ -323,6 +324,7 @@ export class ApiClient {
         status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
+        agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: Array<{

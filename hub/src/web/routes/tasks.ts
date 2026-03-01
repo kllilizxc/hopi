@@ -38,6 +38,7 @@ const createTaskSchema = z.object({
     status: TaskStatusSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).optional(),
     workspaceId: z.string().min(1).optional(),
+    agentFlavor: AgentFlavorSchema.optional(),
     sortKey: z.number().optional(),
     attachments: z.array(taskAttachmentSchema).optional()
 })
@@ -48,6 +49,7 @@ const updateTaskSchema = z.object({
     status: TaskStatusSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
     workspaceId: z.string().min(1).nullable().optional(),
+    agentFlavor: AgentFlavorSchema.nullable().optional(),
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
     attachments: z.array(taskAttachmentSchema).optional()
@@ -495,6 +497,7 @@ export function createTasksRoutes(options: {
             priority: parsed.data.priority ?? null,
             sortKey: parsed.data.sortKey ?? Date.now(),
             workspaceId: parsed.data.workspaceId ?? null,
+            agentFlavor: parsed.data.agentFlavor ?? null,
             attachments: attachments.length > 0 ? attachments : undefined,
             source: 'manual'
         })
@@ -551,6 +554,7 @@ export function createTasksRoutes(options: {
             status: parsed.data.status,
             priority: parsed.data.priority,
             workspaceId: parsed.data.workspaceId,
+            agentFlavor: parsed.data.agentFlavor,
             sortKey: parsed.data.sortKey,
             activeSessionId: parsed.data.activeSessionId,
             attachments: attachments,

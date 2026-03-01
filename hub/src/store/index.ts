@@ -297,6 +297,7 @@ export class Store {
                 sort_key REAL,
                 active_session_id TEXT,
                 workspace_id TEXT,
+                agent_flavor TEXT,
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
@@ -445,6 +446,9 @@ export class Store {
         }
         if (!taskColumns.has('worktree_merge_commit')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN worktree_merge_commit TEXT')
+        }
+        if (!taskColumns.has('agent_flavor')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN agent_flavor TEXT')
         }
     }
 

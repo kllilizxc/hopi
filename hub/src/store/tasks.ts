@@ -13,6 +13,7 @@ type DbTaskRow = {
     sort_key: number | null
     active_session_id: string | null
     workspace_id: string | null
+    agent_flavor: string | null
     attachments: string | null
     source: string | null
     source_task_id: string | null
@@ -35,6 +36,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         sortKey: row.sort_key,
         activeSessionId: row.active_session_id,
         workspaceId: row.workspace_id,
+        agentFlavor: row.agent_flavor,
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
@@ -139,6 +141,7 @@ export function createTask(
         sortKey?: number | null
         activeSessionId?: string | null
         workspaceId?: string | null
+        agentFlavor?: string | null
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
@@ -150,12 +153,12 @@ export function createTask(
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
-            sort_key, active_session_id, workspace_id,
+            sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, worktree_merged_at, worktree_merge_commit,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
-            @sort_key, @active_session_id, @workspace_id,
+            @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @worktree_merged_at, @worktree_merge_commit,
             @created_at, @updated_at, NULL, NULL
         )
@@ -169,6 +172,7 @@ export function createTask(
         sort_key: task.sortKey ?? null,
         active_session_id: task.activeSessionId ?? null,
         workspace_id: task.workspaceId ?? null,
+        agent_flavor: task.agentFlavor ?? null,
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
@@ -197,6 +201,7 @@ export function updateTaskByNamespace(
         sortKey?: number | null
         activeSessionId?: string | null
         workspaceId?: string | null
+        agentFlavor?: string | null
         attachments?: unknown
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
@@ -220,6 +225,7 @@ export function updateTaskByNamespace(
         sortKey: patch.sortKey !== undefined ? patch.sortKey : current.sortKey,
         activeSessionId: patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId,
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
+        agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
         worktreeMergedAt: activeSessionChanged
             ? null
@@ -245,6 +251,7 @@ export function updateTaskByNamespace(
             sort_key = @sort_key,
             active_session_id = @active_session_id,
             workspace_id = @workspace_id,
+            agent_flavor = @agent_flavor,
             attachments = @attachments,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
@@ -262,6 +269,7 @@ export function updateTaskByNamespace(
         sort_key: next.sortKey,
         active_session_id: next.activeSessionId,
         workspace_id: next.workspaceId,
+        agent_flavor: next.agentFlavor,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
