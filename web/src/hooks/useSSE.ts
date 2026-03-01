@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { isObject } from '@hapi/protocol'
-import type { SyncEvent } from '@/types/api'
+import type {
+    ModelMode,
+    PermissionMode,
+    SessionResponse,
+    SessionsResponse,
+    SyncEvent
+} from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { clearMessageWindow, ingestIncomingMessages } from '@/lib/message-window-store'
 
@@ -14,6 +20,161 @@ type SSESubscription = {
 type VisibilityState = 'visible' | 'hidden'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
+type SessionUpdatedEvent = Extract<SyncEvent, { type: 'session-updated' }>
+
+type SessionRealtimePatch = {
+    active?: boolean
+    thinking?: boolean
+    activeAt?: number
+    permissionMode?: PermissionMode
+    modelMode?: ModelMode
+}
+
+const SESSION_REALTIME_KEYS = new Set(['active', 'thinking', 'activeAt', 'permissionMode', 'modelMode'])
+
+function sortSessionSummaries(sessions: SessionsResponse['sessions']): SessionsResponse['sessions'] {
+    return [...sessions].sort((a, b) => {
+        if (a.active !== b.active) {
+            return a.active ? -1 : 1
+        }
+        if (a.active && a.pendingRequestsCount !== b.pendingRequestsCount) {
+            return b.pendingRequestsCount - a.pendingRequestsCount
+        }
+        return b.updatedAt - a.updatedAt
+    })
+}
+
+function parseSessionRealtimePatch(event: SessionUpdatedEvent): SessionRealtimePatch | null {
+    if (!isObject(event.data)) {
+        return null
+    }
+
+    const keys = Object.keys(event.data)
+    if (keys.length === 0 || keys.some((key) => !SESSION_REALTIME_KEYS.has(key))) {
+        return null
+    }
+
+    const patch: SessionRealtimePatch = {}
+    if ('active' in event.data) {
+        if (typeof event.data.active !== 'boolean') {
+            return null
+        }
+        patch.active = event.data.active
+    }
+    if ('thinking' in event.data) {
+        if (typeof event.data.thinking !== 'boolean') {
+            return null
+        }
+        patch.thinking = event.data.thinking
+    }
+    if ('activeAt' in event.data) {
+        if (typeof event.data.activeAt !== 'number') {
+            return null
+        }
+        patch.activeAt = event.data.activeAt
+    }
+    if ('permissionMode' in event.data) {
+        if (typeof event.data.permissionMode !== 'string') {
+            return null
+        }
+        patch.permissionMode = event.data.permissionMode as PermissionMode
+    }
+    if ('modelMode' in event.data) {
+        if (typeof event.data.modelMode !== 'string') {
+            return null
+        }
+        patch.modelMode = event.data.modelMode as ModelMode
+    }
+
+    return Object.keys(patch).length > 0 ? patch : null
+}
+
+function applySessionRealtimePatch(queryClient: QueryClient, event: SessionUpdatedEvent): boolean {
+    const patch = parseSessionRealtimePatch(event)
+    if (!patch) {
+        return false
+    }
+
+    queryClient.setQueryData<SessionResponse>(queryKeys.session(event.sessionId), (current) => {
+        if (!current?.session) {
+            return current
+        }
+
+        const nextSession = { ...current.session }
+        let changed = false
+
+        if (patch.active !== undefined && nextSession.active !== patch.active) {
+            nextSession.active = patch.active
+            changed = true
+        }
+        if (patch.thinking !== undefined && nextSession.thinking !== patch.thinking) {
+            nextSession.thinking = patch.thinking
+            changed = true
+        }
+        if (patch.activeAt !== undefined && nextSession.activeAt !== patch.activeAt) {
+            nextSession.activeAt = patch.activeAt
+            changed = true
+        }
+        if (patch.permissionMode !== undefined && nextSession.permissionMode !== patch.permissionMode) {
+            nextSession.permissionMode = patch.permissionMode
+            changed = true
+        }
+        if (patch.modelMode !== undefined && nextSession.modelMode !== patch.modelMode) {
+            nextSession.modelMode = patch.modelMode
+            changed = true
+        }
+
+        if (!changed) {
+            return current
+        }
+        return { ...current, session: nextSession }
+    })
+
+    queryClient.setQueryData<SessionsResponse>(queryKeys.sessions, (current) => {
+        if (!current) {
+            return current
+        }
+
+        const index = current.sessions.findIndex((session) => session.id === event.sessionId)
+        if (index < 0) {
+            return current
+        }
+
+        const currentSummary = current.sessions[index]
+        const nextSummary = { ...currentSummary }
+        let changed = false
+
+        if (patch.active !== undefined && nextSummary.active !== patch.active) {
+            nextSummary.active = patch.active
+            changed = true
+        }
+        if (patch.thinking !== undefined && nextSummary.thinking !== patch.thinking) {
+            nextSummary.thinking = patch.thinking
+            changed = true
+        }
+        if (patch.activeAt !== undefined && nextSummary.activeAt !== patch.activeAt) {
+            nextSummary.activeAt = patch.activeAt
+            changed = true
+        }
+        if (patch.modelMode !== undefined && nextSummary.modelMode !== patch.modelMode) {
+            nextSummary.modelMode = patch.modelMode
+            changed = true
+        }
+
+        if (!changed) {
+            return current
+        }
+
+        const nextSessions = [...current.sessions]
+        nextSessions[index] = nextSummary
+        return {
+            ...current,
+            sessions: sortSessionSummaries(nextSessions)
+        }
+    })
+
+    return true
+}
 
 function getVisibilityState(): VisibilityState {
     if (typeof document === 'undefined') {
@@ -131,7 +292,7 @@ export function useSSE(options: {
                 ingestIncomingMessages(event.sessionId, [event.message])
             }
 
-            if (event.type === 'session-added' || event.type === 'session-updated' || event.type === 'session-removed') {
+            if (event.type === 'session-added' || event.type === 'session-removed') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                 if ('sessionId' in event) {
                     if (event.type === 'session-removed') {
@@ -140,6 +301,14 @@ export function useSSE(options: {
                     } else {
                         void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                     }
+                }
+            }
+
+            if (event.type === 'session-updated') {
+                const patched = applySessionRealtimePatch(queryClient, event)
+                if (!patched) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                 }
             }
 
