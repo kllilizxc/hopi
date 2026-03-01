@@ -142,6 +142,61 @@ function normalizeBaseRef(raw: unknown): string | null {
     return value
 }
 
+async function autoCommitWorktreeIfNeeded(
+    worktreePath: string,
+    message: string,
+    timeout: number
+): Promise<GitAutocommitWorktreeResponse> {
+    const conflictCheck = await runGitCommand(['diff', '--name-only', '--diff-filter=U'], worktreePath, timeout)
+    if (!conflictCheck.success) {
+        return conflictCheck
+    }
+    if ((conflictCheck.stdout ?? '').trim().length > 0) {
+        return rpcError('Cannot auto-commit: merge conflicts detected', {
+            stdout: conflictCheck.stdout,
+            stderr: conflictCheck.stderr,
+            exitCode: conflictCheck.exitCode
+        })
+    }
+
+    const status = await runGitCommand(['status', '--porcelain'], worktreePath, timeout)
+    if (!status.success) {
+        return status
+    }
+    if ((status.stdout ?? '').trim().length === 0) {
+        return { success: true, skippedReason: 'clean' }
+    }
+
+    const addResult = await runGitCommand(['add', '-A'], worktreePath, timeout)
+    if (!addResult.success) {
+        return addResult
+    }
+
+    const commitArgs = ['commit', '-m', message, '--no-gpg-sign', '--no-verify']
+    let commitResult = await runGitCommand(commitArgs, worktreePath, timeout)
+    if (!commitResult.success && needsGitIdentity(`${commitResult.stderr ?? ''}\n${commitResult.stdout ?? ''}\n${commitResult.error ?? ''}`)) {
+        commitResult = await runGitCommand(
+            ['-c', 'user.name=HAPI', '-c', 'user.email=hapi@local', ...commitArgs],
+            worktreePath,
+            timeout
+        )
+    }
+    if (!commitResult.success) {
+        return commitResult
+    }
+
+    const hashResult = await runGitCommand(['rev-parse', 'HEAD'], worktreePath, timeout)
+    const commitHash = hashResult.success ? (hashResult.stdout ?? '').trim() : undefined
+
+    return {
+        success: true,
+        commitHash: commitHash || undefined,
+        stdout: commitResult.stdout,
+        stderr: commitResult.stderr,
+        exitCode: commitResult.exitCode
+    }
+}
+
 export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<GitStatusRequest, GitCommandResponse>('git-status', async (data) => {
         const resolved = resolveCwd(data.cwd, workingDirectory)
@@ -185,55 +240,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         }
 
         const timeout = data.timeout ?? 30_000
-
-        const conflictCheck = await runGitCommand(['diff', '--name-only', '--diff-filter=U'], worktree.worktreePath, timeout)
-        if (!conflictCheck.success) {
-            return conflictCheck
-        }
-        if ((conflictCheck.stdout ?? '').trim().length > 0) {
-            return rpcError('Cannot auto-commit: merge conflicts detected', {
-                stdout: conflictCheck.stdout,
-                stderr: conflictCheck.stderr,
-                exitCode: conflictCheck.exitCode
-            })
-        }
-
-        const status = await runGitCommand(['status', '--porcelain'], worktree.worktreePath, timeout)
-        if (!status.success) {
-            return status
-        }
-        if ((status.stdout ?? '').trim().length === 0) {
-            return { success: true, skippedReason: 'clean' }
-        }
-
-        const addResult = await runGitCommand(['add', '-A'], worktree.worktreePath, timeout)
-        if (!addResult.success) {
-            return addResult
-        }
-
-        const commitArgs = ['commit', '-m', message, '--no-gpg-sign', '--no-verify']
-        let commitResult = await runGitCommand(commitArgs, worktree.worktreePath, timeout)
-        if (!commitResult.success && needsGitIdentity(`${commitResult.stderr ?? ''}\n${commitResult.stdout ?? ''}\n${commitResult.error ?? ''}`)) {
-            commitResult = await runGitCommand(
-                ['-c', 'user.name=HAPI', '-c', 'user.email=hapi@local', ...commitArgs],
-                worktree.worktreePath,
-                timeout
-            )
-        }
-        if (!commitResult.success) {
-            return commitResult
-        }
-
-        const hashResult = await runGitCommand(['rev-parse', 'HEAD'], worktree.worktreePath, timeout)
-        const commitHash = hashResult.success ? (hashResult.stdout ?? '').trim() : undefined
-
-        return {
-            success: true,
-            commitHash: commitHash || undefined,
-            stdout: commitResult.stdout,
-            stderr: commitResult.stderr,
-            exitCode: commitResult.exitCode
-        }
+        return await autoCommitWorktreeIfNeeded(worktree.worktreePath, message, timeout)
     })
 
     rpcHandlerManager.registerHandler<GitMergeWorktreeRequest, GitMergeWorktreeResponse>('git-merge-worktree', async (data) => {
@@ -266,15 +273,12 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             })
         }
 
-        const worktreeStatus = await runGitCommand(['status', '--porcelain'], worktree.worktreePath, timeout)
-        if (!worktreeStatus.success) {
-            return worktreeStatus
-        }
-        if ((worktreeStatus.stdout ?? '').trim().length > 0) {
-            return rpcError('Worktree has uncommitted changes; wait for auto-commit or commit manually', {
-                stdout: worktreeStatus.stdout,
-                stderr: worktreeStatus.stderr,
-                exitCode: worktreeStatus.exitCode
+        const autoCommit = await autoCommitWorktreeIfNeeded(worktree.worktreePath, commitMessage, timeout)
+        if (!autoCommit.success) {
+            return rpcError(autoCommit.error ?? 'Failed to auto-commit worktree changes before merge', {
+                stdout: autoCommit.stdout,
+                stderr: autoCommit.stderr,
+                exitCode: autoCommit.exitCode
             })
         }
 
