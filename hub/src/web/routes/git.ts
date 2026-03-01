@@ -23,6 +23,16 @@ function parseBooleanParam(value: string | undefined): boolean | undefined {
     return undefined
 }
 
+function parseBaseRefParam(value: string | undefined): string | undefined {
+    if (!value) return undefined
+    const normalized = value.trim()
+    if (!normalized) return undefined
+    if (!/^[0-9a-f]{7,64}$/i.test(normalized)) {
+        throw new Error('Invalid baseRef')
+    }
+    return normalized
+}
+
 async function runRpc<T>(fn: () => Promise<T>): Promise<T | { success: false; error: string }> {
     try {
         return await fn()
@@ -71,7 +81,17 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         }
 
         const staged = parseBooleanParam(c.req.query('staged'))
-        const result = await runRpc(() => engine.getGitDiffNumstat(sessionResult.sessionId, { cwd: sessionPath, staged }))
+        let baseRef: string | undefined
+        try {
+            baseRef = parseBaseRefParam(c.req.query('baseRef'))
+        } catch {
+            return c.json({ success: false, error: 'Invalid baseRef' }, 400)
+        }
+        const result = await runRpc(() => engine.getGitDiffNumstat(sessionResult.sessionId, {
+            cwd: sessionPath,
+            staged,
+            baseRef
+        }))
         return c.json(result)
     })
 
@@ -97,10 +117,17 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         }
 
         const staged = parseBooleanParam(c.req.query('staged'))
+        let baseRef: string | undefined
+        try {
+            baseRef = parseBaseRefParam(c.req.query('baseRef'))
+        } catch {
+            return c.json({ success: false, error: 'Invalid baseRef' }, 400)
+        }
         const result = await runRpc(() => engine.getGitDiffFile(sessionResult.sessionId, {
             cwd: sessionPath,
             filePath: parsed.data.path,
-            staged
+            staged,
+            baseRef
         }))
         return c.json(result)
     })

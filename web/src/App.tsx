@@ -15,7 +15,6 @@ import { AppContextProvider } from '@/lib/app-context'
 import { fetchLatestMessages, getActiveMessageWindowSessionIds } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
-import { I18nProvider } from '@/lib/i18n-context'
 import { VoiceProvider } from '@/lib/voice-context'
 import { requireHubUrlForLogin } from '@/lib/runtime-config'
 import { LoginPrompt } from '@/components/LoginPrompt'
@@ -26,7 +25,7 @@ import { ReconnectingBanner } from '@/components/ReconnectingBanner'
 import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
-import { ToastProvider, useToast } from '@/lib/toast-context'
+import { useToast } from '@/lib/toast-context'
 import type { SyncEvent } from '@/types/api'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
@@ -34,13 +33,7 @@ type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
 const REQUIRE_SERVER_URL = requireHubUrlForLogin()
 
 export function App() {
-    return (
-        <I18nProvider>
-            <ToastProvider>
-                <AppInner />
-            </ToastProvider>
-        </I18nProvider>
-    )
+    return <AppInner />
 }
 
 function AppInner() {

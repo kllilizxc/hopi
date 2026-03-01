@@ -9,14 +9,16 @@ export const queryKeys = {
     tasks: (projectId: string) => ['tasks', projectId] as const,
     task: (taskId: string) => ['task', taskId] as const,
     gitStatus: (sessionId: string) => ['git-status', sessionId] as const,
+    gitCommittedDiff: (sessionId: string, baseRef: string) => ['git-committed-diff', sessionId, baseRef] as const,
     sessionFiles: (sessionId: string, query: string) => ['session-files', sessionId, query] as const,
     sessionDirectory: (sessionId: string, path: string) => ['session-directory', sessionId, path] as const,
     sessionFile: (sessionId: string, path: string) => ['session-file', sessionId, path] as const,
-    gitFileDiff: (sessionId: string, path: string, staged?: boolean) => [
+    gitFileDiff: (sessionId: string, path: string, options?: { staged?: boolean; baseRef?: string }) => [
         'git-file-diff',
         sessionId,
         path,
-        staged ? 'staged' : 'unstaged'
+        options?.baseRef ? `base:${options.baseRef}` : 'working-tree',
+        options?.staged === true ? 'staged' : options?.staged === false ? 'unstaged' : 'auto'
     ] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     skills: (sessionId: string) => ['skills', sessionId] as const,

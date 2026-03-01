@@ -15,6 +15,7 @@ interface GitStatusRequest {
 interface GitDiffNumstatRequest {
     cwd?: string
     staged?: boolean
+    baseRef?: string
     timeout?: number
 }
 
@@ -22,6 +23,7 @@ interface GitDiffFileRequest {
     cwd?: string
     filePath: string
     staged?: boolean
+    baseRef?: string
     timeout?: number
 }
 
@@ -130,6 +132,16 @@ function needsGitIdentity(message: string): boolean {
         || normalized.includes('author identity unknown')
 }
 
+function normalizeBaseRef(raw: unknown): string | null {
+    if (typeof raw !== 'string') return null
+    const value = raw.trim()
+    if (!value) return null
+    if (!/^[0-9a-f]{7,64}$/i.test(value)) {
+        return null
+    }
+    return value
+}
+
 export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<GitStatusRequest, GitCommandResponse>('git-status', async (data) => {
         const resolved = resolveCwd(data.cwd, workingDirectory)
@@ -148,9 +160,16 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         if (resolved.error) {
             return rpcError(resolved.error)
         }
-        const args = data.staged
-            ? ['diff', '--cached', '--numstat']
-            : ['diff', '--numstat']
+        const baseRef = normalizeBaseRef(data.baseRef)
+        if (data.baseRef !== undefined && !baseRef) {
+            return rpcError('Invalid base reference')
+        }
+
+        const args = baseRef
+            ? ['diff', '--numstat', `${baseRef}..HEAD`]
+            : data.staged
+                ? ['diff', '--cached', '--numstat']
+                : ['diff', '--numstat']
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 
@@ -365,9 +384,16 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             return rpcError(fileError)
         }
 
-        const args = data.staged
-            ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
-            : ['diff', '--no-ext-diff', '--', data.filePath]
+        const baseRef = normalizeBaseRef(data.baseRef)
+        if (data.baseRef !== undefined && !baseRef) {
+            return rpcError('Invalid base reference')
+        }
+
+        const args = baseRef
+            ? ['diff', '--no-ext-diff', `${baseRef}..HEAD`, '--', data.filePath]
+            : data.staged
+                ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
+                : ['diff', '--no-ext-diff', '--', data.filePath]
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 }

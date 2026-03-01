@@ -68,16 +68,23 @@ export function useSessionFileDiffViewer(params: {
     sessionId: string
     filePath: string
     staged?: boolean
+    baseRef?: string
 }): UseSessionFileDiffViewerResult {
     const missingPath = !params.filePath
 
     const diffQuery = useQuery({
-        queryKey: queryKeys.gitFileDiff(params.sessionId, params.filePath, params.staged),
+        queryKey: queryKeys.gitFileDiff(params.sessionId, params.filePath, {
+            staged: params.staged,
+            baseRef: params.baseRef,
+        }),
         queryFn: async () => {
             if (!params.api || !params.sessionId || !params.filePath) {
                 throw new Error('Missing session or path')
             }
-            return await params.api.getGitDiffFile(params.sessionId, params.filePath, params.staged)
+            return await params.api.getGitDiffFile(params.sessionId, params.filePath, {
+                staged: params.staged,
+                baseRef: params.baseRef,
+            })
         },
         enabled: Boolean(params.api && params.sessionId && params.filePath)
     })
@@ -133,7 +140,7 @@ export function useSessionFileDiffViewer(params: {
 
     useEffect(() => {
         setDisplayMode('diff')
-    }, [params.filePath, params.sessionId, params.staged])
+    }, [params.filePath, params.sessionId, params.staged, params.baseRef])
 
     useEffect(() => {
         if (diffContent) {

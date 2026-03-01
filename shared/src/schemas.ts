@@ -23,7 +23,8 @@ export const WorktreeMetadataSchema = z.object({
     branch: z.string(),
     name: z.string(),
     worktreePath: z.string().optional(),
-    createdAt: z.number().optional()
+    createdAt: z.number().optional(),
+    baseCommit: z.string().optional()
 })
 
 export type WorktreeMetadata = z.infer<typeof WorktreeMetadataSchema>

@@ -11,6 +11,8 @@ export function SessionFileViewer(props: {
     sessionId: string
     filePath: string
     staged?: boolean
+    baseRef?: string
+    diffScope?: 'staged' | 'unstaged' | 'committed'
     onBack: () => void
 }) {
     const { t } = useTranslation()
@@ -21,6 +23,7 @@ export function SessionFileViewer(props: {
         sessionId: props.sessionId,
         filePath: props.filePath,
         staged: props.staged,
+        baseRef: props.baseRef,
     })
 
     return (

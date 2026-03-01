@@ -12,6 +12,7 @@ export type WorktreeInfo = {
   branch: string;
   name: string;
   createdAt: number;
+  baseCommit?: string;
 };
 
 type WorktreeResult =
@@ -47,6 +48,18 @@ async function resolveRepoRoot(basePath: string): Promise<string> {
     throw new Error('Unable to resolve Git repository root.');
   }
   return root;
+}
+
+async function resolveHeadCommit(repoRoot: string): Promise<string | undefined> {
+  try {
+    const result = await runGit(['rev-parse', '--verify', 'HEAD'], repoRoot);
+    const commit = result.stdout.trim();
+    if (/^[0-9a-f]{40}$/i.test(commit)) {
+      return commit;
+    }
+  } catch {
+  }
+  return undefined;
 }
 
 function toSlug(value: string): string {
@@ -104,6 +117,7 @@ export async function createWorktree(options: {
 }): Promise<WorktreeResult> {
   const { basePath, nameHint } = options;
   let repoRoot: string;
+  let baseCommit: string | undefined;
 
   try {
     repoRoot = await resolveRepoRoot(basePath);
@@ -114,6 +128,8 @@ export async function createWorktree(options: {
       error: `Path is not a Git repository: ${message}`
     };
   }
+
+  baseCommit = await resolveHeadCommit(repoRoot);
 
   const repoParent = dirname(repoRoot);
   const repoName = basename(repoRoot);
@@ -144,7 +160,8 @@ export async function createWorktree(options: {
           worktreePath,
           branch,
           name,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          baseCommit
         }
       };
     } catch (error) {

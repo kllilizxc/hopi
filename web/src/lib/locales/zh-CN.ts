@@ -149,6 +149,7 @@ export default {
   'projects.diffs.noBranch': '无法获取分支',
   'projects.diffs.staged': '已暂存',
   'projects.diffs.unstaged': '未暂存',
+  'projects.diffs.committed': '已提交改动',
   'projects.diffs.unavailable': 'Git 状态不可用。',
   'projects.diffs.noChanges': '暂无改动。',
 
@@ -161,6 +162,7 @@ export default {
   'projects.files.viewFile': '文件',
   'projects.files.staged': '已暂存',
   'projects.files.unstaged': '未暂存',
+  'projects.files.committed': '已提交',
   'projects.files.binary': '无法预览二进制文件。',
 
   'projects.fields.name': '名称',

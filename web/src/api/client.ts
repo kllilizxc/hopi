@@ -428,17 +428,38 @@ export class ApiClient {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
     }
 
-    async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {
+    async getGitDiffNumstat(
+        sessionId: string,
+        stagedOrOptions?: boolean | { staged?: boolean; baseRef?: string }
+    ): Promise<GitCommandResponse> {
+        const options = typeof stagedOrOptions === 'boolean'
+            ? { staged: stagedOrOptions }
+            : (stagedOrOptions ?? {})
         const params = new URLSearchParams()
-        params.set('staged', staged ? 'true' : 'false')
+        if (options.staged !== undefined) {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-numstat?${params.toString()}`)
     }
 
-    async getGitDiffFile(sessionId: string, path: string, staged?: boolean): Promise<GitCommandResponse> {
+    async getGitDiffFile(
+        sessionId: string,
+        path: string,
+        stagedOrOptions?: boolean | { staged?: boolean; baseRef?: string }
+    ): Promise<GitCommandResponse> {
+        const options = typeof stagedOrOptions === 'boolean'
+            ? { staged: stagedOrOptions }
+            : (stagedOrOptions ?? {})
         const params = new URLSearchParams()
         params.set('path', path)
-        if (staged !== undefined) {
-            params.set('staged', staged ? 'true' : 'false')
+        if (options.staged !== undefined) {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options.baseRef) {
+            params.set('baseRef', options.baseRef)
         }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`)
     }

@@ -195,11 +195,11 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-status', { cwd }) as RpcCommandResponse
     }
 
-    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-numstat', options) as RpcCommandResponse
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-file', options) as RpcCommandResponse
     }
 

@@ -322,7 +322,8 @@ export async function startRunner(): Promise<void> {
             HAPI_WORKTREE_BRANCH: worktreeInfo.branch,
             HAPI_WORKTREE_NAME: worktreeInfo.name,
             HAPI_WORKTREE_PATH: worktreeInfo.worktreePath,
-            HAPI_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt)
+            HAPI_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt),
+            ...(worktreeInfo.baseCommit ? { HAPI_WORKTREE_BASE_COMMIT: worktreeInfo.baseCommit } : {})
           };
         }
 

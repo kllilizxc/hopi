@@ -15,6 +15,7 @@ function readWorktreeFromEnv(): WorktreeInfo | null {
     const name = process.env.HAPI_WORKTREE_NAME?.trim();
     const worktreePath = process.env.HAPI_WORKTREE_PATH?.trim();
     const createdAtRaw = process.env.HAPI_WORKTREE_CREATED_AT?.trim();
+    const baseCommitRaw = process.env.HAPI_WORKTREE_BASE_COMMIT?.trim();
 
     if (!basePath || !branch || !name || !worktreePath || !createdAtRaw) {
         return null;
@@ -25,12 +26,17 @@ function readWorktreeFromEnv(): WorktreeInfo | null {
         return null;
     }
 
+    const baseCommit = baseCommitRaw && /^[0-9a-f]{7,64}$/i.test(baseCommitRaw)
+        ? baseCommitRaw
+        : undefined;
+
     return {
         basePath,
         branch,
         name,
         worktreePath,
-        createdAt
+        createdAt,
+        baseCommit
     };
 }
 

@@ -7,6 +7,8 @@ import './index.css'
 import { registerSW } from 'virtual:pwa-register'
 import { initializeFontScale } from '@/hooks/useFontScale'
 import { getTelegramWebApp, isTelegramEnvironment, loadTelegramSdk } from './hooks/useTelegram'
+import { I18nProvider } from '@/lib/i18n-context'
+import { ToastProvider } from '@/lib/toast-context'
 import { queryClient } from './lib/query-client'
 import { createAppRouter } from './router'
 
@@ -52,7 +54,11 @@ async function bootstrap() {
     ReactDOM.createRoot(document.getElementById('root')!).render(
         <React.StrictMode>
             <QueryClientProvider client={queryClient}>
-                <RouterProvider router={router} />
+                <I18nProvider>
+                    <ToastProvider>
+                        <RouterProvider router={router} />
+                    </ToastProvider>
+                </I18nProvider>
                 {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
             </QueryClientProvider>
         </React.StrictMode>

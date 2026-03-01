@@ -149,6 +149,7 @@ export default {
   'projects.diffs.noBranch': 'Branch unavailable',
   'projects.diffs.staged': 'Staged changes',
   'projects.diffs.unstaged': 'Unstaged changes',
+  'projects.diffs.committed': 'Committed changes',
   'projects.diffs.unavailable': 'Git status unavailable.',
   'projects.diffs.noChanges': 'No changes detected.',
 
@@ -161,6 +162,7 @@ export default {
   'projects.files.viewFile': 'File',
   'projects.files.staged': 'staged',
   'projects.files.unstaged': 'unstaged',
+  'projects.files.committed': 'committed',
   'projects.files.binary': 'Binary file preview unavailable.',
 
   'projects.fields.name': 'Name',
