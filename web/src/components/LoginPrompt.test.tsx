@@ -1,15 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { I18nProvider } from '@/lib/i18n-context'
+import { screen, fireEvent } from '@testing-library/react'
+import { renderWithProviders } from '@/test/renderWithProviders'
 import { LoginPrompt } from './LoginPrompt'
-
-function renderWithProviders(ui: React.ReactElement) {
-    return render(
-        <I18nProvider>
-            {ui}
-        </I18nProvider>
-    )
-}
 
 describe('LoginPrompt', () => {
     beforeEach(() => {

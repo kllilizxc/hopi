@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { I18nContext, I18nProvider } from '@/lib/i18n-context'
+import type { ReactElement } from 'react'
+import { screen } from '@testing-library/react'
 import { en } from '@/lib/locales'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { renderWithProviders } from '@/test/renderWithProviders'
 import SettingsPage from './index'
 
 // Mock the router hooks
@@ -31,22 +32,12 @@ vi.mock('@/lib/languages', () => ({
     getLanguageDisplayName: (lang: { code: string | null; name: string }) => lang.name,
 }))
 
-function renderWithProviders(ui: React.ReactElement) {
-    return render(
-        <I18nProvider>
-            {ui}
-        </I18nProvider>
-    )
-}
-
-function renderWithSpyT(ui: React.ReactElement) {
+function renderWithSpyT(ui: ReactElement) {
     const translations = en as Record<string, string>
     const spyT = vi.fn((key: string) => translations[key] ?? key)
-    render(
-        <I18nContext.Provider value={{ t: spyT, locale: 'en', setLocale: vi.fn() }}>
-            {ui}
-        </I18nContext.Provider>
-    )
+    renderWithProviders(ui, {
+        i18nValue: { t: spyT, locale: 'en', setLocale: vi.fn() },
+    })
     return spyT
 }
 
