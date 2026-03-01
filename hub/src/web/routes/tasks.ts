@@ -3,13 +3,15 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store } from '../../store'
-import type { SyncEngine } from '../../sync/syncEngine'
-import { runImprovementsScan, selectLatestActiveProjectSession } from '../../sync/improvementsScan'
+import type { RpcGitMergeWorktreeResponse, SyncEngine } from '../../sync/syncEngine'
+import { runImprovementsScan, selectLatestActiveProjectSession, waitForAssistantCompletion } from '../../sync/improvementsScan'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import type { WebAppEnv } from '../middleware/auth'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
+const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
+const AUTO_MERGE_CONFLICT_TIMEOUT_MS = 180_000
 
 function estimateDataUrlBytes(dataUrl: string): number {
     const comma = dataUrl.indexOf(',')
@@ -69,7 +71,8 @@ const startSessionSchema = z.object({
 })
 
 const mergeWorktreeSchema = z.object({
-    targetBranch: z.string().min(1).optional()
+    targetBranch: z.string().min(1).optional(),
+    conflictStrategy: z.enum(['manual', 'agent']).optional()
 })
 
 function getMergeWorktreeErrorStatus(result: {
@@ -106,6 +109,174 @@ function getMergeWorktreeErrorStatus(result: {
     }
 
     return 500
+}
+
+function shouldAutoResolveMergeConflict(result: {
+    error?: string
+    conflictFiles?: string[]
+}): boolean {
+    const conflictFiles = result.conflictFiles ?? []
+    if (conflictFiles.length > 0) {
+        return true
+    }
+
+    const error = (result.error ?? '').toLowerCase()
+    return error.includes('merge conflict')
+}
+
+function createMergeConflictPrompt(options: {
+    taskTitle: string
+    sourceBranch: string
+    targetBranch: string
+    conflictFiles: string[]
+}): string {
+    const lines = options.conflictFiles.length > 0
+        ? options.conflictFiles.slice(0, 80).map((file) => `- ${file}`).join('\n')
+        : '- (not provided by git; inspect merge output)'
+
+    return [
+        'Merge to target branch failed with conflicts.',
+        '',
+        'Please resolve this automatically in the CURRENT worktree branch.',
+        `Task: ${options.taskTitle}`,
+        `Source branch (current worktree): ${options.sourceBranch}`,
+        `Target branch to integrate from: ${options.targetBranch}`,
+        '',
+        'Known conflict files:',
+        lines,
+        '',
+        'Required outcome:',
+        '1) Integrate target branch changes into current worktree branch.',
+        '2) Resolve conflicts with minimal/safe edits aligned to task intent.',
+        '3) Ensure git status is clean and all conflict resolutions are committed.',
+        '4) Reply with a brief summary of conflict decisions.',
+        '',
+        'Important:',
+        '- Keep unrelated refactors out.',
+        '- If tests are available for touched code, run focused checks before finishing.'
+    ].join('\n')
+}
+
+type AutoResolveMergeConflictResult =
+    | { ok: true; mergeResult: RpcGitMergeWorktreeResponse }
+    | {
+        ok: false
+        status: 409 | 500 | 503 | 504
+        error: string
+        conflictFiles: string[]
+        stdout?: string
+        stderr?: string
+    }
+
+async function tryAutoResolveMergeConflict(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    sessionId: string
+    task: {
+        id: string
+        title: string
+    }
+    sourceBranch: string
+    targetBranch: string
+    commitMessage: string
+    conflictFiles: string[]
+}): Promise<AutoResolveMergeConflictResult> {
+    const latest = options.store.messages.getMessages(options.sessionId, 1)
+    const afterSeq = latest[0]?.seq ?? 0
+    const localId = `${AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
+
+    const prompt = createMergeConflictPrompt({
+        taskTitle: options.task.title,
+        sourceBranch: options.sourceBranch,
+        targetBranch: options.targetBranch,
+        conflictFiles: options.conflictFiles
+    })
+
+    try {
+        await options.engine.sendMessage(options.sessionId, {
+            text: prompt,
+            localId,
+            sentFrom: 'webapp'
+        })
+    } catch (error) {
+        return {
+            ok: false,
+            status: 500,
+            error: error instanceof Error ? error.message : String(error),
+            conflictFiles: options.conflictFiles
+        }
+    }
+
+    const assistantMessage = await waitForAssistantCompletion({
+        store: options.store,
+        engine: options.engine,
+        sessionId: options.sessionId,
+        namespace: options.namespace,
+        afterSeq,
+        timeoutMs: AUTO_MERGE_CONFLICT_TIMEOUT_MS,
+        requireAssistantText: false
+    })
+
+    if (!assistantMessage) {
+        return {
+            ok: false,
+            status: 504,
+            error: 'Agent conflict auto-resolution timed out or session became inactive',
+            conflictFiles: options.conflictFiles
+        }
+    }
+
+    const autoCommitResult = await options.engine.gitAutocommitWorktree(options.sessionId, {
+        message: options.commitMessage
+    })
+    if (!autoCommitResult.success) {
+        const raw = `${autoCommitResult.error ?? ''}\n${autoCommitResult.stderr ?? ''}`.toLowerCase()
+        const status = raw.includes('unmerged') || raw.includes('conflict') ? 409 : 500
+        return {
+            ok: false,
+            status,
+            error: autoCommitResult.error ?? 'Failed to auto-commit conflict resolution changes',
+            conflictFiles: options.conflictFiles,
+            stdout: autoCommitResult.stdout,
+            stderr: autoCommitResult.stderr
+        }
+    }
+
+    let retryResult: RpcGitMergeWorktreeResponse
+    try {
+        retryResult = await options.engine.gitMergeWorktree(options.sessionId, {
+            targetBranch: options.targetBranch,
+            commitMessage: options.commitMessage
+        })
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const lowered = message.toLowerCase()
+        const status = lowered.includes('timed out')
+            ? 504
+            : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
+                ? 503
+                : 500
+        return {
+            ok: false,
+            status,
+            error: message,
+            conflictFiles: options.conflictFiles
+        }
+    }
+
+    if (!retryResult.success) {
+        return {
+            ok: false,
+            status: getMergeWorktreeErrorStatus(retryResult),
+            error: retryResult.error ?? 'Merge failed after agent conflict auto-resolution',
+            conflictFiles: retryResult.conflictFiles ?? options.conflictFiles,
+            stdout: retryResult.stdout,
+            stderr: retryResult.stderr
+        }
+    }
+
+    return { ok: true, mergeResult: retryResult }
 }
 
 function resolveRequestLocale(rawLocale: string | undefined): string | undefined {
@@ -583,6 +754,7 @@ export function createTasksRoutes(options: {
         if (!targetBranch) {
             return c.json({ error: 'Target branch not configured' }, 400)
         }
+        const conflictStrategy = parsed.data.conflictStrategy ?? 'agent'
 
         const engine = options.getSyncEngine()
         if (!engine) {
@@ -605,6 +777,7 @@ export function createTasksRoutes(options: {
 
         const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
         let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
+        let autoResolved = false
         try {
             result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
         } catch (error) {
@@ -618,16 +791,59 @@ export function createTasksRoutes(options: {
             return c.json({ error: message }, status)
         }
 
+        if (!result.success && conflictStrategy === 'agent' && shouldAutoResolveMergeConflict(result)) {
+            const autoResolution = await tryAutoResolveMergeConflict({
+                store: options.store,
+                engine,
+                namespace,
+                sessionId: session.id,
+                task: {
+                    id: task.id,
+                    title: task.title
+                },
+                sourceBranch: session.metadata.worktree.branch,
+                targetBranch,
+                commitMessage,
+                conflictFiles: result.conflictFiles ?? []
+            })
+
+            if (!autoResolution.ok) {
+                const payload: {
+                    error: string
+                    conflictFiles: string[]
+                    autoResolveAttempted: boolean
+                    stdout?: string
+                    stderr?: string
+                } = {
+                    error: autoResolution.error,
+                    conflictFiles: autoResolution.conflictFiles,
+                    autoResolveAttempted: true
+                }
+                if (autoResolution.status >= 500) {
+                    payload.stdout = autoResolution.stdout
+                    payload.stderr = autoResolution.stderr
+                }
+                return c.json(payload, autoResolution.status)
+            }
+
+            result = autoResolution.mergeResult
+            autoResolved = true
+        }
+
         if (!result.success) {
             const status = getMergeWorktreeErrorStatus(result)
             const payload: {
                 error: string
                 conflictFiles: string[]
+                autoResolveAttempted?: boolean
                 stdout?: string
                 stderr?: string
             } = {
                 error: result.error ?? 'Merge failed',
                 conflictFiles: result.conflictFiles ?? []
+            }
+            if (autoResolved) {
+                payload.autoResolveAttempted = true
             }
 
             if (status >= 500) {
@@ -672,7 +888,8 @@ export function createTasksRoutes(options: {
             ok: true,
             commitHash: result.commitHash ?? null,
             skippedReason: result.skippedReason ?? null,
-            mergedAt: updatedTask.worktreeMergedAt
+            mergedAt: updatedTask.worktreeMergedAt,
+            autoResolved: autoResolved || null
         })
     })
 

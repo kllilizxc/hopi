@@ -7,6 +7,7 @@ type MergeTaskWorktreeInput = {
     taskId: string
     payload?: {
         targetBranch?: string
+        conflictStrategy?: 'manual' | 'agent'
     }
 }
 

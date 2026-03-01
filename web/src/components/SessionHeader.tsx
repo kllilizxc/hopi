@@ -53,7 +53,10 @@ function MergeWorktreeDialog(props: {
             if (res.skippedReason) {
                 addToast({ title: 'Merge skipped', body: formatSkippedReason(res.skippedReason), sessionId: '', url: '' })
             } else {
-                addToast({ title: 'Merged successfully', body: res.commitHash ?? '', sessionId: '', url: '' })
+                const body = res.autoResolved
+                    ? `Auto-resolved conflicts before merge. ${res.commitHash ?? ''}`.trim()
+                    : (res.commitHash ?? '')
+                addToast({ title: 'Merged successfully', body, sessionId: '', url: '' })
             }
             props.onClose()
         } catch (err) {

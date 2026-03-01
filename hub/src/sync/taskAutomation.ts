@@ -4,6 +4,7 @@ import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
+const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -21,8 +22,10 @@ function getMessageSentFrom(message: DecryptedMessage): string | null {
     return typeof sentFrom === 'string' ? sentFrom : null
 }
 
-function isImprovementsScanLocalId(localId: unknown): boolean {
-    return typeof localId === 'string' && localId.startsWith(IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX)
+function isInternalAutomationLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX)
+        || localId.startsWith(AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX)
 }
 
 function isReadyEventMessage(message: DecryptedMessage): boolean {
@@ -90,7 +93,7 @@ function isAutomationPromptMessage(message: DecryptedMessage): boolean {
 
 function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
     if (getMessageRole(message) !== 'user') return false
-    return !isImprovementsScanLocalId(message.localId)
+    return !isInternalAutomationLocalId(message.localId)
 }
 
 type LinkedTask = {

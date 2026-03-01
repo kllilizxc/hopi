@@ -341,16 +341,19 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
     return suggestions
 }
 
-async function waitForAssistantCompletion(options: {
+export async function waitForAssistantCompletion(options: {
     store: Store
     engine: SyncEngine
     sessionId: string
     namespace: string
     afterSeq: number
     timeoutMs: number
+    requireAssistantText?: boolean
 }): Promise<DecryptedMessage | null> {
     const start = Date.now()
     let lastAssistant: DecryptedMessage | null = null
+    const requireAssistantText = options.requireAssistantText ?? true
+    let sawAssistantMessage = false
 
     while (Date.now() - start < options.timeoutMs) {
         const session = options.engine.getSessionByNamespace(options.sessionId, options.namespace)
@@ -367,18 +370,26 @@ async function waitForAssistantCompletion(options: {
                 content: msg.content,
                 createdAt: msg.createdAt
             }
-            if (extractAssistantText(candidate)) {
-                lastAssistant = {
-                    id: msg.id,
-                    seq: msg.seq,
-                    localId: msg.localId,
-                    content: msg.content,
-                    createdAt: msg.createdAt
+            const assistantText = extractAssistantText(candidate)
+            if (assistantText) {
+                sawAssistantMessage = true
+                lastAssistant = candidate
+                continue
+            }
+
+            const record = unwrapRoleWrappedRecordEnvelope(candidate.content)
+            if (record && (record.role === 'assistant' || record.role === 'agent')) {
+                sawAssistantMessage = true
+                if (!requireAssistantText) {
+                    lastAssistant = candidate
                 }
             }
         }
 
-        if (lastAssistant && !session.thinking) {
+        if (requireAssistantText && lastAssistant && !session.thinking) {
+            return lastAssistant
+        }
+        if (!requireAssistantText && sawAssistantMessage && !session.thinking) {
             return lastAssistant
         }
 

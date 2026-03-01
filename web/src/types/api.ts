@@ -78,7 +78,13 @@ export type WorkspaceResponse = { workspace: Workspace }
 export type TasksResponse = { tasks: Task[] }
 export type TaskResponse = { task: Task }
 export type TaskStartSessionResponse = { task: Task; sessionId: string }
-export type TaskWorktreeMergeResponse = { ok: true; commitHash: string | null; skippedReason: string | null; mergedAt: number | null }
+export type TaskWorktreeMergeResponse = {
+    ok: true
+    commitHash: string | null
+    skippedReason: string | null
+    mergedAt: number | null
+    autoResolved?: boolean | null
+}
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {

@@ -374,7 +374,7 @@ export class ApiClient {
         })
     }
 
-    async mergeTaskWorktree(taskId: string, payload?: { targetBranch?: string }): Promise<TaskWorktreeMergeResponse> {
+    async mergeTaskWorktree(taskId: string, payload?: { targetBranch?: string; conflictStrategy?: 'manual' | 'agent' }): Promise<TaskWorktreeMergeResponse> {
         return await this.request<TaskWorktreeMergeResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`, {
             method: 'POST',
             body: JSON.stringify(payload ?? {})
