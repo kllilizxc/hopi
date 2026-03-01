@@ -235,7 +235,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             : null
 
         const args = baseRef
-            ? ['diff', '--numstat', `${baseRef}..HEAD`]
+            ? ['diff', '--numstat', baseRef]
             : data.staged === true
                 ? ['diff', '--cached', '--numstat']
                 : data.staged === false
@@ -414,7 +414,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             : null
 
         const args = baseRef
-            ? ['diff', '--no-ext-diff', `${baseRef}..HEAD`, '--', data.filePath]
+            ? ['diff', '--no-ext-diff', baseRef, '--', data.filePath]
             : data.staged === true
                 ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
                 : data.staged === false

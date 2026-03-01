@@ -153,6 +153,7 @@ export default {
   'projects.diffs.staged': 'Staged changes',
   'projects.diffs.unstaged': 'Unstaged changes',
   'projects.diffs.committed': 'Committed changes',
+  'projects.diffs.sinceSessionStart': 'Since session start',
   'projects.diffs.unavailable': 'Git status unavailable.',
   'projects.diffs.noChanges': 'No changes detected.',
 

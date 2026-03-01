@@ -153,6 +153,7 @@ export default {
   'projects.diffs.staged': '已暂存',
   'projects.diffs.unstaged': '未暂存',
   'projects.diffs.committed': '已提交改动',
+  'projects.diffs.sinceSessionStart': '会话开始以来',
   'projects.diffs.unavailable': 'Git 状态不可用。',
   'projects.diffs.noChanges': '暂无改动。',
 

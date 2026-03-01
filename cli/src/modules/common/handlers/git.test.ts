@@ -100,6 +100,7 @@ describe('git merge worktree RPC handler', () => {
 
 describe('git diff RPC handlers', () => {
     let repoDir = ''
+    let initialCommit = ''
     let rpc: RpcHandlerManager
 
     beforeEach(async () => {
@@ -110,6 +111,7 @@ describe('git diff RPC handlers', () => {
         await writeFile(join(repoDir, 'unstaged.txt'), 'base unstaged\n')
         await runGit(repoDir, ['add', 'staged.txt', 'unstaged.txt'])
         await runGit(repoDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init'])
+        initialCommit = await runGit(repoDir, ['rev-parse', 'HEAD'])
 
         await writeFile(join(repoDir, 'staged.txt'), 'base staged\nstaged change\n')
         await writeFile(join(repoDir, 'unstaged.txt'), 'base unstaged\nunstaged change\n')
@@ -140,6 +142,17 @@ describe('git diff RPC handlers', () => {
 
     it('returns both staged and unstaged changes when staged filter is omitted', async () => {
         const result = await callGitHandler('git-diff-numstat', { cwd: repoDir })
+
+        expect(result.success).toBe(true)
+        expect(result.stdout).toContain('staged.txt')
+        expect(result.stdout).toContain('unstaged.txt')
+    })
+
+    it('compares baseRef against current working tree changes', async () => {
+        const result = await callGitHandler('git-diff-numstat', {
+            cwd: repoDir,
+            baseRef: initialCommit
+        })
 
         expect(result.success).toBe(true)
         expect(result.stdout).toContain('staged.txt')
@@ -183,6 +196,17 @@ describe('git diff RPC handlers', () => {
 
         expect(unstagedResult.success).toBe(true)
         expect((unstagedResult.stdout ?? '').trim()).toBe('')
+    })
+
+    it('returns file diff against baseRef from current working tree', async () => {
+        const result = await callGitHandler('git-diff-file', {
+            cwd: repoDir,
+            filePath: 'staged.txt',
+            baseRef: initialCommit
+        })
+
+        expect(result.success).toBe(true)
+        expect(result.stdout).toContain('+staged change')
     })
 
     it('handles default diff mode before the first commit', async () => {

@@ -24,6 +24,10 @@ export async function runCodex(opts: {
     model?: string;
 }): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
+    const worktreeBaseCommit = process.env.HAPI_WORKTREE_BASE_COMMIT?.trim();
+    const diffBaseRef = worktreeBaseCommit && /^[0-9a-f]{7,64}$/i.test(worktreeBaseCommit)
+        ? worktreeBaseCommit
+        : undefined;
     const startedBy = opts.startedBy ?? 'terminal';
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}`);
@@ -83,7 +87,7 @@ export async function runCodex(opts: {
             collaborationMode: currentCollaborationMode
         };
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        const normalizedText = normalizeCodexSlashCommand(formattedText);
+        const normalizedText = normalizeCodexSlashCommand(formattedText, { diffBaseRef });
         messageQueue.push(normalizedText, enhancedMode, message.localKey ?? null);
     });
 

@@ -152,7 +152,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     const worktreeBaseCommit = session?.metadata?.worktree?.baseCommit
     const hasWorktreeBaseCommit = typeof worktreeBaseCommit === 'string' && worktreeBaseCommit.length > 0
 
-    const committedDiffQuery = useQuery({
+    const sessionDiffQuery = useQuery({
         queryKey: queryKeys.gitCommittedDiff(props.sessionId, worktreeBaseCommit ?? 'none'),
         queryFn: async () => {
             if (!props.api || !hasWorktreeBaseCommit) {
@@ -164,11 +164,11 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     })
 
     const hasWorkingTreeChanges = Boolean(gitStatus && (gitStatus.stagedFiles.length > 0 || gitStatus.unstagedFiles.length > 0))
-    const committedDiffOutput = committedDiffQuery.data?.success ? (committedDiffQuery.data.stdout ?? '') : ''
-    const committedFiles = useMemo(() => parseCommittedFiles(committedDiffOutput), [committedDiffOutput])
-    const showCommitted = !hasWorkingTreeChanges && committedFiles.length > 0
-    const committedError = extractCommandError(committedDiffQuery.data)
-    const combinedError = [error, showCommitted ? null : committedError].filter(Boolean).join(' ') || null
+    const sessionDiffOutput = sessionDiffQuery.data?.success ? (sessionDiffQuery.data.stdout ?? '') : ''
+    const sessionDiffFiles = useMemo(() => parseCommittedFiles(sessionDiffOutput), [sessionDiffOutput])
+    const showSessionDiff = hasWorktreeBaseCommit && sessionDiffFiles.length > 0
+    const sessionDiffError = extractCommandError(sessionDiffQuery.data)
+    const combinedError = [error, sessionDiffError].filter(Boolean).join(' ') || null
     const [openFile, setOpenFile] = useState<{
         path: string
         staged?: boolean
@@ -190,7 +190,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    if (isLoading || (hasWorktreeBaseCommit && committedDiffQuery.isLoading)) {
+    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading)) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading.git')} className="text-sm" />
@@ -198,12 +198,12 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    const hasChanges = hasWorkingTreeChanges || showCommitted
+    const hasChanges = hasWorkingTreeChanges || showSessionDiff
 
     const handleRefresh = async () => {
         await refetch()
         if (hasWorktreeBaseCommit) {
-            await committedDiffQuery.refetch()
+            await sessionDiffQuery.refetch()
         }
     }
 
@@ -276,12 +276,12 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                         </div>
                     ) : null}
 
-                    {showCommitted ? (
+                    {showSessionDiff ? (
                         <div>
                             <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                                {t('projects.diffs.committed')} ({committedFiles.length})
+                                {t('projects.diffs.sinceSessionStart')} ({sessionDiffFiles.length})
                             </div>
-                            {committedFiles.map((file, index) => (
+                            {sessionDiffFiles.map((file, index) => (
                                 <GitFileRow
                                     key={`committed-${file.fullPath}-${index}`}
                                     file={file}
@@ -290,7 +290,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                                         baseRef: worktreeBaseCommit,
                                         diffScope: 'committed'
                                     })}
-                                    showDivider={index < committedFiles.length - 1}
+                                    showDivider={index < sessionDiffFiles.length - 1}
                                 />
                             ))}
                         </div>
