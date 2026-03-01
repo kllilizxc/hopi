@@ -30,16 +30,24 @@ export function useMergeTaskWorktree(api: ApiClient | null): {
                 if (!prev?.task) {
                     return prev
                 }
+                const mergedAt = result.mergedAt ?? prev.task.worktreeMergedAt ?? null
+                const mergeCommit = result.commitHash ?? prev.task.worktreeMergeCommit ?? null
+
+                if (mergedAt === prev.task.worktreeMergedAt && mergeCommit === prev.task.worktreeMergeCommit) {
+                    return prev
+                }
+
                 return {
                     ...prev,
                     task: {
                         ...prev.task,
-                        worktreeMergedAt: result.mergedAt ?? prev.task.worktreeMergedAt ?? Date.now(),
-                        worktreeMergeCommit: result.commitHash ?? prev.task.worktreeMergeCommit ?? null
+                        worktreeMergedAt: mergedAt,
+                        worktreeMergeCommit: mergeCommit
                     }
                 }
             })
-
+        },
+        onSettled: (_result, _error, input) => {
             void queryClient.invalidateQueries({ queryKey: queryKeys.task(input.taskId) })
             void queryClient.invalidateQueries({ queryKey: ['tasks'] })
         }
