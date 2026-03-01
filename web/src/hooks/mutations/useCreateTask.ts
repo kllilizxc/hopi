@@ -12,6 +12,13 @@ type TaskAttachmentInput = {
     previewUrl?: string
 }
 
+type TaskSubTaskInput = {
+    id: string
+    content: string
+    status: 'pending' | 'in_progress' | 'completed'
+    priority: 'high' | 'medium' | 'low'
+}
+
 type CreateTaskInput = {
     projectId: string
     title: string
@@ -22,6 +29,7 @@ type CreateTaskInput = {
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     sortKey?: number
     attachments?: TaskAttachmentInput[]
+    subTasks?: TaskSubTaskInput[]
 }
 
 export function useCreateTask(api: ApiClient | null): {
@@ -44,7 +52,8 @@ export function useCreateTask(api: ApiClient | null): {
                 workspaceId: input.workspaceId,
                 agentFlavor: input.agentFlavor,
                 sortKey: input.sortKey,
-                attachments: input.attachments
+                attachments: input.attachments,
+                subTasks: input.subTasks
             })
             return result.task
         },

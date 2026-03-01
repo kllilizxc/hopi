@@ -17,6 +17,8 @@ type DbTaskRow = {
     attachments: string | null
     source: string | null
     source_task_id: string | null
+    sub_tasks: string | null
+    sub_tasks_updated_at: number | null
     worktree_merged_at: number | null
     worktree_merge_commit: string | null
     created_at: number
@@ -40,6 +42,8 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
+        subTasks: safeJsonParse(row.sub_tasks),
+        subTasksUpdatedAt: row.sub_tasks_updated_at,
         worktreeMergedAt: row.worktree_merged_at,
         worktreeMergeCommit: row.worktree_merge_commit,
         createdAt: row.created_at,
@@ -145,6 +149,8 @@ export function createTask(
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        subTasks?: unknown
+        subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
     }
@@ -154,12 +160,12 @@ export function createTask(
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
-            attachments, source, source_task_id, worktree_merged_at, worktree_merge_commit,
+            attachments, source, source_task_id, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
-            @attachments, @source, @source_task_id, @worktree_merged_at, @worktree_merge_commit,
+            @attachments, @source, @source_task_id, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -176,6 +182,8 @@ export function createTask(
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
+        sub_tasks: task.subTasks !== undefined ? JSON.stringify(task.subTasks) : null,
+        sub_tasks_updated_at: task.subTasksUpdatedAt ?? null,
         worktree_merged_at: task.worktreeMergedAt ?? null,
         worktree_merge_commit: task.worktreeMergeCommit ?? null,
         created_at: now,
@@ -203,6 +211,8 @@ export function updateTaskByNamespace(
         workspaceId?: string | null
         agentFlavor?: string | null
         attachments?: unknown
+        subTasks?: unknown
+        subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
         finishedAt?: number | null
@@ -215,6 +225,7 @@ export function updateTaskByNamespace(
     }
 
     const activeSessionChanged = patch.activeSessionId !== undefined && patch.activeSessionId !== current.activeSessionId
+    const now = Date.now()
 
     const next = {
         ...current,
@@ -227,6 +238,10 @@ export function updateTaskByNamespace(
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
         agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
+        subTasks: patch.subTasks !== undefined ? patch.subTasks : current.subTasks,
+        subTasksUpdatedAt: patch.subTasksUpdatedAt !== undefined
+            ? patch.subTasksUpdatedAt
+            : (patch.subTasks !== undefined ? now : current.subTasksUpdatedAt),
         worktreeMergedAt: activeSessionChanged
             ? null
             : patch.worktreeMergedAt !== undefined
@@ -241,7 +256,6 @@ export function updateTaskByNamespace(
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
 
-    const now = Date.now()
     db.prepare(`
         UPDATE tasks SET
             title = @title,
@@ -253,6 +267,8 @@ export function updateTaskByNamespace(
             workspace_id = @workspace_id,
             agent_flavor = @agent_flavor,
             attachments = @attachments,
+            sub_tasks = @sub_tasks,
+            sub_tasks_updated_at = @sub_tasks_updated_at,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
             finished_at = @finished_at,
@@ -271,6 +287,8 @@ export function updateTaskByNamespace(
         workspace_id: next.workspaceId,
         agent_flavor: next.agentFlavor,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
+        sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,
+        sub_tasks_updated_at: next.subTasksUpdatedAt,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
         finished_at: next.finishedAt,

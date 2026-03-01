@@ -5,6 +5,7 @@ import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
+import { syncTaskSubTasksFromSessionTodos } from '../../../sync/taskSubtasks'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { AccessErrorReason, AccessResult } from './types'
 
@@ -92,6 +93,22 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
             if (updated) {
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+
+                const updatedTask = syncTaskSubTasksFromSessionTodos({
+                    store,
+                    session,
+                    todos,
+                    todosUpdatedAt: msg.createdAt
+                })
+                if (updatedTask) {
+                    onWebappEvent?.({
+                        type: 'task-updated',
+                        taskId: updatedTask.id,
+                        projectId: updatedTask.projectId,
+                        namespace: session.namespace,
+                        data: { taskId: updatedTask.id }
+                    })
+                }
             }
         }
 

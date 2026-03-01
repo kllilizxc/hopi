@@ -12,6 +12,13 @@ type TaskAttachmentInput = {
     previewUrl?: string
 }
 
+type TaskSubTaskInput = {
+    id: string
+    content: string
+    status: 'pending' | 'in_progress' | 'completed'
+    priority: 'high' | 'medium' | 'low'
+}
+
 type UpdateTaskInput = {
     taskId: string
     patch: {
@@ -24,6 +31,7 @@ type UpdateTaskInput = {
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: TaskAttachmentInput[]
+        subTasks?: TaskSubTaskInput[]
     }
 }
 

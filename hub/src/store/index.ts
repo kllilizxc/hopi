@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 5
+const SCHEMA_VERSION: number = 6
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -143,9 +143,31 @@ export class Store {
             return
         }
 
+        if (currentVersion === 5 && SCHEMA_VERSION === 6) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion === 3 && SCHEMA_VERSION === 5) {
             this.migrateFromV3ToV4()
             this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 4 && SCHEMA_VERSION === 6) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 3 && SCHEMA_VERSION === 6) {
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -158,11 +180,30 @@ export class Store {
             return
         }
 
+        if (currentVersion === 2 && SCHEMA_VERSION === 6) {
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion === 1 && SCHEMA_VERSION === 5) {
             this.migrateFromV1ToV2()
             this.migrateFromV2ToV3()
             this.migrateFromV3ToV4()
             this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 1 && SCHEMA_VERSION === 6) {
+            this.migrateFromV1ToV2()
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -301,6 +342,8 @@ export class Store {
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
+                sub_tasks TEXT,
+                sub_tasks_updated_at INTEGER,
                 worktree_merged_at INTEGER,
                 worktree_merge_commit TEXT,
                 created_at INTEGER NOT NULL,
@@ -416,6 +459,9 @@ export class Store {
         if (SCHEMA_VERSION >= 5) {
             this.migrateFromV4ToV5()
         }
+        if (SCHEMA_VERSION >= 6) {
+            this.migrateFromV5ToV6()
+        }
     }
 
     private migrateFromV4ToV5(): void {
@@ -449,6 +495,19 @@ export class Store {
         }
         if (!taskColumns.has('agent_flavor')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN agent_flavor TEXT')
+        }
+    }
+
+    private migrateFromV5ToV6(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v5 to v6 migration.')
+        }
+        if (!taskColumns.has('sub_tasks')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN sub_tasks TEXT')
+        }
+        if (!taskColumns.has('sub_tasks_updated_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN sub_tasks_updated_at INTEGER')
         }
     }
 

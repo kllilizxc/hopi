@@ -193,12 +193,30 @@ export async function startSessionFromTask(options: {
     const kickoffText = (() => {
         const title = (updatedTask.title ?? '').trim()
         const desc = (updatedTask.description ?? '').trim()
+        const subTasks = Array.isArray(updatedTask.subTasks)
+            ? updatedTask.subTasks as Array<{
+                content?: unknown
+                status?: unknown
+            }>
+            : []
+        const subTaskLines = subTasks
+            .map((subTask) => {
+                const content = typeof subTask.content === 'string' ? subTask.content.trim() : ''
+                if (!content) return null
+                const done = subTask.status === 'completed'
+                return `- [${done ? 'x' : ' '}] ${content}`
+            })
+            .filter((line): line is string => Boolean(line))
+        const subTasksSection = subTaskLines.length > 0
+            ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
+            : ''
 
         if (title && desc) {
-            return `Task: ${title}\n\nDescription:\n${desc}`
+            return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
         }
-        if (desc) return desc
-        if (title) return `Task: ${title}`
+        if (desc) return `${desc}${subTasksSection}`
+        if (title) return `Task: ${title}${subTasksSection}`
+        if (subTasksSection) return `Task${subTasksSection}`
         return 'Task'
     })()
 

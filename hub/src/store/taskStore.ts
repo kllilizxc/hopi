@@ -60,6 +60,8 @@ export class TaskStore {
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        subTasks?: unknown
+        subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
     }): StoredTask {
@@ -79,6 +81,8 @@ export class TaskStore {
             workspaceId?: string | null
             agentFlavor?: string | null
             attachments?: unknown
+            subTasks?: unknown
+            subTasksUpdatedAt?: number | null
             worktreeMergedAt?: number | null
             worktreeMergeCommit?: string | null
             finishedAt?: number | null

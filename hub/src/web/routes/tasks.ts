@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema } from '@hapi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TodoItemSchema } from '@hapi/protocol/schemas'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -42,7 +42,8 @@ const createTaskSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     agentFlavor: AgentFlavorSchema.optional(),
     sortKey: z.number().optional(),
-    attachments: z.array(taskAttachmentSchema).optional()
+    attachments: z.array(taskAttachmentSchema).optional(),
+    subTasks: z.array(TodoItemSchema).optional()
 })
 
 const updateTaskSchema = z.object({
@@ -54,7 +55,8 @@ const updateTaskSchema = z.object({
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
-    attachments: z.array(taskAttachmentSchema).optional()
+    attachments: z.array(taskAttachmentSchema).optional(),
+    subTasks: z.array(TodoItemSchema).optional()
 })
 
 const listTasksQuerySchema = z.object({
@@ -329,6 +331,8 @@ export function createTasksRoutes(options: {
             workspaceId: parsed.data.workspaceId ?? null,
             agentFlavor: parsed.data.agentFlavor ?? null,
             attachments: attachments.length > 0 ? attachments : undefined,
+            subTasks: parsed.data.subTasks,
+            subTasksUpdatedAt: parsed.data.subTasks ? Date.now() : null,
             source: 'manual'
         })
 
@@ -388,6 +392,8 @@ export function createTasksRoutes(options: {
             sortKey: parsed.data.sortKey,
             activeSessionId: parsed.data.activeSessionId,
             attachments: attachments,
+            subTasks: parsed.data.subTasks,
+            subTasksUpdatedAt: parsed.data.subTasks !== undefined ? Date.now() : undefined,
             finishedAt
         })
 

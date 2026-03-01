@@ -114,6 +114,22 @@ function getTaskOrderValue(task: Task): number {
     return task.updatedAt
 }
 
+function getTaskSubTaskProgress(task: Task): { completed: number; total: number } | null {
+    const subTasks = Array.isArray(task.subTasks) ? task.subTasks : []
+    if (subTasks.length === 0) {
+        return null
+    }
+
+    let completed = 0
+    for (const subTask of subTasks) {
+        if (subTask.status === 'completed') {
+            completed += 1
+        }
+    }
+
+    return { completed, total: subTasks.length }
+}
+
 function sortTasksInColumn(tasks: Task[]): Task[] {
     return [...tasks].sort((a, b) => {
         const av = getTaskOrderValue(a)
@@ -765,6 +781,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                         const cardAgentFlavor: AgentType = (task.agentFlavor as AgentType | null) ?? defaultTaskAgent
                                         const usesProjectDefaultAgent = !task.agentFlavor
                                         const useArchiveStyle = task.status === 'finished'
+                                        const subTaskProgress = getTaskSubTaskProgress(task)
                                         const cardBackground = useArchiveStyle
                                             ? [
                                                 'radial-gradient(150% 120% at 0% 0%, var(--app-kanban-archive-bg) 0%, transparent 64%)',
@@ -919,6 +936,17 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                                 {task.priority ? (
                                                                     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getTaskPriorityClass(task.priority)}`}>
                                                                         {t(getTaskPriorityLabelKey(task.priority))}
+                                                                    </span>
+                                                                ) : null}
+                                                                {subTaskProgress ? (
+                                                                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${subTaskProgress.completed === subTaskProgress.total
+                                                                        ? 'border-[var(--app-badge-success-border)] bg-[var(--app-badge-success-bg)] text-[var(--app-badge-success-text)]'
+                                                                        : 'border-[var(--app-border)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)]'
+                                                                        }`}>
+                                                                        {t('projects.tasks.subtasksProgress', {
+                                                                            completed: subTaskProgress.completed,
+                                                                            total: subTaskProgress.total
+                                                                        })}
                                                                     </span>
                                                                 ) : null}
                                                                 {isGeneratedNew ? (

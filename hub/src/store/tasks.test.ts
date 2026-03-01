@@ -68,4 +68,36 @@ describe('Task store worktree merge fields', () => {
         expect(store.tasks.getTaskByNamespace('task-default', 'default')).toBeNull()
         expect(store.tasks.getTaskByNamespace('task-other', 'other')).not.toBeNull()
     })
+
+    it('stores task subtasks and timestamp updates', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-1',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-1',
+            projectId: 'project-1',
+            title: 'Task',
+            status: 'new'
+        })
+
+        const updatedAt = Date.now()
+        const updated = store.tasks.updateTaskByNamespace('task-1', 'default', {
+            subTasks: [
+                { id: 'st-1', content: 'first', status: 'pending', priority: 'high' },
+                { id: 'st-2', content: 'second', status: 'completed', priority: 'low' }
+            ],
+            subTasksUpdatedAt: updatedAt
+        })
+
+        expect(updated?.subTasks).toEqual([
+            { id: 'st-1', content: 'first', status: 'pending', priority: 'high' },
+            { id: 'st-2', content: 'second', status: 'completed', priority: 'low' }
+        ])
+        expect(updated?.subTasksUpdatedAt).toBe(updatedAt)
+    })
 })

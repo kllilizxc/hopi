@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { getPermissionModeOptionsForFlavor } from '@hapi/protocol'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, Workspace } from '@/types/api'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
@@ -58,6 +58,18 @@ function getTaskPriorityBadgeVariant(priority: TaskPriority): 'default' | 'warni
 
 function getAttachmentsSizeBytes(attachments: TaskAttachment[]): number {
     return attachments.reduce((total, att) => total + (Number.isFinite(att.size) ? att.size : 0), 0)
+}
+
+function normalizeTaskSubTasks(subTasks: Task['subTasks']): TodoItem[] {
+    if (!Array.isArray(subTasks)) return []
+    return subTasks.filter((item): item is TodoItem => {
+        if (!item || typeof item !== 'object') return false
+        if (typeof item.id !== 'string') return false
+        if (typeof item.content !== 'string') return false
+        if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return false
+        if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') return false
+        return true
+    })
 }
 
 function formatBytes(bytes: number): string {
@@ -382,6 +394,9 @@ function TaskDetailsPanel(props: {
     const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
+    const [subTasks, setSubTasks] = useState<TodoItem[]>(normalizeTaskSubTasks(props.task.subTasks))
+    const [newSubTaskContent, setNewSubTaskContent] = useState('')
+    const [newSubTaskPriority, setNewSubTaskPriority] = useState<TaskPriority>('medium')
     const [attachments, setAttachments] = useState<TaskAttachment[]>(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     const [attachmentsBusy, setAttachmentsBusy] = useState(false)
     const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -396,8 +411,11 @@ function TaskDetailsPanel(props: {
         setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
         setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
+        setSubTasks(normalizeTaskSubTasks(props.task.subTasks))
+        setNewSubTaskContent('')
+        setNewSubTaskPriority('medium')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
-    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.attachments])
+    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.subTasks, props.task.attachments])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
@@ -462,6 +480,75 @@ function TaskDetailsPanel(props: {
         setAttachments(next)
         await savePatch({ attachments: next })
     }
+
+    const persistSubTasks = useCallback(async (next: TodoItem[]) => {
+        setSubTasks(next)
+        await savePatch({ subTasks: next })
+    }, [savePatch])
+
+    const handleToggleSubTask = useCallback(async (id: string, checked: boolean) => {
+        const next = subTasks.map((subTask) => {
+            if (subTask.id !== id) return subTask
+            return { ...subTask, status: checked ? 'completed' : 'pending' }
+        })
+        await persistSubTasks(next)
+    }, [subTasks, persistSubTasks])
+
+    const handleSubTaskPriorityChange = useCallback(async (id: string, value: TaskPriority) => {
+        const next = subTasks.map((subTask) => {
+            if (subTask.id !== id) return subTask
+            return { ...subTask, priority: value }
+        })
+        await persistSubTasks(next)
+    }, [subTasks, persistSubTasks])
+
+    const handleSubTaskContentChange = useCallback((id: string, value: string) => {
+        setSubTasks((current) => current.map((subTask) => {
+            if (subTask.id !== id) return subTask
+            return { ...subTask, content: value }
+        }))
+    }, [])
+
+    const handleSubTaskContentBlur = useCallback(async (id: string) => {
+        const next: TodoItem[] = []
+        for (const subTask of subTasks) {
+            if (subTask.id !== id) {
+                next.push(subTask)
+                continue
+            }
+            const trimmed = subTask.content.trim()
+            if (!trimmed) {
+                continue
+            }
+            next.push({ ...subTask, content: trimmed })
+        }
+        await persistSubTasks(next)
+    }, [subTasks, persistSubTasks])
+
+    const handleRemoveSubTask = useCallback(async (id: string) => {
+        const next = subTasks.filter((subTask) => subTask.id !== id)
+        await persistSubTasks(next)
+    }, [subTasks, persistSubTasks])
+
+    const handleAddSubTask = useCallback(async () => {
+        const content = newSubTaskContent.trim()
+        if (!content) return
+        const id = typeof crypto?.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+        const next: TodoItem[] = [
+            ...subTasks,
+            {
+                id,
+                content,
+                status: 'pending',
+                priority: newSubTaskPriority
+            }
+        ]
+        setNewSubTaskContent('')
+        setNewSubTaskPriority('medium')
+        await persistSubTasks(next)
+    }, [newSubTaskContent, newSubTaskPriority, subTasks, persistSubTasks])
 
     const effectiveWorkspaceLabel = useMemo(() => {
         const resolvedWorkspaceId = props.task.workspaceId ?? props.projectDefaultWorkspaceId
@@ -629,6 +716,117 @@ function TaskDetailsPanel(props: {
                                 disabled={isUpdatingTask}
                                 className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
+                        </div>
+                    </section>
+
+                    <section className="space-y-3">
+                        <div>
+                            <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
+                            <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
+                        </div>
+
+                        {subTasks.length === 0 ? (
+                            <div className="text-sm text-[var(--app-hint)]">
+                                {t('projects.task.subtasks.empty')}
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {subTasks.map((subTask) => (
+                                    <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
+                                        <label className="flex items-center gap-2 md:w-auto">
+                                            <input
+                                                type="checkbox"
+                                                checked={subTask.status === 'completed'}
+                                                onChange={(e) => {
+                                                    void handleToggleSubTask(subTask.id, e.target.checked)
+                                                }}
+                                                disabled={isUpdatingTask}
+                                            />
+                                            <span className="text-xs text-[var(--app-hint)]">
+                                                {subTask.status === 'completed'
+                                                    ? t('projects.task.subtasks.status.completed')
+                                                    : subTask.status === 'in_progress'
+                                                        ? t('projects.task.subtasks.status.inProgress')
+                                                        : t('projects.task.subtasks.status.pending')}
+                                            </span>
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            value={subTask.content}
+                                            onChange={(e) => handleSubTaskContentChange(subTask.id, e.target.value)}
+                                            onBlur={() => {
+                                                void handleSubTaskContentBlur(subTask.id)
+                                            }}
+                                            disabled={isUpdatingTask}
+                                            className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
+                                        />
+
+                                        <div className="flex items-center gap-2 md:w-auto">
+                                            <select
+                                                value={subTask.priority}
+                                                onChange={(e) => {
+                                                    void handleSubTaskPriorityChange(subTask.id, e.target.value as TaskPriority)
+                                                }}
+                                                disabled={isUpdatingTask}
+                                                className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                            >
+                                                <option value="high">{t('projects.task.priority.high')}</option>
+                                                <option value="medium">{t('projects.task.priority.medium')}</option>
+                                                <option value="low">{t('projects.task.priority.low')}</option>
+                                            </select>
+
+                                            <Button
+                                                type="button"
+                                                variant="secondary"
+                                                onClick={() => {
+                                                    void handleRemoveSubTask(subTask.id)
+                                                }}
+                                                disabled={isUpdatingTask}
+                                            >
+                                                {t('projects.task.subtasks.remove')}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+                            <input
+                                type="text"
+                                value={newSubTaskContent}
+                                onChange={(e) => setNewSubTaskContent(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        void handleAddSubTask()
+                                    }
+                                }}
+                                disabled={isUpdatingTask}
+                                placeholder={t('projects.task.subtasks.placeholder')}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            />
+                            <select
+                                value={newSubTaskPriority}
+                                onChange={(e) => setNewSubTaskPriority(e.target.value as TaskPriority)}
+                                disabled={isUpdatingTask}
+                                className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            >
+                                <option value="high">{t('projects.task.priority.high')}</option>
+                                <option value="medium">{t('projects.task.priority.medium')}</option>
+                                <option value="low">{t('projects.task.priority.low')}</option>
+                            </select>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => {
+                                    void handleAddSubTask()
+                                }}
+                                disabled={isUpdatingTask || !newSubTaskContent.trim()}
+                            >
+                                {t('projects.task.subtasks.add')}
+                            </Button>
                         </div>
                     </section>
 

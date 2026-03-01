@@ -167,11 +167,15 @@ describe('Store schema migration safety', () => {
         const updatedTask = store.tasks.updateTaskByNamespace('t1', 'default', {
             worktreeMergedAt: Date.now(),
             worktreeMergeCommit: 'abc123',
-            agentFlavor: 'codex'
+            agentFlavor: 'codex',
+            subTasks: [{ id: 'st1', content: 'subtask', status: 'pending', priority: 'medium' }],
+            subTasksUpdatedAt: Date.now()
         })
         expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
         expect(updatedTask?.worktreeMergeCommit).toBe('abc123')
         expect(updatedTask?.agentFlavor).toBe('codex')
+        expect(updatedTask?.subTasks).toEqual([{ id: 'st1', content: 'subtask', status: 'pending', priority: 'medium' }])
+        expect(updatedTask?.subTasksUpdatedAt).toBeTypeOf('number')
 
         ;(store as unknown as { db: Database }).db.close()
     })

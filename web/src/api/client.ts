@@ -307,6 +307,12 @@ export class ApiClient {
             dataUrl: string
             previewUrl?: string
         }>
+        subTasks?: Array<{
+            id: string
+            content: string
+            status: 'pending' | 'in_progress' | 'completed'
+            priority: 'high' | 'medium' | 'low'
+        }>
     }): Promise<TaskResponse> {
         return await this.request<TaskResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks`, {
             method: 'POST',
@@ -334,6 +340,12 @@ export class ApiClient {
             size: number
             dataUrl: string
             previewUrl?: string
+        }>
+        subTasks?: Array<{
+            id: string
+            content: string
+            status: 'pending' | 'in_progress' | 'completed'
+            priority: 'high' | 'medium' | 'low'
         }>
     }): Promise<TaskResponse> {
         return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`, {

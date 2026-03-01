@@ -172,4 +172,85 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(spawnedAgent).toBe('codex')
     })
+
+    it('includes task subtasks in kickoff message', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            description: 'Task description',
+            status: 'planned',
+            workspaceId,
+            subTasks: [
+                { id: 's1', content: 'pending subtask', status: 'pending', priority: 'high' },
+                { id: 's2', content: 'done subtask', status: 'completed', priority: 'low' }
+            ],
+            subTasksUpdatedAt: Date.now()
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Subtasks:')
+        expect(kickoffText).toContain('- [ ] pending subtask')
+        expect(kickoffText).toContain('- [x] done subtask')
+    })
 })

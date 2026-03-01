@@ -104,6 +104,8 @@ export type StoredTask = {
     attachments: unknown | null
     source: string | null
     sourceTaskId: string | null
+    subTasks: unknown | null
+    subTasksUpdatedAt: number | null
     worktreeMergedAt: number | null
     worktreeMergeCommit: string | null
     createdAt: number
