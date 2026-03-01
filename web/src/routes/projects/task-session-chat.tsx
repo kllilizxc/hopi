@@ -14,6 +14,8 @@ import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message
 
 export function TaskSessionChat(props: {
     api: ApiClient | null
+    projectId: string
+    taskId: string
     sessionId: string
     onBack: () => void
     onViewFiles?: () => void
@@ -52,13 +54,30 @@ export function TaskSessionChat(props: {
             if (!props.api || !session || session.active) {
                 return currentSessionId
             }
-            addToast({
-                title: t('projects.chat.readOnlyTitle'),
-                body: t('projects.chat.readOnlyBody'),
-                sessionId: currentSessionId,
-                url: ''
-            })
-            return currentSessionId
+            let resumedSessionId = currentSessionId
+            try {
+                resumedSessionId = await props.api.resumeSession(currentSessionId)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Resume failed'
+                addToast({
+                    title: 'Resume failed',
+                    body: message,
+                    sessionId: currentSessionId,
+                    url: ''
+                })
+                throw error
+            }
+
+            if (resumedSessionId !== currentSessionId) {
+                try {
+                    const linked = await props.api.attachTaskSession(props.taskId, resumedSessionId)
+                    queryClient.setQueryData(queryKeys.task(linked.task.id), linked)
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(props.projectId) })
+                } catch {
+                }
+            }
+
+            return resumedSessionId
         },
         onSessionResolved: (resolvedSessionId) => {
             void (async () => {

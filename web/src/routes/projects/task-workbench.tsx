@@ -944,6 +944,8 @@ export function TaskWorkbench(props: {
                     sessionId ? (
                         <TaskSessionChat
                             api={api}
+                            projectId={props.projectId}
+                            taskId={props.taskId}
                             sessionId={sessionId}
                             onBack={handleBackToProject}
                             onViewFiles={() => {

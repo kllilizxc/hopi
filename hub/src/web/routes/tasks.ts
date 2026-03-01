@@ -401,19 +401,6 @@ async function handleTaskMovedToFinished(options: {
         return
     }
 
-    if (project.improvementsEnabled) {
-        const archived = options.store.tasks.archiveTaskByNamespace(latestTask.id, options.namespace)
-        if (archived) {
-            options.engine.handleRealtimeEvent({
-                type: 'task-updated',
-                taskId: latestTask.id,
-                projectId: latestTask.projectId,
-                namespace: options.namespace,
-                data: { taskId: latestTask.id, archived: true }
-            })
-        }
-    }
-
     if (latestTask.activeSessionId) {
         try {
             await options.engine.archiveSession(latestTask.activeSessionId)
