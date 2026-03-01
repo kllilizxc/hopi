@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
+import { getPermissionModeOptionsForFlavor } from '@hapi/protocol'
+import type { PermissionMode, Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -168,6 +169,14 @@ function parseTaskDraft(value: string): { title: string; description?: string } 
     }
 }
 
+function resolvePermissionModeForAgent(agent: AgentType, preferredMode: PermissionMode | null | undefined): PermissionMode {
+    const options = getPermissionModeOptionsForFlavor(agent)
+    if (preferredMode && options.some((option) => option.mode === preferredMode)) {
+        return preferredMode
+    }
+    return options[0]?.mode ?? 'default'
+}
+
 type AnchorPoint = { x: number; y: number }
 
 function TaskMoveMenu(props: {
@@ -307,13 +316,26 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
+    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+    const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
+
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskDraft, setNewTaskDraft] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
-    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>('claude')
+    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(defaultTaskAgent)
+    const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => (
+        resolvePermissionModeForAgent(defaultTaskAgent, projectDefaultPermissionMode)
+    ))
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
     const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
-    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+    const newTaskPermissionOptions = useMemo(() => getPermissionModeOptionsForFlavor(newTaskAgent), [newTaskAgent])
+
+    useEffect(() => {
+        if (newTaskPermissionOptions.some((option) => option.mode === newTaskPermissionMode)) {
+            return
+        }
+        setNewTaskPermissionMode(resolvePermissionModeForAgent(newTaskAgent, projectDefaultPermissionMode))
+    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, projectDefaultPermissionMode])
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -481,7 +503,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         title: string,
         description?: string,
         priority?: TaskPriority | null,
-        agentFlavor?: AgentType
+        agentFlavor?: AgentType,
+        permissionMode?: PermissionMode
     ) => {
         const trimmed = title.trim()
         if (!trimmed) return
@@ -500,6 +523,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 priority: priority ?? undefined,
                 status: 'new',
                 agentFlavor: agentFlavor ?? defaultTaskAgent,
+                permissionMode,
                 sortKey
             })
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
@@ -636,6 +660,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         setNewTaskDraft('')
         setNewTaskPriority('')
         setNewTaskAgent(defaultTaskAgent)
+        setNewTaskPermissionMode(resolvePermissionModeForAgent(defaultTaskAgent, projectDefaultPermissionMode))
         setCreateOpen(true)
     }
 
@@ -645,7 +670,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
             parsedNewTaskDraft.title,
             parsedNewTaskDraft.description,
             newTaskPriority || null,
-            newTaskAgent
+            newTaskAgent,
+            newTaskPermissionMode
         )
         if (created) {
             setCreateOpen(false)
@@ -1067,6 +1093,28 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 isDisabled={isCreatingTask}
                                 onAgentChange={setNewTaskAgent}
                             />
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">
+                                    {t('misc.permissionMode')}
+                                </label>
+                                <select
+                                    value={newTaskPermissionMode}
+                                    onChange={(e) => setNewTaskPermissionMode(e.target.value as PermissionMode)}
+                                    disabled={isCreatingTask}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                >
+                                    {newTaskPermissionOptions.map((option) => (
+                                        <option key={option.mode} value={option.mode}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                {newTaskPermissionMode === 'plan' ? (
+                                    <div className="text-xs text-[var(--app-hint)]">
+                                        {t('projects.tasks.planModeHint')}
+                                    </div>
+                                ) : null}
+                            </div>
                         </div>
 
                         <div className="mt-5 flex justify-end gap-2">

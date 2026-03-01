@@ -173,7 +173,7 @@ describe('startSessionFromTask', () => {
         expect(spawnedAgent).toBe('codex')
     })
 
-    it('includes task subtasks in kickoff message', async () => {
+    it('uses task permission mode before project defaults when starting session', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -185,7 +185,8 @@ describe('startSessionFromTask', () => {
             id: projectId,
             namespace,
             machineId,
-            name: 'Project'
+            name: 'Project',
+            defaultPermissionMode: 'default'
         })
         store.workspaces.createWorkspace({
             id: workspaceId,
@@ -196,14 +197,10 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            description: 'Task description',
             status: 'planned',
             workspaceId,
-            subTasks: [
-                { id: 's1', content: 'pending subtask', status: 'pending', priority: 'high' },
-                { id: 's2', content: 'done subtask', status: 'completed', priority: 'low' }
-            ],
-            subTasksUpdatedAt: Date.now()
+            agentFlavor: 'claude',
+            permissionMode: 'plan'
         })
 
         const spawned = store.sessions.getOrCreateSession(
@@ -213,7 +210,7 @@ describe('startSessionFromTask', () => {
             namespace
         )
 
-        let kickoffText = ''
+        const appliedConfigs: Array<Record<string, unknown>> = []
         const engine = {
             getMachineByNamespace() {
                 return {
@@ -229,13 +226,13 @@ describe('startSessionFromTask', () => {
             async waitForSessionActive() {
                 return true
             },
-            async applySessionConfig() {
+            async applySessionConfig(_sessionId: string, patch: Record<string, unknown>) {
+                appliedConfigs.push(patch)
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
             },
-            async sendMessage(_sessionId: string, payload: { text: string }) {
-                kickoffText = payload.text
+            async sendMessage() {
             },
             handleRealtimeEvent() {
             }
@@ -249,8 +246,6 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(kickoffText).toContain('Subtasks:')
-        expect(kickoffText).toContain('- [ ] pending subtask')
-        expect(kickoffText).toContain('- [x] done subtask')
+        expect(appliedConfigs.some((patch) => patch.permissionMode === 'plan')).toBe(true)
     })
 })

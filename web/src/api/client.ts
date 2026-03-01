@@ -298,6 +298,7 @@ export class ApiClient {
         priority?: 'high' | 'medium' | 'low'
         workspaceId?: string
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        permissionMode?: PermissionMode
         sortKey?: number
         attachments?: Array<{
             id: string
@@ -331,6 +332,7 @@ export class ApiClient {
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
+        permissionMode?: PermissionMode | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: Array<{

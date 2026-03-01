@@ -82,6 +82,7 @@ export default {
   'projects.tasks.approve': 'Approve',
   'projects.tasks.reject': 'Reject',
   'projects.tasks.rejectFailed': 'Reject failed',
+  'projects.tasks.planModeHint': 'Plan Mode: agent plans first, then executes after plan approval.',
 
   'projects.workbench.tab.task': 'Task',
   'projects.workbench.tab.chat': 'Chat',

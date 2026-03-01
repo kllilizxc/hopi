@@ -82,6 +82,7 @@ export default {
   'projects.tasks.approve': '批准',
   'projects.tasks.reject': '拒绝',
   'projects.tasks.rejectFailed': '拒绝失败',
+  'projects.tasks.planModeHint': 'Plan 模式：先产出计划，确认后再执行。',
 
   'projects.workbench.tab.task': '任务',
   'projects.workbench.tab.chat': '聊天',

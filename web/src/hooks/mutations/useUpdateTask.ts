@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { Task } from '@/types/api'
+import type { PermissionMode, Task } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type TaskAttachmentInput = {
@@ -28,6 +28,7 @@ type UpdateTaskInput = {
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
+        permissionMode?: PermissionMode | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: TaskAttachmentInput[]

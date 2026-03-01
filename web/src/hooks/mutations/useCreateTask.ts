@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { Task } from '@/types/api'
+import type { PermissionMode, Task } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type TaskAttachmentInput = {
@@ -27,6 +27,7 @@ type CreateTaskInput = {
     priority?: 'high' | 'medium' | 'low'
     workspaceId?: string
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    permissionMode?: PermissionMode
     sortKey?: number
     attachments?: TaskAttachmentInput[]
     subTasks?: TaskSubTaskInput[]
@@ -51,6 +52,7 @@ export function useCreateTask(api: ApiClient | null): {
                 priority: input.priority,
                 workspaceId: input.workspaceId,
                 agentFlavor: input.agentFlavor,
+                permissionMode: input.permissionMode,
                 sortKey: input.sortKey,
                 attachments: input.attachments,
                 subTasks: input.subTasks

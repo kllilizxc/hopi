@@ -102,6 +102,7 @@ function StartSessionDialog(props: {
     taskId: string
     machineId: string
     taskAgentFlavor: AgentType | null
+    taskPermissionMode: PermissionMode | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
@@ -126,12 +127,20 @@ function StartSessionDialog(props: {
         }
         return 'auto'
     })()
+    const initialPermissionMode = useMemo(() => {
+        const permissionOptions = getPermissionModeOptionsForFlavor(initialAgent)
+        const preferred = props.taskPermissionMode ?? props.projectDefaults.permissionMode
+        if (permissionOptions.some((option) => option.mode === preferred)) {
+            return preferred
+        }
+        return permissionOptions[0]?.mode ?? 'default'
+    }, [initialAgent, props.taskPermissionMode, props.projectDefaults.permissionMode])
 
     const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId)
     const [agent, setAgent] = useState<AgentType>(initialAgent)
     const [model, setModel] = useState(initialModel)
     const [yolo, setYolo] = useState(false)
-    const [permissionMode, setPermissionMode] = useState<PermissionMode>(props.projectDefaults.permissionMode)
+    const [permissionMode, setPermissionMode] = useState<PermissionMode>(initialPermissionMode)
 
     useEffect(() => {
         if (!props.isOpen) return
@@ -139,8 +148,8 @@ function StartSessionDialog(props: {
         setAgent(initialAgent)
         setModel(initialModel)
         setYolo(false)
-        setPermissionMode(props.projectDefaults.permissionMode)
-    }, [props.isOpen, initialWorkspaceId, initialAgent, initialModel, props.projectDefaults.permissionMode])
+        setPermissionMode(initialPermissionMode)
+    }, [props.isOpen, initialWorkspaceId, initialAgent, initialModel, initialPermissionMode])
 
     const permissionOptions = useMemo(() => getPermissionModeOptionsForFlavor(agent), [agent])
 
@@ -148,8 +157,12 @@ function StartSessionDialog(props: {
         if (permissionOptions.some((option) => option.mode === permissionMode)) {
             return
         }
-        setPermissionMode('default')
-    }, [permissionOptions, permissionMode])
+        const preferred = props.taskPermissionMode ?? props.projectDefaults.permissionMode
+        const fallback = permissionOptions.find((option) => option.mode === preferred)?.mode
+            ?? permissionOptions[0]?.mode
+            ?? 'default'
+        setPermissionMode(fallback)
+    }, [permissionOptions, permissionMode, props.taskPermissionMode, props.projectDefaults.permissionMode])
 
     const canStart = Boolean(workspaceId && agent && !isPending)
 
@@ -944,6 +957,7 @@ function TaskDetailsPanel(props: {
                 taskId={props.taskId}
                 machineId={props.projectMachineId}
                 taskAgentFlavor={agentFlavor || null}
+                taskPermissionMode={props.task.permissionMode ?? null}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}

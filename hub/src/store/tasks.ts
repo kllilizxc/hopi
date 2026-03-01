@@ -14,6 +14,7 @@ type DbTaskRow = {
     active_session_id: string | null
     workspace_id: string | null
     agent_flavor: string | null
+    permission_mode: string | null
     attachments: string | null
     source: string | null
     source_task_id: string | null
@@ -39,6 +40,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         activeSessionId: row.active_session_id,
         workspaceId: row.workspace_id,
         agentFlavor: row.agent_flavor,
+        permissionMode: row.permission_mode,
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
@@ -146,6 +148,7 @@ export function createTask(
         activeSessionId?: string | null
         workspaceId?: string | null
         agentFlavor?: string | null
+        permissionMode?: string | null
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
@@ -161,11 +164,13 @@ export function createTask(
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
+            permission_mode,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
+            @permission_mode,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -179,6 +184,7 @@ export function createTask(
         active_session_id: task.activeSessionId ?? null,
         workspace_id: task.workspaceId ?? null,
         agent_flavor: task.agentFlavor ?? null,
+        permission_mode: task.permissionMode ?? null,
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
@@ -210,6 +216,7 @@ export function updateTaskByNamespace(
         activeSessionId?: string | null
         workspaceId?: string | null
         agentFlavor?: string | null
+        permissionMode?: string | null
         attachments?: unknown
         subTasks?: unknown
         subTasksUpdatedAt?: number | null
@@ -237,6 +244,7 @@ export function updateTaskByNamespace(
         activeSessionId: patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId,
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
         agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
+        permissionMode: patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
         subTasks: patch.subTasks !== undefined ? patch.subTasks : current.subTasks,
         subTasksUpdatedAt: patch.subTasksUpdatedAt !== undefined
@@ -266,6 +274,7 @@ export function updateTaskByNamespace(
             active_session_id = @active_session_id,
             workspace_id = @workspace_id,
             agent_flavor = @agent_flavor,
+            permission_mode = @permission_mode,
             attachments = @attachments,
             sub_tasks = @sub_tasks,
             sub_tasks_updated_at = @sub_tasks_updated_at,
@@ -286,6 +295,7 @@ export function updateTaskByNamespace(
         active_session_id: next.activeSessionId,
         workspace_id: next.workspaceId,
         agent_flavor: next.agentFlavor,
+        permission_mode: next.permissionMode,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
         sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,
         sub_tasks_updated_at: next.subTasksUpdatedAt,

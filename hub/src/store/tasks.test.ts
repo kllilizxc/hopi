@@ -69,7 +69,7 @@ describe('Task store worktree merge fields', () => {
         expect(store.tasks.getTaskByNamespace('task-other', 'other')).not.toBeNull()
     })
 
-    it('stores task subtasks and timestamp updates', () => {
+    it('persists task permission mode updates', () => {
         const store = new Store(':memory:')
         store.projects.createProject({
             id: 'project-1',
@@ -78,26 +78,20 @@ describe('Task store worktree merge fields', () => {
             name: 'Project'
         })
 
-        store.tasks.createTask({
+        const created = store.tasks.createTask({
             id: 'task-1',
             projectId: 'project-1',
             title: 'Task',
-            status: 'new'
+            status: 'new',
+            permissionMode: 'plan'
         })
 
-        const updatedAt = Date.now()
+        expect(created.permissionMode).toBe('plan')
+
         const updated = store.tasks.updateTaskByNamespace('task-1', 'default', {
-            subTasks: [
-                { id: 'st-1', content: 'first', status: 'pending', priority: 'high' },
-                { id: 'st-2', content: 'second', status: 'completed', priority: 'low' }
-            ],
-            subTasksUpdatedAt: updatedAt
+            permissionMode: 'default'
         })
 
-        expect(updated?.subTasks).toEqual([
-            { id: 'st-1', content: 'first', status: 'pending', priority: 'high' },
-            { id: 'st-2', content: 'second', status: 'completed', priority: 'low' }
-        ])
-        expect(updated?.subTasksUpdatedAt).toBe(updatedAt)
+        expect(updated?.permissionMode).toBe('default')
     })
 })

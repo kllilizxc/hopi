@@ -117,6 +117,7 @@ export async function startSessionFromTask(options: {
     })
 
     const permissionMode = overrides.permissionMode
+        ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? undefined
     const modelMode = overrides.modelMode

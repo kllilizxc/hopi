@@ -339,6 +339,7 @@ export class Store {
                 active_session_id TEXT,
                 workspace_id TEXT,
                 agent_flavor TEXT,
+                permission_mode TEXT,
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
@@ -495,6 +496,9 @@ export class Store {
         }
         if (!taskColumns.has('agent_flavor')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN agent_flavor TEXT')
+        }
+        if (!taskColumns.has('permission_mode')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN permission_mode TEXT')
         }
     }
 
