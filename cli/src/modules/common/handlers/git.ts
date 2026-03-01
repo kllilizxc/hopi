@@ -2,6 +2,7 @@ import { execFile, type ExecFileOptions } from 'child_process'
 import { promisify } from 'util'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
+import { formatMergeFailureMessage } from '../gitMergeConflictDetection'
 import { validatePath } from '../pathSecurity'
 import { rpcError } from '../rpcResponses'
 
@@ -343,9 +344,12 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 const conflictFiles = conflicts.success
                     ? (conflicts.stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
                     : []
-                const message = conflictFiles.length > 0
-                    ? 'Merge conflicts detected; manual resolution required'
-                    : mergeResult.error ?? mergeResult.stderr ?? 'Merge failed'
+                const message = formatMergeFailureMessage({
+                    conflictFiles,
+                    error: mergeResult.error,
+                    stdout: mergeResult.stdout,
+                    stderr: mergeResult.stderr
+                })
 
                 return rpcError(message, {
                     conflictFiles,

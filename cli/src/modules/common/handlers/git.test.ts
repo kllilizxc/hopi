@@ -96,6 +96,33 @@ describe('git merge worktree RPC handler', () => {
         const worktreeAheadCount = await runGit(baseDir, ['rev-list', '--count', 'main..task-branch'])
         expect(worktreeAheadCount).toBe('1')
     })
+
+    it('returns normalized conflict message when merge fails with conflicts', async () => {
+        await writeFile(join(worktreeDir, 'README.md'), 'worktree change\n')
+        await writeFile(join(baseDir, 'README.md'), 'main change\n')
+        await runGit(baseDir, ['add', 'README.md'])
+        await runGit(baseDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'main edit'])
+
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+        registerGitHandlers(rpc, worktreeDir)
+
+        const response = await rpc.handleRequest({
+            method: 'session-test:git-merge-worktree',
+            params: JSON.stringify({
+                targetBranch: 'main',
+                commitMessage: 'HAPI: merge conflict test'
+            })
+        })
+
+        const parsed = JSON.parse(response) as {
+            success: boolean
+            conflictFiles?: string[]
+            error?: string
+        }
+        expect(parsed.success).toBe(false)
+        expect(parsed.error).toBe('Merge conflicts detected; manual resolution required')
+        expect(parsed.conflictFiles).toContain('README.md')
+    })
 })
 
 describe('git diff RPC handlers', () => {

@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store } from '../../store'
+import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
 import type { RpcGitMergeWorktreeResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
@@ -78,53 +79,13 @@ const mergeWorktreeSchema = z.object({
     conflictStrategy: z.enum(['manual', 'agent']).optional()
 })
 
-function getMergeWorktreeErrorStatus(result: {
-    error?: string
-    conflictFiles?: string[]
-}): 400 | 409 | 500 | 504 {
-    const conflictFiles = result.conflictFiles ?? []
-    if (conflictFiles.length > 0) {
-        return 409
-    }
-
-    const error = (result.error ?? '').toLowerCase()
-    if (!error) {
-        return 500
-    }
-
-    if (error.includes('uncommitted changes') || error.includes('merge conflict')) {
-        return 409
-    }
-
-    if (error.includes('target branch') && error.includes('not found')) {
-        return 400
-    }
-    if (error.includes('worktree branch') && error.includes('not found')) {
-        return 400
-    }
-
-    if (error.includes('required')) {
-        return 400
-    }
-
-    if (error.includes('timed out')) {
-        return 504
-    }
-
-    return 500
-}
-
 function shouldAutoResolveMergeConflict(result: {
     error?: string
     conflictFiles?: string[]
+    stdout?: string
+    stderr?: string
 }): boolean {
-    const conflictFiles = result.conflictFiles ?? []
-    if (conflictFiles.length > 0) {
-        return true
-    }
-
-    const error = (result.error ?? '').toLowerCase()
-    return error.includes('merge conflict')
+    return isLikelyMergeConflict(result)
 }
 
 function createMergeConflictPrompt(options: {
