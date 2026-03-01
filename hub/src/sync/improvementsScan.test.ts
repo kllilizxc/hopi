@@ -86,12 +86,14 @@ describe('runImprovementsScan', () => {
                                 {
                                     title: '统一归档态视觉规范',
                                     description: '收敛 archived 的灰色 token',
+                                    priority: 'high',
                                     workspacePath: '/Users/realizer/Code/hopi',
                                     workspaceLabel: 'HOPI'
                                 },
                                 {
                                     title: '增加归档样式回归用例',
                                     description: '补充亮/暗主题回归检查',
+                                    priority: 'low',
                                     workspacePath: '/Users/realizer/Code/hopi',
                                     workspaceLabel: 'HOPI'
                                 }
@@ -134,6 +136,10 @@ describe('runImprovementsScan', () => {
         expect(generated.length).toBe(2)
         expect(generated.every((task) => task.status === 'new')).toBe(true)
         expect(generated.every((task) => task.workspaceId === workspaceId)).toBe(true)
+        const first = generated.find((task) => task.title === '统一归档态视觉规范')
+        const second = generated.find((task) => task.title === '增加归档样式回归用例')
+        expect(first?.priority).toBe('high')
+        expect(second?.priority).toBe('low')
     })
 
     it('creates New tasks from claude output assistant JSON response', async () => {
@@ -205,6 +211,7 @@ describe('runImprovementsScan', () => {
         const created = store.tasks.getTaskByNamespace(result.createdTaskIds[0]!, namespace)
         expect(created?.title).toBe('优化归档卡片可读性')
         expect(created?.status).toBe('new')
+        expect(created?.priority).toBe('medium')
         expect(created?.source).toBe('improvements_scan')
     })
 
@@ -276,6 +283,8 @@ describe('runImprovementsScan', () => {
         expect(capturedPrompt).toContain('system language for this session (zh-CN)')
         expect(capturedPrompt).toContain('Suggest up to 3 follow-up improvement tasks.')
         expect(capturedPrompt).toContain('Focus on necessary, high-impact follow-ups only; fewer is better.')
+        expect(capturedPrompt).toContain('"priority":"high|medium|low"')
+        expect(capturedPrompt).toContain('Include a "priority" for each item using ONLY')
     })
 
     it('prefers request locale override over session metadata locale', async () => {

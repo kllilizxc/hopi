@@ -8,10 +8,12 @@ import type { SyncEngine } from './syncEngine'
 
 export const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const MAX_IMPROVEMENTS_PER_SCAN = 3
+type ImprovementPriority = 'high' | 'medium' | 'low'
 
 const suggestionSchema = z.object({
     title: z.string().min(1).max(255),
     description: z.string().max(200_000).optional(),
+    priority: z.string().max(64).optional(),
     workspacePath: z.string().min(1).max(4096).optional(),
     workspaceLabel: z.string().min(1).max(255).optional(),
     workspace: z.string().min(1).max(4096).optional(),
@@ -20,6 +22,7 @@ const suggestionSchema = z.object({
 export type ImprovementsSuggestion = {
     title: string
     description?: string
+    priority: ImprovementPriority
     workspacePath?: string
     workspaceLabel?: string
 }
@@ -94,6 +97,41 @@ function normalizeTitle(value: string): string {
         .toLowerCase()
 }
 
+function normalizeSuggestionPriority(raw: string | undefined): ImprovementPriority | null {
+    const value = raw?.trim().toLowerCase()
+    if (!value) {
+        return null
+    }
+
+    if (value === 'high' || value === 'urgent' || value === 'critical' || value === 'p0' || value === 'p1') {
+        return 'high'
+    }
+
+    if (value === 'medium' || value === 'med' || value === 'normal' || value === 'default' || value === 'p2') {
+        return 'medium'
+    }
+
+    if (value === 'low' || value === 'minor' || value === 'nice-to-have' || value === 'nice_to_have' || value === 'p3' || value === 'p4') {
+        return 'low'
+    }
+
+    return null
+}
+
+function inferSuggestionPriorityFromText(title: string, description?: string): ImprovementPriority {
+    const text = `${title} ${description ?? ''}`.toLowerCase()
+
+    if (/\b(blocker|critical|urgent|security|outage|data loss|crash|regression)\b/.test(text)) {
+        return 'high'
+    }
+
+    if (/\b(polish|cleanup|docs|documentation|typo|minor|nice to have)\b/.test(text)) {
+        return 'low'
+    }
+
+    return 'medium'
+}
+
 function mapWorkspaceHintToWorkspaceId(
     suggestion: ImprovementsSuggestion,
     workspaces: StoredWorkspace[]
@@ -156,12 +194,13 @@ function buildImprovementsPrompt(options: {
         '- Output STRICT JSON ONLY: a JSON array of objects.',
         '',
         'JSON schema:',
-        '[{"title":"string","description":"string?","workspacePath":"string?","workspaceLabel":"string?"}]',
+        '[{"title":"string","description":"string?","priority":"high|medium|low","workspacePath":"string?","workspaceLabel":"string?"}]',
         '',
         'Rules:',
         '- Return an empty array [] if no good suggestions.',
         '- Focus on necessary, high-impact follow-ups only; fewer is better.',
         '- Keep titles short and actionable.',
+        '- Include a "priority" for each item using ONLY: "high", "medium", or "low".',
         '- No duplicates.'
     ].join('\n')
 }
@@ -269,7 +308,10 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
         if (typeof item === 'string') {
             const title = item.trim()
             if (!title) continue
-            suggestions.push({ title })
+            suggestions.push({
+                title,
+                priority: inferSuggestionPriorityFromText(title)
+            })
             continue
         }
 
@@ -282,12 +324,15 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
         if (!title) continue
 
         const description = parsed.data.description?.trim()
+        const priority = normalizeSuggestionPriority(parsed.data.priority)
+            ?? inferSuggestionPriorityFromText(title, description)
         const workspacePath = (parsed.data.workspacePath ?? parsed.data.workspace)?.trim()
         const workspaceLabel = parsed.data.workspaceLabel?.trim()
 
         suggestions.push({
             title,
             description: description || undefined,
+            priority,
             workspacePath: workspacePath || undefined,
             workspaceLabel: workspaceLabel || undefined
         })
@@ -457,7 +502,7 @@ export async function runImprovementsScan(options: {
             title: suggestion.title.trim(),
             description: suggestion.description ?? null,
             status: 'new',
-            priority: null,
+            priority: suggestion.priority,
             sortKey: Date.now() + createdTaskIds.length,
             workspaceId,
             attachments: undefined,
