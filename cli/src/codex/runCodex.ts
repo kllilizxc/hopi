@@ -12,6 +12,7 @@ import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import { normalizeCodexSlashCommand } from './utils/normalizeSlashCommand';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -82,7 +83,8 @@ export async function runCodex(opts: {
             collaborationMode: currentCollaborationMode
         };
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, enhancedMode, message.localKey ?? null);
+        const normalizedText = normalizeCodexSlashCommand(formattedText);
+        messageQueue.push(normalizedText, enhancedMode, message.localKey ?? null);
     });
 
     const formatFailureReason = (message: string): string => {

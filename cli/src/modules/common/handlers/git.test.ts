@@ -97,3 +97,123 @@ describe('git merge worktree RPC handler', () => {
         expect(worktreeAheadCount).toBe('1')
     })
 })
+
+describe('git diff RPC handlers', () => {
+    let repoDir = ''
+    let rpc: RpcHandlerManager
+
+    beforeEach(async () => {
+        repoDir = await createTempDir('hapi-git-diff')
+
+        await runGit(repoDir, ['init', '-b', 'main'])
+        await writeFile(join(repoDir, 'staged.txt'), 'base staged\n')
+        await writeFile(join(repoDir, 'unstaged.txt'), 'base unstaged\n')
+        await runGit(repoDir, ['add', 'staged.txt', 'unstaged.txt'])
+        await runGit(repoDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init'])
+
+        await writeFile(join(repoDir, 'staged.txt'), 'base staged\nstaged change\n')
+        await writeFile(join(repoDir, 'unstaged.txt'), 'base unstaged\nunstaged change\n')
+        await runGit(repoDir, ['add', 'staged.txt'])
+
+        rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+        registerGitHandlers(rpc, repoDir)
+    })
+
+    afterEach(async () => {
+        if (repoDir) {
+            await rm(repoDir, { recursive: true, force: true })
+        }
+    })
+
+    async function callGitHandler(method: string, params: Record<string, unknown>) {
+        const response = await rpc.handleRequest({
+            method: `session-test:${method}`,
+            params: JSON.stringify(params)
+        })
+        return JSON.parse(response) as {
+            success: boolean
+            stdout?: string
+            stderr?: string
+            error?: string
+        }
+    }
+
+    it('returns both staged and unstaged changes when staged filter is omitted', async () => {
+        const result = await callGitHandler('git-diff-numstat', { cwd: repoDir })
+
+        expect(result.success).toBe(true)
+        expect(result.stdout).toContain('staged.txt')
+        expect(result.stdout).toContain('unstaged.txt')
+    })
+
+    it('still supports explicit staged and unstaged filters', async () => {
+        const stagedResult = await callGitHandler('git-diff-numstat', { cwd: repoDir, staged: true })
+        const unstagedResult = await callGitHandler('git-diff-numstat', { cwd: repoDir, staged: false })
+
+        expect(stagedResult.success).toBe(true)
+        expect(stagedResult.stdout).toContain('staged.txt')
+        expect(stagedResult.stdout).not.toContain('unstaged.txt')
+
+        expect(unstagedResult.success).toBe(true)
+        expect(unstagedResult.stdout).toContain('unstaged.txt')
+        expect(unstagedResult.stdout).not.toContain('staged.txt')
+    })
+
+    it('returns staged file content in default file diff mode', async () => {
+        const defaultResult = await callGitHandler('git-diff-file', {
+            cwd: repoDir,
+            filePath: 'staged.txt'
+        })
+        const stagedResult = await callGitHandler('git-diff-file', {
+            cwd: repoDir,
+            filePath: 'staged.txt',
+            staged: true
+        })
+        const unstagedResult = await callGitHandler('git-diff-file', {
+            cwd: repoDir,
+            filePath: 'staged.txt',
+            staged: false
+        })
+
+        expect(defaultResult.success).toBe(true)
+        expect(defaultResult.stdout).toContain('+staged change')
+
+        expect(stagedResult.success).toBe(true)
+        expect(stagedResult.stdout).toContain('+staged change')
+
+        expect(unstagedResult.success).toBe(true)
+        expect((unstagedResult.stdout ?? '').trim()).toBe('')
+    })
+
+    it('handles default diff mode before the first commit', async () => {
+        const noHeadRepo = await createTempDir('hapi-git-diff-no-head')
+        try {
+            await runGit(noHeadRepo, ['init', '-b', 'main'])
+            await writeFile(join(noHeadRepo, 'new-file.txt'), 'hello\nworld\n')
+            await runGit(noHeadRepo, ['add', 'new-file.txt'])
+
+            const noHeadRpc = new RpcHandlerManager({ scopePrefix: 'session-test-no-head' })
+            registerGitHandlers(noHeadRpc, noHeadRepo)
+
+            const numstatRaw = await noHeadRpc.handleRequest({
+                method: 'session-test-no-head:git-diff-numstat',
+                params: JSON.stringify({ cwd: noHeadRepo })
+            })
+            const fileRaw = await noHeadRpc.handleRequest({
+                method: 'session-test-no-head:git-diff-file',
+                params: JSON.stringify({ cwd: noHeadRepo, filePath: 'new-file.txt' })
+            })
+
+            const numstatResult = JSON.parse(numstatRaw) as { success: boolean; stdout?: string }
+            const fileResult = JSON.parse(fileRaw) as { success: boolean; stdout?: string }
+
+            expect(numstatResult.success).toBe(true)
+            expect(numstatResult.stdout).toContain('new-file.txt')
+
+            expect(fileResult.success).toBe(true)
+            expect(fileResult.stdout).toContain('+hello')
+        } finally {
+            await rm(noHeadRepo, { recursive: true, force: true })
+        }
+    })
+})

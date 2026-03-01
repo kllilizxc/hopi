@@ -67,6 +67,8 @@ interface GitMergeWorktreeResponse {
     error?: string
 }
 
+const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+
 function resolveCwd(requestedCwd: string | undefined, workingDirectory: string): { cwd: string; error?: string } {
     const cwd = requestedCwd ?? workingDirectory
     const validation = validatePath(cwd, workingDirectory)
@@ -123,6 +125,14 @@ async function runGitCommand(
             exitCode: typeof execError.code === 'number' ? execError.code : 1
         })
     }
+}
+
+async function resolveCombinedDiffBase(cwd: string, timeout?: number): Promise<string> {
+    const headResult = await runGitCommand(['rev-parse', '--verify', 'HEAD'], cwd, timeout)
+    if (headResult.success) {
+        return 'HEAD'
+    }
+    return EMPTY_TREE_HASH
 }
 
 function needsGitIdentity(message: string): boolean {
@@ -220,11 +230,17 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             return rpcError('Invalid base reference')
         }
 
+        const combinedBase = !baseRef && data.staged === undefined
+            ? await resolveCombinedDiffBase(resolved.cwd, data.timeout)
+            : null
+
         const args = baseRef
             ? ['diff', '--numstat', `${baseRef}..HEAD`]
-            : data.staged
+            : data.staged === true
                 ? ['diff', '--cached', '--numstat']
-                : ['diff', '--numstat']
+                : data.staged === false
+                    ? ['diff', '--numstat']
+                    : ['diff', '--numstat', combinedBase ?? 'HEAD']
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 
@@ -393,11 +409,17 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             return rpcError('Invalid base reference')
         }
 
+        const combinedBase = !baseRef && data.staged === undefined
+            ? await resolveCombinedDiffBase(resolved.cwd, data.timeout)
+            : null
+
         const args = baseRef
             ? ['diff', '--no-ext-diff', `${baseRef}..HEAD`, '--', data.filePath]
-            : data.staged
+            : data.staged === true
                 ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
-                : ['diff', '--no-ext-diff', '--', data.filePath]
+                : data.staged === false
+                    ? ['diff', '--no-ext-diff', '--', data.filePath]
+                    : ['diff', '--no-ext-diff', combinedBase ?? 'HEAD', '--', data.filePath]
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 }
