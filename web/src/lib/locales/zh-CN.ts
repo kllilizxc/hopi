@@ -64,9 +64,11 @@ export default {
 
   'projects.tasks.create': '新建任务',
   'projects.tasks.creating': '创建中…',
-  'projects.tasks.createHint': '默认进入 New。拖到 Planned 后进入队列。',
+  'projects.tasks.createHint': '第一行作为标题，后续行作为描述。默认进入 New。拖到 Planned 后进入队列。',
   'projects.tasks.title': '标题',
   'projects.tasks.description': '描述',
+  'projects.tasks.details': '任务内容',
+  'projects.tasks.detailsPlaceholder': '第一行输入标题\n后续行输入描述（可选）',
   'projects.tasks.add': '添加',
   'projects.tasks.quickAdd': '快速添加到 New…',
   'projects.tasks.moveTo': '移动到…',

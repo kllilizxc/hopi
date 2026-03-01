@@ -136,6 +136,17 @@ function computeInsertedSortKey(above: Task | null, below: Task | null): number 
     return Date.now()
 }
 
+function parseTaskDraft(value: string): { title: string; description?: string } {
+    const normalized = value.replace(/\r\n/g, '\n')
+    const [rawTitle = '', ...descriptionLines] = normalized.split('\n')
+    const title = rawTitle.trim()
+    const description = descriptionLines.join('\n').trim()
+    return {
+        title,
+        description: description ? description : undefined
+    }
+}
+
 function TaskCardMenuIcon(props: { className?: string }) {
     return (
         <svg
@@ -296,10 +307,10 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { updateTask } = useUpdateTask(api)
 
     const [createOpen, setCreateOpen] = useState(false)
-    const [newTaskTitle, setNewTaskTitle] = useState('')
-    const [newTaskDescription, setNewTaskDescription] = useState('')
+    const [newTaskDraft, setNewTaskDraft] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
+    const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -613,15 +624,14 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     ])
 
     const openCreateModal = () => {
-        setNewTaskTitle('')
-        setNewTaskDescription('')
+        setNewTaskDraft('')
         setNewTaskPriority('')
         setCreateOpen(true)
     }
 
     const handleCreateModal = async () => {
-        if (isCreatingTask || !newTaskTitle.trim()) return
-        const created = await handleCreateTask(newTaskTitle, newTaskDescription, newTaskPriority || null)
+        if (isCreatingTask || !parsedNewTaskDraft.title) return
+        const created = await handleCreateTask(parsedNewTaskDraft.title, parsedNewTaskDraft.description, newTaskPriority || null)
         if (created) {
             setCreateOpen(false)
         }
@@ -996,25 +1006,14 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                         <div className="space-y-3">
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.tasks.title')}
-                                </label>
-                                <input
-                                    type="text"
-                                    value={newTaskTitle}
-                                    onChange={(e) => setNewTaskTitle(e.target.value)}
-                                    disabled={isCreatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.tasks.description')}
+                                    {t('projects.tasks.details')}
                                 </label>
                                 <textarea
-                                    value={newTaskDescription}
-                                    onChange={(e) => setNewTaskDescription(e.target.value)}
+                                    value={newTaskDraft}
+                                    onChange={(e) => setNewTaskDraft(e.target.value)}
                                     disabled={isCreatingTask}
-                                    rows={4}
+                                    rows={6}
+                                    placeholder={t('projects.tasks.detailsPlaceholder')}
                                     className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 />
                             </div>
@@ -1040,7 +1039,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                             <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)} disabled={isCreatingTask}>
                                 {t('button.cancel')}
                             </Button>
-                            <Button type="submit" variant="secondary" disabled={isCreatingTask || !newTaskTitle.trim()}>
+                            <Button type="submit" variant="secondary" disabled={isCreatingTask || !parsedNewTaskDraft.title}>
                                 {isCreatingTask ? t('projects.tasks.creating') : t('projects.tasks.create')}
                             </Button>
                         </div>

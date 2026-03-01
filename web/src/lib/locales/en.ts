@@ -64,9 +64,11 @@ export default {
 
   'projects.tasks.create': 'New task',
   'projects.tasks.creating': 'Creating…',
-  'projects.tasks.createHint': 'Starts in New. Drag into Planned to queue.',
+  'projects.tasks.createHint': 'First line becomes title, next lines become description. Starts in New. Drag into Planned to queue.',
   'projects.tasks.title': 'Title',
   'projects.tasks.description': 'Description',
+  'projects.tasks.details': 'Task details',
+  'projects.tasks.detailsPlaceholder': 'Title on the first line\nOptional description on following lines',
   'projects.tasks.add': 'Add',
   'projects.tasks.quickAdd': 'Quick add to New…',
   'projects.tasks.moveTo': 'Move to…',
