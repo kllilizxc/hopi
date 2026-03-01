@@ -130,6 +130,28 @@ function DiffIcon(props: { className?: string }) {
     )
 }
 
+function TaskIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            <path d="M9 12h6" />
+            <path d="M9 16h6" />
+        </svg>
+    )
+}
+
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
@@ -250,10 +272,11 @@ export function SessionHeader(props: {
                                 to: '/projects/$projectId/tasks/$taskId/task',
                                 params: { projectId: taskLink.projectId, taskId: taskLink.taskId }
                             })}
-                            className="rounded-full px-3 py-1.5 text-xs font-medium bg-[var(--app-subtle-bg)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label={t('projects.workbench.tab.task')}
                             title={t('projects.workbench.tab.task')}
                         >
-                            {t('projects.workbench.tab.task')}
+                            <TaskIcon />
                         </button>
                     ) : null}
                 </div>
