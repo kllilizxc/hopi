@@ -254,6 +254,16 @@ export default {
   'session.title': 'Files',
   'session.more': 'More actions',
   'session.backToTask': 'Back to task',
+  'session.files.searchPlaceholder': 'Search files',
+  'session.files.tabChanges': 'Changes',
+  'session.files.tabDirectories': 'Directories',
+  'session.files.changeCount': '{staged} {stagedLabel}, {unstaged} {unstagedLabel}',
+  'session.files.searchNoMatch': 'No files match your search.',
+  'session.files.searchNoFiles': 'No files found in this project.',
+  'session.files.projectRoot': 'project root',
+  'session.files.branchDetached': 'detached',
+  'session.files.emptyHint': 'Use Directories to browse all files, or search.',
+  'session.files.emptyWithHint': '{message} {hint}',
 
   // Session actions
   'session.action.importTask': 'Import as task',

@@ -254,6 +254,16 @@ export default {
   'session.title': '文件',
   'session.more': '更多操作',
   'session.backToTask': '返回任务',
+  'session.files.searchPlaceholder': '搜索文件',
+  'session.files.tabChanges': '改动',
+  'session.files.tabDirectories': '目录',
+  'session.files.changeCount': '{stagedLabel} {staged}，{unstagedLabel} {unstaged}',
+  'session.files.searchNoMatch': '没有匹配搜索的文件。',
+  'session.files.searchNoFiles': '此项目中没有文件。',
+  'session.files.projectRoot': '项目根目录',
+  'session.files.branchDetached': '游离 HEAD',
+  'session.files.emptyHint': '可使用“目录”浏览全部文件，或直接搜索。',
+  'session.files.emptyWithHint': '{message}{hint}',
 
   // Session actions
   'session.action.importTask': '导入为任务',

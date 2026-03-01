@@ -11,6 +11,7 @@ import { useSession } from '@/hooks/queries/useSession'
 import { useSessionFileSearch } from '@/hooks/queries/useSessionFileSearch'
 import { encodeBase64 } from '@/lib/utils'
 import { queryKeys } from '@/lib/query-keys'
+import { useTranslation } from '@/lib/use-translation'
 import { useQueryClient } from '@tanstack/react-query'
 
 function BackIcon(props: { className?: string }) {
@@ -115,10 +116,11 @@ function FolderIcon(props: { className?: string }) {
 
 function SearchResultRow(props: {
     file: FileSearchItem
+    rootLabel: string
     onOpen: () => void
     showDivider: boolean
 }) {
-    const subtitle = props.file.filePath || 'project root'
+    const subtitle = props.file.filePath || props.rootLabel
     const icon = props.file.fileType === 'file'
         ? <FileIcon fileName={props.file.fileName} size={22} />
         : <FolderIcon className="text-[var(--app-link)]" />
@@ -161,6 +163,7 @@ function FileListSkeleton(props: { label: string; rows?: number }) {
 
 export default function FilesPage() {
     const { api } = useAppContext()
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const goBack = useAppGoBack()
@@ -200,7 +203,7 @@ export default function FilesPage() {
         })
     }, [activeTab, navigate, sessionId])
 
-    const branchLabel = gitStatus?.branch ?? 'detached'
+    const branchLabel = gitStatus?.branch ?? t('session.files.branchDetached')
     const subtitle = session?.metadata?.path ?? sessionId
     const showGitErrorBanner = Boolean(gitError)
     const rootLabel = useMemo(() => {
@@ -249,14 +252,14 @@ export default function FilesPage() {
                         <BackIcon />
                     </button>
                     <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">Files</div>
+                        <div className="truncate font-semibold">{t('projects.files.title')}</div>
                         <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
                     </div>
                     <button
                         type="button"
                         onClick={handleRefresh}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        title="Refresh"
+                        title={t('projects.diffs.refresh')}
                     >
                         <RefreshIcon />
                     </button>
@@ -270,7 +273,7 @@ export default function FilesPage() {
                         <input
                             value={searchQuery}
                             onChange={(event) => setSearchQuery(event.target.value)}
-                            placeholder="Search files"
+                            placeholder={t('session.files.searchPlaceholder')}
                             className="w-full bg-transparent text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none"
                             autoCapitalize="none"
                             autoCorrect="off"
@@ -288,7 +291,7 @@ export default function FilesPage() {
                         onClick={() => handleTabChange('changes')}
                         className={`relative py-3 text-center text-sm font-semibold transition-colors hover:bg-[var(--app-subtle-bg)] ${activeTab === 'changes' ? 'text-[var(--app-fg)]' : 'text-[var(--app-hint)]'}`}
                     >
-                        Changes
+                        {t('session.files.tabChanges')}
                         <span
                             className={`absolute bottom-0 left-1/2 h-0.5 w-10 -translate-x-1/2 rounded-full ${activeTab === 'changes' ? 'bg-[var(--app-link)]' : 'bg-transparent'}`}
                         />
@@ -300,7 +303,7 @@ export default function FilesPage() {
                         onClick={() => handleTabChange('directories')}
                         className={`relative py-3 text-center text-sm font-semibold transition-colors hover:bg-[var(--app-subtle-bg)] ${activeTab === 'directories' ? 'text-[var(--app-fg)]' : 'text-[var(--app-hint)]'}`}
                     >
-                        Directories
+                        {t('session.files.tabDirectories')}
                         <span
                             className={`absolute bottom-0 left-1/2 h-0.5 w-10 -translate-x-1/2 rounded-full ${activeTab === 'directories' ? 'bg-[var(--app-link)]' : 'bg-transparent'}`}
                         />
@@ -316,7 +319,12 @@ export default function FilesPage() {
                             <span className="font-semibold">{branchLabel}</span>
                         </div>
                         <div className="text-xs text-[var(--app-hint)]">
-                            {gitStatus.totalStaged} staged, {gitStatus.totalUnstaged} unstaged
+                            {t('session.files.changeCount', {
+                                staged: gitStatus.totalStaged,
+                                unstaged: gitStatus.totalUnstaged,
+                                stagedLabel: t('projects.files.staged'),
+                                unstagedLabel: t('projects.files.unstaged'),
+                            })}
                         </div>
                     </div>
                 </div>
@@ -331,12 +339,12 @@ export default function FilesPage() {
                     ) : null}
                     {shouldSearch ? (
                         searchResults.isLoading ? (
-                            <FileListSkeleton label="Loading files…" />
+                            <FileListSkeleton label={t('loading.files')} />
                         ) : searchResults.error ? (
                             <div className="p-6 text-sm text-[var(--app-hint)]">{searchResults.error}</div>
                         ) : searchResults.files.length === 0 ? (
                             <div className="p-6 text-sm text-[var(--app-hint)]">
-                                {searchQuery ? 'No files match your search.' : 'No files found in this project.'}
+                                {searchQuery ? t('session.files.searchNoMatch') : t('session.files.searchNoFiles')}
                             </div>
                         ) : (
                             <div className="border-t border-[var(--app-divider)]">
@@ -344,6 +352,7 @@ export default function FilesPage() {
                                     <SearchResultRow
                                         key={`${file.fullPath}-${index}`}
                                         file={file}
+                                        rootLabel={t('session.files.projectRoot')}
                                         onOpen={() => handleOpenFile(file.fullPath)}
                                         showDivider={index < searchResults.files.length - 1}
                                     />
@@ -358,28 +367,34 @@ export default function FilesPage() {
                             onOpenFile={(path) => handleOpenFile(path)}
                         />
                     ) : gitLoading ? (
-                        <FileListSkeleton label="Loading Git status…" />
+                        <FileListSkeleton label={t('loading.git')} />
                     ) : (
                         <div>
                             {gitStatus ? (
                                 <GitChangeList
                                     stagedFiles={gitStatus.stagedFiles}
                                     unstagedFiles={gitStatus.unstagedFiles}
-                                    stagedTitle="Staged Changes"
-                                    unstagedTitle="Unstaged Changes"
+                                    stagedTitle={t('projects.diffs.staged')}
+                                    unstagedTitle={t('projects.diffs.unstaged')}
                                     onOpenFile={handleOpenFile}
                                 />
                             ) : null}
 
                             {!gitStatus ? (
                                 <div className="p-6 text-sm text-[var(--app-hint)]">
-                                    Git status unavailable. Use Directories to browse all files, or search.
+                                    {t('session.files.emptyWithHint', {
+                                        message: t('projects.diffs.unavailable'),
+                                        hint: t('session.files.emptyHint'),
+                                    })}
                                 </div>
                             ) : null}
 
                             {gitStatus && gitStatus.stagedFiles.length === 0 && gitStatus.unstagedFiles.length === 0 ? (
                                 <div className="p-6 text-sm text-[var(--app-hint)]">
-                                    No changes detected. Use Directories to browse all files, or search.
+                                    {t('session.files.emptyWithHint', {
+                                        message: t('projects.diffs.noChanges'),
+                                        hint: t('session.files.emptyHint'),
+                                    })}
                                 </div>
                             ) : null}
                         </div>
