@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session } from '@/types/api'
-import type { ChatBlock, NormalizedMessage } from '@/chat/types'
+import type { AgentEvent, ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
@@ -74,6 +74,89 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
     const MAX_FALLBACK_MS = 15 * 60 * 1000
     const ageMs = Date.now() - lastPromptAt
     return ageMs >= 0 && ageMs < MAX_FALLBACK_MS
+}
+
+const CONTINUE_PROMPT_TEXT = '继续'
+
+function getReadyEvent(event: AgentEvent): { forLocalKey: string | null; hasAssistantReply: boolean | null } | null {
+    if (event.type !== 'ready') {
+        return null
+    }
+    return {
+        forLocalKey: typeof event.forLocalKey === 'string' ? event.forLocalKey : null,
+        hasAssistantReply: typeof event.hasAssistantReply === 'boolean' ? event.hasAssistantReply : null
+    }
+}
+
+function isInterruptedEvent(event: AgentEvent): boolean {
+    if (event.type === 'api-error') {
+        const retryAttempt = typeof event.retryAttempt === 'number' ? event.retryAttempt : null
+        const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : null
+        return retryAttempt !== null && maxRetries !== null && maxRetries > 0 && retryAttempt >= maxRetries
+    }
+
+    if (event.type !== 'message' || typeof event.message !== 'string') {
+        return false
+    }
+
+    const message = event.message.toLowerCase()
+    return message.includes('aborted by user')
+        || message.includes('process exited unexpectedly')
+        || message.includes('prompt failed')
+        || message.includes('task failed')
+}
+
+function shouldShowContinueAction(session: Session, normalized: NormalizedMessage[]): boolean {
+    let latestPrompt: NormalizedMessage | null = null
+
+    for (const msg of normalized) {
+        if (msg.role !== 'user') {
+            continue
+        }
+        if (getMessageSentFrom(msg.meta) === 'cli') {
+            continue
+        }
+        latestPrompt = msg
+    }
+
+    if (!latestPrompt) {
+        return false
+    }
+
+    let readyForPrompt: { forLocalKey: string | null; hasAssistantReply: boolean | null } | null = null
+    let fallbackReady: { forLocalKey: string | null; hasAssistantReply: boolean | null } | null = null
+    let hasFailureSignal = false
+
+    for (const msg of normalized) {
+        if (msg.createdAt < latestPrompt.createdAt || msg.role !== 'event') {
+            continue
+        }
+
+        const ready = getReadyEvent(msg.content)
+        if (ready) {
+            if (latestPrompt.localId && ready.forLocalKey === latestPrompt.localId) {
+                readyForPrompt = ready
+            } else if (!latestPrompt.localId && !ready.forLocalKey) {
+                fallbackReady = ready
+            }
+            continue
+        }
+
+        if (isInterruptedEvent(msg.content)) {
+            hasFailureSignal = true
+        }
+    }
+
+    const resolvedReady = readyForPrompt ?? fallbackReady
+    if (resolvedReady) {
+        return resolvedReady.hasAssistantReply === false
+    }
+
+    if (session.thinking) {
+        return false
+    }
+
+    return hasFailureSignal
 }
 
 export function SessionChat(props: {
@@ -341,6 +424,10 @@ export function SessionChat(props: {
         setForceScrollToken((token) => token + 1)
     }, [props.onSend])
 
+    const handleContinue = useCallback(() => {
+        handleSend(CONTINUE_PROMPT_TEXT)
+    }, [handleSend])
+
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {
             return undefined
@@ -350,6 +437,10 @@ export function SessionChat(props: {
 
     const effectiveIsRunning = props.session.thinking
         || (!ignoreRunningFallback && shouldTreatSessionAsRunningFallback(props.session, normalizedMessages))
+    const showContinueAction = useMemo(
+        () => shouldShowContinueAction(props.session, normalizedMessages),
+        [props.session, normalizedMessages]
+    )
 
     const runtime = useHappyRuntime({
         session: props.session,
@@ -403,6 +494,9 @@ export function SessionChat(props: {
                         normalizedMessagesCount={normalizedMessages.length}
                         messagesVersion={props.messagesVersion}
                         forceScrollToken={forceScrollToken}
+                        showContinueAction={showContinueAction}
+                        continueActionDisabled={props.isSending || effectiveIsRunning}
+                        onContinueAction={handleContinue}
                     />
 
                     <HappyComposer

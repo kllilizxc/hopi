@@ -499,6 +499,7 @@ export default {
   'misc.loadOlder': 'Load older',
   'misc.newMessage': '{n} new message{s}',
   'misc.loadingMessages': 'Loading messages…',
+  'misc.continue': 'Continue',
   'misc.typeMessage': "Type 'continue' to resume...",
   'misc.typeAMessage': 'Type a message...',
   'misc.offline': 'offline',

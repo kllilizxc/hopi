@@ -74,6 +74,9 @@ export function HappyThread(props: {
     normalizedMessagesCount: number
     messagesVersion: number
     forceScrollToken: number
+    showContinueAction?: boolean
+    continueActionDisabled?: boolean
+    onContinueAction?: () => void
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -329,6 +332,20 @@ export function HappyThread(props: {
                             <div className="flex flex-col gap-3">
                                 <ThreadPrimitive.Messages components={THREAD_MESSAGE_COMPONENTS} />
                             </div>
+                            {props.showContinueAction && props.onContinueAction ? (
+                                <div className="py-2">
+                                    <div className="mx-auto w-fit max-w-[92%]">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={props.onContinueAction}
+                                            disabled={props.continueActionDisabled}
+                                        >
+                                            {t('misc.continue')}
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                 </ThreadPrimitive.Viewport>
