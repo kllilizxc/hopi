@@ -76,14 +76,14 @@ describe('tasks improvements automation', () => {
             id: 'task-finished-a',
             projectId,
             title: 'Finish A',
-            status: 'in_review',
+            status: 'finished',
             activeSessionId: sessionId
         })
         store.tasks.createTask({
             id: 'task-finished-b',
             projectId,
             title: 'Finish B',
-            status: 'in_review',
+            status: 'finished',
             activeSessionId: sessionId
         })
 
@@ -127,14 +127,12 @@ describe('tasks improvements automation', () => {
             })
         ])
 
-        await waitFor(() => {
-            const taskA = store.tasks.getTaskByNamespace('task-finished-a', namespace)
-            const taskB = store.tasks.getTaskByNamespace('task-finished-b', namespace)
-            return Boolean(taskA?.archivedAt && taskB?.archivedAt)
-        })
+        await waitFor(() => store.tasks.countGeneratedNewTasks(projectId, namespace) === 1)
 
         expect(sendMessageCalls).toBe(1)
         expect(store.tasks.countGeneratedNewTasks(projectId, namespace)).toBe(1)
+        expect(store.tasks.getTaskByNamespace('task-finished-a', namespace)?.archivedAt).toBeNull()
+        expect(store.tasks.getTaskByNamespace('task-finished-b', namespace)?.archivedAt).toBeNull()
     })
 
     it('keeps scans concurrent across different projects', async () => {
