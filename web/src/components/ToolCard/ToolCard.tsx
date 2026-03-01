@@ -20,6 +20,7 @@ import { usePointerFocusRing } from '@/hooks/usePointerFocusRing'
 import { getInputString, getInputStringAny, truncate } from '@/lib/toolInputUtils'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
+import { DetailsIcon, SpinnerIcon, StatusCompletedIcon, StatusErrorIcon, StatusPendingIcon } from '@/assets/icons'
 
 const ELAPSED_INTERVAL_MS = 1000
 
@@ -228,35 +229,15 @@ function renderToolInput(block: ToolCallBlock): ReactNode {
 
 function StatusIcon(props: { state: ToolCallBlock['tool']['state'] }) {
     if (props.state === 'completed') {
-        return (
-            <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M5.2 8.3l1.8 1.8 3.8-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-        )
+        return <StatusCompletedIcon />
     }
     if (props.state === 'error') {
-        return (
-            <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-        )
+        return <StatusErrorIcon />
     }
     if (props.state === 'pending') {
-        return (
-            <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none">
-                <rect x="4.5" y="7" width="7" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M6 7V5.8a2 2 0 0 1 4 0V7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-        )
+        return <StatusPendingIcon />
     }
-    return (
-        <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" opacity="0.25" />
-            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" opacity="0.75" />
-        </svg>
-    )
+    return <SpinnerIcon className="h-3 w-3 animate-spin" />
 }
 
 function statusColorClass(state: ToolCallBlock['tool']['state']): string {
@@ -264,14 +245,6 @@ function statusColorClass(state: ToolCallBlock['tool']['state']): string {
     if (state === 'error') return 'text-red-600'
     if (state === 'pending') return 'text-amber-600'
     return 'text-[var(--app-hint)]'
-}
-
-function DetailsIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-    )
 }
 
 type ToolCardProps = {

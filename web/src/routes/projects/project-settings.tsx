@@ -22,25 +22,7 @@ import { useCreateWorkspaces } from '@/hooks/mutations/useCreateWorkspaces'
 import { useDeleteWorkspace } from '@/hooks/mutations/useDeleteWorkspace'
 import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
 import { useUpdateWorkspace } from '@/hooks/mutations/useUpdateWorkspace'
-
-function BackIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <polyline points="15 18 9 12 15 6" />
-        </svg>
-    )
-}
+import { BackIcon } from '@/assets/icons'
 
 function estimateHumanSize(bytes: number): string {
     if (!Number.isFinite(bytes)) return '0B'

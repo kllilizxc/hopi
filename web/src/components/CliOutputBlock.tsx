@@ -3,6 +3,7 @@ import { stripAnsiAndControls } from '@/components/assistant-ui/markdown-utils'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useTranslation } from '@/lib/use-translation'
+import { CliIcon, DetailsIcon } from '@/assets/icons'
 
 const CLI_TAG_PATTERN = '(?:local-command-[a-z-]+|command-(?:name|message|args))'
 const CLI_TAG_CHECK_REGEX = new RegExp(`<${CLI_TAG_PATTERN}>`, 'i')
@@ -82,23 +83,6 @@ function extractCommandName(text: string): string | null {
     const normalized = normalizeCliText(match[1] ?? '')
     const firstLine = normalized.split('\n').find((line) => line.trim().length > 0)?.trim()
     return firstLine && firstLine.length > 0 ? firstLine : null
-}
-
-function DetailsIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-    )
-}
-
-function CliIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M3 4.5l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M8.5 10.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-    )
 }
 
 export function CliOutputBlock(props: { text: string }) {

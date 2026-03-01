@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { FileDocumentIcon } from '@/assets/icons'
 
 const EXTENSION_COLORS: Record<string, string> = {
     ts: '#3178c6',
@@ -37,21 +38,5 @@ export function FileIcon(props: { fileName: string; size?: number }) {
         return EXTENSION_COLORS[ext] ?? 'var(--app-hint)'
     }, [props.fileName])
 
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ color }}
-        >
-            <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-        </svg>
-    )
+    return <FileDocumentIcon size={size} style={{ color }} />
 }

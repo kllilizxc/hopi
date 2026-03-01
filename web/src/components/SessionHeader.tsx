@@ -9,6 +9,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useToast } from '@/lib/toast-context'
+import { BackIcon, DiffIcon, FilesIcon, TaskIcon } from '@/assets/icons'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -91,70 +92,6 @@ function MergeWorktreeDialog(props: {
     )
 }
 
-function FilesIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-        </svg>
-    )
-}
-
-function DiffIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M5 4v6h6" />
-            <path d="M19 20v-6h-6" />
-            <path d="M5 10a7 7 0 0 1 12-4.9l.5.5" />
-            <path d="M19 14a7 7 0 0 1-12 4.9l-.5-.5" />
-        </svg>
-    )
-}
-
-function TaskIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-            <path d="M9 12h6" />
-            <path d="M9 16h6" />
-        </svg>
-    )
-}
-
 export function SessionHeader(props: {
     session: Session
     onBack: () => void
@@ -200,19 +137,7 @@ export function SessionHeader(props: {
                         onClick={props.onBack}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                     >
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="20"
-                            height="20"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        >
-                            <polyline points="15 18 9 12 15 6" />
-                        </svg>
+                        <BackIcon />
                     </button>
 
                     {/* Session info - two lines: title and path */}

@@ -106,9 +106,7 @@ export default function Home() {
         
         {/* Background decorative elements */}
         <div className="absolute top-20 right-0 -z-10 opacity-20">
-          <svg width="400" height="400" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-            <path fill="#FF0066" d="M44.7,-76.4C58.9,-69.2,71.8,-59.1,81.6,-46.6C91.4,-34.1,98.1,-19.2,95.8,-5.3C93.5,8.6,82.2,21.5,71.6,32.8C61,44.1,51.1,53.8,39.9,62.4C28.7,71,16.2,78.5,2.3,74.5C-11.6,70.5,-26.9,55,-40.4,42.4C-53.9,29.8,-65.6,20.1,-71.6,6.8C-77.6,-6.5,-77.9,-23.4,-70.3,-37.8C-62.7,-52.2,-47.2,-64.1,-31.8,-70.5C-16.4,-76.9,-1.1,-77.8,13.8,-77.1L28.7,-76.4Z" transform="translate(100 100)" />
-          </svg>
+          <img src="/assets/icons/hero-blob.svg" alt="" width={400} height={400} />
         </div>
       </section>
 
