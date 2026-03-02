@@ -58,6 +58,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     private abortController: AbortController = new AbortController();
     private currentThreadId: string | null = null;
     private currentTurnId: string | null = null;
+    private collaborationModeSupported = true;
+    private collaborationModeFallbackNotified = false;
 
     constructor(session: CodexSession) {
         super(process.env.DEBUG ? session.logPath : undefined);
@@ -181,6 +183,51 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         const asString = (value: unknown): string | null => {
             return typeof value === 'string' && value.length > 0 ? value : null;
+        };
+
+        const dropCollaborationMode = (mode: EnhancedMode): EnhancedMode => {
+            if (!mode.collaborationMode) {
+                return mode;
+            }
+            const rest: EnhancedMode = { ...mode };
+            delete rest.collaborationMode;
+            return rest;
+        };
+
+        const getEffectiveMode = (mode: EnhancedMode): EnhancedMode => {
+            if (this.collaborationModeSupported || !mode.collaborationMode) {
+                return mode;
+            }
+            return dropCollaborationMode(mode);
+        };
+
+        const shouldRetryWithoutCollaborationMode = (error: unknown, mode: EnhancedMode): boolean => {
+            if (!mode.collaborationMode || !this.collaborationModeSupported) {
+                return false;
+            }
+            if (!(error instanceof Error)) {
+                return false;
+            }
+            const message = error.message.toLowerCase();
+            if (!message.includes('collaboration')) {
+                return false;
+            }
+            return message.includes('unknown')
+                || message.includes('invalid')
+                || message.includes('unexpected')
+                || message.includes('unsupported')
+                || message.includes('not supported')
+                || message.includes('unrecognized');
+        };
+
+        const notifyCollaborationModeFallback = (mode: string) => {
+            if (this.collaborationModeFallbackNotified) {
+                return;
+            }
+            this.collaborationModeFallbackNotified = true;
+            const message = `Codex CLI does not support collaboration mode '${mode}' in app-server. Falling back to default mode.`;
+            messageBuffer.addMessage(message, 'status');
+            session.sendSessionEvent({ type: 'message', message });
         };
 
         const buildMcpToolName = (server: unknown, tool: unknown): string | null => {
@@ -702,8 +749,9 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             try {
                 if (!wasCreated) {
                     if (useAppServer && appServerClient) {
+                        const effectiveMode = getEffectiveMode(message.mode);
                         const threadParams = buildThreadStartParams({
-                            mode: message.mode,
+                            mode: effectiveMode,
                             cwd: session.path,
                             mcpServers,
                             cliOverrides: session.codexCliOverrides
@@ -752,14 +800,34 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             threadId,
                             message: message.message,
                             cwd: session.path,
-                            mode: message.mode,
+                            mode: effectiveMode,
                             cliOverrides: session.codexCliOverrides
                         });
                         turnInFlight = true;
                         allowAnonymousTerminalEvent = false;
-                        const turnResponse = await appServerClient.startTurn(turnParams, {
-                            signal: this.abortController.signal
-                        });
+                        let turnResponse: unknown;
+                        try {
+                            turnResponse = await appServerClient.startTurn(turnParams, {
+                                signal: this.abortController.signal
+                            });
+                        } catch (error) {
+                            if (!shouldRetryWithoutCollaborationMode(error, effectiveMode)) {
+                                throw error;
+                            }
+                            this.collaborationModeSupported = false;
+                            notifyCollaborationModeFallback(effectiveMode.collaborationMode!);
+                            const fallbackMode = dropCollaborationMode(effectiveMode);
+                            const retryParams = buildTurnStartParams({
+                                threadId,
+                                message: message.message,
+                                cwd: session.path,
+                                mode: fallbackMode,
+                                cliOverrides: session.codexCliOverrides
+                            });
+                            turnResponse = await appServerClient.startTurn(retryParams, {
+                                signal: this.abortController.signal
+                            });
+                        }
                         const turnRecord = asRecord(turnResponse);
                         const turn = turnRecord ? asRecord(turnRecord.turn) : null;
                         const turnId = asString(turn?.id);
@@ -785,6 +853,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     wasCreated = true;
                     first = false;
                 } else if (useAppServer && appServerClient) {
+                    const effectiveMode = getEffectiveMode(message.mode);
                     if (!this.currentThreadId) {
                         logger.debug('[Codex] Missing thread id; restarting app-server thread');
                         wasCreated = false;
@@ -796,14 +865,34 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         threadId: this.currentThreadId,
                         message: message.message,
                         cwd: session.path,
-                        mode: message.mode,
+                        mode: effectiveMode,
                         cliOverrides: session.codexCliOverrides
                     });
                     turnInFlight = true;
                     allowAnonymousTerminalEvent = false;
-                    const turnResponse = await appServerClient.startTurn(turnParams, {
-                        signal: this.abortController.signal
-                    });
+                    let turnResponse: unknown;
+                    try {
+                        turnResponse = await appServerClient.startTurn(turnParams, {
+                            signal: this.abortController.signal
+                        });
+                    } catch (error) {
+                        if (!shouldRetryWithoutCollaborationMode(error, effectiveMode)) {
+                            throw error;
+                        }
+                        this.collaborationModeSupported = false;
+                        notifyCollaborationModeFallback(effectiveMode.collaborationMode!);
+                        const fallbackMode = dropCollaborationMode(effectiveMode);
+                        const retryParams = buildTurnStartParams({
+                            threadId: this.currentThreadId,
+                            message: message.message,
+                            cwd: session.path,
+                            mode: fallbackMode,
+                            cliOverrides: session.codexCliOverrides
+                        });
+                        turnResponse = await appServerClient.startTurn(retryParams, {
+                            signal: this.abortController.signal
+                        });
+                    }
                     const turnRecord = asRecord(turnResponse);
                     const turn = turnRecord ? asRecord(turnRecord.turn) : null;
                     const turnId = asString(turn?.id);
