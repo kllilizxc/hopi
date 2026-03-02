@@ -46,6 +46,7 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
 
     let lastPromptAt: number | null = null
     let lastReadyAt: number | null = null
+    let lastInterruptedAt: number | null = null
 
     for (const msg of normalized) {
         if (msg.role === 'user') {
@@ -58,9 +59,20 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
             continue
         }
 
-        if (msg.role === 'event' && msg.content.type === 'ready') {
+        if (msg.role !== 'event' || lastPromptAt === null || msg.createdAt < lastPromptAt) {
+            continue
+        }
+
+        if (msg.content.type === 'ready') {
             if (lastReadyAt === null || msg.createdAt > lastReadyAt) {
                 lastReadyAt = msg.createdAt
+            }
+            continue
+        }
+
+        if (isInterruptedEvent(msg.content)) {
+            if (lastInterruptedAt === null || msg.createdAt > lastInterruptedAt) {
+                lastInterruptedAt = msg.createdAt
             }
         }
     }
@@ -70,6 +82,10 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
     }
 
     if (lastReadyAt !== null && lastReadyAt > lastPromptAt) {
+        return false
+    }
+
+    if (lastInterruptedAt !== null && lastInterruptedAt > lastPromptAt) {
         return false
     }
 

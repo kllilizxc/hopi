@@ -138,6 +138,17 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         let activeTurnLocalKey: string | null = null;
         let activeTurnHasAssistantReply = false;
         let turnInFlight = false;
+        const emitReadyForInFlightTurn = () => {
+            if (!turnInFlight) {
+                return;
+            }
+            session.client.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
+            turnInFlight = false;
+        };
 
         const originalSendClaudeSessionMessage = session.client.sendClaudeSessionMessage.bind(session.client);
         session.client.sendClaudeSessionMessage = (body: any) => {
@@ -419,12 +430,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         },
                         onReady: () => {
                             if (!pending && session.queue.size() === 0) {
-                                session.client.sendSessionEvent({
-                                    type: 'ready',
-                                    forLocalKey: activeTurnLocalKey ?? undefined,
-                                    hasAssistantReply: activeTurnHasAssistantReply
-                                });
-                                turnInFlight = false;
+                                emitReadyForInFlightTurn();
                             }
                         },
                         signal: controller.signal,
@@ -434,16 +440,19 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
 
                     if (!this.exitReason && controller.signal.aborted) {
                         session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
+                        emitReadyForInFlightTurn();
                     }
                 } catch (e) {
                     logger.debug('[remote]: launch error', e);
                     if (!this.exitReason) {
                         session.client.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                        emitReadyForInFlightTurn();
                         continue;
                     }
                 } finally {
                     logger.debug('[remote]: launch finally');
                     turnInFlight = false;
+                    session.onThinkingChange(false);
 
                     for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
                         const converted = sdkToLogConverter.generateInterruptedToolResult(toolCallId, parentToolCallId);
