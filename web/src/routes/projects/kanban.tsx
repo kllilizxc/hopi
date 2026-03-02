@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import type { PermissionMode, Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -300,6 +300,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
+    const matchRoute = useMatchRoute()
     const { addToast } = useToast()
     const { t } = useTranslation()
     const { project } = useProject(api, props.projectId)
@@ -307,6 +308,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const selectedTaskId = taskRouteMatch?.projectId === props.projectId ? taskRouteMatch.taskId : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
@@ -797,6 +800,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 >
                                     {colTasks.map((task, index) => {
                                         const isDragging = dragState?.taskId === task.id
+                                        const isSelectedTask = selectedTaskId === task.id
                                         const isGeneratedNew = task.source === 'improvements_scan' && task.status === 'new'
                                         const isGeneratedActionPending = pendingGeneratedActionTaskId === task.id
                                         const cardAgentFlavor: AgentType = (task.agentFlavor as AgentType | null) ?? defaultTaskAgent
@@ -817,6 +821,12 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
 
                                         return (
                                             <div key={task.id} className="relative">
+                                                {isSelectedTask ? (
+                                                    <div
+                                                        aria-hidden
+                                                        className="pointer-events-none absolute -inset-1 rounded-2xl ring-2 ring-[var(--app-link)]"
+                                                    />
+                                                ) : null}
                                                 <div
                                                     draggable
                                                     data-kanban-task-id={task.id}
