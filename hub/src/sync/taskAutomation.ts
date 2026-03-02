@@ -36,7 +36,11 @@ function getMessageSentFrom(message: DecryptedMessage): string | null {
 function isInternalAutomationLocalId(localId: unknown): boolean {
     if (typeof localId !== 'string') return false
     return localId.startsWith(IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX)
-        || localId.startsWith(AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX)
+}
+
+function isMergeConflictAutoResolveLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX)
 }
 
 function isReadyEventMessage(message: DecryptedMessage): boolean {
@@ -191,6 +195,7 @@ function isAssistantReplyMessage(message: DecryptedMessage): boolean {
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
     if (!isTaskProgressPromptMessage(message)) return false
+    if (isMergeConflictAutoResolveLocalId(message.localId)) return false
     return getMessageSentFrom(message) !== 'cli'
 }
 

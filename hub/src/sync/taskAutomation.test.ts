@@ -768,6 +768,70 @@ describe('TaskAutomation', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
 
+    it('treats merge-conflict resolution prompts as in-progress work', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_review',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = `auto:merge_conflict_resolve:${taskId}:1`
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'resolve merge conflicts' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'output', data: { type: 'text', text: 'conflicts resolved' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+    })
+
     it('moves finished task back to in_progress on follow-up prompt and clears merge markers', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
