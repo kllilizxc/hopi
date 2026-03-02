@@ -49,6 +49,17 @@ export function getMergeWorktreeErrorStatus(result: MergeFailureResult): 400 | 4
     if (text.includes('uncommitted changes')) {
         return 409
     }
+    if (text.includes('already checked out at')) {
+        return 409
+    }
+    if (
+        text.includes('rebase in progress')
+        || text.includes('while rebasing')
+        || text.includes('cherry-pick')
+        || text.includes('revert in progress')
+    ) {
+        return 409
+    }
 
     if (text.includes('target branch') && text.includes('not found')) {
         return 400

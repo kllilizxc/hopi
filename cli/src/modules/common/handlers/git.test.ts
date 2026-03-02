@@ -97,6 +97,30 @@ describe('git merge worktree RPC handler', () => {
         expect(worktreeAheadCount).toBe('1')
     })
 
+    it('merges via target branch worktree when branch is checked out elsewhere', async () => {
+        const targetDir = join(baseDir, '.target-worktree')
+        await runGit(baseDir, ['worktree', 'add', '-b', 'dev', targetDir])
+
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+        registerGitHandlers(rpc, worktreeDir)
+
+        const response = await rpc.handleRequest({
+            method: 'session-test:git-merge-worktree',
+            params: JSON.stringify({
+                targetBranch: 'dev',
+                commitMessage: 'HAPI: merge into dev'
+            })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; commitHash?: string; error?: string }
+        expect(parsed.success).toBe(true)
+        expect(parsed.error).toBeUndefined()
+        expect(parsed.commitHash).toBeTruthy()
+
+        const targetHeadMessage = await runGit(targetDir, ['log', '-1', '--pretty=%s'])
+        expect(targetHeadMessage).toBe('HAPI: merge into dev')
+    })
+
     it('returns normalized conflict message when merge fails with conflicts', async () => {
         await writeFile(join(worktreeDir, 'README.md'), 'worktree change\n')
         await writeFile(join(baseDir, 'README.md'), 'main change\n')
