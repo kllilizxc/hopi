@@ -51,7 +51,12 @@ function CreateProjectDialog(props: {
     onClose: () => void
     machines: Machine[]
     isMachinesLoading: boolean
-    onCreate: (input: { machineId: string; name: string; description?: string }) => Promise<string | null>
+    onCreate: (input: {
+        machineId: string
+        name: string
+        description?: string
+        workspaces: Array<{ path: string; label?: string }>
+    }) => Promise<string | null>
     isPending: boolean
     error: string | null
 }) {
@@ -59,6 +64,9 @@ function CreateProjectDialog(props: {
     const [machineId, setMachineId] = useState<string>('')
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
+    const [workspacePath, setWorkspacePath] = useState('')
+    const [workspaceLabel, setWorkspaceLabel] = useState('')
+    const [workspaces, setWorkspaces] = useState<Array<{ path: string; label?: string }>>([])
 
     useEffect(() => {
         if (!props.isOpen) return
@@ -69,7 +77,7 @@ function CreateProjectDialog(props: {
         }
     }, [props.isOpen, props.machines, machineId])
 
-    const canSubmit = Boolean(machineId && name.trim() && !props.isPending)
+    const canSubmit = Boolean(machineId && name.trim() && workspaces.length > 0 && !props.isPending)
 
     const handleOpenChange = (open: boolean) => {
         if (!open) {
@@ -82,13 +90,34 @@ function CreateProjectDialog(props: {
         const createdId = await props.onCreate({
             machineId,
             name: name.trim(),
-            description: description.trim() ? description.trim() : undefined
+            description: description.trim() ? description.trim() : undefined,
+            workspaces
         })
         if (createdId) {
             setName('')
             setDescription('')
+            setWorkspacePath('')
+            setWorkspaceLabel('')
+            setWorkspaces([])
             props.onClose()
         }
+    }
+
+    const handleAddWorkspace = () => {
+        const path = workspacePath.trim()
+        if (!path) return
+        if (workspaces.some((workspace) => workspace.path === path)) return
+
+        setWorkspaces((prev) => [...prev, {
+            path,
+            label: workspaceLabel.trim() ? workspaceLabel.trim() : undefined
+        }])
+        setWorkspacePath('')
+        setWorkspaceLabel('')
+    }
+
+    const handleRemoveWorkspace = (path: string) => {
+        setWorkspaces((prev) => prev.filter((workspace) => workspace.path !== path))
     }
 
     return (
@@ -150,6 +179,81 @@ function CreateProjectDialog(props: {
                             className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                         />
                     </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('projects.workspaces.fields.path')}
+                        </label>
+                        <input
+                            type="text"
+                            value={workspacePath}
+                            onChange={(e) => setWorkspacePath(e.target.value)}
+                            disabled={props.isPending}
+                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('projects.workspaces.fields.label')}
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={workspaceLabel}
+                                onChange={(e) => setWorkspaceLabel(e.target.value)}
+                                disabled={props.isPending}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                placeholder={t('projects.workspaces.fields.labelPlaceholder')}
+                            />
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={handleAddWorkspace}
+                                disabled={props.isPending || !workspacePath.trim()}
+                            >
+                                {t('projects.workspaces.add.add')}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {workspaces.length > 0 ? (
+                        <div className="space-y-2">
+                            <div className="text-xs font-medium text-[var(--app-hint)]">
+                                {t('projects.workspaces.add.pending')}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                {workspaces.map((workspace, index) => (
+                                    <div
+                                        key={workspace.path}
+                                        className="flex items-start justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="text-xs font-medium truncate">
+                                                {workspace.label ?? t('projects.workspaces.unnamed')}
+                                                {index === 0 ? ` · ${t('projects.workspaces.default')}` : ''}
+                                            </div>
+                                            <div className="text-xs text-[var(--app-hint)] truncate" title={workspace.path}>
+                                                {workspace.path}
+                                            </div>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={() => handleRemoveWorkspace(workspace.path)}
+                                            disabled={props.isPending}
+                                        >
+                                            {t('projects.workspaces.add.remove')}
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-xs text-[var(--app-hint)]">
+                            {t('projects.create.workspaceRequired')}
+                        </div>
+                    )}
 
                     {props.error ? (
                         <div className="text-sm text-red-600">
@@ -379,7 +483,12 @@ export default function ProjectsPage() {
 
     const [createOpen, setCreateOpen] = useState(false)
 
-    const handleCreateProject = useCallback(async (input: { machineId: string; name: string; description?: string }): Promise<string | null> => {
+    const handleCreateProject = useCallback(async (input: {
+        machineId: string
+        name: string
+        description?: string
+        workspaces: Array<{ path: string; label?: string }>
+    }): Promise<string | null> => {
         try {
             const created = await createProject(input)
             addToast({ title: t('projects.toast.created'), body: created.name, sessionId: '', url: '' })

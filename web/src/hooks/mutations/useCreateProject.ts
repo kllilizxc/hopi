@@ -7,7 +7,7 @@ type CreateProjectInput = {
     machineId: string
     name: string
     description?: string
-    defaultWorkspaceId?: string
+    workspaces: Array<{ path: string; label?: string }>
     defaultAgentFlavor?: AgentFlavor
     defaultPermissionMode?: PermissionMode
     defaultModelMode?: ModelMode

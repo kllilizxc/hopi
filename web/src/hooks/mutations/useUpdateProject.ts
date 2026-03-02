@@ -8,7 +8,6 @@ type UpdateProjectInput = {
     patch: {
         name?: string
         description?: string | null
-        defaultWorkspaceId?: string | null
         defaultAgentFlavor?: AgentFlavor | null
         defaultPermissionMode?: PermissionMode | null
         defaultModelMode?: ModelMode | null

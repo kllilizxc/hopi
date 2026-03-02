@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { getModelModesForFlavor, getPermissionModeOptionsForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import type { AgentFlavor, ModelMode, PermissionMode, Workspace } from '@/types/api'
@@ -9,27 +9,11 @@ import { LoadingState } from '@/components/LoadingState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DirectorySection } from '@/components/NewSession/DirectorySection'
-import { useActiveSuggestions, type Suggestion } from '@/hooks/useActiveSuggestions'
-import { useDirectorySuggestions } from '@/hooks/useDirectorySuggestions'
-import { useRecentPaths } from '@/hooks/useRecentPaths'
-import { useSessions } from '@/hooks/queries/useSessions'
 import { useProject } from '@/hooks/queries/useProject'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { useArchiveProject } from '@/hooks/mutations/useArchiveProject'
-import { useCreateWorkspaces } from '@/hooks/mutations/useCreateWorkspaces'
-import { useDeleteWorkspace } from '@/hooks/mutations/useDeleteWorkspace'
 import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
-import { useUpdateWorkspace } from '@/hooks/mutations/useUpdateWorkspace'
 import { BackIcon } from '@/assets/icons'
-
-function estimateHumanSize(bytes: number): string {
-    if (!Number.isFinite(bytes)) return '0B'
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
-    return `${Math.round(bytes / 1024 / 1024)}MB`
-}
 
 function WorkspacesBadge(props: { ok: boolean; label: string }) {
     return (
@@ -39,299 +23,19 @@ function WorkspacesBadge(props: { ok: boolean; label: string }) {
     )
 }
 
-type PendingWorkspace = {
-    path: string
-    label?: string
-}
-
-function AddWorkspacesDialog(props: {
-    isOpen: boolean
-    onClose: () => void
-    machineId: string
-    existingPaths: Set<string>
-    maxNew: number
-    onSave: (workspaces: PendingWorkspace[]) => Promise<void>
-    isPending: boolean
-}) {
-    const { api } = useAppContext()
-    const { t } = useTranslation()
-    const { sessions } = useSessions(api)
-    const { getRecentPaths } = useRecentPaths()
-
-    const [directory, setDirectory] = useState('')
-    const [label, setLabel] = useState('')
-    const [pending, setPending] = useState<PendingWorkspace[]>([])
-    const [suppressSuggestions, setSuppressSuggestions] = useState(false)
-    const [isDirectoryFocused, setIsDirectoryFocused] = useState(false)
-    const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
-
-    const recentPaths = useMemo(() => getRecentPaths(props.machineId), [getRecentPaths, props.machineId])
-    const allPaths = useDirectorySuggestions(props.machineId, sessions, recentPaths)
-
-    const pathsToCheck = useMemo(() => {
-        const pendingPaths = pending.map((item) => item.path)
-        return Array.from(new Set([...allPaths, ...pendingPaths])).slice(0, 1000)
-    }, [allPaths, pending])
-
-    useEffect(() => {
-        let cancelled = false
-
-        if (!api || !props.machineId || pathsToCheck.length === 0) {
-            setPathExistence({})
-            return () => { cancelled = true }
-        }
-
-        void api.checkMachinePathsExists(props.machineId, pathsToCheck)
-            .then((result) => {
-                if (cancelled) return
-                setPathExistence(result.exists ?? {})
-            })
-            .catch(() => {
-                if (cancelled) return
-                setPathExistence({})
-            })
-
-        return () => {
-            cancelled = true
-        }
-    }, [api, props.machineId, pathsToCheck])
-
-    const verifiedPaths = useMemo(() => allPaths.filter((path) => pathExistence[path]), [allPaths, pathExistence])
-
-    const getSuggestions = useCallback(async (query: string): Promise<Suggestion[]> => {
-        const lowered = query.toLowerCase()
-        return verifiedPaths
-            .filter((path) => path.toLowerCase().includes(lowered))
-            .slice(0, 8)
-            .map((path) => ({
-                key: path,
-                text: path,
-                label: path
-            }))
-    }, [verifiedPaths])
-
-    const activeQuery = (!isDirectoryFocused || suppressSuggestions) ? null : directory
-    const [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions] = useActiveSuggestions(
-        activeQuery,
-        getSuggestions,
-        { allowEmptyQuery: true, autoSelectFirst: false }
-    )
-
-    const handleDirectoryFocus = useCallback(() => {
-        setSuppressSuggestions(false)
-        setIsDirectoryFocused(true)
-    }, [])
-
-    const handleDirectoryBlur = useCallback(() => {
-        setIsDirectoryFocused(false)
-    }, [])
-
-    const handleSuggestionSelect = useCallback((index: number) => {
-        const suggestion = suggestions[index]
-        if (!suggestion) return
-        setDirectory(suggestion.text)
-        clearSuggestions()
-        setSuppressSuggestions(true)
-    }, [suggestions, clearSuggestions])
-
-    const handleDirectoryKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
-        if (suggestions.length === 0) return
-
-        if (event.key === 'ArrowUp') {
-            event.preventDefault()
-            moveUp()
-        }
-
-        if (event.key === 'ArrowDown') {
-            event.preventDefault()
-            moveDown()
-        }
-
-        if (event.key === 'Enter' || event.key === 'Tab') {
-            if (selectedIndex >= 0) {
-                event.preventDefault()
-                handleSuggestionSelect(selectedIndex)
-            }
-        }
-
-        if (event.key === 'Escape') {
-            clearSuggestions()
-        }
-    }, [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions, handleSuggestionSelect])
-
-    const handleAdd = useCallback(() => {
-        const path = directory.trim()
-        if (!path) return
-        if (props.existingPaths.has(path)) {
-            return
-        }
-        if (pending.some((item) => item.path === path)) {
-            return
-        }
-        if (pending.length >= props.maxNew) {
-            return
-        }
-
-        setPending((prev) => [...prev, {
-            path,
-            label: label.trim() ? label.trim() : undefined
-        }])
-        setDirectory('')
-        setLabel('')
-        clearSuggestions()
-        setSuppressSuggestions(false)
-    }, [directory, label, pending, props.existingPaths, props.maxNew, clearSuggestions])
-
-    const handleRemovePending = useCallback((path: string) => {
-        setPending((prev) => prev.filter((item) => item.path !== path))
-    }, [])
-
-    const canSave = pending.length > 0 && !props.isPending
-
-    const handleSave = async () => {
-        if (!canSave) return
-        await props.onSave(pending)
-        setPending([])
-        setDirectory('')
-        setLabel('')
-        clearSuggestions()
-        props.onClose()
-    }
-
-    const remaining = props.maxNew - pending.length
-
-    return (
-        <Dialog open={props.isOpen} onOpenChange={(open) => !open && props.onClose()}>
-            <DialogContent className="max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>{t('projects.workspaces.add.title')}</DialogTitle>
-                    <DialogDescription>{t('projects.workspaces.add.description')}</DialogDescription>
-                </DialogHeader>
-
-                <div className="mt-4 space-y-3">
-                    <DirectorySection
-                        directory={directory}
-                        suggestions={suggestions}
-                        selectedIndex={selectedIndex}
-                        isDisabled={props.isPending}
-                        recentPaths={recentPaths}
-                        onDirectoryChange={(value) => {
-                            setSuppressSuggestions(false)
-                            setDirectory(value)
-                        }}
-                        onDirectoryFocus={handleDirectoryFocus}
-                        onDirectoryBlur={handleDirectoryBlur}
-                        onDirectoryKeyDown={handleDirectoryKeyDown}
-                        onSuggestionSelect={handleSuggestionSelect}
-                        onPathClick={(path) => setDirectory(path)}
-                    />
-
-                    <div className="px-3 space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('projects.workspaces.fields.label')}
-                        </label>
-                        <input
-                            type="text"
-                            value={label}
-                            onChange={(e) => setLabel(e.target.value)}
-                            disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            placeholder={t('projects.workspaces.fields.labelPlaceholder')}
-                        />
-                    </div>
-
-                    <div className="px-3 flex items-center justify-between gap-3">
-                        <div className="text-xs text-[var(--app-hint)]">
-                            {t('projects.workspaces.add.remaining', { n: remaining })}
-                        </div>
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={handleAdd}
-                            disabled={!directory.trim() || props.isPending || pending.length >= props.maxNew}
-                        >
-                            {t('projects.workspaces.add.add')}
-                        </Button>
-                    </div>
-
-                    {pending.length > 0 ? (
-                        <div className="px-3">
-                            <div className="text-xs font-medium text-[var(--app-hint)] mb-2">
-                                {t('projects.workspaces.add.pending')}
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                {pending.map((item) => {
-                                    const ok = Boolean(pathExistence[item.path])
-                                    return (
-                                        <div
-                                            key={item.path}
-                                            className="flex items-start justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
-                                        >
-                                            <div className="min-w-0">
-                                                <div className="text-xs font-medium truncate">{item.label ?? t('projects.workspaces.unnamed')}</div>
-                                                <div className="text-xs text-[var(--app-hint)] truncate" title={item.path}>{item.path}</div>
-                                            </div>
-                                            <div className="flex items-center gap-2 shrink-0">
-                                                <WorkspacesBadge ok={ok} label={ok ? t('projects.workspaces.pathOk') : t('projects.workspaces.pathMissing')} />
-                                                <Button type="button" variant="secondary" onClick={() => handleRemovePending(item.path)} disabled={props.isPending}>
-                                                    {t('projects.workspaces.add.remove')}
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        </div>
-                    ) : null}
-                </div>
-
-                <div className="mt-5 flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={props.onClose} disabled={props.isPending}>
-                        {t('button.cancel')}
-                    </Button>
-                    <Button type="button" variant="secondary" onClick={handleSave} disabled={!canSave}>
-                        {props.isPending ? t('projects.workspaces.add.saving') : t('projects.workspaces.add.save')}
-                    </Button>
-                </div>
-            </DialogContent>
-        </Dialog>
-    )
-}
-
 function WorkspaceRow(props: {
     workspace: Workspace
     isDefault: boolean
     exists: boolean | null
-    onSetDefault: () => void
-    onSave: (patch: { path: string; label: string | null }) => Promise<void>
-    onDelete: () => void
-    isPending: boolean
 }) {
     const { t } = useTranslation()
-    const [path, setPath] = useState(props.workspace.path)
-    const [label, setLabel] = useState(props.workspace.label ?? '')
-
-    useEffect(() => {
-        setPath(props.workspace.path)
-        setLabel(props.workspace.label ?? '')
-    }, [props.workspace.id, props.workspace.path, props.workspace.label])
-
-    const dirty = path.trim() !== props.workspace.path || (label.trim() || null) !== (props.workspace.label ?? null)
 
     return (
         <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
                     <div className="flex items-center gap-2">
-                        <label className="flex items-center gap-2 text-xs text-[var(--app-hint)]">
-                            <input
-                                type="radio"
-                                checked={props.isDefault}
-                                onChange={props.onSetDefault}
-                                disabled={props.isPending}
-                            />
-                            {t('projects.workspaces.default')}
-                        </label>
+                        {props.isDefault ? <Badge variant="default">{t('projects.workspaces.default')}</Badge> : null}
                         {props.exists === null ? (
                             <Badge variant="default">{t('projects.workspaces.pathUnknown')}</Badge>
                         ) : (
@@ -340,49 +44,16 @@ function WorkspaceRow(props: {
                     </div>
 
                     <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('projects.workspaces.fields.label')}
-                        </label>
-                        <input
-                            type="text"
-                            value={label}
-                            onChange={(e) => setLabel(e.target.value)}
-                            disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        />
+                        <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.workspaces.fields.label')}</div>
+                        <div className="text-sm">
+                            {props.workspace.label ?? t('projects.workspaces.unnamed')}
+                        </div>
                     </div>
 
                     <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('projects.workspaces.fields.path')}
-                        </label>
-                        <input
-                            type="text"
-                            value={path}
-                            onChange={(e) => setPath(e.target.value)}
-                            disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        />
+                        <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.workspaces.fields.path')}</div>
+                        <div className="text-sm break-all">{props.workspace.path}</div>
                     </div>
-                </div>
-
-                <div className="flex flex-col gap-2 shrink-0">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => props.onSave({ path: path.trim(), label: label.trim() ? label.trim() : null })}
-                        disabled={props.isPending || !dirty || !path.trim()}
-                    >
-                        {t('button.save')}
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={props.onDelete}
-                        disabled={props.isPending}
-                    >
-                        {t('projects.workspaces.remove')}
-                    </Button>
                 </div>
             </div>
         </div>
@@ -399,12 +70,9 @@ export function ProjectSettingsPage() {
     const { project, isLoading: projectLoading, error: projectError } = useProject(api, projectId)
     const { workspaces, isLoading: workspacesLoading, error: workspacesError } = useWorkspaces(api, projectId)
     const { updateProject, isPending: isSavingProject } = useUpdateProject(api)
-    const { createWorkspaces, isPending: isCreatingWorkspaces } = useCreateWorkspaces(api)
-    const { updateWorkspace, isPending: isUpdatingWorkspace } = useUpdateWorkspace(api)
-    const { deleteWorkspace, isPending: isDeletingWorkspace } = useDeleteWorkspace(api)
     const { archiveProject, isPending: isArchivingProject } = useArchiveProject(api)
 
-    const isPending = isSavingProject || isCreatingWorkspaces || isUpdatingWorkspace || isDeletingWorkspace || isArchivingProject
+    const isPending = isSavingProject || isArchivingProject
 
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
@@ -420,7 +88,6 @@ export function ProjectSettingsPage() {
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
     const [improvementsMaxGeneratedNew, setImprovementsMaxGeneratedNew] = useState(5)
 
-    const [addDialogOpen, setAddDialogOpen] = useState(false)
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
 
     const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
@@ -461,8 +128,6 @@ export function ProjectSettingsPage() {
             setDefaultModelMode('default')
         }
     }, [defaultAgentFlavor, defaultPermissionMode, defaultModelMode])
-
-    const existingPaths = useMemo(() => new Set(workspaces.map((w) => w.path)), [workspaces])
 
     useEffect(() => {
         let cancelled = false
@@ -535,71 +200,6 @@ export function ProjectSettingsPage() {
         improvementsMaxGeneratedNew
     ])
 
-    const handleAddWorkspaces = useCallback(async (newWorkspaces: PendingWorkspace[]) => {
-        if (!project) return
-        if (newWorkspaces.length === 0) return
-
-        await createWorkspaces({
-            projectId: project.id,
-            workspaces: newWorkspaces.map((ws) => ({
-                path: ws.path,
-                label: ws.label
-            }))
-        })
-        addToast({
-            title: t('projects.workspaces.toast.added'),
-            body: t('projects.workspaces.toast.addedBody', { n: newWorkspaces.length }),
-            sessionId: '',
-            url: ''
-        })
-    }, [project, createWorkspaces, addToast, t])
-
-    const handleSetDefaultWorkspace = useCallback(async (workspaceId: string) => {
-        if (!project) return
-        await updateProject({
-            projectId: project.id,
-            patch: { defaultWorkspaceId: workspaceId }
-        })
-        addToast({ title: t('projects.workspaces.toast.defaultSet'), body: '', sessionId: '', url: '' })
-    }, [project, updateProject, addToast, t])
-
-    const handleSaveWorkspace = useCallback(async (workspace: Workspace, patch: { path: string; label: string | null }) => {
-        if (!project) return
-
-        await updateWorkspace({
-            projectId: project.id,
-            workspaceId: workspace.id,
-            patch: { path: patch.path, label: patch.label }
-        })
-        addToast({ title: t('projects.workspaces.toast.saved'), body: workspace.label ?? workspace.path, sessionId: '', url: '' })
-    }, [project, updateWorkspace, addToast, t])
-
-    const handleDeleteWorkspace = useCallback(async (workspace: Workspace) => {
-        if (!project) return
-
-        if (project.autoRunEnabled && workspaces.length <= 1) {
-            addToast({
-                title: t('projects.workspaces.toast.cannotRemoveLast.title'),
-                body: t('projects.workspaces.toast.cannotRemoveLast.body'),
-                sessionId: '',
-                url: ''
-            })
-            return
-        }
-
-        const deletingDefault = (project.defaultWorkspaceId ?? null) === workspace.id
-        if (deletingDefault) {
-            const nextDefault = workspaces.find((w) => w.id !== workspace.id)?.id ?? null
-            await updateProject({
-                projectId: project.id,
-                patch: { defaultWorkspaceId: nextDefault }
-            })
-        }
-
-        await deleteWorkspace({ projectId: project.id, workspaceId: workspace.id })
-        addToast({ title: t('projects.workspaces.toast.removed'), body: workspace.label ?? workspace.path, sessionId: '', url: '' })
-    }, [project, workspaces, updateProject, deleteWorkspace, addToast, t])
-
     const handleArchiveProject = useCallback(async () => {
         if (!project) return
         await archiveProject(project.id)
@@ -651,8 +251,6 @@ export function ProjectSettingsPage() {
             </div>
         )
     }
-
-    const maxNew = Math.max(0, 50 - workspaces.length)
 
     return (
         <div className="h-full flex flex-col">
@@ -854,16 +452,13 @@ export function ProjectSettingsPage() {
                     </section>
 
                     <section className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
+                        <div>
                             <div>
                                 <div className="text-sm font-semibold">{t('projects.workspaces.title')}</div>
                                 <div className="text-xs text-[var(--app-hint)]">
                                     {t('projects.workspaces.hint')}
                                 </div>
                             </div>
-                            <Button type="button" variant="secondary" onClick={() => setAddDialogOpen(true)} disabled={isPending || maxNew <= 0}>
-                                {t('projects.workspaces.add.open')}
-                            </Button>
                         </div>
 
                         {workspaces.length === 0 ? (
@@ -879,10 +474,6 @@ export function ProjectSettingsPage() {
                                     workspace={workspace}
                                     isDefault={(project.defaultWorkspaceId ?? null) === workspace.id}
                                     exists={workspace.path in pathExistence ? Boolean(pathExistence[workspace.path]) : null}
-                                    onSetDefault={() => handleSetDefaultWorkspace(workspace.id)}
-                                    onSave={(patch) => handleSaveWorkspace(workspace, patch)}
-                                    onDelete={() => handleDeleteWorkspace(workspace)}
-                                    isPending={isPending}
                                 />
                             ))}
                         </div>
@@ -897,16 +488,6 @@ export function ProjectSettingsPage() {
                     </section>
                 </div>
             </div>
-
-            <AddWorkspacesDialog
-                isOpen={addDialogOpen}
-                onClose={() => setAddDialogOpen(false)}
-                machineId={project.machineId}
-                existingPaths={existingPaths}
-                maxNew={maxNew}
-                onSave={handleAddWorkspaces}
-                isPending={isCreatingWorkspaces}
-            />
 
             <ConfirmDialog
                 isOpen={archiveConfirmOpen}

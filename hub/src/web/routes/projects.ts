@@ -2,7 +2,7 @@ import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, SessionTypeSc
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { Store } from '../../store'
+import type { Store, StoredWorkspace } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 
@@ -10,7 +10,10 @@ const createProjectSchema = z.object({
     machineId: z.string().min(1),
     name: z.string().min(1).max(255),
     description: z.string().max(10_000).optional(),
-    defaultWorkspaceId: z.string().min(1).optional(),
+    workspaces: z.array(z.object({
+        path: z.string().min(1).max(4096),
+        label: z.string().max(255).optional()
+    })).min(1).max(50),
     defaultAgentFlavor: AgentFlavorSchema.optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultModelMode: ModelModeSchema.optional(),
@@ -28,7 +31,6 @@ const updateProjectSchema = z.object({
     machineId: z.string().min(1).optional(),
     name: z.string().min(1).max(255).optional(),
     description: z.string().max(10_000).nullable().optional(),
-    defaultWorkspaceId: z.string().min(1).nullable().optional(),
     defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
     defaultPermissionMode: PermissionModeSchema.nullable().optional(),
     defaultModelMode: ModelModeSchema.nullable().optional(),
@@ -70,9 +72,25 @@ export function createProjectsRoutes(options: {
     app.post('/projects', async (c) => {
         const namespace = c.get('namespace')
         const json = await c.req.json().catch(() => null)
+        if (json && typeof json === 'object' && !Array.isArray(json) && 'defaultWorkspaceId' in json) {
+            return c.json({ error: 'defaultWorkspaceId is immutable; set workspace order at creation instead' }, 400)
+        }
         const parsed = createProjectSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const normalizedWorkspaces = parsed.data.workspaces.map((input) => ({
+            path: input.path.trim(),
+            label: input.label?.trim() ? input.label.trim() : null
+        }))
+        if (normalizedWorkspaces.some((workspace) => workspace.path.length === 0)) {
+            return c.json({ error: 'Workspace path is required' }, 400)
+        }
+
+        const uniquePaths = new Set(normalizedWorkspaces.map((workspace) => workspace.path))
+        if (uniquePaths.size !== normalizedWorkspaces.length) {
+            return c.json({ error: 'Duplicate workspace paths are not allowed' }, 400)
         }
 
         const projectId = randomUUID()
@@ -82,7 +100,7 @@ export function createProjectsRoutes(options: {
             machineId: parsed.data.machineId,
             name: parsed.data.name,
             description: parsed.data.description ?? null,
-            defaultWorkspaceId: parsed.data.defaultWorkspaceId ?? null,
+            defaultWorkspaceId: null,
             defaultAgentFlavor: parsed.data.defaultAgentFlavor ?? null,
             defaultPermissionMode: parsed.data.defaultPermissionMode ?? null,
             defaultModelMode: parsed.data.defaultModelMode ?? null,
@@ -96,10 +114,42 @@ export function createProjectsRoutes(options: {
             improvementsMaxGeneratedNew: parsed.data.improvementsMaxGeneratedNew
         })
 
+        const createdWorkspaces: StoredWorkspace[] = []
+        try {
+            for (const workspace of normalizedWorkspaces) {
+                createdWorkspaces.push(options.store.workspaces.createWorkspace({
+                    id: randomUUID(),
+                    projectId,
+                    path: workspace.path,
+                    label: workspace.label
+                }))
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to create workspace'
+            if (message.includes('UNIQUE') || message.includes('unique')) {
+                return c.json({ error: 'Workspace path already exists' }, 409)
+            }
+            return c.json({ error: message }, 500)
+        }
+
+        const defaultWorkspaceId = createdWorkspaces[0]?.id ?? null
+        const project = defaultWorkspaceId
+            ? options.store.projects.updateProject(projectId, namespace, { defaultWorkspaceId }) ?? created
+            : created
+
         const engine = options.getSyncEngine()
         engine?.handleRealtimeEvent({ type: 'project-added', projectId, namespace, data: { projectId } })
+        for (const workspace of createdWorkspaces) {
+            engine?.handleRealtimeEvent({
+                type: 'workspace-added',
+                workspaceId: workspace.id,
+                projectId,
+                namespace,
+                data: { workspaceId: workspace.id }
+            })
+        }
 
-        return c.json({ project: created })
+        return c.json({ project })
     })
 
     app.get('/projects/:projectId', (c) => {
@@ -118,6 +168,9 @@ export function createProjectsRoutes(options: {
         const namespace = c.get('namespace')
         const projectId = c.req.param('projectId')
         const json = await c.req.json().catch(() => null)
+        if (json && typeof json === 'object' && !Array.isArray(json) && 'defaultWorkspaceId' in json) {
+            return c.json({ error: 'defaultWorkspaceId is immutable after project creation' }, 400)
+        }
         const parsed = updateProjectSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
@@ -135,7 +188,6 @@ export function createProjectsRoutes(options: {
         const updated = options.store.projects.updateProject(projectId, namespace, {
             name: parsed.data.name,
             description: parsed.data.description,
-            defaultWorkspaceId: parsed.data.defaultWorkspaceId,
             defaultAgentFlavor: parsed.data.defaultAgentFlavor,
             defaultPermissionMode: parsed.data.defaultPermissionMode,
             defaultModelMode: parsed.data.defaultModelMode,

@@ -212,7 +212,7 @@ export class ApiClient {
         machineId: string
         name: string
         description?: string
-        defaultWorkspaceId?: string
+        workspaces: Array<{ path: string; label?: string }>
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         defaultPermissionMode?: PermissionMode
         defaultModelMode?: ModelMode
@@ -234,7 +234,6 @@ export class ApiClient {
     async updateProject(projectId: string, patch: {
         name?: string
         description?: string | null
-        defaultWorkspaceId?: string | null
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         defaultPermissionMode?: PermissionMode | null
         defaultModelMode?: ModelMode | null

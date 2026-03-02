@@ -192,6 +192,7 @@ export default {
 
   'projects.create.title': 'Create project',
   'projects.create.description': 'Projects group tasks and bind one or more workspaces.',
+  'projects.create.workspaceRequired': 'Add at least one workspace. First one becomes default.',
   'projects.create.create': 'Create',
   'projects.create.creating': 'Creating…',
 
@@ -212,7 +213,7 @@ export default {
   'projects.automation.maxGeneratedNew': 'Max generated New tasks',
 
   'projects.workspaces.title': 'Workspaces',
-  'projects.workspaces.hint': 'Bind one or more directories to this project.',
+  'projects.workspaces.hint': 'Workspaces are fixed at project creation and read-only here.',
   'projects.workspaces.empty': 'No workspaces yet. Add at least one to start sessions.',
   'projects.workspaces.default': 'Default',
   'projects.workspaces.unnamed': 'Workspace',

@@ -192,6 +192,7 @@ export default {
 
   'projects.create.title': '创建项目',
   'projects.create.description': '项目用于管理任务，并绑定一个或多个工作区目录。',
+  'projects.create.workspaceRequired': '请至少添加一个工作区；第一个将作为默认工作区。',
   'projects.create.create': '创建',
   'projects.create.creating': '创建中…',
 
@@ -212,7 +213,7 @@ export default {
   'projects.automation.maxGeneratedNew': 'New 列最大生成数量',
 
   'projects.workspaces.title': '工作区',
-  'projects.workspaces.hint': '为项目绑定一个或多个目录。',
+  'projects.workspaces.hint': '工作区在创建项目时确定，之后在此页面只读。',
   'projects.workspaces.empty': '暂无工作区。至少添加一个才能启动会话。',
   'projects.workspaces.default': '默认',
   'projects.workspaces.unnamed': '工作区',
