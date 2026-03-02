@@ -419,7 +419,7 @@ export default function ProjectsPage() {
             </div>
 
             <div
-                className={`${shouldShowRightPanel ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-all duration-200 ease-out lg:flex-none lg:w-full ${
+                className={`${shouldShowRightPanel ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[opacity,transform] duration-200 ease-out lg:flex-none lg:w-full ${
                     shouldShowRightPanel
                         ? 'lg:max-w-content lg:opacity-100 lg:translate-x-0'
                         : 'lg:max-w-[0px] lg:opacity-0 lg:translate-x-2 lg:pointer-events-none'
