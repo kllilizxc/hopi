@@ -152,4 +152,52 @@ describe('tasks merge route unexpected errors', () => {
         expect(body.error).toBe('RPC socket disconnected: session-merge-auto-resolve-runtime')
         expect(body.autoResolveAttempted).toBe(true)
     })
+
+    it('prefers stderr details over generic command-failed error text', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-command-failed-stderr'
+        seedMergeTask(store, {
+            namespace: 'default',
+            projectId: 'project-merge-command-failed-stderr',
+            taskId,
+            sessionId: 'session-merge-command-failed-stderr'
+        })
+
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId: 'session-merge-command-failed-stderr',
+                    session: {
+                        id: 'session-merge-command-failed-stderr',
+                        thinking: false,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async gitMergeWorktree() {
+                return {
+                    success: false,
+                    error: 'Command failed: git switch dev',
+                    stderr: 'fatal: unexpected repository state',
+                    stdout: ''
+                }
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ conflictStrategy: 'manual' })
+        })
+
+        expect(response.status).toBe(500)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toBe('fatal: unexpected repository state')
+    })
 })

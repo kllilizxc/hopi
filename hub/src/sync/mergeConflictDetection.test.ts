@@ -43,8 +43,12 @@ describe('merge conflict detection', () => {
         const rebaseInProgress = {
             stderr: 'fatal: cannot switch branch while rebasing'
         }
+        const mergeHeadExists = {
+            stderr: 'fatal: You have not concluded your merge (MERGE_HEAD exists).'
+        }
 
         expect(getMergeWorktreeErrorStatus(checkedOutElsewhere)).toBe(409)
         expect(getMergeWorktreeErrorStatus(rebaseInProgress)).toBe(409)
+        expect(getMergeWorktreeErrorStatus(mergeHeadExists)).toBe(409)
     })
 })

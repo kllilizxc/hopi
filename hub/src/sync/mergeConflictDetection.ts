@@ -53,6 +53,20 @@ export function getMergeWorktreeErrorStatus(result: MergeFailureResult): 400 | 4
         return 409
     }
     if (
+        text.includes('you have not concluded your merge')
+        || text.includes('merge_head exists')
+        || text.includes('resolve your current index first')
+        || text.includes('another git process seems to be running')
+        || text.includes('index.lock')
+        || text.includes('please commit your changes or stash them')
+        || text.includes('working tree contains unstaged changes')
+        || text.includes('would be overwritten by checkout')
+        || text.includes('would be overwritten by merge')
+        || text.includes('cannot switch branch')
+    ) {
+        return 409
+    }
+    if (
         text.includes('rebase in progress')
         || text.includes('while rebasing')
         || text.includes('cherry-pick')

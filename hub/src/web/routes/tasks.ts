@@ -303,6 +303,39 @@ function formatErrorMessage(error: unknown, fallback: string): string {
     return fallback
 }
 
+function pickReadableMergeError(result: {
+    error?: string
+    stderr?: string
+    stdout?: string
+}, fallback: string): string {
+    const explicit = result.error?.trim()
+    if (explicit && !/^command failed: git /i.test(explicit)) {
+        return explicit
+    }
+
+    const stderr = result.stderr?.trim()
+    if (stderr) {
+        const first = stderr.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    const stdout = result.stdout?.trim()
+    if (stdout) {
+        const first = stdout.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    if (explicit) {
+        return explicit
+    }
+
+    return fallback
+}
+
 function resolveMergeExecutionErrorStatus(message: string): 500 | 503 | 504 {
     const lowered = message.toLowerCase()
     if (lowered.includes('timed out') || lowered.includes('timeout')) {
@@ -737,6 +770,15 @@ export function createTasksRoutes(options: {
                     if (autoResolution.status >= 500) {
                         payload.stdout = autoResolution.stdout
                         payload.stderr = autoResolution.stderr
+                        console.error('[Tasks] Auto-resolve merge failed with server error status', {
+                            taskId,
+                            sessionId: session.id,
+                            targetBranch,
+                            status: autoResolution.status,
+                            error: payload.error,
+                            stderr: autoResolution.stderr,
+                            stdout: autoResolution.stdout
+                        })
                     }
                     return c.json(payload, autoResolution.status)
                 }
@@ -754,7 +796,7 @@ export function createTasksRoutes(options: {
                     stdout?: string
                     stderr?: string
                 } = {
-                    error: result.error ?? 'Merge failed',
+                    error: pickReadableMergeError(result, 'Merge failed'),
                     conflictFiles: result.conflictFiles ?? []
                 }
                 if (autoResolved) {
@@ -764,6 +806,15 @@ export function createTasksRoutes(options: {
                 if (status >= 500) {
                     payload.stdout = result.stdout
                     payload.stderr = result.stderr
+                    console.error('[Tasks] Merge failed with server error status', {
+                        taskId,
+                        sessionId: session.id,
+                        targetBranch,
+                        status,
+                        error: payload.error,
+                        stderr: result.stderr,
+                        stdout: result.stdout
+                    })
                 }
 
                 return c.json(payload, status)
