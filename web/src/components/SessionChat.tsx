@@ -264,6 +264,7 @@ export function SessionChat(props: {
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const [ignoreRunningFallback, setIgnoreRunningFallback] = useState(false)
     const [isMergeFinalizing, setIsMergeFinalizing] = useState(false)
+    const [mergeActionHidden, setMergeActionHidden] = useState(false)
     const [mergeEvents, setMergeEvents] = useState<MergeThreadEvent[]>([])
     const mergeEventSeqRef = useRef(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
@@ -277,6 +278,7 @@ export function SessionChat(props: {
         : null
     const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
     const taskId = taskLink?.taskId ?? null
+    const taskProjectId = taskLink?.projectId ?? null
     const composerDraftScope = taskLink
         ? `task:${taskLink.projectId}:${taskLink.taskId}`
         : `session:${props.session.id}`
@@ -328,7 +330,7 @@ export function SessionChat(props: {
         mergeDiffSummary,
         worktreeBaseCommit
     ])
-    const shouldShowMergeAction = canMergeTaskWorktree && hasMergeableChanges
+    const shouldShowMergeAction = canMergeTaskWorktree && hasMergeableChanges && !mergeActionHidden
     const isMergeBusy = isMergePending || isMergeFinalizing
 
     const appendMergeEvent = useCallback((text: string, tone: MergeThreadEvent['tone'] = 'info') => {
@@ -349,7 +351,14 @@ export function SessionChat(props: {
     useEffect(() => {
         mergeEventSeqRef.current = 0
         setMergeEvents([])
+        setMergeActionHidden(false)
     }, [props.session.id, taskId])
+
+    useEffect(() => {
+        if (task?.status === 'in_review' && !task.worktreeMergedAt) {
+            setMergeActionHidden(false)
+        }
+    }, [task?.status, task?.worktreeMergedAt])
 
     const handleMergeAction = useCallback(async () => {
         if (!taskId || isMergeBusy) {
@@ -365,16 +374,24 @@ export function SessionChat(props: {
             const res = await mergeTaskWorktree({ taskId })
             if (res.skippedReason) {
                 finalizeMergeEvent(`Merge 跳过：${formatMergeSkippedReason(res.skippedReason)}`, 'info')
+                if (res.mergedAt || res.skippedReason === 'already_merged') {
+                    setMergeActionHidden(true)
+                }
                 return
             }
 
             const commitSuffix = res.commitHash ? ` (${res.commitHash})` : ''
             if (res.autoResolved) {
                 finalizeMergeEvent(`Merge 成功（已自动解决冲突）${commitSuffix}`, 'success')
+                setMergeActionHidden(true)
+                if (taskProjectId) {
+                    void navigate({ to: '/projects/$projectId', params: { projectId: taskProjectId } })
+                }
                 return
             }
 
             finalizeMergeEvent(`Merge 成功${commitSuffix}`, 'success')
+            setMergeActionHidden(true)
         } catch (error) {
             setIsMergeFinalizing(true)
             let mergedAfterFailure = false
@@ -386,12 +403,13 @@ export function SessionChat(props: {
 
             if (mergedAfterFailure) {
                 finalizeMergeEvent('Merge 成功（接口报错，但任务状态已更新）', 'success')
+                setMergeActionHidden(true)
                 return
             }
 
             finalizeMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
         }
-    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, props.api, replaceMergeEvent, taskId])
+    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, navigate, props.api, replaceMergeEvent, taskId, taskProjectId])
 
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
