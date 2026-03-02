@@ -111,4 +111,114 @@ describe('project workspace policy', () => {
         })
         expect(deleteWorkspaceResponse.status).toBe(400)
     })
+
+    it('allows one-way worktree mode switch before first task/session only', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Gamma',
+                workspaces: [{ path: '/tmp/workspace-main' }],
+                defaultSessionType: 'simple'
+            })
+        })
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+                defaultSessionType: 'simple' | 'worktree'
+                worktreeLocked?: boolean
+            }
+        }
+        expect(createBody.project.worktreeLocked).toBe(false)
+
+        const upgradeResponse = await app.request(`/api/projects/${createBody.project.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                defaultSessionType: 'worktree',
+                worktreeTargetBranch: 'main'
+            })
+        })
+        expect(upgradeResponse.status).toBe(200)
+
+        const downgradeResponse = await app.request(`/api/projects/${createBody.project.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                defaultSessionType: 'simple'
+            })
+        })
+        expect(downgradeResponse.status).toBe(400)
+    })
+
+    it('locks worktree mode and target branch after first task/session but keeps strategy editable', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Delta',
+                workspaces: [{ path: '/tmp/workspace-main' }],
+                defaultSessionType: 'worktree',
+                worktreeTargetBranch: 'main'
+            })
+        })
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+            }
+        }
+        const projectId = createBody.project.id
+
+        store.tasks.createTask({
+            id: 'task-1',
+            projectId,
+            title: 'seed',
+            status: 'new'
+        })
+
+        const getResponse = await app.request(`/api/projects/${projectId}`)
+        expect(getResponse.status).toBe(200)
+        const getBody = await getResponse.json() as {
+            project: {
+                worktreeLocked?: boolean
+            }
+        }
+        expect(getBody.project.worktreeLocked).toBe(true)
+
+        const changeModeResponse = await app.request(`/api/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                defaultSessionType: 'simple'
+            })
+        })
+        expect(changeModeResponse.status).toBe(400)
+
+        const changeTargetResponse = await app.request(`/api/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                worktreeTargetBranch: 'develop'
+            })
+        })
+        expect(changeTargetResponse.status).toBe(400)
+
+        const strategyResponse = await app.request(`/api/projects/${projectId}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                worktreeAutoCommitMode: 'per_conversation',
+                worktreeCleanupAfterMerge: true
+            })
+        })
+        expect(strategyResponse.status).toBe(200)
+    })
 })

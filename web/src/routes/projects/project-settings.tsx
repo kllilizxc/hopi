@@ -73,6 +73,7 @@ export function ProjectSettingsPage() {
     const { archiveProject, isPending: isArchivingProject } = useArchiveProject(api)
 
     const isPending = isSavingProject || isArchivingProject
+    const isWorktreeLocked = Boolean(project?.worktreeLocked)
 
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
@@ -407,7 +408,7 @@ export function ProjectSettingsPage() {
                                             setWorktreeAutoCommitMode('off')
                                         }
                                     }}
-                                    disabled={isPending}
+                                    disabled={isPending || isWorktreeLocked}
                                 />
                                 {t('projects.worktree.enable')}
                             </label>
@@ -419,7 +420,7 @@ export function ProjectSettingsPage() {
                                         type="text"
                                         value={worktreeTargetBranch}
                                         onChange={(e) => setWorktreeTargetBranch(e.target.value)}
-                                        disabled={isPending || defaultSessionType !== 'worktree'}
+                                        disabled={isPending || defaultSessionType !== 'worktree' || isWorktreeLocked}
                                         placeholder={t('projects.worktree.targetBranchPlaceholder')}
                                         className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                     />

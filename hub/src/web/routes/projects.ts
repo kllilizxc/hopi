@@ -48,6 +48,22 @@ const listQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional()
 })
 
+function hasProjectHistory(store: Store, options: { projectId: string; namespace: string }): boolean {
+    const tasks = store.tasks.listTasksByProjectAndNamespace(options.projectId, options.namespace, { includeArchived: true })
+    if (tasks.length > 0) {
+        return true
+    }
+
+    const sessions = store.sessions.getSessionsByNamespace(options.namespace)
+    return sessions.some((session) => {
+        const metadata = session.metadata
+        if (!metadata || typeof metadata !== 'object') {
+            return false
+        }
+        return (metadata as { projectId?: unknown }).projectId === options.projectId
+    })
+}
+
 export function createProjectsRoutes(options: {
     store: Store
     getSyncEngine: () => SyncEngine | null
@@ -149,7 +165,14 @@ export function createProjectsRoutes(options: {
             })
         }
 
-        return c.json({ project })
+        const workspaceCount = options.store.workspaces.listWorkspacesByProject(projectId).length
+        return c.json({
+            project: {
+                ...project,
+                workspaceCount,
+                worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
+            }
+        })
     })
 
     app.get('/projects/:projectId', (c) => {
@@ -161,7 +184,13 @@ export function createProjectsRoutes(options: {
         }
 
         const workspaceCount = options.store.workspaces.listWorkspacesByProject(projectId).length
-        return c.json({ project: { ...project, workspaceCount } })
+        return c.json({
+            project: {
+                ...project,
+                workspaceCount,
+                worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
+            }
+        })
     })
 
     app.patch('/projects/:projectId', async (c) => {
@@ -183,6 +212,21 @@ export function createProjectsRoutes(options: {
 
         if (parsed.data.machineId && parsed.data.machineId !== existing.machineId) {
             return c.json({ error: 'machineId is immutable in v1' }, 400)
+        }
+
+        const currentSessionType = existing.defaultSessionType ?? 'simple'
+        const nextSessionType = parsed.data.defaultSessionType === undefined
+            ? currentSessionType
+            : parsed.data.defaultSessionType ?? 'simple'
+        const sessionTypeChanged = nextSessionType !== currentSessionType
+        if (currentSessionType === 'worktree' && nextSessionType !== 'worktree') {
+            return c.json({ error: 'defaultSessionType downgrade is not supported (simple -> worktree only)' }, 400)
+        }
+
+        const targetBranchChanged = parsed.data.worktreeTargetBranch !== undefined
+            && (parsed.data.worktreeTargetBranch ?? null) !== (existing.worktreeTargetBranch ?? null)
+        if ((sessionTypeChanged || targetBranchChanged) && hasProjectHistory(options.store, { projectId, namespace })) {
+            return c.json({ error: 'worktree mode and target branch are immutable after first task/session' }, 400)
         }
 
         const updated = options.store.projects.updateProject(projectId, namespace, {
@@ -208,7 +252,14 @@ export function createProjectsRoutes(options: {
         const engine = options.getSyncEngine()
         engine?.handleRealtimeEvent({ type: 'project-updated', projectId, namespace, data: { projectId } })
 
-        return c.json({ project: updated })
+        const workspaceCount = options.store.workspaces.listWorkspacesByProject(projectId).length
+        return c.json({
+            project: {
+                ...updated,
+                workspaceCount,
+                worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
+            }
+        })
     })
 
     app.post('/projects/:projectId/archive', (c) => {

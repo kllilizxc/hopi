@@ -170,6 +170,7 @@ export const ProjectSchema = z.object({
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxGeneratedNew: z.number().int().min(1).max(50).optional(),
+    worktreeLocked: z.boolean().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     lastImprovementsAt: z.number().nullable().optional(),
