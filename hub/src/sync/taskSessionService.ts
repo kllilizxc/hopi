@@ -156,14 +156,6 @@ export async function startSessionFromTask(options: {
         name: task.title
     })
 
-    const permissionMode = overrides.permissionMode
-        ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
-        ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
-        ?? undefined
-    const modelMode = overrides.modelMode
-        ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
-        ?? undefined
-
     const sessionConfigPatch: SessionConfigPatch = {}
     if (permissionMode === 'plan' && agent === 'codex') {
         sessionConfigPatch.collaborationMode = 'plan'
