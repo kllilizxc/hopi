@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
@@ -6,6 +7,7 @@ import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, S
 import type { AgentEvent, ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
+import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useTask } from '@/hooks/queries/useTask'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
@@ -18,6 +20,9 @@ import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useVoiceOptional } from '@/lib/voice-context'
+import { parseNumStat } from '@/lib/gitParsers'
+import { hasTaskMergeableChanges } from '@/lib/taskMerge'
+import { queryKeys } from '@/lib/query-keys'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 
 function getMessageSentFrom(meta: unknown): string | null {
@@ -278,7 +283,52 @@ export function SessionChat(props: {
     const { task } = useTask(props.api, taskId)
     const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
     const isTaskMerged = Boolean(task?.worktreeMergedAt)
-    const shouldShowMergeAction = Boolean(taskId && task?.status === 'in_review' && !isTaskMerged)
+    const canMergeTaskWorktree = Boolean(taskId && task?.status === 'in_review' && !isTaskMerged)
+    const { status: mergeGitStatus, error: mergeGitStatusError, isLoading: isMergeGitStatusLoading } = useGitStatusFiles(
+        props.api,
+        canMergeTaskWorktree ? props.session.id : null
+    )
+    const worktreeBaseCommit = props.session.metadata?.worktree?.baseCommit?.trim() ?? ''
+    const mergeDiffQuery = useQuery({
+        queryKey: queryKeys.gitCommittedDiff(props.session.id, worktreeBaseCommit || 'none'),
+        queryFn: async () => {
+            if (!worktreeBaseCommit) {
+                throw new Error('Worktree base commit unavailable')
+            }
+            return await props.api.getGitDiffNumstat(props.session.id, { baseRef: worktreeBaseCommit })
+        },
+        enabled: canMergeTaskWorktree && worktreeBaseCommit.length > 0
+    })
+    const mergeDiffSummary = useMemo(() => {
+        if (!mergeDiffQuery.data?.success) {
+            return null
+        }
+        return parseNumStat(mergeDiffQuery.data.stdout ?? '')
+    }, [mergeDiffQuery.data])
+    const hasWorkingTreeChanges = Boolean(
+        mergeGitStatus
+        && (mergeGitStatus.stagedFiles.length > 0 || mergeGitStatus.unstagedFiles.length > 0)
+    )
+    const hasMergeableChanges = useMemo(() => {
+        return hasTaskMergeableChanges({
+            canMergeTaskWorktree,
+            hasWorkingTreeChanges,
+            worktreeBaseCommit,
+            committedChangedCount: mergeDiffSummary?.changed ?? null,
+            gitStatusError: mergeGitStatusError,
+            isGitStatusLoading: isMergeGitStatusLoading,
+            isCommittedDiffLoading: mergeDiffQuery.isLoading
+        })
+    }, [
+        canMergeTaskWorktree,
+        hasWorkingTreeChanges,
+        mergeGitStatusError,
+        isMergeGitStatusLoading,
+        mergeDiffQuery.isLoading,
+        mergeDiffSummary,
+        worktreeBaseCommit
+    ])
+    const shouldShowMergeAction = canMergeTaskWorktree && hasMergeableChanges
     const isMergeBusy = isMergePending || isMergeFinalizing
 
     const appendMergeEvent = useCallback((text: string, tone: MergeThreadEvent['tone'] = 'info') => {
