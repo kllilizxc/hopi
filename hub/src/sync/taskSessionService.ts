@@ -25,6 +25,32 @@ type SessionConfigPatch = {
     collaborationMode?: string
 }
 
+const SESSION_CONFIG_APPLY_ATTEMPTS = 8
+const SESSION_CONFIG_APPLY_RETRY_DELAY_MS = 250
+
+function shouldRetrySessionConfigApply(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')
+}
+
+async function applySessionConfigWithRetry(options: {
+    engine: SyncEngine
+    sessionId: string
+    patch: SessionConfigPatch
+}): Promise<void> {
+    for (let attempt = 1; attempt <= SESSION_CONFIG_APPLY_ATTEMPTS; attempt += 1) {
+        try {
+            await options.engine.applySessionConfig(options.sessionId, options.patch)
+            return
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error) || attempt >= SESSION_CONFIG_APPLY_ATTEMPTS) {
+                return
+            }
+            await new Promise((resolve) => setTimeout(resolve, SESSION_CONFIG_APPLY_RETRY_DELAY_MS))
+        }
+    }
+}
+
 export type StartTaskSessionResult =
     | { ok: true; task: StoredTask; sessionId: string }
     | { ok: false; error: string }
@@ -76,7 +102,15 @@ export async function startSessionFromTask(options: {
         return undefined
     })()
 
-    const yolo = Boolean(overrides.yolo)
+    const permissionMode = overrides.permissionMode
+        ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
+        ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
+        ?? undefined
+    const modelMode = overrides.modelMode
+        ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
+        ?? undefined
+    const inferredYolo = permissionMode === 'yolo' && isPermissionModeAllowedForFlavor(permissionMode, agent)
+    const yolo = overrides.yolo ?? inferredYolo
 
     const sessionType = project.defaultSessionType === 'worktree' ? 'worktree' : 'simple'
     const worktreeName = sessionType === 'worktree'
@@ -122,14 +156,6 @@ export async function startSessionFromTask(options: {
         name: task.title
     })
 
-    const permissionMode = overrides.permissionMode
-        ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
-        ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
-        ?? undefined
-    const modelMode = overrides.modelMode
-        ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
-        ?? undefined
-
     const sessionConfigPatch: SessionConfigPatch = {}
     if (permissionMode === 'plan' && agent === 'codex') {
         sessionConfigPatch.collaborationMode = 'plan'
@@ -137,16 +163,18 @@ export async function startSessionFromTask(options: {
         sessionConfigPatch.permissionMode = permissionMode
     }
     if (Object.keys(sessionConfigPatch).length > 0) {
-        try {
-            await options.engine.applySessionConfig(spawn.sessionId, sessionConfigPatch)
-        } catch {
-        }
+        await applySessionConfigWithRetry({
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            patch: sessionConfigPatch
+        })
     }
     if (modelMode && isModelModeAllowedForFlavor(modelMode, agent)) {
-        try {
-            await options.engine.applySessionConfig(spawn.sessionId, { modelMode })
-        } catch {
-        }
+        await applySessionConfigWithRetry({
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            patch: { modelMode }
+        })
     }
 
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
