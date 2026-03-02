@@ -48,6 +48,14 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+const SESSION_CONFIG_APPLY_ATTEMPTS = 8
+const SESSION_CONFIG_APPLY_RETRY_DELAY_MS = 250
+
+function shouldRetrySessionConfigApply(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')
+}
+
 export class SyncEngine {
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
@@ -320,6 +328,26 @@ export class SyncEngine {
         this.sessionCache.applySessionConfig(sessionId, applied)
     }
 
+    private async applySessionConfigWithRetry(
+        sessionId: string,
+        patch: {
+            permissionMode?: PermissionMode
+            modelMode?: ModelMode
+        }
+    ): Promise<void> {
+        for (let attempt = 1; attempt <= SESSION_CONFIG_APPLY_ATTEMPTS; attempt += 1) {
+            try {
+                await this.applySessionConfig(sessionId, patch)
+                return
+            } catch (error) {
+                if (!shouldRetrySessionConfigApply(error) || attempt >= SESSION_CONFIG_APPLY_ATTEMPTS) {
+                    return
+                }
+                await new Promise((resolve) => setTimeout(resolve, SESSION_CONFIG_APPLY_RETRY_DELAY_MS))
+            }
+        }
+    }
+
     async spawnSession(
         machineId: string,
         directory: string,
@@ -389,12 +417,16 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
+        const previousPermissionMode = session.permissionMode
+        const previousModelMode = session.modelMode
+        const resumeWithYolo = previousPermissionMode === 'yolo' ? true : undefined
+
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,
             metadata.path,
             flavor,
             undefined,
-            undefined,
+            resumeWithYolo,
             undefined,
             undefined,
             resumeToken
@@ -407,6 +439,13 @@ export class SyncEngine {
         const becameActive = await this.waitForSessionActive(spawnResult.sessionId)
         if (!becameActive) {
             return { type: 'error', message: 'Session failed to become active', code: 'resume_failed' }
+        }
+
+        if (previousPermissionMode || previousModelMode) {
+            await this.applySessionConfigWithRetry(spawnResult.sessionId, {
+                permissionMode: previousPermissionMode,
+                modelMode: previousModelMode
+            })
         }
 
         if (spawnResult.sessionId !== access.sessionId) {
