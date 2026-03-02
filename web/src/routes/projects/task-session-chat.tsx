@@ -58,9 +58,10 @@ export function TaskSessionChat(props: {
             try {
                 resumedSessionId = await props.api.resumeSession(currentSessionId)
             } catch (error) {
-                const message = error instanceof Error ? error.message : 'Resume failed'
+                const resumeFailedMessage = t('projects.sessions.resumeFailed')
+                const message = error instanceof Error ? error.message : resumeFailedMessage
                 addToast({
-                    title: 'Resume failed',
+                    title: resumeFailedMessage,
                     body: message,
                     sessionId: currentSessionId,
                     url: ''

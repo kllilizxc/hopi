@@ -40,7 +40,7 @@ export function SessionFileViewer(props: {
                 </button>
                 <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold">{viewer.fileName}</div>
-                    <div className="truncate text-[10px] text-[var(--app-hint)]">{props.filePath || 'Unknown path'}</div>
+                    <div className="truncate text-[10px] text-[var(--app-hint)]">{props.filePath || t('projects.files.pathUnknown')}</div>
                 </div>
             </div>
 
@@ -65,13 +65,13 @@ export function SessionFileViewer(props: {
                 contentCopyVariant="button"
                 labels={{
                     loading: t('loading.files'),
-                    noPath: 'No file path provided.',
+                    noPath: t('projects.files.noPath'),
                     binary: t('projects.files.binary'),
-                    fileEmpty: 'File is empty.',
-                    noChanges: 'No changes to display.',
+                    fileEmpty: t('projects.files.fileEmpty'),
+                    noChanges: t('projects.files.noChanges'),
                     diffTab: t('projects.files.viewDiff'),
                     fileTab: t('projects.files.viewFile'),
-                    diffUnavailablePrefix: 'Diff unavailable: ',
+                    diffUnavailablePrefix: t('projects.files.diffUnavailablePrefix'),
                     copyContent: t('projects.files.copyContent'),
                     copiedContent: t('projects.files.copied'),
                     staged: t('projects.files.staged'),

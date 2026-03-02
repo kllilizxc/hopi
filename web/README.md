@@ -126,6 +126,7 @@ From the repo root:
 ```bash
 bun install
 bun run dev:web
+cd web && bun run check:i18n
 ```
 
 If testing in Telegram, set:
