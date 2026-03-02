@@ -824,7 +824,10 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                 {isSelectedTask ? (
                                                     <div
                                                         aria-hidden
-                                                        className="pointer-events-none absolute -inset-1 rounded-2xl ring-2 ring-[var(--app-link)]"
+                                                        className="pointer-events-none absolute -inset-0.5 rounded-2xl"
+                                                        style={{
+                                                            boxShadow: '0 0 0 1px var(--kanban-accent-1), 0 0 0 4px var(--kanban-wash-1)'
+                                                        }}
                                                     />
                                                 ) : null}
                                                 <div
@@ -941,8 +944,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                         setMenuState({ taskId: task.id, anchorPoint: { x: event.clientX, y: event.clientY } })
                                                     }}
                                                     className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
-                                                            ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
-                                                            : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
+                                                        ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
+                                                        : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
                                                         } ${isDragging ? 'opacity-60' : ''
                                                         }`}
                                                     style={{
