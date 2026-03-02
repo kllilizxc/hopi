@@ -35,4 +35,20 @@ describe('merge conflict detection', () => {
         expect(getMergeWorktreeErrorStatus(timeoutResult)).toBe(504)
         expect(getMergeWorktreeErrorStatus(unknownResult)).toBe(500)
     })
+
+    it('maps target branch checked-out and rebase-in-progress failures to 409', () => {
+        const checkedOutElsewhere = {
+            stderr: "fatal: 'dev' is already checked out at '/tmp/dev-worktree'"
+        }
+        const rebaseInProgress = {
+            stderr: 'fatal: cannot switch branch while rebasing'
+        }
+        const mergeHeadExists = {
+            stderr: 'fatal: You have not concluded your merge (MERGE_HEAD exists).'
+        }
+
+        expect(getMergeWorktreeErrorStatus(checkedOutElsewhere)).toBe(409)
+        expect(getMergeWorktreeErrorStatus(rebaseInProgress)).toBe(409)
+        expect(getMergeWorktreeErrorStatus(mergeHeadExists)).toBe(409)
+    })
 })

@@ -208,6 +208,65 @@ async function autoCommitWorktreeIfNeeded(
     }
 }
 
+function parseGitWorktreeEntries(raw: string): Array<{ path: string; branch: string | null }> {
+    const entries: Array<{ path: string; branch: string | null }> = []
+    const lines = raw.split('\n')
+
+    let currentPath: string | null = null
+    let currentBranch: string | null = null
+
+    const flush = () => {
+        if (!currentPath) {
+            return
+        }
+        entries.push({ path: currentPath, branch: currentBranch })
+        currentPath = null
+        currentBranch = null
+    }
+
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.length === 0) {
+            flush()
+            continue
+        }
+
+        if (line.startsWith('worktree ')) {
+            flush()
+            currentPath = line.slice('worktree '.length).trim()
+            continue
+        }
+
+        if (line.startsWith('branch ')) {
+            currentBranch = line.slice('branch '.length).trim()
+        }
+    }
+
+    flush()
+    return entries
+}
+
+async function resolveMergeTargetPath(
+    basePath: string,
+    targetBranch: string,
+    timeout: number
+): Promise<string> {
+    const worktreeList = await runGitCommand(['worktree', 'list', '--porcelain'], basePath, timeout)
+    if (!worktreeList.success) {
+        return basePath
+    }
+
+    const targetRef = `refs/heads/${targetBranch}`
+    const entries = parseGitWorktreeEntries(worktreeList.stdout ?? '')
+    for (const entry of entries) {
+        if (entry.branch === targetRef && entry.path.trim().length > 0) {
+            return entry.path
+        }
+    }
+
+    return basePath
+}
+
 export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<GitStatusRequest, GitCommandResponse>('git-status', async (data) => {
         const resolved = resolveCwd(data.cwd, workingDirectory)
@@ -277,8 +336,9 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         }
 
         const timeout = data.timeout ?? 60_000
+        const mergeTargetPath = await resolveMergeTargetPath(worktree.basePath, targetBranch, timeout)
 
-        const baseStatus = await runGitCommand(['status', '--porcelain'], worktree.basePath, timeout)
+        const baseStatus = await runGitCommand(['status', '--porcelain'], mergeTargetPath, timeout)
         if (!baseStatus.success) {
             return baseStatus
         }
@@ -299,18 +359,18 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             })
         }
 
-        const originalBranchResult = await runGitCommand(['symbolic-ref', '--short', 'HEAD'], worktree.basePath, timeout)
+        const originalBranchResult = await runGitCommand(['symbolic-ref', '--short', 'HEAD'], mergeTargetPath, timeout)
         const originalBranch = originalBranchResult.success ? (originalBranchResult.stdout ?? '').trim() : ''
 
         const ensureBranch = async (branch: string): Promise<GitCommandResponse> => {
-            return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], worktree.basePath, timeout)
+            return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], mergeTargetPath, timeout)
         }
 
         const restoreBranch = async () => {
             if (!originalBranch || originalBranch === targetBranch) {
                 return
             }
-            await runGitCommand(['switch', originalBranch], worktree.basePath, timeout)
+            await runGitCommand(['switch', originalBranch], mergeTargetPath, timeout)
         }
 
         try {
@@ -332,15 +392,15 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 })
             }
 
-            const switchResult = await runGitCommand(['switch', targetBranch], worktree.basePath, timeout)
+            const switchResult = await runGitCommand(['switch', targetBranch], mergeTargetPath, timeout)
             if (!switchResult.success) {
                 return switchResult
             }
 
-            const mergeResult = await runGitCommand(['merge', '--squash', worktree.branch], worktree.basePath, timeout)
+            const mergeResult = await runGitCommand(['merge', '--squash', worktree.branch], mergeTargetPath, timeout)
             if (!mergeResult.success) {
-                const conflicts = await runGitCommand(['diff', '--name-only', '--diff-filter=U'], worktree.basePath, timeout)
-                await runGitCommand(['reset', '--hard'], worktree.basePath, timeout)
+                const conflicts = await runGitCommand(['diff', '--name-only', '--diff-filter=U'], mergeTargetPath, timeout)
+                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
                 const conflictFiles = conflicts.success
                     ? (conflicts.stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
                     : []
@@ -359,31 +419,31 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 })
             }
 
-            const staged = await runGitCommand(['diff', '--cached', '--name-only'], worktree.basePath, timeout)
+            const staged = await runGitCommand(['diff', '--cached', '--name-only'], mergeTargetPath, timeout)
             if (!staged.success) {
-                await runGitCommand(['reset', '--hard'], worktree.basePath, timeout)
+                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
                 return staged
             }
             if ((staged.stdout ?? '').trim().length === 0) {
-                await runGitCommand(['reset', '--hard'], worktree.basePath, timeout)
+                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
                 return { success: true, skippedReason: 'no_changes' }
             }
 
             const commitArgs = ['commit', '-m', commitMessage, '--no-gpg-sign', '--no-verify']
-            let commitResult = await runGitCommand(commitArgs, worktree.basePath, timeout)
+            let commitResult = await runGitCommand(commitArgs, mergeTargetPath, timeout)
             if (!commitResult.success && needsGitIdentity(`${commitResult.stderr ?? ''}\n${commitResult.stdout ?? ''}\n${commitResult.error ?? ''}`)) {
                 commitResult = await runGitCommand(
                     ['-c', 'user.name=HAPI', '-c', 'user.email=hapi@local', ...commitArgs],
-                    worktree.basePath,
+                    mergeTargetPath,
                     timeout
                 )
             }
             if (!commitResult.success) {
-                await runGitCommand(['reset', '--hard'], worktree.basePath, timeout)
+                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
                 return commitResult
             }
 
-            const hashResult = await runGitCommand(['rev-parse', 'HEAD'], worktree.basePath, timeout)
+            const hashResult = await runGitCommand(['rev-parse', 'HEAD'], mergeTargetPath, timeout)
             const commitHash = hashResult.success ? (hashResult.stdout ?? '').trim() : undefined
 
             return {

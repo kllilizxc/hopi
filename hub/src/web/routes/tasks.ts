@@ -168,23 +168,35 @@ async function tryAutoResolveMergeConflict(options: {
             sentFrom: 'webapp'
         })
     } catch (error) {
+        const message = formatErrorMessage(error, 'Failed to send merge conflict prompt')
         return {
             ok: false,
-            status: 500,
-            error: formatErrorMessage(error, 'Failed to send merge conflict prompt'),
+            status: resolveMergeExecutionErrorStatus(message),
+            error: message,
             conflictFiles: options.conflictFiles
         }
     }
 
-    const assistantMessage = await waitForAssistantCompletion({
-        store: options.store,
-        engine: options.engine,
-        sessionId: options.sessionId,
-        namespace: options.namespace,
-        afterSeq,
-        timeoutMs: AUTO_MERGE_CONFLICT_TIMEOUT_MS,
-        requireAssistantText: false
-    })
+    let assistantMessage: Awaited<ReturnType<typeof waitForAssistantCompletion>> | null = null
+    try {
+        assistantMessage = await waitForAssistantCompletion({
+            store: options.store,
+            engine: options.engine,
+            sessionId: options.sessionId,
+            namespace: options.namespace,
+            afterSeq,
+            timeoutMs: AUTO_MERGE_CONFLICT_TIMEOUT_MS,
+            requireAssistantText: false
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Agent conflict auto-resolution failed unexpectedly')
+        return {
+            ok: false,
+            status: resolveMergeExecutionErrorStatus(message),
+            error: message,
+            conflictFiles: options.conflictFiles
+        }
+    }
 
     if (!assistantMessage) {
         return {
@@ -195,9 +207,20 @@ async function tryAutoResolveMergeConflict(options: {
         }
     }
 
-    const autoCommitResult = await options.engine.gitAutocommitWorktree(options.sessionId, {
-        message: options.commitMessage
-    })
+    let autoCommitResult: Awaited<ReturnType<SyncEngine['gitAutocommitWorktree']>>
+    try {
+        autoCommitResult = await options.engine.gitAutocommitWorktree(options.sessionId, {
+            message: options.commitMessage
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Failed to auto-commit conflict resolution changes')
+        return {
+            ok: false,
+            status: resolveMergeExecutionErrorStatus(message),
+            error: message,
+            conflictFiles: options.conflictFiles
+        }
+    }
     if (!autoCommitResult.success) {
         const raw = `${autoCommitResult.error ?? ''}\n${autoCommitResult.stderr ?? ''}`.toLowerCase()
         const status = raw.includes('unmerged') || raw.includes('conflict') ? 409 : 500
@@ -219,12 +242,7 @@ async function tryAutoResolveMergeConflict(options: {
         })
     } catch (error) {
         const message = formatErrorMessage(error, 'Merge retry failed unexpectedly')
-        const lowered = message.toLowerCase()
-        const status = lowered.includes('timed out')
-            ? 504
-            : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
-                ? 503
-                : 500
+        const status = resolveMergeExecutionErrorStatus(message)
         return {
             ok: false,
             status,
@@ -283,6 +301,57 @@ function formatErrorMessage(error: unknown, fallback: string): string {
     }
 
     return fallback
+}
+
+function pickReadableMergeError(result: {
+    error?: string
+    stderr?: string
+    stdout?: string
+}, fallback: string): string {
+    const explicit = result.error?.trim()
+    if (explicit && !/^command failed: git /i.test(explicit)) {
+        return explicit
+    }
+
+    const stderr = result.stderr?.trim()
+    if (stderr) {
+        const first = stderr.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    const stdout = result.stdout?.trim()
+    if (stdout) {
+        const first = stdout.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    if (explicit) {
+        return explicit
+    }
+
+    return fallback
+}
+
+function resolveMergeExecutionErrorStatus(message: string): 500 | 503 | 504 {
+    const lowered = message.toLowerCase()
+    if (lowered.includes('timed out') || lowered.includes('timeout')) {
+        return 504
+    }
+
+    if (
+        lowered.includes('rpc handler not registered')
+        || lowered.includes('rpc socket disconnected')
+        || lowered.includes('runner offline')
+        || lowered.includes('not connected')
+    ) {
+        return 503
+    }
+
+    return 500
 }
 
 function sumAttachmentBytes(attachments: Array<z.infer<typeof taskAttachmentSchema>>): number {
@@ -656,30 +725,35 @@ export function createTasksRoutes(options: {
                 result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
             } catch (error) {
                 const message = formatErrorMessage(error, 'Merge failed unexpectedly')
-                const lowered = message.toLowerCase()
-                const status = lowered.includes('timed out')
-                    ? 504
-                    : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
-                        ? 503
-                        : 500
+                const status = resolveMergeExecutionErrorStatus(message)
                 return c.json({ error: message }, status)
             }
 
             if (!result.success && conflictStrategy === 'agent' && shouldAutoResolveMergeConflict(result)) {
-                const autoResolution = await tryAutoResolveMergeConflict({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    sessionId: session.id,
-                    task: {
-                        id: task.id,
-                        title: task.title
-                    },
-                    sourceBranch: session.metadata.worktree.branch,
-                    targetBranch,
-                    commitMessage,
-                    conflictFiles: result.conflictFiles ?? []
-                })
+                let autoResolution: AutoResolveMergeConflictResult
+                try {
+                    autoResolution = await tryAutoResolveMergeConflict({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        sessionId: session.id,
+                        task: {
+                            id: task.id,
+                            title: task.title
+                        },
+                        sourceBranch: session.metadata.worktree.branch,
+                        targetBranch,
+                        commitMessage,
+                        conflictFiles: result.conflictFiles ?? []
+                    })
+                } catch (error) {
+                    const message = formatErrorMessage(error, 'Agent conflict auto-resolution failed unexpectedly')
+                    return c.json({
+                        error: message,
+                        conflictFiles: result.conflictFiles ?? [],
+                        autoResolveAttempted: true
+                    }, resolveMergeExecutionErrorStatus(message))
+                }
 
                 if (!autoResolution.ok) {
                     const payload: {
@@ -696,6 +770,15 @@ export function createTasksRoutes(options: {
                     if (autoResolution.status >= 500) {
                         payload.stdout = autoResolution.stdout
                         payload.stderr = autoResolution.stderr
+                        console.error('[Tasks] Auto-resolve merge failed with server error status', {
+                            taskId,
+                            sessionId: session.id,
+                            targetBranch,
+                            status: autoResolution.status,
+                            error: payload.error,
+                            stderr: autoResolution.stderr,
+                            stdout: autoResolution.stdout
+                        })
                     }
                     return c.json(payload, autoResolution.status)
                 }
@@ -713,7 +796,7 @@ export function createTasksRoutes(options: {
                     stdout?: string
                     stderr?: string
                 } = {
-                    error: result.error ?? 'Merge failed',
+                    error: pickReadableMergeError(result, 'Merge failed'),
                     conflictFiles: result.conflictFiles ?? []
                 }
                 if (autoResolved) {
@@ -723,6 +806,15 @@ export function createTasksRoutes(options: {
                 if (status >= 500) {
                     payload.stdout = result.stdout
                     payload.stderr = result.stderr
+                    console.error('[Tasks] Merge failed with server error status', {
+                        taskId,
+                        sessionId: session.id,
+                        targetBranch,
+                        status,
+                        error: payload.error,
+                        stderr: result.stderr,
+                        stdout: result.stdout
+                    })
                 }
 
                 return c.json(payload, status)
