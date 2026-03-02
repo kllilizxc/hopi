@@ -5,7 +5,6 @@ import { isObject, safeStringify } from '@hapi/protocol'
 import { getEventPresentation } from '@/chat/presentation'
 import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
-import { LazyRainbowText } from '@/components/LazyRainbowText'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { ToolCard } from '@/components/ToolCard/ToolCard'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
@@ -63,7 +62,7 @@ function HappyNestedBlockList(props: {
                         <div key={`user:${block.id}`} className={userBubbleClass}>
                             <div className="flex items-end gap-2">
                                 <div className="flex-1">
-                                    <LazyRainbowText text={block.text} />
+                                    <MarkdownRenderer content={block.text} />
                                 </div>
                                 {status ? (
                                     <div className="shrink-0 self-end pb-0.5">

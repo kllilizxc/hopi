@@ -1,10 +1,10 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
-import { LazyRainbowText } from '@/components/LazyRainbowText'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { MessageAttachments } from '@/components/AssistantChat/messages/MessageAttachments'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
+import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 
 export function HappyUserMessage() {
     const ctx = useHappyChatContext()
@@ -61,7 +61,7 @@ export function HappyUserMessage() {
         <MessagePrimitive.Root className={userBubbleClass}>
             <div className="flex items-end gap-2">
                 <div className="flex-1 min-w-0">
-                    {hasText && <LazyRainbowText text={text} />}
+                    {hasText && <MarkdownRenderer content={text} />}
                     {hasAttachments && <MessageAttachments attachments={attachments} />}
                 </div>
                 {status ? (
