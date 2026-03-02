@@ -343,9 +343,25 @@ export class SessionCache {
             )
         }
 
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(oldSessionId, namespace, { includeArchived: true })
+
         const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
         if (!deleted) {
             throw new Error('Failed to delete old session during merge')
+        }
+
+        for (const task of linkedTasks) {
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, { activeSessionId: newSessionId })
+            if (!updated) {
+                continue
+            }
+            this.publisher.emit({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace,
+                data: { taskId: updated.id, activeSessionId: newSessionId }
+            })
         }
 
         const existed = this.sessions.delete(oldSessionId)
