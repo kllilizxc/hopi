@@ -272,6 +272,9 @@ export function SessionChat(props: {
         : null
     const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
     const taskId = taskLink?.taskId ?? null
+    const composerDraftScope = taskLink
+        ? `task:${taskLink.projectId}:${taskLink.taskId}`
+        : `session:${props.session.id}`
     const { task } = useTask(props.api, taskId)
     const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
     const isTaskMerged = Boolean(task?.worktreeMergedAt)
@@ -643,6 +646,7 @@ export function SessionChat(props: {
                     />
 
                     <HappyComposer
+                        draftScope={composerDraftScope}
                         disabled={props.isSending}
                         permissionMode={props.session.permissionMode}
                         modelMode={props.session.modelMode}

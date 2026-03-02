@@ -35,8 +35,19 @@ export interface TextInputState {
 }
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
+// Keep unsent drafts isolated per task/session scope to avoid leaking text across tasks.
+const composerDraftByScope = new Map<string, string>()
+
+function setDraftForScope(scope: string, text: string): void {
+    if (text.trim().length > 0) {
+        composerDraftByScope.set(scope, text)
+    } else {
+        composerDraftByScope.delete(scope)
+    }
+}
 
 export function HappyComposer(props: {
+    draftScope: string
     disabled?: boolean
     permissionMode?: PermissionMode
     modelMode?: ModelMode
@@ -61,6 +72,7 @@ export function HappyComposer(props: {
 }) {
     const { t } = useTranslation()
     const {
+        draftScope,
         disabled = false,
         permissionMode: rawPermissionMode,
         modelMode: rawModelMode,
@@ -120,6 +132,7 @@ export function HappyComposer(props: {
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
+    const prevDraftScopeRef = useRef<string | null>(null)
 
     useEffect(() => {
         setInputState((prev) => {
@@ -141,6 +154,35 @@ export function HappyComposer(props: {
         }
         prevControlledByUser.current = controlledByUser
     }, [controlledByUser])
+
+    useEffect(() => {
+        const previousScope = prevDraftScopeRef.current
+        if (previousScope === draftScope) {
+            return
+        }
+
+        if (previousScope) {
+            setDraftForScope(previousScope, composerText)
+        }
+
+        prevDraftScopeRef.current = draftScope
+
+        const nextText = composerDraftByScope.get(draftScope) ?? ''
+        if (nextText !== composerText) {
+            api.composer().setText(nextText)
+            const cursor = nextText.length
+            setInputState({
+                text: nextText,
+                selection: { start: cursor, end: cursor }
+            })
+        }
+    }, [api, composerText, draftScope])
+
+    useEffect(() => {
+        return () => {
+            setDraftForScope(draftScope, composerText)
+        }
+    }, [draftScope, composerText])
 
     const { haptic: platformHaptic, isTouch } = usePlatform()
     const { isStandalone, isIOS } = usePWAInstall()
