@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session } from '@/types/api'
 import type { AgentEvent, ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
+import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
+import { useTask } from '@/hooks/queries/useTask'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
@@ -77,6 +79,56 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
 }
 
 const CONTINUE_PROMPT_TEXT = '继续'
+
+type MergeThreadEvent = {
+    id: string
+    text: string
+    tone?: 'info' | 'success' | 'error'
+}
+
+function formatMergeSkippedReason(reason: string): string {
+    if (reason === 'already_merged') {
+        return '已经合并过了'
+    }
+    if (reason === 'no_changes') {
+        return '没有可合并的变更'
+    }
+    return reason
+}
+
+function toErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) {
+        return error.message
+    }
+    return String(error)
+}
+
+function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms)
+    })
+}
+
+async function waitForTaskMerged(api: ApiClient, taskId: string): Promise<boolean> {
+    const maxChecks = 6
+    const checkDelayMs = 2_000
+
+    for (let attempt = 0; attempt < maxChecks; attempt += 1) {
+        try {
+            const latest = await api.getTask(taskId)
+            if (latest.task.worktreeMergedAt) {
+                return true
+            }
+        } catch {
+        }
+
+        if (attempt < maxChecks - 1) {
+            await wait(checkDelayMs)
+        }
+    }
+
+    return false
+}
 
 function getReadyEvent(event: AgentEvent): { forLocalKey: string | null; hasAssistantReply: boolean | null } | null {
     if (event.type !== 'ready') {
@@ -184,12 +236,81 @@ export function SessionChat(props: {
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
+    const matchRoute = useMatchRoute()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const [ignoreRunningFallback, setIgnoreRunningFallback] = useState(false)
+    const [isMergeFinalizing, setIsMergeFinalizing] = useState(false)
+    const [mergeEvents, setMergeEvents] = useState<MergeThreadEvent[]>([])
+    const mergeEventSeqRef = useRef(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
+
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const taskParamsFromRoute = taskRouteMatch
+        ? { projectId: taskRouteMatch.projectId, taskId: taskRouteMatch.taskId }
+        : null
+    const taskParamsFromMetadata = props.session.metadata?.projectId && props.session.metadata?.taskId
+        ? { projectId: props.session.metadata.projectId, taskId: props.session.metadata.taskId }
+        : null
+    const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
+    const taskId = taskLink?.taskId ?? null
+    const { task } = useTask(props.api, taskId)
+    const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
+    const isTaskMerged = Boolean(task?.worktreeMergedAt)
+    const shouldShowMergeAction = Boolean(taskId && task?.status === 'in_review' && !isTaskMerged)
+    const isMergeBusy = isMergePending || isMergeFinalizing
+
+    const appendMergeEvent = useCallback((text: string, tone: MergeThreadEvent['tone'] = 'info') => {
+        mergeEventSeqRef.current += 1
+        setMergeEvents((prev) => [...prev, { id: `merge-event-${mergeEventSeqRef.current}`, text, tone }])
+    }, [])
+
+    useEffect(() => {
+        mergeEventSeqRef.current = 0
+        setMergeEvents([])
+    }, [props.session.id, taskId])
+
+    const handleMergeAction = useCallback(async () => {
+        if (!taskId || isMergeBusy) {
+            return
+        }
+
+        appendMergeEvent('正在 Merge 到目标分支...', 'info')
+
+        try {
+            const res = await mergeTaskWorktree({ taskId })
+            if (res.skippedReason) {
+                appendMergeEvent(`Merge 跳过：${formatMergeSkippedReason(res.skippedReason)}`, 'info')
+                return
+            }
+
+            const commitSuffix = res.commitHash ? ` (${res.commitHash})` : ''
+            if (res.autoResolved) {
+                appendMergeEvent(`Merge 成功（已自动解决冲突）${commitSuffix}`, 'success')
+                return
+            }
+
+            appendMergeEvent(`Merge 成功${commitSuffix}`, 'success')
+        } catch (error) {
+            setIsMergeFinalizing(true)
+            let mergedAfterFailure = false
+            try {
+                mergedAfterFailure = await waitForTaskMerged(props.api, taskId)
+            } finally {
+                setIsMergeFinalizing(false)
+            }
+
+            if (mergedAfterFailure) {
+                appendMergeEvent('Merge 成功（接口报错，但任务状态已更新）', 'success')
+                return
+            }
+
+            appendMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
+        }
+    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, props.api, taskId])
+
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
         props.session.id,
@@ -460,7 +581,6 @@ export function SessionChat(props: {
                 onBack={props.onBack}
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
-                api={props.api}
                 onSessionDeleted={props.onBack}
             />
 
@@ -497,6 +617,13 @@ export function SessionChat(props: {
                         showContinueAction={showContinueAction}
                         continueActionDisabled={props.isSending || effectiveIsRunning}
                         onContinueAction={handleContinue}
+                        showMergeAction={shouldShowMergeAction}
+                        mergeActionDisabled={effectiveIsRunning || isMergeBusy}
+                        mergeActionLabel={isMergeBusy ? 'Merging...' : 'Merge'}
+                        onMergeAction={() => {
+                            void handleMergeAction()
+                        }}
+                        mergeEvents={mergeEvents}
                     />
 
                     <HappyComposer
