@@ -171,7 +171,7 @@ async function tryAutoResolveMergeConflict(options: {
         return {
             ok: false,
             status: 500,
-            error: error instanceof Error ? error.message : String(error),
+            error: formatErrorMessage(error, 'Failed to send merge conflict prompt'),
             conflictFiles: options.conflictFiles
         }
     }
@@ -218,7 +218,7 @@ async function tryAutoResolveMergeConflict(options: {
             commitMessage: options.commitMessage
         })
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = formatErrorMessage(error, 'Merge retry failed unexpectedly')
         const lowered = message.toLowerCase()
         const status = lowered.includes('timed out')
             ? 504
@@ -254,6 +254,35 @@ function resolveRequestLocale(rawLocale: string | undefined): string | undefined
     }
 
     return trimmed.split(',')[0]?.split(';')[0]?.trim() || undefined
+}
+
+function formatErrorMessage(error: unknown, fallback: string): string {
+    if (error instanceof Error) {
+        const message = error.message.trim()
+        if (message.length > 0) {
+            return message
+        }
+    }
+
+    if (typeof error === 'string') {
+        const message = error.trim()
+        if (message.length > 0) {
+            return message
+        }
+    }
+
+    if (error && typeof error === 'object') {
+        const maybeMessage = (error as { message?: unknown }).message
+        if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+            return maybeMessage.trim()
+        }
+        const maybeError = (error as { error?: unknown }).error
+        if (typeof maybeError === 'string' && maybeError.trim().length > 0) {
+            return maybeError.trim()
+        }
+    }
+
+    return fallback
 }
 
 function sumAttachmentBytes(attachments: Array<z.infer<typeof taskAttachmentSchema>>): number {
@@ -558,183 +587,189 @@ export function createTasksRoutes(options: {
     })
 
     app.post('/tasks/:taskId/worktree/merge', async (c) => {
-        const namespace = c.get('namespace')
-        const taskId = c.req.param('taskId')
-        const preferredLocale = resolveRequestLocale(
-            c.req.header('x-hapi-locale')
-            ?? c.req.header('accept-language')
-            ?? undefined
-        )
-        const json = await c.req.json().catch(() => null)
-        const parsed = mergeWorktreeSchema.safeParse(json ?? {})
-        if (!parsed.success) {
-            return c.json({ error: 'Invalid body' }, 400)
-        }
-
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
-        if (!task) {
-            return c.json({ error: 'Task not found' }, 404)
-        }
-        if (task.worktreeMergedAt) {
-            return c.json({
-                ok: true,
-                commitHash: task.worktreeMergeCommit ?? null,
-                skippedReason: 'already_merged',
-                mergedAt: task.worktreeMergedAt
-            })
-        }
-        if (!task.activeSessionId) {
-            return c.json({ error: 'Task has no active session' }, 400)
-        }
-
-        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
-        if (!project) {
-            return c.json({ error: 'Project not found' }, 404)
-        }
-
-        const targetBranch = parsed.data.targetBranch
-            ?? project.worktreeTargetBranch
-            ?? ''
-        if (!targetBranch) {
-            return c.json({ error: 'Target branch not configured' }, 400)
-        }
-        const conflictStrategy = parsed.data.conflictStrategy ?? 'agent'
-
-        const engine = options.getSyncEngine()
-        if (!engine) {
-            return c.json({ error: 'Not connected' }, 503)
-        }
-
-        const access = engine.resolveSessionAccess(task.activeSessionId, namespace)
-        if (!access.ok) {
-            return c.json({ error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found' }, access.reason === 'access-denied' ? 403 : 404)
-        }
-
-        const session = access.session
-        if (!session.metadata?.worktree) {
-            return c.json({ error: 'Session is not a worktree session' }, 400)
-        }
-
-        if (session.thinking) {
-            return c.json({ error: 'Session is busy' }, 409)
-        }
-
-        const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
-        let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
-        let autoResolved = false
         try {
-            result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            const lowered = message.toLowerCase()
-            const status = lowered.includes('timed out')
-                ? 504
-                : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
-                    ? 503
-                    : 500
-            return c.json({ error: message }, status)
-        }
+            const namespace = c.get('namespace')
+            const taskId = c.req.param('taskId')
+            const preferredLocale = resolveRequestLocale(
+                c.req.header('x-hapi-locale')
+                ?? c.req.header('accept-language')
+                ?? undefined
+            )
+            const json = await c.req.json().catch(() => null)
+            const parsed = mergeWorktreeSchema.safeParse(json ?? {})
+            if (!parsed.success) {
+                return c.json({ error: 'Invalid body' }, 400)
+            }
 
-        if (!result.success && conflictStrategy === 'agent' && shouldAutoResolveMergeConflict(result)) {
-            const autoResolution = await tryAutoResolveMergeConflict({
-                store: options.store,
-                engine,
-                namespace,
-                sessionId: session.id,
-                task: {
-                    id: task.id,
-                    title: task.title
-                },
-                sourceBranch: session.metadata.worktree.branch,
-                targetBranch,
-                commitMessage,
-                conflictFiles: result.conflictFiles ?? []
-            })
+            const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+            if (!task) {
+                return c.json({ error: 'Task not found' }, 404)
+            }
+            if (task.worktreeMergedAt) {
+                return c.json({
+                    ok: true,
+                    commitHash: task.worktreeMergeCommit ?? null,
+                    skippedReason: 'already_merged',
+                    mergedAt: task.worktreeMergedAt
+                })
+            }
+            if (!task.activeSessionId) {
+                return c.json({ error: 'Task has no active session' }, 400)
+            }
 
-            if (!autoResolution.ok) {
+            const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+            if (!project) {
+                return c.json({ error: 'Project not found' }, 404)
+            }
+
+            const targetBranch = parsed.data.targetBranch
+                ?? project.worktreeTargetBranch
+                ?? ''
+            if (!targetBranch) {
+                return c.json({ error: 'Target branch not configured' }, 400)
+            }
+            const conflictStrategy = parsed.data.conflictStrategy ?? 'agent'
+
+            const engine = options.getSyncEngine()
+            if (!engine) {
+                return c.json({ error: 'Not connected' }, 503)
+            }
+
+            const access = engine.resolveSessionAccess(task.activeSessionId, namespace)
+            if (!access.ok) {
+                return c.json({ error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found' }, access.reason === 'access-denied' ? 403 : 404)
+            }
+
+            const session = access.session
+            if (!session.metadata?.worktree) {
+                return c.json({ error: 'Session is not a worktree session' }, 400)
+            }
+
+            if (session.thinking) {
+                return c.json({ error: 'Session is busy' }, 409)
+            }
+
+            const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
+            let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
+            let autoResolved = false
+            try {
+                result = await engine.gitMergeWorktree(session.id, { targetBranch, commitMessage })
+            } catch (error) {
+                const message = formatErrorMessage(error, 'Merge failed unexpectedly')
+                const lowered = message.toLowerCase()
+                const status = lowered.includes('timed out')
+                    ? 504
+                    : lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
+                        ? 503
+                        : 500
+                return c.json({ error: message }, status)
+            }
+
+            if (!result.success && conflictStrategy === 'agent' && shouldAutoResolveMergeConflict(result)) {
+                const autoResolution = await tryAutoResolveMergeConflict({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    sessionId: session.id,
+                    task: {
+                        id: task.id,
+                        title: task.title
+                    },
+                    sourceBranch: session.metadata.worktree.branch,
+                    targetBranch,
+                    commitMessage,
+                    conflictFiles: result.conflictFiles ?? []
+                })
+
+                if (!autoResolution.ok) {
+                    const payload: {
+                        error: string
+                        conflictFiles: string[]
+                        autoResolveAttempted: boolean
+                        stdout?: string
+                        stderr?: string
+                    } = {
+                        error: autoResolution.error,
+                        conflictFiles: autoResolution.conflictFiles,
+                        autoResolveAttempted: true
+                    }
+                    if (autoResolution.status >= 500) {
+                        payload.stdout = autoResolution.stdout
+                        payload.stderr = autoResolution.stderr
+                    }
+                    return c.json(payload, autoResolution.status)
+                }
+
+                result = autoResolution.mergeResult
+                autoResolved = true
+            }
+
+            if (!result.success) {
+                const status = getMergeWorktreeErrorStatus(result)
                 const payload: {
                     error: string
                     conflictFiles: string[]
-                    autoResolveAttempted: boolean
+                    autoResolveAttempted?: boolean
                     stdout?: string
                     stderr?: string
                 } = {
-                    error: autoResolution.error,
-                    conflictFiles: autoResolution.conflictFiles,
-                    autoResolveAttempted: true
+                    error: result.error ?? 'Merge failed',
+                    conflictFiles: result.conflictFiles ?? []
                 }
-                if (autoResolution.status >= 500) {
-                    payload.stdout = autoResolution.stdout
-                    payload.stderr = autoResolution.stderr
+                if (autoResolved) {
+                    payload.autoResolveAttempted = true
                 }
-                return c.json(payload, autoResolution.status)
+
+                if (status >= 500) {
+                    payload.stdout = result.stdout
+                    payload.stderr = result.stderr
+                }
+
+                return c.json(payload, status)
             }
 
-            result = autoResolution.mergeResult
-            autoResolved = true
-        }
-
-        if (!result.success) {
-            const status = getMergeWorktreeErrorStatus(result)
-            const payload: {
-                error: string
-                conflictFiles: string[]
-                autoResolveAttempted?: boolean
-                stdout?: string
-                stderr?: string
-            } = {
-                error: result.error ?? 'Merge failed',
-                conflictFiles: result.conflictFiles ?? []
-            }
-            if (autoResolved) {
-                payload.autoResolveAttempted = true
-            }
-
-            if (status >= 500) {
-                payload.stdout = result.stdout
-                payload.stderr = result.stderr
-            }
-
-            return c.json(payload, status)
-        }
-
-        const mergedAt = Date.now()
-        const statusChangingToFinished = task.status === 'in_review'
-        const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
-            worktreeMergedAt: mergedAt,
-            worktreeMergeCommit: result.commitHash ?? null,
-            status: statusChangingToFinished ? 'finished' : undefined,
-            finishedAt: statusChangingToFinished ? mergedAt : undefined
-        })
-        if (!updatedTask) {
-            return c.json({ error: 'Task not found' }, 404)
-        }
-
-        if (statusChangingToFinished) {
-            void handleTaskMovedToFinished({
-                store: options.store,
-                engine,
-                namespace,
-                taskId,
-                preferredLocale
+            const mergedAt = Date.now()
+            const statusChangingToFinished = task.status === 'in_review'
+            const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
+                worktreeMergedAt: mergedAt,
+                worktreeMergeCommit: result.commitHash ?? null,
+                status: statusChangingToFinished ? 'finished' : undefined,
+                finishedAt: statusChangingToFinished ? mergedAt : undefined
             })
+            if (!updatedTask) {
+                return c.json({ error: 'Task not found' }, 404)
+            }
+
+            if (statusChangingToFinished) {
+                void handleTaskMovedToFinished({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    taskId,
+                    preferredLocale
+                })
+            }
+
+            engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId,
+                projectId: updatedTask.projectId,
+                namespace,
+                data: { taskId, worktreeMergedAt: updatedTask.worktreeMergedAt }
+            })
+
+            return c.json({
+                ok: true,
+                commitHash: result.commitHash ?? null,
+                skippedReason: result.skippedReason ?? null,
+                mergedAt: updatedTask.worktreeMergedAt,
+                autoResolved: autoResolved || null
+            })
+        } catch (error) {
+            const message = formatErrorMessage(error, 'Merge failed unexpectedly')
+            console.error('[Tasks] Unexpected merge error:', error)
+            return c.json({ error: message }, 500)
         }
-
-        engine.handleRealtimeEvent({
-            type: 'task-updated',
-            taskId,
-            projectId: updatedTask.projectId,
-            namespace,
-            data: { taskId, worktreeMergedAt: updatedTask.worktreeMergedAt }
-        })
-
-        return c.json({
-            ok: true,
-            commitHash: result.commitHash ?? null,
-            skippedReason: result.skippedReason ?? null,
-            mergedAt: updatedTask.worktreeMergedAt,
-            autoResolved: autoResolved || null
-        })
     })
 
     return app
