@@ -283,7 +283,17 @@ export function SessionChat(props: {
 
     const appendMergeEvent = useCallback((text: string, tone: MergeThreadEvent['tone'] = 'info') => {
         mergeEventSeqRef.current += 1
-        setMergeEvents((prev) => [...prev, { id: `merge-event-${mergeEventSeqRef.current}`, text, tone }])
+        const id = `merge-event-${mergeEventSeqRef.current}`
+        setMergeEvents((prev) => [...prev, { id, text, tone }])
+        return id
+    }, [])
+
+    const replaceMergeEvent = useCallback((id: string, text: string, tone: MergeThreadEvent['tone'] = 'info') => {
+        setMergeEvents((prev) => prev.map((event) => (
+            event.id === id
+                ? { ...event, text, tone }
+                : event
+        )))
     }, [])
 
     useEffect(() => {
@@ -296,22 +306,25 @@ export function SessionChat(props: {
             return
         }
 
-        appendMergeEvent('正在 Merge 到目标分支...', 'info')
+        const mergeEventId = appendMergeEvent('正在 Merge 到目标分支...', 'info')
+        const finalizeMergeEvent = (text: string, tone: MergeThreadEvent['tone']) => {
+            replaceMergeEvent(mergeEventId, text, tone)
+        }
 
         try {
             const res = await mergeTaskWorktree({ taskId })
             if (res.skippedReason) {
-                appendMergeEvent(`Merge 跳过：${formatMergeSkippedReason(res.skippedReason)}`, 'info')
+                finalizeMergeEvent(`Merge 跳过：${formatMergeSkippedReason(res.skippedReason)}`, 'info')
                 return
             }
 
             const commitSuffix = res.commitHash ? ` (${res.commitHash})` : ''
             if (res.autoResolved) {
-                appendMergeEvent(`Merge 成功（已自动解决冲突）${commitSuffix}`, 'success')
+                finalizeMergeEvent(`Merge 成功（已自动解决冲突）${commitSuffix}`, 'success')
                 return
             }
 
-            appendMergeEvent(`Merge 成功${commitSuffix}`, 'success')
+            finalizeMergeEvent(`Merge 成功${commitSuffix}`, 'success')
         } catch (error) {
             setIsMergeFinalizing(true)
             let mergedAfterFailure = false
@@ -322,13 +335,13 @@ export function SessionChat(props: {
             }
 
             if (mergedAfterFailure) {
-                appendMergeEvent('Merge 成功（接口报错，但任务状态已更新）', 'success')
+                finalizeMergeEvent('Merge 成功（接口报错，但任务状态已更新）', 'success')
                 return
             }
 
-            appendMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
+            finalizeMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
         }
-    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, props.api, taskId])
+    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, props.api, replaceMergeEvent, taskId])
 
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
