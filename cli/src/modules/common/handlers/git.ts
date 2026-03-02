@@ -1,4 +1,6 @@
 import { execFile, type ExecFileOptions } from 'child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'util'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
@@ -246,25 +248,52 @@ function parseGitWorktreeEntries(raw: string): Array<{ path: string; branch: str
     return entries
 }
 
-async function resolveMergeTargetPath(
+async function resolveMergeTargetContext(
     basePath: string,
     targetBranch: string,
     timeout: number
-): Promise<string> {
+): Promise<
+    | {
+        ok: true
+        path: string
+        cleanup: () => Promise<void>
+    }
+    | {
+        ok: false
+        error: GitCommandResponse
+    }
+> {
     const worktreeList = await runGitCommand(['worktree', 'list', '--porcelain'], basePath, timeout)
     if (!worktreeList.success) {
-        return basePath
+        return { ok: false, error: worktreeList }
     }
 
     const targetRef = `refs/heads/${targetBranch}`
     const entries = parseGitWorktreeEntries(worktreeList.stdout ?? '')
     for (const entry of entries) {
         if (entry.branch === targetRef && entry.path.trim().length > 0) {
-            return entry.path
+            return {
+                ok: true,
+                path: entry.path,
+                cleanup: async () => {}
+            }
         }
     }
 
-    return basePath
+    const safeBranch = targetBranch.replace(/[^a-zA-Z0-9._-]/g, '-')
+    const tempPath = join(tmpdir(), `hapi-merge-target-${safeBranch}-${Date.now()}`)
+    const addWorktree = await runGitCommand(['worktree', 'add', tempPath, targetBranch], basePath, timeout)
+    if (!addWorktree.success) {
+        return { ok: false, error: addWorktree }
+    }
+
+    return {
+        ok: true,
+        path: tempPath,
+        cleanup: async () => {
+            await runGitCommand(['worktree', 'remove', '--force', tempPath], basePath, timeout)
+        }
+    }
 }
 
 export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
@@ -336,19 +365,6 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         }
 
         const timeout = data.timeout ?? 60_000
-        const mergeTargetPath = await resolveMergeTargetPath(worktree.basePath, targetBranch, timeout)
-
-        const baseStatus = await runGitCommand(['status', '--porcelain'], mergeTargetPath, timeout)
-        if (!baseStatus.success) {
-            return baseStatus
-        }
-        if ((baseStatus.stdout ?? '').trim().length > 0) {
-            return rpcError('Base repository has uncommitted changes; commit/stash first', {
-                stdout: baseStatus.stdout,
-                stderr: baseStatus.stderr,
-                exitCode: baseStatus.exitCode
-            })
-        }
 
         const autoCommit = await autoCommitWorktreeIfNeeded(worktree.worktreePath, commitMessage, timeout)
         if (!autoCommit.success) {
@@ -359,12 +375,50 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             })
         }
 
+        const ensureBranch = async (branch: string): Promise<GitCommandResponse> => {
+            return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], worktree.basePath, timeout)
+        }
+
+        const targetExists = await ensureBranch(targetBranch)
+        if (!targetExists.success) {
+            return rpcError(`Target branch '${targetBranch}' not found`, {
+                stdout: targetExists.stdout,
+                stderr: targetExists.stderr,
+                exitCode: targetExists.exitCode
+            })
+        }
+
+        const sourceExists = await ensureBranch(worktree.branch)
+        if (!sourceExists.success) {
+            return rpcError(`Worktree branch '${worktree.branch}' not found`, {
+                stdout: sourceExists.stdout,
+                stderr: sourceExists.stderr,
+                exitCode: sourceExists.exitCode
+            })
+        }
+
+        const targetContext = await resolveMergeTargetContext(worktree.basePath, targetBranch, timeout)
+        if (!targetContext.ok) {
+            return targetContext.error
+        }
+
+        const mergeTargetPath = targetContext.path
+        const baseStatus = await runGitCommand(['status', '--porcelain'], mergeTargetPath, timeout)
+        if (!baseStatus.success) {
+            await targetContext.cleanup()
+            return baseStatus
+        }
+        if ((baseStatus.stdout ?? '').trim().length > 0) {
+            await targetContext.cleanup()
+            return rpcError('Base repository has uncommitted changes; commit/stash first', {
+                stdout: baseStatus.stdout,
+                stderr: baseStatus.stderr,
+                exitCode: baseStatus.exitCode
+            })
+        }
+
         const originalBranchResult = await runGitCommand(['symbolic-ref', '--short', 'HEAD'], mergeTargetPath, timeout)
         const originalBranch = originalBranchResult.success ? (originalBranchResult.stdout ?? '').trim() : ''
-
-        const ensureBranch = async (branch: string): Promise<GitCommandResponse> => {
-            return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], mergeTargetPath, timeout)
-        }
 
         const restoreBranch = async () => {
             if (!originalBranch || originalBranch === targetBranch) {
@@ -374,27 +428,11 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         }
 
         try {
-            const targetExists = await ensureBranch(targetBranch)
-            if (!targetExists.success) {
-                return rpcError(`Target branch '${targetBranch}' not found`, {
-                    stdout: targetExists.stdout,
-                    stderr: targetExists.stderr,
-                    exitCode: targetExists.exitCode
-                })
-            }
-
-            const sourceExists = await ensureBranch(worktree.branch)
-            if (!sourceExists.success) {
-                return rpcError(`Worktree branch '${worktree.branch}' not found`, {
-                    stdout: sourceExists.stdout,
-                    stderr: sourceExists.stderr,
-                    exitCode: sourceExists.exitCode
-                })
-            }
-
-            const switchResult = await runGitCommand(['switch', targetBranch], mergeTargetPath, timeout)
-            if (!switchResult.success) {
-                return switchResult
+            if (originalBranch !== targetBranch) {
+                const switchResult = await runGitCommand(['switch', targetBranch], mergeTargetPath, timeout)
+                if (!switchResult.success) {
+                    return switchResult
+                }
             }
 
             const mergeResult = await runGitCommand(['merge', '--squash', worktree.branch], mergeTargetPath, timeout)
@@ -455,6 +493,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             }
         } finally {
             await restoreBranch()
+            await targetContext.cleanup()
         }
     })
 

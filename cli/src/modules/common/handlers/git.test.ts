@@ -121,6 +121,36 @@ describe('git merge worktree RPC handler', () => {
         expect(targetHeadMessage).toBe('HAPI: merge into dev')
     })
 
+    it('uses isolated target worktree when target branch is not checked out', async () => {
+        await runGit(baseDir, ['branch', 'dev'])
+        await writeFile(join(baseDir, 'runtime.log'), 'watcher file\n')
+
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+        registerGitHandlers(rpc, worktreeDir)
+
+        const response = await rpc.handleRequest({
+            method: 'session-test:git-merge-worktree',
+            params: JSON.stringify({
+                targetBranch: 'dev',
+                commitMessage: 'HAPI: merge into isolated dev'
+            })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; commitHash?: string; error?: string }
+        expect(parsed.success).toBe(true)
+        expect(parsed.error).toBeUndefined()
+        expect(parsed.commitHash).toBeTruthy()
+
+        const targetHeadMessage = await runGit(baseDir, ['log', '-1', '--pretty=%s', 'dev'])
+        expect(targetHeadMessage).toBe('HAPI: merge into isolated dev')
+
+        const baseCurrentBranch = await runGit(baseDir, ['branch', '--show-current'])
+        expect(baseCurrentBranch).toBe('main')
+
+        const baseStatus = await runGit(baseDir, ['status', '--porcelain'])
+        expect(baseStatus).toContain('?? runtime.log')
+    })
+
     it('returns normalized conflict message when merge fails with conflicts', async () => {
         await writeFile(join(worktreeDir, 'README.md'), 'worktree change\n')
         await writeFile(join(baseDir, 'README.md'), 'main change\n')
