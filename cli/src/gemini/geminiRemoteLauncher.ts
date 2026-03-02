@@ -11,6 +11,19 @@ import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly session: GeminiSession;
     private readonly model?: string;
@@ -49,7 +62,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
         const originalSendCodexMessage = session.sendCodexMessage.bind(session);
         session.sendCodexMessage = (message: unknown) => {
-            if (turnInFlight) {
+            if (turnInFlight && isAssistantTextCodexMessage(message)) {
                 activeTurnHasAssistantReply = true;
             }
             originalSendCodexMessage(message);

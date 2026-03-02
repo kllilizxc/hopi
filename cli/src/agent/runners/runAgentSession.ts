@@ -13,6 +13,19 @@ import { bootstrapSession } from '@/agent/sessionFactory';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 function emitReadyIfIdle(props: {
     queueSize: () => number;
     shouldExit: boolean;
@@ -148,7 +161,9 @@ export async function runAgentSession(opts: {
                 await backend.prompt(agentSessionId, promptContent, (message) => {
                     const converted = convertAgentMessage(message);
                     if (converted) {
-                        activeTurnHasAssistantReply = true;
+                        if (isAssistantTextCodexMessage(converted)) {
+                            activeTurnHasAssistantReply = true;
+                        }
                         session.sendCodexMessage(converted);
                     }
                 });

@@ -175,7 +175,9 @@ describe('codexRemoteLauncher', () => {
         expect(exitReason).toBe('exit');
         expect(foundSessionIds).toContain('thread-anonymous');
         expect(harness.notifications.map((entry) => entry.method)).toEqual(['turn/started', 'turn/completed']);
-        expect(sessionEvents.filter((event) => event.type === 'ready').length).toBeGreaterThanOrEqual(1);
+        const readyEvents = sessionEvents.filter((event) => event.type === 'ready');
+        expect(readyEvents.length).toBeGreaterThanOrEqual(1);
+        expect(readyEvents.every((event) => event.hasAssistantReply === false)).toBe(true);
         expect(thinkingChanges).toContain(true);
         expect(session.thinking).toBe(false);
     });

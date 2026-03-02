@@ -41,6 +41,7 @@ See `src/configuration.ts` for all options.
 - `HAPI_RELAY_AUTH` - Relay auth key (default: hapi).
 - `HAPI_RELAY_FORCE_TCP` - Force TCP relay mode (true/1).
 - `VAPID_SUBJECT` - Contact email/URL for Web Push.
+- `HAPI_TASK_AUTOMATION_DISABLE_BACKSCAN` - Disable task ready backscan and only trust ready correlation fields (`forLocalKey` + `hasAssistantReply`).
 
 ## Running
 

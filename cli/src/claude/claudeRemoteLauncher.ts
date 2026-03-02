@@ -25,6 +25,54 @@ interface PermissionsField {
     allowedTools?: string[];
 }
 
+function hasTextInClaudeAssistantContent(content: unknown): boolean {
+    if (typeof content === 'string') {
+        return content.trim().length > 0;
+    }
+
+    if (!Array.isArray(content)) {
+        return false;
+    }
+
+    return content.some((part) => {
+        if (!part || typeof part !== 'object') {
+            return false;
+        }
+        const record = part as { type?: unknown; text?: unknown };
+        if (record.type !== 'text') {
+            return false;
+        }
+        return typeof record.text === 'string' && record.text.trim().length > 0;
+    });
+}
+
+function isAssistantTextClaudeMessage(body: unknown): boolean {
+    if (!body || typeof body !== 'object') {
+        return false;
+    }
+
+    const record = body as {
+        type?: unknown
+        summary?: unknown
+        message?: unknown
+    };
+
+    if (record.type === 'summary') {
+        return typeof record.summary === 'string' && record.summary.trim().length > 0;
+    }
+
+    if (record.type !== 'assistant') {
+        return false;
+    }
+
+    const message = record.message;
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    return hasTextInClaudeAssistantContent((message as { content?: unknown }).content);
+}
+
 class ClaudeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: Session;
     private abortController: AbortController | null = null;
@@ -91,21 +139,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         let activeTurnHasAssistantReply = false;
         let turnInFlight = false;
 
-        const isPlainClaudeUserTextMessage = (body: unknown): boolean => {
-            if (!body || typeof body !== 'object') return false;
-            const record = body as { type?: unknown; message?: unknown; isSidechain?: unknown; isMeta?: unknown };
-            if (record.type !== 'user') return false;
-            if (record.isSidechain === true) return false;
-            if (record.isMeta === true) return false;
-            const message = record.message;
-            if (!message || typeof message !== 'object') return false;
-            const content = (message as { content?: unknown }).content;
-            return typeof content === 'string';
-        };
-
         const originalSendClaudeSessionMessage = session.client.sendClaudeSessionMessage.bind(session.client);
         session.client.sendClaudeSessionMessage = (body: any) => {
-            if (turnInFlight && !isPlainClaudeUserTextMessage(body)) {
+            if (turnInFlight && isAssistantTextClaudeMessage(body)) {
                 activeTurnHasAssistantReply = true;
             }
             originalSendClaudeSessionMessage(body);

@@ -33,6 +33,19 @@ function shouldUseAppServer(): boolean {
     return !useMcpServer;
 }
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 class CodexRemoteLauncher extends RemoteLauncherBase {
     private readonly session: CodexSession;
     private readonly useAppServer: boolean;
@@ -141,7 +154,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         const originalSendCodexMessage = session.sendCodexMessage.bind(session);
         session.sendCodexMessage = (message: unknown) => {
-            if (trackTurnOutput) {
+            if (trackTurnOutput && isAssistantTextCodexMessage(message)) {
                 activeTurnHasAssistantReply = true;
             }
             originalSendCodexMessage(message);

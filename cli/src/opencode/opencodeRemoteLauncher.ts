@@ -11,6 +11,19 @@ import { createOpencodeBackend } from './utils/opencodeBackend';
 import { OpencodePermissionHandler } from './utils/permissionHandler';
 import { TITLE_INSTRUCTION } from './utils/systemPrompt';
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OpencodeSession;
     private backend: ReturnType<typeof createOpencodeBackend> | null = null;
@@ -47,7 +60,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         // Used to decide task automation transitions without scanning message history.
         const originalSendCodexMessage = session.sendCodexMessage.bind(session);
         session.sendCodexMessage = (message: unknown) => {
-            if (turnInFlight) {
+            if (turnInFlight && isAssistantTextCodexMessage(message)) {
                 activeTurnHasAssistantReply = true;
             }
             originalSendCodexMessage(message);

@@ -465,7 +465,7 @@ describe('TaskAutomation', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
     })
 
-    it('flips task to in_review based on ready correlation fields (forLocalKey + hasAssistantReply)', () => {
+    it('does not flip to in_review based only on ready correlation fields when no assistant reply message exists', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -513,17 +513,17 @@ describe('TaskAutomation', () => {
         }, promptLocalId)
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
-        // No assistant output messages stored; rely solely on ready correlation fields.
+        // No assistant output messages stored; ready correlation alone is not enough.
         const readyMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
             content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
 
-    it('flips task to in_review even when ready correlation says hasAssistantReply=false', () => {
+    it('still flips to in_review when ready correlation says hasAssistantReply=false but assistant reply exists', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -563,6 +563,194 @@ describe('TaskAutomation', () => {
 
         const promptLocalId = 'prompt-1'
 
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'do thing' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'output', data: { type: 'text', text: 'done' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: false } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+    })
+
+    it('does not flip to in_review when the turn only has codex tool-call messages before ready', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = 'prompt-1'
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'do thing' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const toolCallMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'tool-call',
+                    name: 'CodexBash',
+                    callId: 'call-1',
+                    input: { command: 'ls' }
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, toolCallMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+    })
+
+    it('can flip to in_review from ready correlation only when backscan is disabled', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine, { disableBackscan: true })
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = 'prompt-1'
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'do thing' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+    })
+
+    it('does not flip to in_review from ready when backscan is disabled and hasAssistantReply=false', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine, { disableBackscan: true })
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = 'prompt-1'
         const userMsg = store.messages.addMessage(sessionId, {
             role: 'user',
             content: { type: 'text', text: 'do thing' },
@@ -577,7 +765,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
 
     it('moves finished task back to in_progress on follow-up prompt and clears merge markers', () => {

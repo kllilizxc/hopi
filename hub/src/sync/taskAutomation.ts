@@ -5,6 +5,17 @@ import type { SyncEngine } from './syncEngine'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
+const DISABLE_BACKSCAN_ENV = 'HAPI_TASK_AUTOMATION_DISABLE_BACKSCAN'
+
+type TaskAutomationOptions = {
+    disableBackscan?: boolean
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+    if (!value) return false
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -73,6 +84,72 @@ function getReadyEventDetails(message: DecryptedMessage): ReadyEventDetails | nu
     return { forLocalKey, hasAssistantReply }
 }
 
+function isNonEmptyText(value: unknown): boolean {
+    return typeof value === 'string' && value.trim().length > 0
+}
+
+function hasAssistantTextInOutputPayload(payload: unknown): boolean {
+    if (isNonEmptyText(payload)) {
+        return true
+    }
+
+    if (!payload || typeof payload !== 'object') {
+        return false
+    }
+
+    const record = payload as Record<string, unknown>
+    const type = typeof record.type === 'string' ? record.type : null
+
+    if (type === 'text') {
+        return isNonEmptyText(record.text)
+    }
+
+    if (type === 'summary') {
+        return isNonEmptyText(record.summary)
+    }
+
+    if (type === 'assistant') {
+        const message = record.message
+        if (!message || typeof message !== 'object') {
+            return false
+        }
+
+        const content = (message as { content?: unknown }).content
+        if (isNonEmptyText(content)) {
+            return true
+        }
+
+        if (Array.isArray(content)) {
+            return content.some((item) => {
+                if (!item || typeof item !== 'object') {
+                    return false
+                }
+                const part = item as Record<string, unknown>
+                const partType = typeof part.type === 'string' ? part.type : null
+                if (partType !== null && partType !== 'text') {
+                    return false
+                }
+                return isNonEmptyText(part.text)
+            })
+        }
+    }
+
+    return false
+}
+
+function hasAssistantTextInCodexPayload(payload: unknown): boolean {
+    if (!payload || typeof payload !== 'object') {
+        return false
+    }
+
+    const record = payload as Record<string, unknown>
+    if (record.type !== 'message') {
+        return false
+    }
+
+    return isNonEmptyText(record.message)
+}
+
 function isAssistantReplyMessage(message: DecryptedMessage): boolean {
     if (isReadyEventMessage(message)) return false
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -80,10 +157,36 @@ function isAssistantReplyMessage(message: DecryptedMessage): boolean {
     if (record.role !== 'assistant' && record.role !== 'agent') return false
 
     const content = record.content
-    if (content && typeof content === 'object' && 'type' in content && (content as { type?: unknown }).type === 'event') {
+    if (isNonEmptyText(content)) {
+        return true
+    }
+
+    if (!content || typeof content !== 'object') {
         return false
     }
-    return true
+
+    if (!('type' in content)) {
+        return false
+    }
+
+    const type = (content as { type?: unknown }).type
+    if (type === 'event') {
+        return false
+    }
+
+    if (type === 'text') {
+        return isNonEmptyText((content as { text?: unknown }).text)
+    }
+
+    if (type === 'output') {
+        return hasAssistantTextInOutputPayload((content as { data?: unknown }).data)
+    }
+
+    if (type === 'codex') {
+        return hasAssistantTextInCodexPayload((content as { data?: unknown }).data)
+    }
+
+    return false
 }
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
@@ -149,11 +252,14 @@ export class TaskAutomation {
     private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly autoCommitInFlightBySessionId: Set<string> = new Set()
+    private readonly disableBackscan: boolean
 
     constructor(
         private readonly store: Store,
-        private readonly engine: SyncEngine
+        private readonly engine: SyncEngine,
+        options?: TaskAutomationOptions
     ) {
+        this.disableBackscan = options?.disableBackscan ?? isTruthyEnv(process.env[DISABLE_BACKSCAN_ENV])
     }
 
     handleEvent(event: SyncEvent): void {
@@ -203,7 +309,7 @@ export class TaskAutomation {
         const thinkingStopped = previous === true && current === false
         const becameActiveWhileIdle = previousActive !== true && currentActive === true && current === false
 
-        if (thinkingStopped || becameActiveWhileIdle) {
+        if (!this.disableBackscan && (thinkingStopped || becameActiveWhileIdle)) {
             this.tryFlipToInReview(sessionId)
         }
     }
@@ -243,7 +349,7 @@ export class TaskAutomation {
 
         if (getMessageRole(message) === 'assistant' && isReadyEventMessage(message)) {
             const handled = this.tryFlipToInReviewFromReady(sessionId, message)
-            if (!handled) {
+            if (!handled && !this.disableBackscan) {
                 this.tryFlipToInReview(sessionId)
             }
             this.maybeAutoCommitWorktreeFromReady(sessionId, message)
@@ -285,6 +391,8 @@ export class TaskAutomation {
                 }
                 return isAutomationPromptMessage(prompt)
             }
+
+            if (this.disableBackscan) return false
 
             const scan = this.scanForLatestPromptAndReady(sessionId, isAutomationPromptMessage)
             if (!scan) return false
@@ -331,6 +439,49 @@ export class TaskAutomation {
             })
     }
 
+    private hasAssistantReplyBetween(
+        sessionId: string,
+        promptSeq: number,
+        readySeq: number
+    ): boolean {
+        if (readySeq <= promptSeq) {
+            return false
+        }
+
+        const PAGE_SIZE = 200
+        const MAX_SCAN_MESSAGES = 50_000
+
+        let beforeSeq: number | undefined = readySeq
+        let scanned = 0
+
+        while (scanned < MAX_SCAN_MESSAGES) {
+            const page = this.store.messages.getMessages(sessionId, PAGE_SIZE, beforeSeq)
+            if (page.length === 0) {
+                break
+            }
+
+            scanned += page.length
+
+            for (let i = page.length - 1; i >= 0; i -= 1) {
+                const msg = page[i]
+
+                if (msg.seq <= promptSeq) {
+                    return false
+                }
+                if (msg.seq >= readySeq) {
+                    continue
+                }
+                if (isAssistantReplyMessage(msg)) {
+                    return true
+                }
+            }
+
+            beforeSeq = page[0]?.seq
+        }
+
+        return false
+    }
+
     private tryFlipToInReviewFromReady(sessionId: string, readyMessage: DecryptedMessage): boolean {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return true
@@ -345,11 +496,13 @@ export class TaskAutomation {
 
         // Correlation missing: fall back.
         if (!details.forLocalKey) {
+            if (this.disableBackscan) return true
             return false
         }
 
         const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
         if (!storedPrompt) {
+            if (this.disableBackscan) return true
             return false
         }
 
@@ -363,6 +516,14 @@ export class TaskAutomation {
 
         // Ignore internal improvements-scan prompts when deriving task progress.
         if (!isTaskProgressPromptMessage(prompt)) {
+            return true
+        }
+
+        if (this.disableBackscan) {
+            if (details.hasAssistantReply !== true) {
+                return true
+            }
+        } else if (!this.hasAssistantReplyBetween(sessionId, prompt.seq, readyMessage.seq)) {
             return true
         }
 
