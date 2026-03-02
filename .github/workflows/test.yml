@@ -12,6 +12,7 @@ jobs:
             - uses: oven-sh/setup-bun@v2
             - run: bun install
             - run: bun typecheck
+            - run: bun run check:i18n:web
             - name: Create integration test env
               run: |
                   {

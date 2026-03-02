@@ -18,6 +18,7 @@
         "typecheck:cli": "cd cli && bun run typecheck",
         "typecheck:hub": "cd hub && bun run typecheck",
         "typecheck:web": "cd web && bun run typecheck",
+        "check:i18n:web": "cd web && bun run check:i18n",
         "test": "bun run test:cli && bun run test:hub && bun run test:web",
         "test:cli": "cd cli && bun run test",
         "test:hub": "cd hub && bun run test",

@@ -301,10 +301,10 @@ export function ProjectSettingsPage() {
                                     disabled={isPending}
                                     className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 >
-                                    <option value="claude">Claude</option>
-                                    <option value="codex">Codex</option>
-                                    <option value="gemini">Gemini</option>
-                                    <option value="opencode">Opencode</option>
+                                    <option value="claude">{t('agent.claude')}</option>
+                                    <option value="codex">{t('agent.codex')}</option>
+                                    <option value="gemini">{t('agent.gemini')}</option>
+                                    <option value="opencode">{t('agent.opencode')}</option>
                                 </select>
                             </div>
 
@@ -332,7 +332,7 @@ export function ProjectSettingsPage() {
                                     disabled={isPending || defaultAgentFlavor !== 'claude'}
                                     className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 >
-                                    <option value="default">Default</option>
+                                    <option value="default">{t('misc.default')}</option>
                                     {modelModes.map((mode) => (
                                         <option key={mode} value={mode}>
                                             {mode}

@@ -21,9 +21,14 @@ import {
 } from '@/components/ui/dialog'
 
 function ConnectionIndicator(props: { status: 'idle' | 'connecting' | 'connected' | 'error' }) {
+    const { t } = useTranslation()
     const isConnected = props.status === 'connected'
     const isConnecting = props.status === 'connecting'
-    const label = isConnected ? 'Connected' : isConnecting ? 'Connecting' : 'Offline'
+    const label = isConnected
+        ? t('terminal.status.connected')
+        : isConnecting
+            ? t('terminal.status.connecting')
+            : t('terminal.status.offline')
     const colorClass = isConnected
         ? 'bg-emerald-500'
         : isConnecting
@@ -39,13 +44,13 @@ function ConnectionIndicator(props: { status: 'idle' | 'connecting' | 'connected
 
 type QuickInput = {
     label: string
+    labelKey?: string
     sequence?: string
-    description: string
+    descriptionKey: string
     modifier?: 'ctrl' | 'alt'
     popup?: {
-        label: string
         sequence: string
-        description: string
+        descriptionKey: string
     }
 }
 
@@ -77,32 +82,32 @@ function shouldResetModifiers(sequence: string, state: ModifierState): boolean {
 
 const QUICK_INPUT_ROWS: QuickInput[][] = [
     [
-        { label: 'Esc', sequence: '\u001b', description: 'Escape' },
+        { label: '', labelKey: 'terminal.quick.label.escape', sequence: '\u001b', descriptionKey: 'terminal.quick.description.escape' },
         {
             label: '/',
             sequence: '/',
-            description: 'Forward slash',
-            popup: { label: '?', sequence: '?', description: 'Question mark' },
+            descriptionKey: 'terminal.quick.description.forwardSlash',
+            popup: { sequence: '?', descriptionKey: 'terminal.quick.description.questionMark' },
         },
         {
             label: '-',
             sequence: '-',
-            description: 'Hyphen',
-            popup: { label: '|', sequence: '|', description: 'Pipe' },
+            descriptionKey: 'terminal.quick.description.hyphen',
+            popup: { sequence: '|', descriptionKey: 'terminal.quick.description.pipe' },
         },
-        { label: 'Home', sequence: '\u001b[H', description: 'Home' },
-        { label: '↑', sequence: '\u001b[A', description: 'Arrow up' },
-        { label: 'End', sequence: '\u001b[F', description: 'End' },
-        { label: 'PgUp', sequence: '\u001b[5~', description: 'Page up' },
+        { label: '', labelKey: 'terminal.quick.label.home', sequence: '\u001b[H', descriptionKey: 'terminal.quick.description.home' },
+        { label: '↑', sequence: '\u001b[A', descriptionKey: 'terminal.quick.description.arrowUp' },
+        { label: '', labelKey: 'terminal.quick.label.end', sequence: '\u001b[F', descriptionKey: 'terminal.quick.description.end' },
+        { label: '', labelKey: 'terminal.quick.label.pageUp', sequence: '\u001b[5~', descriptionKey: 'terminal.quick.description.pageUp' },
     ],
     [
-        { label: 'Tab', sequence: '\t', description: 'Tab' },
-        { label: 'Ctrl', description: 'Control', modifier: 'ctrl' },
-        { label: 'Alt', description: 'Alternate', modifier: 'alt' },
-        { label: '←', sequence: '\u001b[D', description: 'Arrow left' },
-        { label: '↓', sequence: '\u001b[B', description: 'Arrow down' },
-        { label: '→', sequence: '\u001b[C', description: 'Arrow right' },
-        { label: 'PgDn', sequence: '\u001b[6~', description: 'Page down' },
+        { label: '', labelKey: 'terminal.quick.label.tab', sequence: '\t', descriptionKey: 'terminal.quick.description.tab' },
+        { label: '', labelKey: 'terminal.quick.label.ctrl', descriptionKey: 'terminal.quick.description.control', modifier: 'ctrl' },
+        { label: '', labelKey: 'terminal.quick.label.alt', descriptionKey: 'terminal.quick.description.alternate', modifier: 'alt' },
+        { label: '←', sequence: '\u001b[D', descriptionKey: 'terminal.quick.description.arrowLeft' },
+        { label: '↓', sequence: '\u001b[B', descriptionKey: 'terminal.quick.description.arrowDown' },
+        { label: '→', sequence: '\u001b[C', descriptionKey: 'terminal.quick.description.arrowRight' },
+        { label: '', labelKey: 'terminal.quick.label.pageDown', sequence: '\u001b[6~', descriptionKey: 'terminal.quick.description.pageDown' },
     ],
 ]
 
@@ -113,10 +118,16 @@ function QuickKeyButton(props: {
     onPress: (sequence: string) => void
     onToggleModifier: (modifier: 'ctrl' | 'alt') => void
 }) {
+    const { t } = useTranslation()
     const { input, disabled, isActive, onPress, onToggleModifier } = props
     const modifier = input.modifier
     const popupSequence = input.popup?.sequence
-    const popupDescription = input.popup?.description
+    const label = input.labelKey ? t(input.labelKey) : input.label
+    const description = t(input.descriptionKey)
+    const popupDescription = input.popup ? t(input.popup.descriptionKey) : null
+    const title = popupDescription
+        ? t('terminal.quick.longPressHint', { label: description, popup: popupDescription })
+        : description
     const hasPopup = Boolean(popupSequence)
     const longPressDisabled = disabled || Boolean(modifier) || !hasPopup
 
@@ -154,10 +165,10 @@ function QuickKeyButton(props: {
             className={`flex-1 border-l border-[var(--app-border)] px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:border-l-0 active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
                 isActive ? 'bg-[var(--app-link)] text-[var(--app-bg)]' : 'hover:bg-[var(--app-subtle-bg)]'
             }`}
-            aria-label={input.description}
-            title={popupDescription ? `${input.description} (long press: ${popupDescription})` : input.description}
+            aria-label={description}
+            title={title}
         >
-            {input.label}
+            {label}
         </button>
     )
 }
@@ -416,10 +427,30 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
         [quickInputDisabled]
     )
 
+    const exitMessage = useMemo(() => {
+        if (!exitInfo) {
+            return null
+        }
+
+        if (exitInfo.code !== null && exitInfo.signal) {
+            return t('terminal.exit.withCodeAndSignal', { code: exitInfo.code, signal: exitInfo.signal })
+        }
+
+        if (exitInfo.code !== null) {
+            return t('terminal.exit.withCode', { code: exitInfo.code })
+        }
+
+        if (exitInfo.signal) {
+            return t('terminal.exit.withSignal', { signal: exitInfo.signal })
+        }
+
+        return t('terminal.exit.default')
+    }, [exitInfo, t])
+
     if (!session) {
         return (
             <div className="flex h-full items-center justify-center">
-                <LoadingState label="Loading session…" className="text-sm" />
+                <LoadingState label={t('loading.session')} className="text-sm" />
             </div>
         )
     }
@@ -441,7 +472,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                             <BackIcon />
                         </button>
                         <div className="min-w-0 flex-1">
-                            <div className="truncate font-semibold">Terminal</div>
+                            <div className="truncate font-semibold">{t('projects.workbench.tab.terminal')}</div>
                             <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
                         </div>
                         <ConnectionIndicator status={status} />
@@ -452,7 +483,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
             {session.active ? null : (
                 <div className="px-3 pt-3">
                     <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        Session is inactive. Terminal is unavailable.
+                        {t('terminal.inactive')}
                     </div>
                 </div>
             )}
@@ -468,8 +499,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
             {exitInfo ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
                     <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
-                        Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
-                        {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
+                        {exitMessage}
                     </div>
                 </div>
             ) : null}
@@ -505,7 +535,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                                     const isActive = (isCtrl && ctrlActive) || (isAlt && altActive)
                                     return (
                                         <QuickKeyButton
-                                            key={input.label}
+                                            key={`${input.labelKey ?? input.label}-${input.sequence ?? modifier ?? 'modifier'}`}
                                             input={input}
                                             disabled={quickInputDisabled}
                                             isActive={isActive}
