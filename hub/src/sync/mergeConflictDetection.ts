@@ -57,6 +57,10 @@ export function getMergeWorktreeErrorStatus(result: MergeFailureResult): 400 | 4
         return 400
     }
 
+    if (text.includes('not a worktree session')) {
+        return 400
+    }
+
     if (text.includes('required')) {
         return 400
     }

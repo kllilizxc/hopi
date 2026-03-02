@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
 import type { WorktreeInfo } from '@/runner/worktree';
 import { logger } from '@/ui/logger';
+import { resolveCliWorkingDirectory } from './workingDirectory';
 
 export function readWorktreeEnv(): WorktreeInfo | null {
     return readWorktreeFromEnv() ?? readWorktreeFromGit();
@@ -45,7 +46,7 @@ function readWorktreeFromGit(): WorktreeInfo | null {
     let result: WorktreeInfo | null = null;
 
     try {
-        const cwd = process.cwd();
+        const cwd = resolveCliWorkingDirectory();
         const isInside = runGit(['rev-parse', '--is-inside-work-tree'], cwd);
         if (isInside !== 'true') {
             return null;
