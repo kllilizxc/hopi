@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { getPermissionModeOptionsForFlavor } from '@hapi/protocol'
 import type { PermissionMode, Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
@@ -20,6 +19,7 @@ import { TaskCardMenuIcon } from '@/assets/icons'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import type { AgentType } from '@/components/NewSession/types'
+import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
@@ -169,14 +169,6 @@ function parseTaskDraft(value: string): { title: string; description?: string } 
     }
 }
 
-function resolvePermissionModeForAgent(agent: AgentType, preferredMode: PermissionMode | null | undefined): PermissionMode {
-    const options = getPermissionModeOptionsForFlavor(agent)
-    if (preferredMode && options.some((option) => option.mode === preferredMode)) {
-        return preferredMode
-    }
-    return options[0]?.mode ?? 'default'
-}
-
 type AnchorPoint = { x: number; y: number }
 
 function TaskMoveMenu(props: {
@@ -324,17 +316,20 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
     const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(defaultTaskAgent)
     const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => (
-        resolvePermissionModeForAgent(defaultTaskAgent, projectDefaultPermissionMode)
+        resolveTaskPermissionModeForFlavor(defaultTaskAgent, projectDefaultPermissionMode)
     ))
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
     const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
-    const newTaskPermissionOptions = useMemo(() => getPermissionModeOptionsForFlavor(newTaskAgent), [newTaskAgent])
+    const newTaskPermissionOptions = useMemo(
+        () => getTaskPermissionModeOptionsForFlavor(newTaskAgent),
+        [newTaskAgent]
+    )
 
     useEffect(() => {
         if (newTaskPermissionOptions.some((option) => option.mode === newTaskPermissionMode)) {
             return
         }
-        setNewTaskPermissionMode(resolvePermissionModeForAgent(newTaskAgent, projectDefaultPermissionMode))
+        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, projectDefaultPermissionMode))
     }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, projectDefaultPermissionMode])
 
     const [dragState, setDragState] = useState<DragState | null>(null)
@@ -660,7 +655,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         setNewTaskDraft('')
         setNewTaskPriority('')
         setNewTaskAgent(defaultTaskAgent)
-        setNewTaskPermissionMode(resolvePermissionModeForAgent(defaultTaskAgent, projectDefaultPermissionMode))
+        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(defaultTaskAgent, projectDefaultPermissionMode))
         setCreateOpen(true)
     }
 

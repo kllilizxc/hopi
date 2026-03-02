@@ -248,4 +248,81 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(appliedConfigs.some((patch) => patch.permissionMode === 'plan')).toBe(true)
     })
+
+    it('maps codex task plan mode to collaboration mode when starting session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultPermissionMode: 'default'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId,
+            agentFlavor: 'codex',
+            permissionMode: 'plan'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const appliedConfigs: Array<Record<string, unknown>> = []
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig(_sessionId: string, patch: Record<string, unknown>) {
+                appliedConfigs.push(patch)
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(appliedConfigs.some((patch) => patch.collaborationMode === 'plan')).toBe(true)
+        expect(appliedConfigs.some((patch) => patch.permissionMode === 'plan')).toBe(false)
+    })
 })

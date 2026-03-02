@@ -19,6 +19,12 @@ export type StartSessionOverrides = {
     modelMode?: z.infer<typeof ModelModeSchema>
 }
 
+type SessionConfigPatch = {
+    permissionMode?: z.infer<typeof PermissionModeSchema>
+    modelMode?: z.infer<typeof ModelModeSchema>
+    collaborationMode?: string
+}
+
 export type StartTaskSessionResult =
     | { ok: true; task: StoredTask; sessionId: string }
     | { ok: false; error: string }
@@ -124,9 +130,15 @@ export async function startSessionFromTask(options: {
         ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
         ?? undefined
 
-    if (permissionMode && isPermissionModeAllowedForFlavor(permissionMode, agent)) {
+    const sessionConfigPatch: SessionConfigPatch = {}
+    if (permissionMode === 'plan' && agent === 'codex') {
+        sessionConfigPatch.collaborationMode = 'plan'
+    } else if (permissionMode && isPermissionModeAllowedForFlavor(permissionMode, agent)) {
+        sessionConfigPatch.permissionMode = permissionMode
+    }
+    if (Object.keys(sessionConfigPatch).length > 0) {
         try {
-            await options.engine.applySessionConfig(spawn.sessionId, { permissionMode })
+            await options.engine.applySessionConfig(spawn.sessionId, sessionConfigPatch)
         } catch {
         }
     }

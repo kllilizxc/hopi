@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { getPermissionModeOptionsForFlavor } from '@hapi/protocol'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
 import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
@@ -31,6 +30,7 @@ import { TaskSessionDiffs } from '@/routes/projects/task-session-diffs'
 import { TaskSessionFiles } from '@/routes/projects/task-session-files'
 import { SessionTerminal } from '@/routes/sessions/terminal'
 import { BackIcon, CopyIcon } from '@/assets/icons'
+import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 
@@ -128,12 +128,7 @@ function StartSessionDialog(props: {
         return 'auto'
     })()
     const initialPermissionMode = useMemo(() => {
-        const permissionOptions = getPermissionModeOptionsForFlavor(initialAgent)
-        const preferred = props.taskPermissionMode ?? props.projectDefaults.permissionMode
-        if (permissionOptions.some((option) => option.mode === preferred)) {
-            return preferred
-        }
-        return permissionOptions[0]?.mode ?? 'default'
+        return resolveTaskPermissionModeForFlavor(initialAgent, props.taskPermissionMode ?? props.projectDefaults.permissionMode)
     }, [initialAgent, props.taskPermissionMode, props.projectDefaults.permissionMode])
 
     const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId)
@@ -151,18 +146,14 @@ function StartSessionDialog(props: {
         setPermissionMode(initialPermissionMode)
     }, [props.isOpen, initialWorkspaceId, initialAgent, initialModel, initialPermissionMode])
 
-    const permissionOptions = useMemo(() => getPermissionModeOptionsForFlavor(agent), [agent])
+    const permissionOptions = useMemo(() => getTaskPermissionModeOptionsForFlavor(agent), [agent])
 
     useEffect(() => {
         if (permissionOptions.some((option) => option.mode === permissionMode)) {
             return
         }
-        const preferred = props.taskPermissionMode ?? props.projectDefaults.permissionMode
-        const fallback = permissionOptions.find((option) => option.mode === preferred)?.mode
-            ?? permissionOptions[0]?.mode
-            ?? 'default'
-        setPermissionMode(fallback)
-    }, [permissionOptions, permissionMode, props.taskPermissionMode, props.projectDefaults.permissionMode])
+        setPermissionMode(resolveTaskPermissionModeForFlavor(agent, props.taskPermissionMode ?? props.projectDefaults.permissionMode))
+    }, [permissionOptions, permissionMode, agent, props.taskPermissionMode, props.projectDefaults.permissionMode])
 
     const canStart = Boolean(workspaceId && agent && !isPending)
 
