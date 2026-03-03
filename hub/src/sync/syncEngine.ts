@@ -496,6 +496,22 @@ export class SyncEngine {
         return await this.rpcGateway.previewStop(machineId, params)
     }
 
+    async previewStartForSession(sessionId: string, params: {
+        taskId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStartForSession(sessionId, params)
+    }
+
+    async previewStatusForSession(sessionId: string): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStatusForSession(sessionId)
+    }
+
+    async previewStopForSession(sessionId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStopForSession(sessionId, params)
+    }
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
         return await this.rpcGateway.getGitStatus(sessionId, cwd)
     }

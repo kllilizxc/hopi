@@ -228,6 +228,28 @@ export class RpcGateway {
         return await this.machineRpc(machineId, 'preview-stop', params ?? {}) as RpcPreviewStatus
     }
 
+    async previewStartForSession(sessionId: string, params: {
+        taskId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-start', {
+            taskId: params.taskId,
+            sessionId,
+            rootPath: params.rootPath,
+            mode: params.mode,
+            basePort: params.basePort
+        }) as RpcPreviewStatus
+    }
+
+    async previewStatusForSession(sessionId: string): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-status', {}) as RpcPreviewStatus
+    }
+
+    async previewStopForSession(sessionId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-stop', params ?? {}) as RpcPreviewStatus
+    }
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-status', { cwd }) as RpcCommandResponse
     }

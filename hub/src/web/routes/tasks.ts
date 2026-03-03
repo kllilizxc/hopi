@@ -401,6 +401,15 @@ function resolveMergeExecutionErrorStatus(message: string): 500 | 503 | 504 {
     return 500
 }
 
+function isPreviewRpcUnavailable(message: string): boolean {
+    const lowered = message.toLowerCase()
+    return lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected') || lowered.includes('runner offline')
+}
+
+function resolvePreviewErrorStatus(message: string): 500 | 503 {
+    return isPreviewRpcUnavailable(message) ? 503 : 500
+}
+
 function sumAttachmentBytes(attachments: Array<z.infer<typeof taskAttachmentSchema>>): number {
     let total = 0
     for (const att of attachments) {
@@ -435,7 +444,7 @@ function resolveTaskPreviewAccess(options: {
     ok: true
     task: StoredTask
     session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
-    machineId: string
+    machineId: string | null
 } | {
     ok: false
     status: number
@@ -461,15 +470,12 @@ function resolveTaskPreviewAccess(options: {
     const machineId = typeof access.session.metadata?.machineId === 'string'
         ? access.session.metadata.machineId.trim()
         : ''
-    if (!machineId) {
-        return { ok: false, status: 400, error: 'Session metadata is missing machineId' }
-    }
 
     return {
         ok: true,
         task,
         session: access.session,
-        machineId
+        machineId: machineId || null
     }
 }
 
@@ -779,23 +785,41 @@ export function createTasksRoutes(options: {
         }
 
         try {
-            const preview = await engine.previewStart(resolved.machineId, {
+            const preview = await engine.previewStartForSession(resolved.session.id, {
                 taskId: resolved.task.id,
-                sessionId: resolved.session.id,
                 rootPath: previewPath.rootPath,
                 mode: previewPath.mode,
                 basePort: parsed.data.basePort
             })
             return c.json({ preview })
-        } catch (error) {
-            const message = formatErrorMessage(error, 'Preview start failed')
-            const lowered = message.toLowerCase()
-            const status = (
-                lowered.includes('rpc handler not registered')
-                || lowered.includes('rpc socket disconnected')
-                || lowered.includes('runner offline')
-            ) ? 503 : 500
-            return c.json({ error: message }, status)
+        } catch (sessionError) {
+            const sessionMessage = formatErrorMessage(sessionError, 'Preview start failed')
+            if (!isPreviewRpcUnavailable(sessionMessage)) {
+                return c.json({ error: sessionMessage }, resolvePreviewErrorStatus(sessionMessage))
+            }
+
+            if (!resolved.machineId) {
+                return c.json({
+                    error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`
+                }, 503)
+            }
+
+            try {
+                const preview = await engine.previewStart(resolved.machineId, {
+                    taskId: resolved.task.id,
+                    sessionId: resolved.session.id,
+                    rootPath: previewPath.rootPath,
+                    mode: previewPath.mode,
+                    basePort: parsed.data.basePort
+                })
+                return c.json({ preview })
+            } catch (machineError) {
+                const machineMessage = formatErrorMessage(machineError, 'Preview start failed')
+                const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                    ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                    : machineMessage
+                return c.json({ error: combinedMessage }, resolvePreviewErrorStatus(machineMessage))
+            }
         }
     })
 
@@ -818,28 +842,43 @@ export function createTasksRoutes(options: {
             return c.json({ error: resolved.error }, resolved.status)
         }
 
-        try {
-            const preview = await engine.previewStatus(resolved.machineId)
+        const normalizePreview = (preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>) => {
             if (preview.taskId && preview.taskId !== resolved.task.id) {
-                return c.json({
-                    preview: {
-                        active: false,
-                        status: 'idle',
-                        updatedAt: Date.now(),
-                        logTail: []
-                    }
-                })
+                return {
+                    active: false,
+                    status: 'idle' as const,
+                    updatedAt: Date.now(),
+                    logTail: []
+                }
             }
-            return c.json({ preview })
-        } catch (error) {
-            const message = formatErrorMessage(error, 'Preview status failed')
-            const lowered = message.toLowerCase()
-            const status = (
-                lowered.includes('rpc handler not registered')
-                || lowered.includes('rpc socket disconnected')
-                || lowered.includes('runner offline')
-            ) ? 503 : 500
-            return c.json({ error: message }, status)
+            return preview
+        }
+
+        try {
+            const preview = await engine.previewStatusForSession(resolved.session.id)
+            return c.json({ preview: normalizePreview(preview) })
+        } catch (sessionError) {
+            const sessionMessage = formatErrorMessage(sessionError, 'Preview status failed')
+            if (!isPreviewRpcUnavailable(sessionMessage)) {
+                return c.json({ error: sessionMessage }, resolvePreviewErrorStatus(sessionMessage))
+            }
+
+            if (!resolved.machineId) {
+                return c.json({
+                    error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`
+                }, 503)
+            }
+
+            try {
+                const preview = await engine.previewStatus(resolved.machineId)
+                return c.json({ preview: normalizePreview(preview) })
+            } catch (machineError) {
+                const machineMessage = formatErrorMessage(machineError, 'Preview status failed')
+                const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                    ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                    : machineMessage
+                return c.json({ error: combinedMessage }, resolvePreviewErrorStatus(machineMessage))
+            }
         }
     })
 
@@ -863,17 +902,30 @@ export function createTasksRoutes(options: {
         }
 
         try {
-            const preview = await engine.previewStop(resolved.machineId, { taskId: resolved.task.id })
+            const preview = await engine.previewStopForSession(resolved.session.id, { taskId: resolved.task.id })
             return c.json({ preview })
-        } catch (error) {
-            const message = formatErrorMessage(error, 'Preview stop failed')
-            const lowered = message.toLowerCase()
-            const status = (
-                lowered.includes('rpc handler not registered')
-                || lowered.includes('rpc socket disconnected')
-                || lowered.includes('runner offline')
-            ) ? 503 : 500
-            return c.json({ error: message }, status)
+        } catch (sessionError) {
+            const sessionMessage = formatErrorMessage(sessionError, 'Preview stop failed')
+            if (!isPreviewRpcUnavailable(sessionMessage)) {
+                return c.json({ error: sessionMessage }, resolvePreviewErrorStatus(sessionMessage))
+            }
+
+            if (!resolved.machineId) {
+                return c.json({
+                    error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`
+                }, 503)
+            }
+
+            try {
+                const preview = await engine.previewStop(resolved.machineId, { taskId: resolved.task.id })
+                return c.json({ preview })
+            } catch (machineError) {
+                const machineMessage = formatErrorMessage(machineError, 'Preview stop failed')
+                const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                    ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                    : machineMessage
+                return c.json({ error: combinedMessage }, resolvePreviewErrorStatus(machineMessage))
+            }
         }
     })
 

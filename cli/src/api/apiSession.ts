@@ -32,6 +32,7 @@ import { registerCommonHandlers } from '../modules/common/registerCommonHandlers
 import { cleanupUploadDir } from '../modules/common/handlers/uploads'
 import { TerminalManager } from '@/terminal/TerminalManager'
 import { applyVersionedAck } from './versionedUpdate'
+import { PreviewManager } from '@/runner/previewManager'
 
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
@@ -49,6 +50,7 @@ export class ApiSessionClient extends EventEmitter {
     private hasConnectedOnce = false
     readonly rpcHandlerManager: RpcHandlerManager
     private readonly terminalManager: TerminalManager
+    private readonly previewManager: PreviewManager
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
 
@@ -65,10 +67,42 @@ export class ApiSessionClient extends EventEmitter {
             scopePrefix: this.sessionId,
             logger: (msg, data) => logger.debug(msg, data)
         })
+        this.previewManager = new PreviewManager()
 
         if (this.metadata?.path) {
             registerCommonHandlers(this.rpcHandlerManager, this.metadata.path)
         }
+
+        this.rpcHandlerManager.registerHandler('preview-start', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : ''
+            const rootPath = typeof params?.rootPath === 'string' ? params.rootPath.trim() : ''
+            const mode = params?.mode === 'worktree' ? 'worktree' : 'local'
+            const basePort = typeof params?.basePort === 'number' ? params.basePort : undefined
+
+            if (!taskId) {
+                throw new Error('Task ID is required')
+            }
+            if (!rootPath) {
+                throw new Error('Root path is required')
+            }
+
+            return await this.previewManager.start({
+                taskId,
+                sessionId: this.sessionId,
+                rootPath,
+                mode,
+                basePort
+            })
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-status', () => {
+            return this.previewManager.getState()
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-stop', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : undefined
+            return await this.previewManager.stop({ taskId })
+        })
 
         this.socket = io(`${configuration.apiUrl}/cli`, {
             auth: {
@@ -644,6 +678,7 @@ export class ApiSessionClient extends EventEmitter {
     close(): void {
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
+        void this.previewManager.stop()
         this.socket.disconnect()
     }
 }
