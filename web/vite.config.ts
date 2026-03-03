@@ -6,6 +6,13 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const base = process.env.VITE_BASE_URL || '/'
+const webPortEnv = process.env.HAPI_WEB_PORT?.trim()
+const webPort = webPortEnv ? Number.parseInt(webPortEnv, 10) : null
+const hubUrl = process.env.HAPI_HUB_URL?.trim() || (() => {
+    const hubPortEnv = process.env.HAPI_LISTEN_PORT?.trim()
+    const hubPort = hubPortEnv ? Number.parseInt(hubPortEnv, 10) : NaN
+    return Number.isFinite(hubPort) ? `http://127.0.0.1:${hubPort}` : 'http://127.0.0.1:3006'
+})()
 
 export default defineConfig({
     define: {
@@ -13,14 +20,17 @@ export default defineConfig({
     },
     server: {
         host: true,
+        port: Number.isFinite(webPort) ? webPort : 5173,
+        // Only enforce strict port when caller explicitly pinned the port (preview mode).
+        strictPort: Boolean(webPortEnv),
         allowedHosts: ['hapidev.weishu.me'],
         proxy: {
             '/api': {
-                target: 'http://127.0.0.1:3006',
+                target: hubUrl,
                 changeOrigin: true
             },
             '/socket.io': {
-                target: 'http://127.0.0.1:3006',
+                target: hubUrl,
                 ws: true
             }
         }

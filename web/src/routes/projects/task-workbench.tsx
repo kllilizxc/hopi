@@ -1082,6 +1082,15 @@ function TaskDetailsPanel(props: {
                                         {previewError}
                                     </div>
                                 ) : null}
+
+                                {previewStatus?.logTail?.length ? (
+                                    <details className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2">
+                                        <summary className="cursor-pointer text-xs text-[var(--app-hint)]">Logs</summary>
+                                        <div className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-snug text-[var(--app-fg)]">
+                                            {previewStatus.logTail.slice(-80).join('\n')}
+                                        </div>
+                                    </details>
+                                ) : null}
                             </div>
                         ) : null}
 

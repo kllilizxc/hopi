@@ -245,8 +245,8 @@ export class PreviewManager {
     await ensureDirectory(options.rootPath);
 
     const selected = await pickPreviewCommand(options.rootPath);
-    const port = await findFreePort(options.basePort ?? 5173);
-    const defaultUrl = `http://127.0.0.1:${port}`;
+    const isPreviewScript = selected.command === 'bash .hapi/preview.sh';
+    const port = isPreviewScript ? undefined : await findFreePort(options.basePort ?? 5173);
     const runId = this.runId + 1;
     this.runId = runId;
     this.stopRequestedRunId = null;
@@ -262,23 +262,31 @@ export class PreviewManager {
       runPath: selected.cwd,
       command: selected.command,
       port,
-      url: defaultUrl,
       startedAt: now,
       updatedAt: now,
       logTail: []
     };
 
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      HAPI_PREVIEW_ROOT: options.rootPath,
+      HAPI_PREVIEW_MODE: options.mode
+    };
+
+    if (isPreviewScript) {
+      env.HAPI_PREVIEW_TIMEOUT_SEC = String(180);
+      env.HAPI_PREVIEW_HUB_PORT_BASE = String(3006);
+      env.HAPI_PREVIEW_WEB_PORT_BASE = String(options.basePort ?? 5173);
+    } else if (port) {
+      env.PORT = String(port);
+      env.HOST = '127.0.0.1';
+      env.HAPI_PREVIEW_PORT = String(port);
+    }
+
     const child = spawn(selected.command, {
       cwd: selected.cwd,
       shell: true,
-      env: {
-        ...process.env,
-        PORT: String(port),
-        HOST: '127.0.0.1',
-        HAPI_PREVIEW_PORT: String(port),
-        HAPI_PREVIEW_ROOT: options.rootPath,
-        HAPI_PREVIEW_MODE: options.mode
-      }
+      env
     });
 
     this.process = child;
@@ -289,7 +297,9 @@ export class PreviewManager {
     if (selected.cwd !== options.rootPath) {
       this.pushLog(`Run dir: ${selected.cwd}`);
     }
-    this.pushLog(`Default URL: ${defaultUrl}`);
+    if (port) {
+      this.pushLog(`Suggested PORT: ${port}`);
+    }
 
     const attachOutput = (stream: NodeJS.ReadableStream | null | undefined, source: 'stdout' | 'stderr') => {
       if (!stream) {
@@ -442,10 +452,13 @@ export class PreviewManager {
       return;
     }
 
-    const urlMatch = line.match(URL_PATTERN);
-    if (urlMatch && urlMatch[1] && this.state.status === 'starting') {
-      const url = urlMatch[1].trim();
-      this.updateReadyState(url);
+    const isPreviewScript = Boolean(this.state.command?.includes('.hapi/preview.sh'));
+    if (!isPreviewScript) {
+      const urlMatch = line.match(URL_PATTERN);
+      if (urlMatch && urlMatch[1] && this.state.status === 'starting') {
+        const url = urlMatch[1].trim();
+        this.updateReadyState(url);
+      }
     }
   }
 

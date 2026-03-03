@@ -38,6 +38,9 @@ coverage/
 localdocs/
 execplan/
 
+# Preview runtime cache (repo-local)
+.hapi/*.hash
+
 # Generated npm bundle output (local)
 cli/npm/main/
 
