@@ -410,6 +410,7 @@ function TaskDetailsPanel(props: {
     const [previewStatus, setPreviewStatus] = useState<TaskPreviewStatus | null>(null)
     const [previewBusy, setPreviewBusy] = useState(false)
     const [previewError, setPreviewError] = useState<string | null>(null)
+    const [previewPort, setPreviewPort] = useState('')
     const sessionId = props.task.activeSessionId ?? null
 
     useEffect(() => {
@@ -428,6 +429,7 @@ function TaskDetailsPanel(props: {
     useEffect(() => {
         setPreviewStatus(null)
         setPreviewError(null)
+        setPreviewPort('')
     }, [props.task.id])
 
     const loadPreviewStatus = useCallback(async () => {
@@ -492,7 +494,14 @@ function TaskDetailsPanel(props: {
         setPreviewBusy(true)
         setPreviewError(null)
         try {
-            const response = await api.startTaskPreview(props.taskId, { mode: 'auto' })
+            const trimmedPort = previewPort.trim()
+            const basePort = trimmedPort.length > 0 ? Number.parseInt(trimmedPort, 10) : undefined
+            if (typeof basePort === 'number' && (!Number.isFinite(basePort) || basePort < 1 || basePort > 65535)) {
+                setPreviewError('Invalid port (must be 1-65535)')
+                return
+            }
+
+            const response = await api.startTaskPreview(props.taskId, { mode: 'auto', basePort })
             setPreviewStatus(response.preview)
             if (response.preview.url) {
                 addToast({
@@ -507,7 +516,7 @@ function TaskDetailsPanel(props: {
         } finally {
             setPreviewBusy(false)
         }
-    }, [api, sessionId, props.taskId, addToast])
+    }, [api, sessionId, props.taskId, previewPort, addToast])
 
     const handleStopPreview = useCallback(async () => {
         if (!api || !sessionId) {
@@ -1007,7 +1016,21 @@ function TaskDetailsPanel(props: {
                         {sessionId ? (
                             <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-2">
                                 <div className="text-xs font-medium text-[var(--app-hint)]">Preview</div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap items-end gap-2">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-medium text-[var(--app-hint)]">Port</label>
+                                        <input
+                                            type="number"
+                                            inputMode="numeric"
+                                            min={1}
+                                            max={65535}
+                                            value={previewPort}
+                                            onChange={(e) => setPreviewPort(e.target.value)}
+                                            disabled={previewBusy}
+                                            placeholder="5173"
+                                            className="w-28 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                        />
+                                    </div>
                                     <Button
                                         type="button"
                                         variant="secondary"
