@@ -583,7 +583,7 @@ export function HappyComposer(props: {
                         voiceStatus={voiceStatus}
                     />
 
-                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)]">
+                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] ring-1 ring-inset ring-[var(--app-border)] transition-shadow focus-within:ring-2 focus-within:ring-[var(--app-link)]">
                         {attachments.length > 0 ? (
                             <div className="flex flex-wrap gap-2 px-4 pt-3">
                                 <ComposerPrimitive.Attachments components={{ Attachment: AttachmentItem }} />

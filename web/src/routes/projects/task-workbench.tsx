@@ -505,7 +505,7 @@ function TaskDetailsPanel(props: {
             setPreviewStatus(response.preview)
             if (response.preview.url) {
                 addToast({
-                    title: 'Preview ready',
+                    title: t('projects.task.preview.ready'),
                     body: response.preview.url,
                     sessionId: '',
                     url: ''
@@ -1015,10 +1015,10 @@ function TaskDetailsPanel(props: {
 
                         {sessionId ? (
                             <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-2">
-                                <div className="text-xs font-medium text-[var(--app-hint)]">Preview</div>
+                                <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.task.preview.title')}</div>
                                 <div className="flex flex-wrap items-end gap-2">
                                     <div className="space-y-1">
-                                        <label className="text-xs font-medium text-[var(--app-hint)]">Port</label>
+                                        <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.task.preview.port')}</label>
                                         <input
                                             type="number"
                                             inputMode="numeric"
@@ -1050,7 +1050,7 @@ function TaskDetailsPanel(props: {
                                             }}
                                             disabled={previewBusy}
                                         >
-                                            Stop Preview
+                                            {t('projects.task.preview.stop')}
                                         </Button>
                                     ) : null}
                                 </div>

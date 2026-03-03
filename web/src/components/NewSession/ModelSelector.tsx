@@ -1,6 +1,9 @@
 import type { AgentType } from './types'
 import { MODEL_OPTIONS } from './types'
 import { useTranslation } from '@/lib/use-translation'
+import { useState } from 'react'
+import { ChevronDownIcon } from '@/assets/icons'
+import { ActionSheetSelect } from '@/components/ui/ActionSheetSelect'
 
 export function ModelSelector(props: {
     agent: AgentType
@@ -9,10 +12,13 @@ export function ModelSelector(props: {
     onModelChange: (value: string) => void
 }) {
     const { t } = useTranslation()
+    const [open, setOpen] = useState(false)
     const options = MODEL_OPTIONS[props.agent]
     if (options.length === 0) {
         return null
     }
+
+    const selectedLabel = options.find((opt) => opt.value === props.model)?.label ?? props.model
 
     return (
         <div className="flex flex-col gap-1.5 px-3 py-3">
@@ -20,18 +26,26 @@ export function ModelSelector(props: {
                 {t('newSession.model')}{' '}
                 <span className="font-normal">({t('newSession.model.optional')})</span>
             </label>
-            <select
-                value={props.model}
-                onChange={(e) => props.onModelChange(e.target.value)}
+            <button
+                type="button"
                 disabled={props.isDisabled}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                onClick={() => setOpen(true)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-3 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                aria-expanded={open}
+                aria-haspopup="dialog"
             >
-                {options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                        {option.label}
-                    </option>
-                ))}
-            </select>
+                <span className="min-w-0 flex-1 truncate text-left">{selectedLabel}</span>
+                <ChevronDownIcon className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            <ActionSheetSelect
+                open={open}
+                onOpenChange={setOpen}
+                title={t('newSession.model')}
+                value={props.model}
+                options={options}
+                onValueChange={(nextModel) => props.onModelChange(nextModel)}
+            />
         </div>
     )
 }

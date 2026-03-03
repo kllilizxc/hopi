@@ -84,6 +84,17 @@
     --app-scrollbar-track: transparent;
     --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
     --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
+
+    /* Viewport + motion tokens (mobile + Telegram-friendly) */
+    --app-viewport-h: var(--tg-viewport-height, 100dvh);
+    --app-viewport-stable-h: var(--tg-viewport-stable-height, 100dvh);
+    --app-motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --app-motion-duration-micro: 180ms;
+    --app-motion-duration-menu: 220ms;
+    --app-motion-duration-sheet: 260ms;
+
+    /* Ensure built-in controls (if any) match the current color scheme. */
+    color-scheme: light;
 }
 
 [data-theme="dark"] {
@@ -165,6 +176,37 @@
     --app-kanban-archive-border: rgba(156, 163, 175, 0.36);
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
+
+    color-scheme: dark;
+}
+
+/* Theme presets (derived neutrals only). Telegram base colors remain source-of-truth. */
+html[data-theme-preset="soft"] {
+    --app-border: rgba(0, 0, 0, 0.08);
+    --app-divider: rgba(0, 0, 0, 0.06);
+    --app-subtle-bg: rgba(0, 0, 0, 0.035);
+    --app-inline-code-bg: rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="dark"][data-theme-preset="soft"] {
+    --app-border: rgba(255, 255, 255, 0.08);
+    --app-divider: rgba(255, 255, 255, 0.06);
+    --app-subtle-bg: rgba(255, 255, 255, 0.035);
+    --app-inline-code-bg: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme-preset="contrast"] {
+    --app-border: rgba(0, 0, 0, 0.14);
+    --app-divider: rgba(0, 0, 0, 0.12);
+    --app-subtle-bg: rgba(0, 0, 0, 0.07);
+    --app-inline-code-bg: rgba(0, 0, 0, 0.10);
+}
+
+html[data-theme="dark"][data-theme-preset="contrast"] {
+    --app-border: rgba(255, 255, 255, 0.16);
+    --app-divider: rgba(255, 255, 255, 0.14);
+    --app-subtle-bg: rgba(255, 255, 255, 0.07);
+    --app-inline-code-bg: rgba(255, 255, 255, 0.14);
 }
 
 html {
@@ -175,7 +217,7 @@ html,
 body {
     height: 100vh;
     height: 100dvh;
-    height: var(--tg-viewport-stable-height, 100dvh);
+    height: var(--app-viewport-stable-h);
     overflow: hidden;
     touch-action: pan-x pan-y;
     overscroll-behavior: none;
@@ -186,6 +228,21 @@ body {
     font-size: 1rem;
     background: var(--app-bg);
     color: var(--app-fg);
+}
+
+/* Graphite preset: subtle depth without changing Telegram-provided token values. */
+html[data-theme-preset="graphite"] body {
+    background-color: var(--app-bg);
+    background-image:
+        radial-gradient(1000px 600px at 20% -10%, rgba(0, 0, 0, 0.035), transparent 60%),
+        radial-gradient(900px 520px at 110% 10%, rgba(0, 0, 0, 0.025), transparent 55%);
+}
+
+html[data-theme="dark"][data-theme-preset="graphite"] body {
+    background-color: var(--app-bg);
+    background-image:
+        radial-gradient(1000px 600px at 20% -10%, rgba(255, 255, 255, 0.035), transparent 60%),
+        radial-gradient(900px 520px at 110% 10%, rgba(255, 255, 255, 0.02), transparent 55%);
 }
 
 #root {
@@ -292,7 +349,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-slide-up {
-  animation: slide-up 0.3s ease-out;
+  animation: slide-up var(--app-motion-duration-sheet) var(--app-motion-ease-out);
 }
 
 @keyframes menu-pop {
@@ -307,7 +364,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-menu-pop {
-  animation: menu-pop 0.18s ease-out;
+  animation: menu-pop var(--app-motion-duration-menu) var(--app-motion-ease-out);
 }
 
 /* Syncing spinner animation */
@@ -340,7 +397,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-bounce-in {
-  animation: bounce-in 0.3s ease-out;
+  animation: bounce-in var(--app-motion-duration-micro) var(--app-motion-ease-out);
 }
 
 /* Chat assistant typing indicator - breathing dots */
@@ -361,10 +418,46 @@ html[data-theme="dark"] .shiki span {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
   .hapi-typing-dot {
     animation: none;
     opacity: 0.6;
   }
+
+  .animate-slide-up,
+  .animate-menu-pop,
+  .animate-bounce-in {
+    animation: none;
+  }
+}
+
+/* Manual reduced motion override (Settings -> Motion). */
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+html[data-motion="reduce"] .hapi-typing-dot {
+  animation: none;
+  opacity: 0.6;
+}
+
+html[data-motion="reduce"] .animate-slide-up,
+html[data-motion="reduce"] .animate-menu-pop,
+html[data-motion="reduce"] .animate-bounce-in {
+  animation: none;
 }
 
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */

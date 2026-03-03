@@ -8,6 +8,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ActionSheet, ActionSheetItem } from '@/components/ui/ActionSheet'
 import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
@@ -169,120 +170,57 @@ function parseTaskDraft(value: string): { title: string; description?: string } 
     }
 }
 
-type AnchorPoint = { x: number; y: number }
-
-function TaskMoveMenu(props: {
+function TaskMoveSheet(props: {
     isOpen: boolean
-    anchorPoint: AnchorPoint
     currentStatus: TaskStatus
     onClose: () => void
     onMove: (status: TaskStatus) => void
 }) {
     const { t } = useTranslation()
-    const menuRef = useRef<HTMLDivElement | null>(null)
-    const [position, setPosition] = useState<{ top: number; left: number; origin: string } | null>(null)
-
-    useEffect(() => {
-        if (!props.isOpen) {
-            setPosition(null)
-            return
-        }
-
-        const frame = requestAnimationFrame(() => {
-            const el = menuRef.current
-            if (!el) return
-            const rect = el.getBoundingClientRect()
-            const viewportWidth = window.innerWidth
-            const viewportHeight = window.innerHeight
-            const padding = 8
-            const gap = 8
-
-            const spaceBelow = viewportHeight - props.anchorPoint.y
-            const spaceAbove = props.anchorPoint.y
-            const openAbove = spaceBelow < rect.height + gap && spaceAbove > spaceBelow
-
-            let top = openAbove ? props.anchorPoint.y - rect.height - gap : props.anchorPoint.y + gap
-            let left = props.anchorPoint.x - rect.width / 2
-            const origin = openAbove ? 'bottom center' : 'top center'
-
-            top = Math.min(Math.max(top, padding), viewportHeight - rect.height - padding)
-            left = Math.min(Math.max(left, padding), viewportWidth - rect.width - padding)
-            setPosition({ top, left, origin })
-        })
-
-        return () => cancelAnimationFrame(frame)
-    }, [props.isOpen, props.anchorPoint])
-
-    useEffect(() => {
-        if (!props.isOpen) return
-
-        const handlePointerDown = (event: PointerEvent) => {
-            const target = event.target as Node
-            if (menuRef.current?.contains(target)) return
-            props.onClose()
-        }
-
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                props.onClose()
-            }
-        }
-
-        document.addEventListener('pointerdown', handlePointerDown)
-        document.addEventListener('keydown', handleKeyDown)
-        return () => {
-            document.removeEventListener('pointerdown', handlePointerDown)
-            document.removeEventListener('keydown', handleKeyDown)
-        }
-    }, [props.isOpen, props.onClose])
-
-    if (!props.isOpen) return null
-
-    const style = position ? { top: position.top, left: position.left, transformOrigin: position.origin } : undefined
-    const itemClassName = 'flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]'
 
     return (
-        <div
-            ref={menuRef}
-            className="fixed z-50 min-w-[220px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg animate-menu-pop"
-            style={style}
+        <ActionSheet
+            open={props.isOpen}
+            onOpenChange={(open) => {
+                if (!open) {
+                    props.onClose()
+                }
+            }}
+            title={t('projects.tasks.moveTo')}
         >
-            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--app-hint)]">
-                {t('projects.tasks.moveTo')}
-            </div>
             <div className="flex flex-col gap-1">
                 {KANBAN_COLUMNS.map((col) => {
                     const theme = getKanbanStatusTheme(col.status)
                     const isCurrent = col.status === props.currentStatus
 
                     return (
-                        <button
+                        <ActionSheetItem
                             key={col.status}
-                            type="button"
-                            className={itemClassName}
+                            icon={
+                                <span
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
+                                />
+                            }
                             onClick={() => {
                                 props.onMove(col.status)
                                 props.onClose()
                             }}
                             disabled={isCurrent}
                         >
-                            <span className="flex items-center gap-2 min-w-0">
-                                <span
-                                    className="h-2.5 w-2.5 rounded-full shrink-0"
-                                    style={{
-                                        background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})`,
-                                    }}
-                                />
-                                <span className="truncate">{t(col.titleKey)}</span>
+                            <span className="flex w-full items-center justify-between gap-3">
+                                <span className="min-w-0 flex-1 truncate">{t(col.titleKey)}</span>
+                                {isCurrent ? (
+                                    <span className="shrink-0 text-[10px] text-[var(--app-hint)]">
+                                        {t('projects.tasks.current')}
+                                    </span>
+                                ) : null}
                             </span>
-                            {isCurrent ? (
-                                <span className="text-[10px] text-[var(--app-hint)]">{t('projects.tasks.current')}</span>
-                            ) : null}
-                        </button>
+                        </ActionSheetItem>
                     )
                 })}
             </div>
-        </div>
+        </ActionSheet>
     )
 }
 
@@ -351,10 +289,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     } | null>(null)
     const touchCleanupRef = useRef<(() => void) | null>(null)
 
-    const [menuState, setMenuState] = useState<{
-        taskId: string
-        anchorPoint: AnchorPoint
-    } | null>(null)
+    const [moveSheetTaskId, setMoveSheetTaskId] = useState<string | null>(null)
 
     const setDragStateSynced = useCallback((next: DragState | null) => {
         dragStateRef.current = next
@@ -941,7 +876,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                     }}
                                                     onContextMenu={(event) => {
                                                         event.preventDefault()
-                                                        setMenuState({ taskId: task.id, anchorPoint: { x: event.clientX, y: event.clientY } })
+                                                        setMoveSheetTaskId(task.id)
                                                     }}
                                                     className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
                                                         ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
@@ -1025,7 +960,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             className="shrink-0 rounded-md p-1 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
                                                             onClick={(event) => {
                                                                 event.stopPropagation()
-                                                                setMenuState({ taskId: task.id, anchorPoint: { x: event.clientX, y: event.clientY } })
+                                                                setMoveSheetTaskId(task.id)
                                                             }}
                                                             aria-label={t('projects.tasks.moveTo')}
                                                         >
@@ -1137,15 +1072,13 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 </DialogContent>
             </Dialog>
 
-            <TaskMoveMenu
-                isOpen={Boolean(menuState)}
-                anchorPoint={menuState?.anchorPoint ?? { x: 0, y: 0 }}
-                currentStatus={(menuState && tasksById.get(menuState.taskId)?.status) ?? 'new'}
-                onClose={() => setMenuState(null)}
+            <TaskMoveSheet
+                isOpen={Boolean(moveSheetTaskId)}
+                currentStatus={(moveSheetTaskId && tasksById.get(moveSheetTaskId)?.status) ?? 'new'}
+                onClose={() => setMoveSheetTaskId(null)}
                 onMove={(status) => {
-                    const taskId = menuState?.taskId
-                    if (!taskId) return
-                    void moveTask(taskId, status, 0)
+                    if (!moveSheetTaskId) return
+                    void moveTask(moveSheetTaskId, status, 0)
                 }}
             />
         </div>

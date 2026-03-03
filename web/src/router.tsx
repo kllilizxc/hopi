@@ -30,6 +30,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+import { IconButton } from '@/components/ui/icon-button'
 import { BackIcon, PlusIcon, SettingsIcon } from '@/assets/icons'
 import ProjectsPage, {
     ProjectOverviewPage,
@@ -75,22 +76,24 @@ function SessionsPage() {
                             {t('sessions.count', { n: sessions.length, m: projectCount })}
                         </div>
                         <div className="flex items-center gap-2">
-                            <button
+                            <IconButton
                                 type="button"
+                                variant="subtle"
                                 onClick={() => navigate({ to: '/settings' })}
-                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
                                 title={t('settings.title')}
+                                className="text-[var(--app-hint)]"
                             >
                                 <SettingsIcon className="h-5 w-5" />
-                            </button>
-                            <button
+                            </IconButton>
+                            <IconButton
                                 type="button"
+                                variant="accent"
                                 onClick={() => navigate({ to: '/sessions/new' })}
-                                className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                                className="session-list-new-button"
                                 title={t('sessions.new')}
                             >
                                 <PlusIcon className="h-5 w-5" />
-                            </button>
+                            </IconButton>
                         </div>
                     </div>
                 </div>

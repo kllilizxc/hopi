@@ -113,7 +113,6 @@ function SessionItem(props: {
     const { session: s, onSelect, showPath = true, api, selected = false } = props
     const { haptic } = usePlatform()
     const [menuOpen, setMenuOpen] = useState(false)
-    const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
     const [renameOpen, setRenameOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
@@ -125,9 +124,8 @@ function SessionItem(props: {
     )
 
     const longPressHandlers = useLongPress({
-        onLongPress: (point) => {
+        onLongPress: (_point) => {
             haptic.impact('medium')
-            setMenuAnchorPoint(point)
             setMenuOpen(true)
         },
         onClick: () => {
@@ -140,7 +138,7 @@ function SessionItem(props: {
 
     const sessionName = getSessionTitle(s)
     const statusDotClass = s.active
-        ? (s.thinking ? 'bg-[#007AFF]' : 'bg-[var(--app-badge-success-text)]')
+        ? (s.thinking ? 'bg-[var(--app-link)]' : 'bg-[var(--app-badge-success-text)]')
         : 'bg-[var(--app-hint)]'
     return (
         <>
@@ -164,7 +162,7 @@ function SessionItem(props: {
                     </div>
                     <div className="flex items-center gap-2 shrink-0 text-xs">
                         {s.thinking ? (
-                            <span className="text-[#007AFF] animate-pulse">
+                            <span className="text-[var(--app-link)] animate-pulse">
                                 {t('session.item.thinking')}
                             </span>
                         ) : null}
@@ -214,7 +212,6 @@ function SessionItem(props: {
                 onRename={() => setRenameOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
-                anchorPoint={menuAnchorPoint}
             />
 
             <RenameSessionDialog

@@ -4,6 +4,7 @@ import type { Session } from '@/types/api'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useTranslation } from '@/lib/use-translation'
 import { BackIcon, DiffIcon, FilesIcon, TaskIcon } from '@/assets/icons'
+import { IconButton } from '@/components/ui/icon-button'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -54,13 +55,9 @@ export function SessionHeader(props: {
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
                     {/* Back button */}
-                    <button
-                        type="button"
-                        onClick={props.onBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
+                    <IconButton type="button" onClick={props.onBack}>
                         <BackIcon />
-                    </button>
+                    </IconButton>
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
@@ -82,40 +79,29 @@ export function SessionHeader(props: {
                     </div>
 
                     {props.onViewFiles ? (
-                        <button
-                            type="button"
-                            onClick={props.onViewFiles}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.title')}
-                        >
+                        <IconButton type="button" onClick={props.onViewFiles} title={t('session.title')}>
                             <FilesIcon />
-                        </button>
+                        </IconButton>
                     ) : null}
 
                     {props.onViewDiffs ? (
-                        <button
-                            type="button"
-                            onClick={props.onViewDiffs}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('projects.workbench.tab.diffs')}
-                        >
+                        <IconButton type="button" onClick={props.onViewDiffs} title={t('projects.workbench.tab.diffs')}>
                             <DiffIcon />
-                        </button>
+                        </IconButton>
                     ) : null}
 
                     {taskLink ? (
-                        <button
+                        <IconButton
                             type="button"
                             onClick={() => navigate({
                                 to: '/projects/$projectId/tasks/$taskId/task',
                                 params: { projectId: taskLink.projectId, taskId: taskLink.taskId }
                             })}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                             aria-label={t('projects.workbench.tab.task')}
                             title={t('projects.workbench.tab.task')}
                         >
                             <TaskIcon />
-                        </button>
+                        </IconButton>
                     ) : null}
                 </div>
             </div>

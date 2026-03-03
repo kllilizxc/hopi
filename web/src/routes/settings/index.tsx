@@ -1,10 +1,14 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
-import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
+import { getElevenLabsSupportedLanguages, getLanguageDisplayName } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
+import { useTheme, type Appearance, type ThemePreset } from '@/hooks/useTheme'
+import { useMotionPreference, type MotionPreference } from '@/hooks/useMotionPreference'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 import { BackIcon, CheckIcon, ChevronDownIcon } from '@/assets/icons'
+import { ActionSheetSelect } from '@/components/ui/ActionSheetSelect'
+import { IconButton } from '@/components/ui/icon-button'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
     { value: 'en', nativeLabel: 'English' },
@@ -16,13 +20,10 @@ const voiceLanguages = getElevenLabsSupportedLanguages()
 export default function SettingsPage() {
     const { t, locale, setLocale } = useTranslation()
     const goBack = useAppGoBack()
-    const [isOpen, setIsOpen] = useState(false)
-    const [isFontOpen, setIsFontOpen] = useState(false)
-    const [isVoiceOpen, setIsVoiceOpen] = useState(false)
-    const containerRef = useRef<HTMLDivElement>(null)
-    const fontContainerRef = useRef<HTMLDivElement>(null)
-    const voiceContainerRef = useRef<HTMLDivElement>(null)
+    const { appearance, setAppearance, preset, setPreset } = useTheme()
+    const [openSheet, setOpenSheet] = useState<'language' | 'font' | 'motion' | 'voice' | 'preset' | null>(null)
     const { fontScale, setFontScale } = useFontScale()
+    const { preference: motionPreference, setPreference: setMotionPreference } = useMotionPreference()
 
     // Voice language state - read from localStorage
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
@@ -33,74 +34,30 @@ export default function SettingsPage() {
     const currentLocale = locales.find((loc) => loc.value === locale)
     const currentFontScaleLabel = fontScaleOptions.find((opt) => opt.value === fontScale)?.label ?? '100%'
     const currentVoiceLanguage = voiceLanguages.find((lang) => lang.code === voiceLanguage)
-
-    const handleLocaleChange = (newLocale: Locale) => {
-        setLocale(newLocale)
-        setIsOpen(false)
-    }
-
-    const handleFontScaleChange = (newScale: FontScale) => {
-        setFontScale(newScale)
-        setIsFontOpen(false)
-    }
-
-    const handleVoiceLanguageChange = (language: Language) => {
-        setVoiceLanguage(language.code)
-        if (language.code === null) {
-            localStorage.removeItem('hapi-voice-lang')
-        } else {
-            localStorage.setItem('hapi-voice-lang', language.code)
-        }
-        setIsVoiceOpen(false)
-    }
-
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
-
-        const handleClickOutside = (event: MouseEvent) => {
-            if (isOpen && containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false)
-            }
-            if (isFontOpen && fontContainerRef.current && !fontContainerRef.current.contains(event.target as Node)) {
-                setIsFontOpen(false)
-            }
-            if (isVoiceOpen && voiceContainerRef.current && !voiceContainerRef.current.contains(event.target as Node)) {
-                setIsVoiceOpen(false)
-            }
-        }
-
-        document.addEventListener('mousedown', handleClickOutside)
-        return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [isOpen, isFontOpen, isVoiceOpen])
-
-    // Close on escape key
-    useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
-
-        const handleEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                setIsOpen(false)
-                setIsFontOpen(false)
-                setIsVoiceOpen(false)
-            }
-        }
-
-        document.addEventListener('keydown', handleEscape)
-        return () => document.removeEventListener('keydown', handleEscape)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    const appearanceOptions: { value: Appearance; label: string }[] = [
+        { value: 'auto', label: t('settings.theme.auto') },
+        { value: 'light', label: t('settings.theme.light') },
+        { value: 'dark', label: t('settings.theme.dark') },
+    ]
+    const presetOptions: { value: ThemePreset; label: string }[] = [
+        { value: 'graphite', label: t('settings.theme.preset.graphite') },
+        { value: 'soft', label: t('settings.theme.preset.soft') },
+        { value: 'contrast', label: t('settings.theme.preset.contrast') },
+    ]
+    const currentPresetLabel = presetOptions.find((opt) => opt.value === preset)?.label ?? t('settings.theme.preset.graphite')
+    const motionOptions: { value: MotionPreference; label: string }[] = [
+        { value: 'auto', label: t('settings.motion.auto') },
+        { value: 'reduce', label: t('settings.motion.reduce') },
+    ]
+    const currentMotionLabel = motionOptions.find((opt) => opt.value === motionPreference)?.label ?? t('settings.motion.auto')
 
     return (
         <div className="flex h-full flex-col">
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
+                    <IconButton type="button" onClick={goBack}>
                         <BackIcon />
-                    </button>
+                    </IconButton>
                     <div className="flex-1 font-semibold">{t('settings.title')}</div>
                 </div>
             </div>
@@ -112,54 +69,30 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.language.title')}
                         </div>
-                        <div ref={containerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsOpen(!isOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>{currentLocale?.nativeLabel}</span>
-                                    <ChevronDownIcon className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOpenSheet('language')
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                            aria-expanded={openSheet === 'language'}
+                            aria-haspopup="dialog"
+                        >
+                            <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
+                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                <span>{currentLocale?.nativeLabel}</span>
+                                <ChevronDownIcon className={`transition-transform ${openSheet === 'language' ? 'rotate-180' : ''}`} />
+                            </span>
+                        </button>
 
-                            {isOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.language.title')}
-                                >
-                                    {locales.map((loc) => {
-                                        const isSelected = locale === loc.value
-                                        return (
-                                            <button
-                                                key={loc.value}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleLocaleChange(loc.value)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{loc.nativeLabel}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
+                        <ActionSheetSelect
+                            open={openSheet === 'language'}
+                            onOpenChange={(open) => setOpenSheet(open ? 'language' : null)}
+                            title={t('settings.language.title')}
+                            value={locale}
+                            options={locales.map((loc) => ({ value: loc.value, label: loc.nativeLabel }))}
+                            onValueChange={(nextLocale: Locale) => setLocale(nextLocale)}
+                        />
                     </div>
 
                     {/* Display section */}
@@ -167,54 +100,105 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.display.title')}
                         </div>
-                        <div ref={fontContainerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsFontOpen(!isFontOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isFontOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>{currentFontScaleLabel}</span>
-                                    <ChevronDownIcon className={`transition-transform ${isFontOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOpenSheet('font')
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                            aria-expanded={openSheet === 'font'}
+                            aria-haspopup="dialog"
+                        >
+                            <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
+                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                <span>{currentFontScaleLabel}</span>
+                                <ChevronDownIcon className={`transition-transform ${openSheet === 'font' ? 'rotate-180' : ''}`} />
+                            </span>
+                        </button>
 
-                            {isFontOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[140px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.display.fontSize')}
-                                >
-                                    {fontScaleOptions.map((opt) => {
-                                        const isSelected = fontScale === opt.value
-                                        return (
-                                            <button
-                                                key={opt.value}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleFontScaleChange(opt.value)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{opt.label}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
+                        <ActionSheetSelect
+                            open={openSheet === 'font'}
+                            onOpenChange={(open) => setOpenSheet(open ? 'font' : null)}
+                            title={t('settings.display.fontSize')}
+                            value={fontScale}
+                            options={fontScaleOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
+                            onValueChange={(nextScale: FontScale) => setFontScale(nextScale)}
+                        />
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOpenSheet('motion')
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                            aria-expanded={openSheet === 'motion'}
+                            aria-haspopup="dialog"
+                        >
+                            <span className="text-[var(--app-fg)]">{t('settings.display.motion')}</span>
+                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                <span>{currentMotionLabel}</span>
+                                <ChevronDownIcon className={`transition-transform ${openSheet === 'motion' ? 'rotate-180' : ''}`} />
+                            </span>
+                        </button>
+
+                        <ActionSheetSelect
+                            open={openSheet === 'motion'}
+                            onOpenChange={(open) => setOpenSheet(open ? 'motion' : null)}
+                            title={t('settings.display.motion')}
+                            value={motionPreference}
+                            options={motionOptions}
+                            onValueChange={(nextPref: MotionPreference) => setMotionPreference(nextPref)}
+                        />
+                    </div>
+
+                    {/* Theme section */}
+                    <div className="border-b border-[var(--app-divider)]">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.theme.title')}
                         </div>
+                        {appearanceOptions.map((opt) => {
+                            const isSelected = appearance === opt.value
+                            return (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => setAppearance(opt.value)}
+                                    className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{opt.label}</span>
+                                    {isSelected ? (
+                                        <span className="ml-2 text-[var(--app-link)]" aria-hidden="true">
+                                            <CheckIcon />
+                                        </span>
+                                    ) : null}
+                                </button>
+                            )
+                        })}
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOpenSheet('preset')
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                            aria-expanded={openSheet === 'preset'}
+                            aria-haspopup="dialog"
+                        >
+                            <span className="text-[var(--app-fg)]">{t('settings.theme.preset')}</span>
+                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                <span>{currentPresetLabel}</span>
+                                <ChevronDownIcon className={`transition-transform ${openSheet === 'preset' ? 'rotate-180' : ''}`} />
+                            </span>
+                        </button>
+
+                        <ActionSheetSelect
+                            open={openSheet === 'preset'}
+                            onOpenChange={(open) => setOpenSheet(open ? 'preset' : null)}
+                            title={t('settings.theme.preset')}
+                            value={preset}
+                            options={presetOptions}
+                            onValueChange={(nextPreset: ThemePreset) => setPreset(nextPreset)}
+                        />
                     </div>
 
                     {/* Voice Assistant section */}
@@ -222,63 +206,46 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.voice.title')}
                         </div>
-                        <div ref={voiceContainerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsVoiceOpen(!isVoiceOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isVoiceOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>
-                                        {currentVoiceLanguage
-                                            ? currentVoiceLanguage.code === null
-                                                ? t('settings.voice.autoDetect')
-                                                : getLanguageDisplayName(currentVoiceLanguage)
-                                            : t('settings.voice.autoDetect')}
-                                    </span>
-                                    <ChevronDownIcon className={`transition-transform ${isVoiceOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
-
-                            {isVoiceOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[200px] max-h-[300px] overflow-y-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.voice.title')}
-                                >
-                                    {voiceLanguages.map((lang) => {
-                                        const isSelected = voiceLanguage === lang.code
-                                        const displayName = lang.code === null
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOpenSheet('voice')
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                            aria-expanded={openSheet === 'voice'}
+                            aria-haspopup="dialog"
+                        >
+                            <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
+                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                <span>
+                                    {currentVoiceLanguage
+                                        ? currentVoiceLanguage.code === null
                                             ? t('settings.voice.autoDetect')
-                                            : getLanguageDisplayName(lang)
-                                        return (
-                                            <button
-                                                key={lang.code ?? 'auto'}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleVoiceLanguageChange(lang)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{displayName}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
+                                            : getLanguageDisplayName(currentVoiceLanguage)
+                                        : t('settings.voice.autoDetect')}
+                                </span>
+                                <ChevronDownIcon className={`transition-transform ${openSheet === 'voice' ? 'rotate-180' : ''}`} />
+                            </span>
+                        </button>
+
+                        <ActionSheetSelect
+                            open={openSheet === 'voice'}
+                            onOpenChange={(open) => setOpenSheet(open ? 'voice' : null)}
+                            title={t('settings.voice.title')}
+                            value={voiceLanguage}
+                            options={voiceLanguages.map((lang) => ({
+                                value: lang.code,
+                                label: lang.code === null ? t('settings.voice.autoDetect') : getLanguageDisplayName(lang),
+                            }))}
+                            onValueChange={(nextCode: string | null) => {
+                                setVoiceLanguage(nextCode)
+                                if (nextCode === null) {
+                                    localStorage.removeItem('hapi-voice-lang')
+                                } else {
+                                    localStorage.setItem('hapi-voice-lang', nextCode)
+                                }
+                            }}
+                        />
                     </div>
 
                     {/* About section */}

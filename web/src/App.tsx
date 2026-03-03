@@ -3,6 +3,7 @@ import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-r
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
 import { initializeTheme } from '@/hooks/useTheme'
+import { initializeMotionPreference } from '@/hooks/useMotionPreference'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
 import { useServerUrl } from '@/hooks/useServerUrl'
@@ -52,6 +53,7 @@ function AppInner() {
         tg?.ready()
         tg?.expand()
         initializeTheme()
+        initializeMotionPreference()
     }, [])
 
     useEffect(() => {
