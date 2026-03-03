@@ -237,17 +237,18 @@ describe('SSEManager namespace filtering', () => {
         expect(received).toHaveLength(1)
     })
 
-    it('delivers task/project/workspace updates to session-scoped subscriptions', () => {
+    it('delivers task/project/workspace updates to project-scoped subscriptions', () => {
         const manager = new SSEManager(0, new VisibilityTracker())
-        const receivedSessionScoped: SyncEvent[] = []
+        const receivedProjectScoped: SyncEvent[] = []
 
         manager.subscribe({
-            id: 'session-scoped',
+            id: 'project-scoped',
             namespace: 'alpha',
             all: false,
-            sessionId: 's1',
+            projectId: 'p1',
+            include: ['tasks', 'projects', 'workspaces'],
             send: (event) => {
-                receivedSessionScoped.push(event)
+                receivedProjectScoped.push(event)
             },
             sendHeartbeat: () => { }
         })
@@ -273,24 +274,25 @@ describe('SSEManager namespace filtering', () => {
             data: { workspaceId: 'w1' }
         })
 
-        expect(receivedSessionScoped.map((event) => event.type)).toEqual([
+        expect(receivedProjectScoped.map((event) => event.type)).toEqual([
             'task-updated',
             'project-updated',
             'workspace-updated'
         ])
     })
 
-    it('delivers task/project/workspace updates to session-scoped subscriptions', () => {
+    it('does not deliver task updates to session-scoped subscriptions unless explicitly scoped', () => {
         const manager = new SSEManager(0, new VisibilityTracker())
-        const receivedSessionScoped: SyncEvent[] = []
+        const received: SyncEvent[] = []
 
         manager.subscribe({
             id: 'session-scoped',
             namespace: 'alpha',
             all: false,
             sessionId: 's1',
+            include: ['messages', 'sessions'],
             send: (event) => {
-                receivedSessionScoped.push(event)
+                received.push(event)
             },
             sendHeartbeat: () => { }
         })
@@ -302,24 +304,7 @@ describe('SSEManager namespace filtering', () => {
             namespace: 'alpha',
             data: { taskId: 't1' }
         })
-        manager.broadcast({
-            type: 'project-updated',
-            projectId: 'p1',
-            namespace: 'alpha',
-            data: { projectId: 'p1' }
-        })
-        manager.broadcast({
-            type: 'workspace-updated',
-            workspaceId: 'w1',
-            projectId: 'p1',
-            namespace: 'alpha',
-            data: { workspaceId: 'w1' }
-        })
 
-        expect(receivedSessionScoped.map((event) => event.type)).toEqual([
-            'task-updated',
-            'project-updated',
-            'workspace-updated'
-        ])
+        expect(received).toHaveLength(0)
     })
 })

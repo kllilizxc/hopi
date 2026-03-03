@@ -98,7 +98,7 @@ function toMessageReceivedEvent(sessionId: string, msg: {
 }
 
 describe('TaskAutomation', () => {
-    it('flips task to in_review when assistant message arrives after thinking stops', () => {
+    it('flips task to in_review on ready', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -115,7 +115,7 @@ describe('TaskAutomation', () => {
             namespace,
             projectId,
             taskId,
-            thinking: true
+            thinking: false
         })
 
         store.tasks.createTask({
@@ -137,7 +137,6 @@ describe('TaskAutomation', () => {
         } as unknown as SyncEngine
 
         const automation = new TaskAutomation(store, engine)
-
         automation.handleEvent({ type: 'session-added', sessionId })
 
         const userMsg = store.messages.addMessage(sessionId, {
@@ -146,19 +145,6 @@ describe('TaskAutomation', () => {
             meta: { sentFrom: 'webapp' }
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        session.thinking = false
-        automation.handleEvent({ type: 'session-updated', sessionId })
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
-
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'done' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
 
         const readyMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
@@ -170,423 +156,7 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
-    it('flips task to in_review when session is linked only via activeSessionId', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createUnlinkedSession(store, {
-            namespace,
-            thinking: false
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            meta: { sentFrom: 'webapp' }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'done' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
-    })
-
-    it('does not flip to in_review while session is still thinking', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: true
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        store.messages.addMessage(sessionId, { role: 'user', content: { type: 'text', text: 'do thing' }, meta: { sentFrom: 'webapp' } })
-
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'partial reply' } }
-        })
-
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
-    })
-
-    it('flips task to in_review when a non-role message trails the assistant output', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: true
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            meta: { sentFrom: 'webapp' }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'done' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
-        const trailing = store.messages.addMessage(sessionId, { note: 'trail' })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, trailing))
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        session.thinking = false
-        automation.handleEvent({ type: 'session-updated', sessionId })
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
-    })
-
-    it('flips task to in_review when session becomes active while already idle', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: false
-        })
-
-        session.active = false
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            meta: { sentFrom: 'webapp' }
-        })
-        store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'done' } }
-        })
-        store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready' } }
-        })
-
-        session.active = true
-        automation.handleEvent({ type: 'session-updated', sessionId })
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
-    })
-
-    it('flips task to in_review even when the last automation prompt is older than the last 200 messages', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: false
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            meta: { sentFrom: 'webapp' }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        // Simulate long streaming / tool-heavy turn (prompt pushed out of the last 200 messages)
-        for (let i = 0; i < 210; i += 1) {
-            store.messages.addMessage(sessionId, {
-                role: 'agent',
-                content: { type: 'output', data: { type: 'text', text: `chunk-${i}` } }
-            })
-        }
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
-    })
-
-    it('does not flip to in_review based only on ready correlation fields when no assistant reply message exists', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: false
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const promptLocalId = 'prompt-1'
-
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            localKey: promptLocalId,
-            meta: { sentFrom: 'webapp' }
-        }, promptLocalId)
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        // No assistant output messages stored; ready correlation alone is not enough.
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
-    })
-
-    it('still flips to in_review when ready correlation says hasAssistantReply=false but assistant reply exists', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: false
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine)
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const promptLocalId = 'prompt-1'
-
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            localKey: promptLocalId,
-            meta: { sentFrom: 'webapp' }
-        }, promptLocalId)
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'done' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: false } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
-    })
-
-    it('does not flip to in_review when the turn only has codex tool-call messages before ready', () => {
+    it('flips to in_review even when only codex tool-call messages exist before ready', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -649,70 +219,120 @@ describe('TaskAutomation', () => {
 
         const readyMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
-
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
-    })
-
-    it('can flip to in_review from ready correlation only when backscan is disabled', () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-1'
-        const taskId = 'task-1'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId: 'machine-1',
-            name: 'Test project'
-        })
-
-        const { sessionId, session } = createLinkedSession(store, {
-            namespace,
-            projectId,
-            taskId,
-            thinking: false
-        })
-
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Test task',
-            status: 'in_progress',
-            activeSessionId: sessionId
-        })
-
-        const engine = {
-            getSession(id: string) {
-                return id === sessionId ? session : undefined
-            },
-            handleRealtimeEvent(_event: SyncEvent) {}
-        } as unknown as SyncEngine
-
-        const automation = new TaskAutomation(store, engine, { disableBackscan: true })
-        automation.handleEvent({ type: 'session-added', sessionId })
-
-        const promptLocalId = 'prompt-1'
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            localKey: promptLocalId,
-            meta: { sentFrom: 'webapp' }
-        }, promptLocalId)
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId } }
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
     })
 
-    it('does not flip to in_review from ready when backscan is disabled and hasAssistantReply=false', () => {
+    it('flips to in_review even if ready arrives before thinking=false session update', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: true
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'do thing' },
+            meta: { sentFrom: 'webapp' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+    })
+
+    it('flips task to in_review when session is linked only via activeSessionId', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createUnlinkedSession(store, {
+            namespace,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'do thing' },
+            meta: { sentFrom: 'webapp' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+    })
+
+    it('treats permission pending as in_review (session-updated)', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -740,6 +360,62 @@ describe('TaskAutomation', () => {
             activeSessionId: sessionId
         })
 
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        session.agentState = {
+            requests: {
+                'req-1': {
+                    type: 'filesystem',
+                    title: 'allow read',
+                    createdAt: Date.now()
+                }
+            }
+        }
+        automation.handleEvent({ type: 'session-updated', sessionId })
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
+    })
+
+    it('moves in_review back to in_progress when session starts thinking again', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_review',
+            activeSessionId: sessionId
+        })
+
         const engine = {
             getSession(id: string) {
                 return id === sessionId ? session : undefined
@@ -747,23 +423,11 @@ describe('TaskAutomation', () => {
             handleRealtimeEvent(_event: SyncEvent) {}
         } as unknown as SyncEngine
 
-        const automation = new TaskAutomation(store, engine, { disableBackscan: true })
+        const automation = new TaskAutomation(store, engine)
         automation.handleEvent({ type: 'session-added', sessionId })
 
-        const promptLocalId = 'prompt-1'
-        const userMsg = store.messages.addMessage(sessionId, {
-            role: 'user',
-            content: { type: 'text', text: 'do thing' },
-            localKey: promptLocalId,
-            meta: { sentFrom: 'webapp' }
-        }, promptLocalId)
-        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
-
-        const readyMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: false } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+        session.thinking = true
+        automation.handleEvent({ type: 'session-updated', sessionId })
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
@@ -824,15 +488,9 @@ describe('TaskAutomation', () => {
         expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
         expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
 
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'conflicts resolved' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
         const readyMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
-            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId, hasAssistantReply: true } }
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId } }
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
@@ -900,12 +558,6 @@ describe('TaskAutomation', () => {
         expect(afterPrompt?.worktreeMergeCommit).toBeNull()
         expect(afterPrompt?.finishedAt).toBeNull()
 
-        const assistantMsg = store.messages.addMessage(sessionId, {
-            role: 'agent',
-            content: { type: 'output', data: { type: 'text', text: 'working' } }
-        })
-        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
-
         const readyMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
             content: { type: 'event', data: { type: 'ready' } }
@@ -916,3 +568,4 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 })
+

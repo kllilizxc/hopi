@@ -18,8 +18,11 @@ import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useSSE } from '@/hooks/useSSE'
 import { useVoiceOptional } from '@/lib/voice-context'
+import { useAppContext } from '@/lib/app-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
+import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 
 function getMessageSentFrom(meta: unknown): string | null {
     if (!meta || typeof meta !== 'object') return null
@@ -147,16 +150,6 @@ async function waitForTaskMerged(api: ApiClient, taskId: string): Promise<boolea
     return false
 }
 
-function getReadyEvent(event: AgentEvent): { forLocalKey: string | null; hasAssistantReply: boolean | null } | null {
-    if (event.type !== 'ready') {
-        return null
-    }
-    return {
-        forLocalKey: typeof event.forLocalKey === 'string' ? event.forLocalKey : null,
-        hasAssistantReply: typeof event.hasAssistantReply === 'boolean' ? event.hasAssistantReply : null
-    }
-}
-
 function isInterruptedEvent(event: AgentEvent): boolean {
     if (event.type === 'api-error') {
         const retryAttempt = typeof event.retryAttempt === 'number' ? event.retryAttempt : null
@@ -173,59 +166,6 @@ function isInterruptedEvent(event: AgentEvent): boolean {
         || message.includes('process exited unexpectedly')
         || message.includes('prompt failed')
         || message.includes('task failed')
-}
-
-function shouldShowContinueAction(session: Session, normalized: NormalizedMessage[]): boolean {
-    let latestPrompt: NormalizedMessage | null = null
-
-    for (const msg of normalized) {
-        if (msg.role !== 'user') {
-            continue
-        }
-        if (getMessageSentFrom(msg.meta) === 'cli') {
-            continue
-        }
-        latestPrompt = msg
-    }
-
-    if (!latestPrompt) {
-        return false
-    }
-
-    let readyForPrompt: { forLocalKey: string | null; hasAssistantReply: boolean | null } | null = null
-    let fallbackReady: { forLocalKey: string | null; hasAssistantReply: boolean | null } | null = null
-    let hasFailureSignal = false
-
-    for (const msg of normalized) {
-        if (msg.createdAt < latestPrompt.createdAt || msg.role !== 'event') {
-            continue
-        }
-
-        const ready = getReadyEvent(msg.content)
-        if (ready) {
-            if (latestPrompt.localId && ready.forLocalKey === latestPrompt.localId) {
-                readyForPrompt = ready
-            } else if (!latestPrompt.localId && !ready.forLocalKey) {
-                fallbackReady = ready
-            }
-            continue
-        }
-
-        if (isInterruptedEvent(msg.content)) {
-            hasFailureSignal = true
-        }
-    }
-
-    const resolvedReady = readyForPrompt ?? fallbackReady
-    if (resolvedReady) {
-        return resolvedReady.hasAssistantReply === false
-    }
-
-    if (session.thinking) {
-        return false
-    }
-
-    return hasFailureSignal
 }
 
 export function SessionChat(props: {
@@ -251,6 +191,7 @@ export function SessionChat(props: {
     onViewDiffs?: () => void
     onViewTerminal?: () => void
 }) {
+    const { token, baseUrl } = useAppContext()
     const { haptic } = usePlatform()
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
@@ -264,6 +205,7 @@ export function SessionChat(props: {
     const [mergeEvents, setMergeEvents] = useState<MergeThreadEvent[]>([])
     const mergeEventSeqRef = useRef(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
+    const hasPendingRequests = Boolean(props.session.agentState?.requests && Object.keys(props.session.agentState.requests).length > 0)
 
     const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
     const taskParamsFromRoute = taskRouteMatch
@@ -280,7 +222,7 @@ export function SessionChat(props: {
         : `session:${props.session.id}`
     const { task } = useTask(props.api, taskId)
     const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
-    const shouldQueryMergeState = Boolean(taskId && task?.status === 'in_review')
+    const shouldQueryMergeState = Boolean(taskId && task?.status === 'in_review' && !hasPendingRequests)
     const { state: mergeState, isLoading: isMergeStateLoading } = useTaskWorktreeMergeState(
         props.api,
         taskId,
@@ -291,6 +233,7 @@ export function SessionChat(props: {
         && !isMergeStateLoading
         && mergeState?.canMerge
         && !mergeActionHidden
+        && !hasPendingRequests
     )
     const isMergeBusy = isMergePending || isMergeFinalizing
 
@@ -619,9 +562,13 @@ export function SessionChat(props: {
 
     const effectiveIsRunning = props.session.thinking
         || (!ignoreRunningFallback && shouldTreatSessionAsRunningFallback(props.session, normalizedMessages))
-    const showContinueAction = useMemo(
-        () => shouldShowContinueAction(props.session, normalizedMessages),
-        [props.session, normalizedMessages]
+    const showContinueAction = Boolean(
+        taskId
+        && task
+        && task.status === 'in_review'
+        && !task.archivedAt
+        && !task.finishedAt
+        && !hasPendingRequests
     )
 
     const runtime = useHappyRuntime({
@@ -633,6 +580,26 @@ export function SessionChat(props: {
         attachmentAdapter,
         allowSendWhenInactive: true,
         isRunning: effectiveIsRunning
+    })
+
+    const { subscriptionId: sessionSubscriptionId } = useSSE({
+        enabled: Boolean(token && baseUrl && props.session.id),
+        token,
+        baseUrl,
+        subscription: {
+            all: false,
+            sessionId: props.session.id,
+            include: ['messages', 'sessions']
+        },
+        onConnect: undefined,
+        onDisconnect: undefined,
+        onEvent: () => {}
+    })
+
+    useVisibilityReporter({
+        api: props.api,
+        subscriptionId: sessionSubscriptionId,
+        enabled: Boolean(token && baseUrl)
     })
 
     return (
@@ -676,10 +643,10 @@ export function SessionChat(props: {
                         messagesVersion={props.messagesVersion}
                         forceScrollToken={forceScrollToken}
                         showContinueAction={showContinueAction}
-                        continueActionDisabled={props.isSending || effectiveIsRunning}
+                        continueActionDisabled={props.isSending || effectiveIsRunning || hasPendingRequests}
                         onContinueAction={handleContinue}
                         showMergeAction={shouldShowMergeAction}
-                        mergeActionDisabled={effectiveIsRunning || isMergeBusy}
+                        mergeActionDisabled={effectiveIsRunning || isMergeBusy || hasPendingRequests}
                         mergeActionLabel={isMergeBusy ? 'Merging...' : 'Merge'}
                         onMergeAction={() => {
                             void handleMergeAction()

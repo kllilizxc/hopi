@@ -15,6 +15,8 @@ type SSESubscription = {
     all?: boolean
     sessionId?: string
     machineId?: string
+    projectId?: string
+    include?: ReadonlyArray<'messages' | 'sessions' | 'machines' | 'projects' | 'workspaces' | 'tasks' | 'toasts'>
 }
 
 type VisibilityState = 'visible' | 'hidden'
@@ -201,6 +203,12 @@ function buildEventsUrl(
     if (subscription.machineId) {
         params.set('machineId', subscription.machineId)
     }
+    if (subscription.projectId) {
+        params.set('projectId', subscription.projectId)
+    }
+    if (subscription.include && subscription.include.length > 0) {
+        params.set('include', subscription.include.join(','))
+    }
 
     const path = `/api/events?${params.toString()}`
     try {
@@ -253,8 +261,9 @@ export function useSSE(options: {
     const subscription = options.subscription ?? {}
 
     const subscriptionKey = useMemo(() => {
-        return `${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
-    }, [subscription.all, subscription.sessionId, subscription.machineId])
+        const includeKey = subscription.include ? [...subscription.include].sort().join(',') : ''
+        return `${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}|${subscription.projectId ?? ''}|${includeKey}`
+    }, [subscription.all, subscription.include, subscription.machineId, subscription.projectId, subscription.sessionId])
 
     useEffect(() => {
         if (!options.enabled) {

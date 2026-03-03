@@ -2,15 +2,30 @@ import type { SyncEvent } from '../sync/syncEngine'
 import type { VisibilityState } from '../visibility/visibilityTracker'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 
+export const SSE_EVENT_CATEGORIES = [
+    'messages',
+    'sessions',
+    'machines',
+    'projects',
+    'workspaces',
+    'tasks',
+    'toasts',
+] as const
+
+export type SSEEventCategory = (typeof SSE_EVENT_CATEGORIES)[number]
+
 export type SSESubscription = {
     id: string
     namespace: string
     all: boolean
+    include: SSEEventCategory[] | null
     sessionId: string | null
     machineId: string | null
+    projectId: string | null
 }
 
 type SSEConnection = SSESubscription & {
+    includeSet: ReadonlySet<SSEEventCategory> | null
     send: (event: SyncEvent) => void | Promise<void>
     sendHeartbeat: () => void | Promise<void>
 }
@@ -30,18 +45,26 @@ export class SSEManager {
         id: string
         namespace: string
         all?: boolean
+        include?: SSEEventCategory[] | null
         sessionId?: string | null
         machineId?: string | null
+        projectId?: string | null
         visibility?: VisibilityState
         send: (event: SyncEvent) => void | Promise<void>
         sendHeartbeat: () => void | Promise<void>
     }): SSESubscription {
+        const include = options.include ?? null
+        const includeSet = include ? new Set(include) : null
+
         const subscription: SSEConnection = {
             id: options.id,
             namespace: options.namespace,
             all: Boolean(options.all),
+            include,
+            includeSet,
             sessionId: options.sessionId ?? null,
             machineId: options.machineId ?? null,
+            projectId: options.projectId ?? null,
             send: options.send,
             sendHeartbeat: options.sendHeartbeat
         }
@@ -57,8 +80,10 @@ export class SSEManager {
             id: subscription.id,
             namespace: subscription.namespace,
             all: subscription.all,
+            include: subscription.include,
             sessionId: subscription.sessionId,
-            machineId: subscription.machineId
+            machineId: subscription.machineId,
+            projectId: subscription.projectId
         }
     }
 
@@ -89,6 +114,9 @@ export class SSEManager {
                 continue
             }
             if (!this.visibilityTracker.isVisibleConnection(connection.id)) {
+                continue
+            }
+            if (connection.includeSet && !connection.includeSet.has('toasts')) {
                 continue
             }
 
@@ -195,31 +223,69 @@ export class SSEManager {
             return false
         }
 
-        if (event.type === 'message-received') {
-            if (connection.all) {
-                return true
-            }
-            return connection.sessionId === event.sessionId
+        const category = getEventCategory(event)
+        if (connection.includeSet && category && !connection.includeSet.has(category)) {
+            return false
         }
 
         if (connection.all) {
             return true
         }
 
-        if ('sessionId' in event && connection.sessionId === event.sessionId) {
-            return true
+        if (category === 'messages' || category === 'sessions') {
+            return Boolean(connection.sessionId && 'sessionId' in event && connection.sessionId === event.sessionId)
         }
 
-        if ('machineId' in event && connection.machineId === event.machineId) {
-            return true
+        if (category === 'machines') {
+            return Boolean(connection.machineId && 'machineId' in event && connection.machineId === event.machineId)
         }
 
-        // Session-scoped streams still need project/task/workspace updates so task cards
-        // and board state stay fresh while users are inside a specific session route.
-        if (event.type.startsWith('project-') || event.type.startsWith('workspace-') || event.type.startsWith('task-')) {
+        if (category === 'projects') {
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
+        }
+
+        if (category === 'workspaces' || category === 'tasks') {
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
+        }
+
+        if (category === 'toasts') {
+            // Toasts are namespace-wide and do not carry a stable scope key.
             return true
         }
 
         return false
+    }
+}
+
+function getEventCategory(event: SyncEvent): SSEEventCategory | null {
+    switch (event.type) {
+        case 'message-received':
+            return 'messages'
+        case 'session-added':
+        case 'session-updated':
+        case 'session-removed':
+            return 'sessions'
+        case 'machine-updated':
+            return 'machines'
+        case 'project-added':
+        case 'project-updated':
+        case 'project-removed':
+            return 'projects'
+        case 'workspace-added':
+        case 'workspace-updated':
+        case 'workspace-removed':
+            return 'workspaces'
+        case 'task-added':
+        case 'task-updated':
+        case 'task-removed':
+            return 'tasks'
+        case 'toast':
+            return 'toasts'
+        case 'connection-changed':
+            return null
+        default: {
+            const _exhaustive: never = event
+            return _exhaustive
+        }
     }
 }

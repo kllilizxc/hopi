@@ -111,6 +111,8 @@ function AppInner() {
     const queryClient = useQueryClient()
     const sessionMatch = matchRoute({ to: '/sessions/$sessionId', fuzzy: true })
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
+    const projectMatch = matchRoute({ to: '/projects/$projectId', fuzzy: true })
+    const selectedProjectId = projectMatch ? projectMatch.projectId : null
     const { isSyncing, startSync, endSync } = useSyncingState()
     const [sseDisconnected, setSseDisconnected] = useState(false)
     const syncTokenRef = useRef(0)
@@ -238,11 +240,37 @@ function AppInner() {
     }, [addToast])
 
     const eventSubscription = useMemo(() => {
-        if (selectedSessionId) {
-            return { sessionId: selectedSessionId }
+        const includeToasts = ['toasts'] as const
+        const includeMachines = ['machines'] as const
+
+        if (selectedProjectId) {
+            return {
+                all: false,
+                projectId: selectedProjectId,
+                include: ['projects', 'workspaces', 'tasks', ...includeMachines, ...includeToasts] as const
+            }
         }
-        return { all: true }
-    }, [selectedSessionId])
+
+        if (pathname.startsWith('/projects')) {
+            return {
+                all: true,
+                include: ['projects', ...includeMachines, ...includeToasts] as const
+            }
+        }
+
+        if (pathname.startsWith('/sessions') && !selectedSessionId) {
+            return {
+                all: true,
+                include: ['sessions', ...includeMachines, ...includeToasts] as const
+            }
+        }
+
+        // Default: keep toasts flowing, but avoid message/session noise.
+        return {
+            all: true,
+            include: [...includeMachines, ...includeToasts] as const
+        }
+    }, [pathname, selectedProjectId, selectedSessionId])
 
     const { subscriptionId } = useSSE({
         enabled: Boolean(api && token),

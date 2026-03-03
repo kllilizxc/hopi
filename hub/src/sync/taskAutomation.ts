@@ -5,17 +5,6 @@ import type { SyncEngine } from './syncEngine'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
-const DISABLE_BACKSCAN_ENV = 'HAPI_TASK_AUTOMATION_DISABLE_BACKSCAN'
-
-type TaskAutomationOptions = {
-    disableBackscan?: boolean
-}
-
-function isTruthyEnv(value: string | undefined): boolean {
-    if (!value) return false
-    const normalized = value.trim().toLowerCase()
-    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
-}
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -61,7 +50,6 @@ function isReadyEventMessage(message: DecryptedMessage): boolean {
 
 type ReadyEventDetails = {
     forLocalKey: string | null
-    hasAssistantReply: boolean | null
 }
 
 function getReadyEventDetails(message: DecryptedMessage): ReadyEventDetails | null {
@@ -81,116 +69,8 @@ function getReadyEventDetails(message: DecryptedMessage): ReadyEventDetails | nu
     const forLocalKey = 'forLocalKey' in data && typeof (data as { forLocalKey?: unknown }).forLocalKey === 'string'
         ? (data as { forLocalKey: string }).forLocalKey
         : null
-    const hasAssistantReply = 'hasAssistantReply' in data && typeof (data as { hasAssistantReply?: unknown }).hasAssistantReply === 'boolean'
-        ? (data as { hasAssistantReply: boolean }).hasAssistantReply
-        : null
 
-    return { forLocalKey, hasAssistantReply }
-}
-
-function isNonEmptyText(value: unknown): boolean {
-    return typeof value === 'string' && value.trim().length > 0
-}
-
-function hasAssistantTextInOutputPayload(payload: unknown): boolean {
-    if (isNonEmptyText(payload)) {
-        return true
-    }
-
-    if (!payload || typeof payload !== 'object') {
-        return false
-    }
-
-    const record = payload as Record<string, unknown>
-    const type = typeof record.type === 'string' ? record.type : null
-
-    if (type === 'text') {
-        return isNonEmptyText(record.text)
-    }
-
-    if (type === 'summary') {
-        return isNonEmptyText(record.summary)
-    }
-
-    if (type === 'assistant') {
-        const message = record.message
-        if (!message || typeof message !== 'object') {
-            return false
-        }
-
-        const content = (message as { content?: unknown }).content
-        if (isNonEmptyText(content)) {
-            return true
-        }
-
-        if (Array.isArray(content)) {
-            return content.some((item) => {
-                if (!item || typeof item !== 'object') {
-                    return false
-                }
-                const part = item as Record<string, unknown>
-                const partType = typeof part.type === 'string' ? part.type : null
-                if (partType !== null && partType !== 'text') {
-                    return false
-                }
-                return isNonEmptyText(part.text)
-            })
-        }
-    }
-
-    return false
-}
-
-function hasAssistantTextInCodexPayload(payload: unknown): boolean {
-    if (!payload || typeof payload !== 'object') {
-        return false
-    }
-
-    const record = payload as Record<string, unknown>
-    if (record.type !== 'message') {
-        return false
-    }
-
-    return isNonEmptyText(record.message)
-}
-
-function isAssistantReplyMessage(message: DecryptedMessage): boolean {
-    if (isReadyEventMessage(message)) return false
-    const record = unwrapRoleWrappedRecordEnvelope(message.content)
-    if (!record) return false
-    if (record.role !== 'assistant' && record.role !== 'agent') return false
-
-    const content = record.content
-    if (isNonEmptyText(content)) {
-        return true
-    }
-
-    if (!content || typeof content !== 'object') {
-        return false
-    }
-
-    if (!('type' in content)) {
-        return false
-    }
-
-    const type = (content as { type?: unknown }).type
-    if (type === 'event') {
-        return false
-    }
-
-    if (type === 'text') {
-        return isNonEmptyText((content as { text?: unknown }).text)
-    }
-
-    if (type === 'output') {
-        return hasAssistantTextInOutputPayload((content as { data?: unknown }).data)
-    }
-
-    if (type === 'codex') {
-        return hasAssistantTextInCodexPayload((content as { data?: unknown }).data)
-    }
-
-    return false
+    return { forLocalKey }
 }
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
@@ -255,17 +135,13 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
 }
 
 export class TaskAutomation {
-    private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly autoCommitInFlightBySessionId: Set<string> = new Set()
-    private readonly disableBackscan: boolean
 
     constructor(
         private readonly store: Store,
-        private readonly engine: SyncEngine,
-        options?: TaskAutomationOptions
+        private readonly engine: SyncEngine
     ) {
-        this.disableBackscan = options?.disableBackscan ?? isTruthyEnv(process.env[DISABLE_BACKSCAN_ENV])
     }
 
     handleEvent(event: SyncEvent): void {
@@ -276,14 +152,12 @@ export class TaskAutomation {
         if (event.type === 'session-added' && event.sessionId) {
             const session = this.engine.getSession(event.sessionId)
             if (session) {
-                this.lastActiveBySessionId.set(event.sessionId, Boolean(session.active))
                 this.lastThinkingBySessionId.set(event.sessionId, Boolean(session.thinking))
             }
             return
         }
 
         if (event.type === 'session-removed' && event.sessionId) {
-            this.lastActiveBySessionId.delete(event.sessionId)
             this.lastThinkingBySessionId.delete(event.sessionId)
             this.autoCommitInFlightBySessionId.delete(event.sessionId)
             return
@@ -304,19 +178,19 @@ export class TaskAutomation {
         const session = this.engine.getSession(sessionId)
         if (!session) return
 
-        const previousActive = this.lastActiveBySessionId.get(sessionId)
-        const currentActive = Boolean(session.active)
-        this.lastActiveBySessionId.set(sessionId, currentActive)
+        const previousThinking = this.lastThinkingBySessionId.get(sessionId)
+        const currentThinking = Boolean(session.thinking)
+        this.lastThinkingBySessionId.set(sessionId, currentThinking)
 
-        const previous = this.lastThinkingBySessionId.get(sessionId)
-        const current = Boolean(session.thinking)
-        this.lastThinkingBySessionId.set(sessionId, current)
+        const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+        if (hasPendingRequests) {
+            this.tryMoveToInReviewForPermissionRequest(sessionId)
+            return
+        }
 
-        const thinkingStopped = previous === true && current === false
-        const becameActiveWhileIdle = previousActive !== true && currentActive === true && current === false
-
-        if (!this.disableBackscan && (thinkingStopped || becameActiveWhileIdle)) {
-            this.tryFlipToInReview(sessionId)
+        const startedThinking = previousThinking !== true && currentThinking === true
+        if (startedThinking) {
+            this.tryMoveToInProgressWhenThinking(sessionId)
         }
     }
 
@@ -354,10 +228,7 @@ export class TaskAutomation {
         }
 
         if (getMessageRole(message) === 'assistant' && isReadyEventMessage(message)) {
-            const handled = this.tryFlipToInReviewFromReady(sessionId, message)
-            if (!handled && !this.disableBackscan) {
-                this.tryFlipToInReview(sessionId)
-            }
+            this.tryMoveToInReviewFromReady(sessionId, message)
             this.maybeAutoCommitWorktreeFromReady(sessionId, message)
             return
         }
@@ -385,25 +256,19 @@ export class TaskAutomation {
 
         const shouldCommit = (() => {
             const details = getReadyEventDetails(readyMessage)
-            if (details?.forLocalKey) {
-                const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
-                if (!storedPrompt) return false
-                const prompt: DecryptedMessage = {
-                    id: storedPrompt.id,
-                    seq: storedPrompt.seq,
-                    localId: storedPrompt.localId,
-                    content: storedPrompt.content,
-                    createdAt: storedPrompt.createdAt
-                }
-                return isAutomationPromptMessage(prompt)
+            if (!details?.forLocalKey) return false
+
+            const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
+            if (!storedPrompt) return false
+
+            const prompt: DecryptedMessage = {
+                id: storedPrompt.id,
+                seq: storedPrompt.seq,
+                localId: storedPrompt.localId,
+                content: storedPrompt.content,
+                createdAt: storedPrompt.createdAt
             }
-
-            if (this.disableBackscan) return false
-
-            const scan = this.scanForLatestPromptAndReady(sessionId, isAutomationPromptMessage)
-            if (!scan) return false
-            if (scan.readySeq !== readyMessage.seq) return false
-            return true
+            return isAutomationPromptMessage(prompt)
         })()
 
         if (!shouldCommit) return
@@ -445,111 +310,7 @@ export class TaskAutomation {
             })
     }
 
-    private hasAssistantReplyBetween(
-        sessionId: string,
-        promptSeq: number,
-        readySeq: number
-    ): boolean {
-        if (readySeq <= promptSeq) {
-            return false
-        }
-
-        const PAGE_SIZE = 200
-        const MAX_SCAN_MESSAGES = 50_000
-
-        let beforeSeq: number | undefined = readySeq
-        let scanned = 0
-
-        while (scanned < MAX_SCAN_MESSAGES) {
-            const page = this.store.messages.getMessages(sessionId, PAGE_SIZE, beforeSeq)
-            if (page.length === 0) {
-                break
-            }
-
-            scanned += page.length
-
-            for (let i = page.length - 1; i >= 0; i -= 1) {
-                const msg = page[i]
-
-                if (msg.seq <= promptSeq) {
-                    return false
-                }
-                if (msg.seq >= readySeq) {
-                    continue
-                }
-                if (isAssistantReplyMessage(msg)) {
-                    return true
-                }
-            }
-
-            beforeSeq = page[0]?.seq
-        }
-
-        return false
-    }
-
-    private tryFlipToInReviewFromReady(sessionId: string, readyMessage: DecryptedMessage): boolean {
-        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
-        if (!linked) return true
-
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
-        if (!current) return true
-        if (current.archivedAt) return true
-        if (current.status !== 'in_progress') return true
-
-        const details = getReadyEventDetails(readyMessage)
-        if (!details) return false
-
-        // Correlation missing: fall back.
-        if (!details.forLocalKey) {
-            if (this.disableBackscan) return true
-            return false
-        }
-
-        const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
-        if (!storedPrompt) {
-            if (this.disableBackscan) return true
-            return false
-        }
-
-        const prompt: DecryptedMessage = {
-            id: storedPrompt.id,
-            seq: storedPrompt.seq,
-            localId: storedPrompt.localId,
-            content: storedPrompt.content,
-            createdAt: storedPrompt.createdAt
-        }
-
-        // Ignore internal improvements-scan prompts when deriving task progress.
-        if (!isTaskProgressPromptMessage(prompt)) {
-            return true
-        }
-
-        if (this.disableBackscan) {
-            if (details.hasAssistantReply !== true) {
-                return true
-            }
-        } else if (!this.hasAssistantReplyBetween(sessionId, prompt.seq, readyMessage.seq)) {
-            return true
-        }
-
-        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'in_review'
-        })
-        if (updated) {
-            this.engine.handleRealtimeEvent({
-                type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
-                namespace: linked.namespace,
-                data: { taskId: updated.id }
-            })
-        }
-
-        return true
-    }
-
-    private tryFlipToInReview(sessionId: string): void {
+    private tryMoveToInReviewFromReady(sessionId: string, readyMessage: DecryptedMessage): void {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
@@ -558,9 +319,24 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_progress') return
 
-        const scanResult = this.scanForLatestPromptAndReady(sessionId, isTaskProgressPromptMessage)
-        if (!scanResult) return
-        if (!scanResult.hasAssistantReply) return
+        const details = getReadyEventDetails(readyMessage)
+        if (details?.forLocalKey) {
+            const storedPrompt = this.store.messages.getMessageByLocalId(sessionId, details.forLocalKey)
+            if (storedPrompt) {
+                const prompt: DecryptedMessage = {
+                    id: storedPrompt.id,
+                    seq: storedPrompt.seq,
+                    localId: storedPrompt.localId,
+                    content: storedPrompt.content,
+                    createdAt: storedPrompt.createdAt
+                }
+
+                // Internal automation turns should not affect human-facing task progress.
+                if (!isTaskProgressPromptMessage(prompt)) {
+                    return
+                }
+            }
+        }
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: 'in_review'
@@ -576,67 +352,49 @@ export class TaskAutomation {
         }
     }
 
-    private scanForLatestPromptAndReady(
-        sessionId: string,
-        isPromptMessage: (message: DecryptedMessage) => boolean
-    ): {
-        promptSeq: number
-        readySeq: number
-        hasAssistantReply: boolean
-    } | null {
-        /**
-         * Problem: store.messages.getMessages() hard-caps at 200 messages.
-         * Long turns (streaming output / many tool calls) can push the prompt outside the last 200 messages,
-         * causing lastPromptIndex to be -1 and blocking the flip.
-         *
-         * Strategy: page backwards from the end until we find the latest ready + the latest tracked prompt.
-         * While paging between ready → prompt, track whether any assistant reply happened.
-         */
+    private tryMoveToInReviewForPermissionRequest(sessionId: string): void {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return
 
-        const PAGE_SIZE = 200
-        // Guardrail: avoid unbounded scans in huge sessions.
-        // 50k messages ~= "very long / very chatty" agent turns (streaming output, tool spam).
-        const MAX_SCAN_MESSAGES = 50_000
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current) return
+        if (current.archivedAt) return
+        if (current.status !== 'in_progress') return
 
-        let beforeSeq: number | undefined
-        let scanned = 0
-
-        let promptSeq: number | null = null
-        let readySeq: number | null = null
-        let hasAssistantReply = false
-
-        while (scanned < MAX_SCAN_MESSAGES && (promptSeq === null || readySeq === null)) {
-            const page = this.store.messages.getMessages(sessionId, PAGE_SIZE, beforeSeq)
-            if (page.length === 0) {
-                break
-            }
-
-            scanned += page.length
-
-            for (let i = page.length - 1; i >= 0; i -= 1) {
-                const msg = page[i]
-
-                if (readySeq === null && isReadyEventMessage(msg)) {
-                    readySeq = msg.seq
-                    continue
-                }
-
-                if (promptSeq === null && isPromptMessage(msg)) {
-                    promptSeq = msg.seq
-                    break
-                }
-
-                if (readySeq !== null && promptSeq === null && isAssistantReplyMessage(msg)) {
-                    hasAssistantReply = true
-                }
-            }
-
-            beforeSeq = page[0]?.seq
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: 'in_review'
+        })
+        if (updated) {
+            this.engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace: linked.namespace,
+                data: { taskId: updated.id }
+            })
         }
+    }
 
-        if (promptSeq === null || readySeq === null) return null
-        if (readySeq <= promptSeq) return null
+    private tryMoveToInProgressWhenThinking(sessionId: string): void {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return
 
-        return { promptSeq, readySeq, hasAssistantReply }
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current) return
+        if (current.archivedAt) return
+        if (current.status !== 'in_review') return
+
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: 'in_progress'
+        })
+        if (updated) {
+            this.engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace: linked.namespace,
+                data: { taskId: updated.id }
+            })
+        }
     }
 }

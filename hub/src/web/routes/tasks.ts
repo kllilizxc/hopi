@@ -1140,6 +1140,16 @@ export function createTasksRoutes(options: {
             } satisfies TaskWorktreeMergeState)
         }
 
+        const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+        if (hasPendingRequests) {
+            return c.json({
+                ...stateWithSession,
+                canMerge: false,
+                reason: 'session_busy',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
         if (session.thinking) {
             return c.json({
                 ...stateWithSession,
@@ -1217,6 +1227,11 @@ export function createTasksRoutes(options: {
             const session = access.session
             if (!session.metadata?.worktree) {
                 return c.json({ error: 'Session is not a worktree session' }, 400)
+            }
+
+            const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+            if (hasPendingRequests) {
+                return c.json({ error: 'Session is waiting for permission' }, 409)
             }
 
             if (session.thinking) {
