@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPreviewStatus, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
@@ -407,10 +407,6 @@ function TaskDetailsPanel(props: {
     const [startOpen, setStartOpen] = useState(false)
     const [attachOpen, setAttachOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
-    const [previewStatus, setPreviewStatus] = useState<TaskPreviewStatus | null>(null)
-    const [previewBusy, setPreviewBusy] = useState(false)
-    const [previewError, setPreviewError] = useState<string | null>(null)
-    const [previewPort, setPreviewPort] = useState('')
     const sessionId = props.task.activeSessionId ?? null
 
     useEffect(() => {
@@ -425,44 +421,6 @@ function TaskDetailsPanel(props: {
         setNewSubTaskPriority('medium')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.subTasks, props.task.attachments])
-
-    useEffect(() => {
-        setPreviewStatus(null)
-        setPreviewError(null)
-        setPreviewPort('')
-    }, [props.task.id])
-
-    const loadPreviewStatus = useCallback(async () => {
-        if (!api || !sessionId) {
-            setPreviewStatus(null)
-            return
-        }
-        try {
-            const response = await api.getTaskPreview(props.taskId)
-            setPreviewStatus(response.preview)
-            setPreviewError(null)
-        } catch (error) {
-            setPreviewError(error instanceof Error ? error.message : 'Failed to load preview status')
-        }
-    }, [api, sessionId, props.taskId])
-
-    useEffect(() => {
-        if (!sessionId) {
-            setPreviewStatus(null)
-            return
-        }
-        void loadPreviewStatus()
-    }, [sessionId, loadPreviewStatus])
-
-    useEffect(() => {
-        if (!sessionId || previewStatus?.status !== 'starting') {
-            return
-        }
-        const timer = setInterval(() => {
-            void loadPreviewStatus()
-        }, 2_000)
-        return () => clearInterval(timer)
-    }, [sessionId, previewStatus?.status, loadPreviewStatus])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
@@ -486,53 +444,6 @@ function TaskDetailsPanel(props: {
         addToast({ title: t('projects.task.archived'), body: title, sessionId: '', url: '' })
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [archiveTask, props.taskId, props.projectId, addToast, t, title, navigate])
-
-    const handleStartPreview = useCallback(async () => {
-        if (!api || !sessionId) {
-            return
-        }
-        setPreviewBusy(true)
-        setPreviewError(null)
-        try {
-            const trimmedPort = previewPort.trim()
-            const basePort = trimmedPort.length > 0 ? Number.parseInt(trimmedPort, 10) : undefined
-            if (typeof basePort === 'number' && (!Number.isFinite(basePort) || basePort < 1 || basePort > 65535)) {
-                setPreviewError('Invalid port (must be 1-65535)')
-                return
-            }
-
-            const response = await api.startTaskPreview(props.taskId, { mode: 'auto', basePort })
-            setPreviewStatus(response.preview)
-            if (response.preview.url) {
-                addToast({
-                    title: t('projects.task.preview.ready'),
-                    body: response.preview.url,
-                    sessionId: '',
-                    url: ''
-                })
-            }
-        } catch (error) {
-            setPreviewError(error instanceof Error ? error.message : 'Failed to start preview')
-        } finally {
-            setPreviewBusy(false)
-        }
-    }, [api, sessionId, props.taskId, previewPort, addToast])
-
-    const handleStopPreview = useCallback(async () => {
-        if (!api || !sessionId) {
-            return
-        }
-        setPreviewBusy(true)
-        setPreviewError(null)
-        try {
-            const response = await api.stopTaskPreview(props.taskId)
-            setPreviewStatus(response.preview)
-        } catch (error) {
-            setPreviewError(error instanceof Error ? error.message : 'Failed to stop preview')
-        } finally {
-            setPreviewBusy(false)
-        }
-    }, [api, sessionId, props.taskId])
 
     const handleAddFiles = async (files: FileList | null) => {
         if (!files || files.length === 0) return
@@ -1012,87 +923,6 @@ function TaskDetailsPanel(props: {
                                 </Button>
                             </div>
                         )}
-
-                        {sessionId ? (
-                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-2">
-                                <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.task.preview.title')}</div>
-                                <div className="flex flex-wrap items-end gap-2">
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.task.preview.port')}</label>
-                                        <input
-                                            type="number"
-                                            inputMode="numeric"
-                                            min={1}
-                                            max={65535}
-                                            value={previewPort}
-                                            onChange={(e) => setPreviewPort(e.target.value)}
-                                            disabled={previewBusy}
-                                            placeholder="5173"
-                                            className="w-28 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                        />
-                                    </div>
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        onClick={() => {
-                                            void handleStartPreview()
-                                        }}
-                                        disabled={previewBusy}
-                                    >
-                                        {previewBusy ? 'Starting...' : 'Start Preview'}
-                                    </Button>
-                                    {previewStatus?.active ? (
-                                        <Button
-                                            type="button"
-                                            variant="secondary"
-                                            onClick={() => {
-                                                void handleStopPreview()
-                                            }}
-                                            disabled={previewBusy}
-                                        >
-                                            {t('projects.task.preview.stop')}
-                                        </Button>
-                                    ) : null}
-                                </div>
-
-                                <div className="text-xs text-[var(--app-hint)]">
-                                    Status: {previewStatus?.status ?? 'idle'}
-                                </div>
-
-                                {previewStatus?.url ? (
-                                    <div className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2 text-xs break-all">
-                                        {previewStatus.url}
-                                    </div>
-                                ) : null}
-
-                                {previewStatus?.command ? (
-                                    <div className="text-xs text-[var(--app-hint)] break-all">
-                                        Cmd: {previewStatus.command}
-                                    </div>
-                                ) : null}
-
-                                {previewStatus?.error ? (
-                                    <div className="text-xs text-red-600">
-                                        {previewStatus.error}
-                                    </div>
-                                ) : null}
-
-                                {previewError ? (
-                                    <div className="text-xs text-red-600">
-                                        {previewError}
-                                    </div>
-                                ) : null}
-
-                                {previewStatus?.logTail?.length ? (
-                                    <details className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2">
-                                        <summary className="cursor-pointer text-xs text-[var(--app-hint)]">Logs</summary>
-                                        <div className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-snug text-[var(--app-fg)]">
-                                            {previewStatus.logTail.slice(-80).join('\n')}
-                                        </div>
-                                    </details>
-                                ) : null}
-                            </div>
-                        ) : null}
 
                         {overLimit ? (
                             <div className="text-xs text-[var(--app-hint)]">

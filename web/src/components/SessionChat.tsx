@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session } from '@/types/api'
+import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session, TaskPreviewStatus } from '@/types/api'
 import type { AgentEvent, ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
@@ -106,6 +106,12 @@ type MergeThreadEvent = {
     tone?: 'info' | 'success' | 'error'
 }
 
+type PreviewThreadEvent = {
+    id: string
+    text: string
+    tone?: 'info' | 'success' | 'error'
+}
+
 function formatMergeSkippedReason(reason: string): string {
     if (reason === 'already_merged') {
         return '已经合并过了'
@@ -121,6 +127,13 @@ function toErrorMessage(error: unknown): string {
         return error.message
     }
     return String(error)
+}
+
+function isPreviewActive(preview: TaskPreviewStatus | null): boolean {
+    if (!preview?.active) {
+        return false
+    }
+    return preview.status === 'starting' || preview.status === 'ready'
 }
 
 function wait(ms: number): Promise<void> {
@@ -204,6 +217,11 @@ export function SessionChat(props: {
     const [mergeActionHidden, setMergeActionHidden] = useState(false)
     const [mergeEvents, setMergeEvents] = useState<MergeThreadEvent[]>([])
     const mergeEventSeqRef = useRef(0)
+    const [previewStatus, setPreviewStatus] = useState<TaskPreviewStatus | null>(null)
+    const [previewBusy, setPreviewBusy] = useState(false)
+    const [previewEvents, setPreviewEvents] = useState<PreviewThreadEvent[]>([])
+    const previewEventSeqRef = useRef(0)
+    const previewStatusRef = useRef<TaskPreviewStatus | null>(null)
     const agentFlavor = props.session.metadata?.flavor ?? null
     const hasPendingRequests = Boolean(props.session.agentState?.requests && Object.keys(props.session.agentState.requests).length > 0)
 
@@ -314,6 +332,142 @@ export function SessionChat(props: {
             finalizeMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
         }
     }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, navigate, props.api, replaceMergeEvent, taskId, taskProjectId])
+
+    const previewActive = isPreviewActive(previewStatus)
+    const shouldShowPreviewAction = Boolean(
+        taskId
+        && task
+        && task.activeSessionId === props.session.id
+        && !task.archivedAt
+        && !task.finishedAt
+        && !hasPendingRequests
+        && !sessionInactive
+    )
+    const previewActionLabel = previewBusy
+        ? (previewActive ? 'Stopping Preview...' : 'Starting Preview...')
+        : (previewActive ? 'Stop Preview' : 'Preview')
+
+    const appendPreviewEvent = useCallback((text: string, tone: PreviewThreadEvent['tone'] = 'info') => {
+        previewEventSeqRef.current += 1
+        const id = `preview-event-${previewEventSeqRef.current}`
+        setPreviewEvents((prev) => [...prev, { id, text, tone }])
+        return id
+    }, [])
+
+    const replacePreviewEvent = useCallback((id: string, text: string, tone: PreviewThreadEvent['tone'] = 'info') => {
+        setPreviewEvents((prev) => prev.map((event) => (
+            event.id === id
+                ? { ...event, text, tone }
+                : event
+        )))
+    }, [])
+
+    useEffect(() => {
+        previewEventSeqRef.current = 0
+        previewStatusRef.current = null
+        setPreviewStatus(null)
+        setPreviewBusy(false)
+        setPreviewEvents([])
+    }, [props.session.id, taskId])
+
+    const loadPreviewStatus = useCallback(async () => {
+        if (!taskId) {
+            setPreviewStatus(null)
+            previewStatusRef.current = null
+            return
+        }
+        try {
+            const response = await props.api.getTaskPreview(taskId)
+            setPreviewStatus(response.preview)
+        } catch {
+        }
+    }, [props.api, taskId])
+
+    useEffect(() => {
+        if (!shouldShowPreviewAction) {
+            setPreviewStatus(null)
+            previewStatusRef.current = null
+            return
+        }
+        void loadPreviewStatus()
+    }, [loadPreviewStatus, shouldShowPreviewAction])
+
+    useEffect(() => {
+        if (!shouldShowPreviewAction || previewStatus?.status !== 'starting') {
+            return
+        }
+
+        const timer = setInterval(() => {
+            void loadPreviewStatus()
+        }, 2_000)
+        return () => clearInterval(timer)
+    }, [loadPreviewStatus, previewStatus?.status, shouldShowPreviewAction])
+
+    useEffect(() => {
+        const prev = previewStatusRef.current
+        const next = previewStatus
+        previewStatusRef.current = next
+        if (!next) {
+            return
+        }
+
+        if (next.status === 'ready' && next.url && prev?.status === 'starting' && prev.url !== next.url) {
+            appendPreviewEvent(`Preview 已就绪：${next.url}`, 'success')
+            return
+        }
+
+        if (next.status === 'error' && next.error && prev?.status === 'starting' && prev.error !== next.error) {
+            appendPreviewEvent(`Preview 失败：${next.error}`, 'error')
+        }
+    }, [appendPreviewEvent, previewStatus])
+
+    const handlePreviewAction = useCallback(async () => {
+        if (!taskId || previewBusy || !shouldShowPreviewAction) {
+            return
+        }
+
+        setPreviewBusy(true)
+        if (previewActive) {
+            const eventId = appendPreviewEvent('正在停止 Preview...', 'info')
+            const finalizePreviewEvent = (text: string, tone: PreviewThreadEvent['tone']) => {
+                replacePreviewEvent(eventId, text, tone)
+            }
+
+            try {
+                const response = await props.api.stopTaskPreview(taskId)
+                setPreviewStatus(response.preview)
+                finalizePreviewEvent('Preview 已停止', 'info')
+            } catch (error) {
+                finalizePreviewEvent(`停止 Preview 失败：${toErrorMessage(error)}`, 'error')
+            } finally {
+                setPreviewBusy(false)
+            }
+            return
+        }
+
+        const eventId = appendPreviewEvent('正在启动 Preview...', 'info')
+        const finalizePreviewEvent = (text: string, tone: PreviewThreadEvent['tone']) => {
+            replacePreviewEvent(eventId, text, tone)
+        }
+
+        try {
+            const response = await props.api.startTaskPreview(taskId, { mode: 'auto' })
+            setPreviewStatus(response.preview)
+            if (response.preview.status === 'ready' && response.preview.url) {
+                finalizePreviewEvent(`Preview 已就绪：${response.preview.url}`, 'success')
+            } else if (response.preview.status === 'starting') {
+                finalizePreviewEvent('Preview 启动中，等待服务就绪...', 'info')
+            } else if (response.preview.error) {
+                finalizePreviewEvent(`Preview 失败：${response.preview.error}`, 'error')
+            } else {
+                finalizePreviewEvent(`Preview 状态：${response.preview.status}`, 'info')
+            }
+        } catch (error) {
+            finalizePreviewEvent(`启动 Preview 失败：${toErrorMessage(error)}`, 'error')
+        } finally {
+            setPreviewBusy(false)
+        }
+    }, [appendPreviewEvent, previewActive, previewBusy, props.api, replacePreviewEvent, shouldShowPreviewAction, taskId])
 
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
@@ -653,6 +807,13 @@ export function SessionChat(props: {
                             void handleMergeAction()
                         }}
                         mergeEvents={mergeEvents}
+                        showPreviewAction={shouldShowPreviewAction}
+                        previewActionDisabled={effectiveIsRunning || previewBusy || hasPendingRequests}
+                        previewActionLabel={previewActionLabel}
+                        onPreviewAction={() => {
+                            void handlePreviewAction()
+                        }}
+                        previewEvents={previewEvents}
                     />
 
                     <HappyComposer

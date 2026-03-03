@@ -555,6 +555,74 @@ describe('TaskAutomation', () => {
         expect(afterReady?.worktreeMergeCommit).toBe('abc123')
     })
 
+    it('ignores preview setup automation prompts for task progress state', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        const mergedAt = Date.now() - 1_000
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'finished',
+            activeSessionId: sessionId,
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'abc123'
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, { finishedAt: mergedAt })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = `auto:preview_setup:${taskId}:1`
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'setup preview script' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterReady?.worktreeMergeCommit).toBe('abc123')
+    })
+
     it('moves finished task back to in_progress on follow-up prompt and clears merge markers', () => {
         const store = new Store(':memory:')
         const namespace = 'default'

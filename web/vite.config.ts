@@ -20,10 +20,9 @@ export default defineConfig({
     },
     server: {
         host: true,
-        port: Number.isFinite(webPort) ? webPort : 5173,
+        allowedHosts: ['hapidev.weishu.me', 'ruilimacbook-pro.tailfbf761.ts.net'],
         // Only enforce strict port when caller explicitly pinned the port (preview mode).
         strictPort: Boolean(webPortEnv),
-        allowedHosts: ['hapidev.weishu.me'],
         proxy: {
             '/api': {
                 target: hubUrl,

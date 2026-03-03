@@ -14,6 +14,8 @@ import { handleTaskMovedToFinished } from './taskFinishAutomation'
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
 const AUTO_MERGE_CONFLICT_TIMEOUT_MS = 180_000
+const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
+const AUTO_PREVIEW_SETUP_TIMEOUT_MS = 240_000
 
 function estimateDataUrlBytes(dataUrl: string): number {
     const comma = dataUrl.indexOf(',')
@@ -534,6 +536,208 @@ function resolvePreviewErrorStatus(message: string): 500 | 503 {
     return isPreviewRpcUnavailable(message) ? 503 : 500
 }
 
+function resolvePreviewAutomationErrorStatus(message: string): 500 | 503 | 504 {
+    const lowered = message.toLowerCase()
+    if (lowered.includes('timed out') || lowered.includes('timeout')) {
+        return 504
+    }
+
+    if (
+        lowered.includes('rpc handler not registered')
+        || lowered.includes('rpc socket disconnected')
+        || lowered.includes('runner offline')
+        || lowered.includes('not connected')
+    ) {
+        return 503
+    }
+
+    return 500
+}
+
+function isMissingPreviewCommandError(message: string): boolean {
+    const lowered = message.toLowerCase()
+    return lowered.includes('no preview command found') || lowered.includes('create .hapi/preview.sh')
+}
+
+function createPreviewSetupPrompt(options: {
+    task: {
+        id: string
+        title: string
+    }
+    mode: 'local' | 'worktree'
+    rootPath: string
+    basePort?: number
+    failureMessage: string
+}): string {
+    const preferredPortLine = typeof options.basePort === 'number'
+        ? String(options.basePort)
+        : 'auto'
+
+    return [
+        'Preview start failed because no runnable preview command was found.',
+        '',
+        `Task: ${options.task.title} (${options.task.id})`,
+        `Preview mode: ${options.mode}`,
+        `Project root path: ${options.rootPath}`,
+        `Preferred web port base: ${preferredPortLine}`,
+        `Last error: ${options.failureMessage}`,
+        '',
+        'Please create or update `.hapi/preview.sh` in this project so future preview starts are one-click.',
+        '',
+        'Requirements:',
+        '1) Script path: `.hapi/preview.sh` under the project root.',
+        '2) Shebang: `#!/usr/bin/env bash`, safe options: `set -euo pipefail`.',
+        '3) Make it executable (`chmod +x .hapi/preview.sh`).',
+        '4) Respect HAPI vars when present (`HAPI_PREVIEW_ROOT`, `HAPI_PREVIEW_WEB_PORT_BASE`, `HAPI_PREVIEW_HUB_PORT_BASE`, `HAPI_PREVIEW_MODE`).',
+        '5) Start the project preview/dev server(s) and keep process running.',
+        '6) Emit readiness marker exactly as: `::hapi-preview-url::http://127.0.0.1:<port>` once ready.',
+        '7) Keep changes minimal; avoid unrelated refactors.',
+        '',
+        'After editing the script, run a quick sanity check and reply with a short summary.'
+    ].join('\n')
+}
+
+type PreviewStartAttemptResult =
+    | { ok: true; preview: Awaited<ReturnType<SyncEngine['previewStartForSession']>> }
+    | { ok: false; status: 500 | 503; error: string; rawMessage: string }
+
+async function startPreviewWithFallback(options: {
+    engine: SyncEngine
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+    previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+    basePort?: number
+}): Promise<PreviewStartAttemptResult> {
+    try {
+        const preview = await options.engine.previewStartForSession(options.resolved.session.id, {
+            taskId: options.resolved.task.id,
+            rootPath: options.previewPath.rootPath,
+            mode: options.previewPath.mode,
+            basePort: options.basePort
+        })
+        return { ok: true, preview }
+    } catch (sessionError) {
+        const sessionMessage = formatErrorMessage(sessionError, 'Preview start failed')
+        if (!isPreviewRpcUnavailable(sessionMessage)) {
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(sessionMessage),
+                error: sessionMessage,
+                rawMessage: sessionMessage
+            }
+        }
+
+        if (!options.resolved.machineId) {
+            return {
+                ok: false,
+                status: 503,
+                error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`,
+                rawMessage: sessionMessage
+            }
+        }
+
+        try {
+            const preview = await options.engine.previewStart(options.resolved.machineId, {
+                taskId: options.resolved.task.id,
+                sessionId: options.resolved.session.id,
+                rootPath: options.previewPath.rootPath,
+                mode: options.previewPath.mode,
+                basePort: options.basePort
+            })
+            return { ok: true, preview }
+        } catch (machineError) {
+            const machineMessage = formatErrorMessage(machineError, 'Preview start failed')
+            const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                : machineMessage
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(machineMessage),
+                error: combinedMessage,
+                rawMessage: machineMessage
+            }
+        }
+    }
+}
+
+type AutoSetupPreviewResult =
+    | { ok: true }
+    | {
+        ok: false
+        status: 500 | 503 | 504
+        error: string
+    }
+
+async function tryAutoSetupPreviewScript(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    sessionId: string
+    task: {
+        id: string
+        title: string
+    }
+    mode: 'local' | 'worktree'
+    rootPath: string
+    basePort?: number
+    failureMessage: string
+}): Promise<AutoSetupPreviewResult> {
+    const latest = options.store.messages.getMessages(options.sessionId, 1)
+    const afterSeq = latest[0]?.seq ?? 0
+    const localId = `${AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
+    const prompt = createPreviewSetupPrompt({
+        task: options.task,
+        mode: options.mode,
+        rootPath: options.rootPath,
+        basePort: options.basePort,
+        failureMessage: options.failureMessage
+    })
+
+    try {
+        await options.engine.sendMessage(options.sessionId, {
+            text: prompt,
+            localId,
+            sentFrom: 'webapp'
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Failed to send preview setup prompt')
+        return {
+            ok: false,
+            status: resolvePreviewAutomationErrorStatus(message),
+            error: message
+        }
+    }
+
+    let assistantMessage: Awaited<ReturnType<typeof waitForAssistantCompletion>> | null = null
+    try {
+        assistantMessage = await waitForAssistantCompletion({
+            store: options.store,
+            engine: options.engine,
+            sessionId: options.sessionId,
+            namespace: options.namespace,
+            afterSeq,
+            timeoutMs: AUTO_PREVIEW_SETUP_TIMEOUT_MS,
+            requireAssistantText: false
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Agent preview setup failed unexpectedly')
+        return {
+            ok: false,
+            status: resolvePreviewAutomationErrorStatus(message),
+            error: message
+        }
+    }
+
+    if (!assistantMessage) {
+        return {
+            ok: false,
+            status: 504,
+            error: 'Agent preview setup timed out or session became inactive'
+        }
+    }
+
+    return { ok: true }
+}
+
 function sumAttachmentBytes(attachments: Array<z.infer<typeof taskAttachmentSchema>>): number {
     let total = 0
     for (const att of attachments) {
@@ -908,43 +1112,58 @@ export function createTasksRoutes(options: {
             return c.json({ error: previewPath.error }, previewPath.status)
         }
 
-        try {
-            const preview = await engine.previewStartForSession(resolved.session.id, {
-                taskId: resolved.task.id,
-                rootPath: previewPath.rootPath,
-                mode: previewPath.mode,
-                basePort: parsed.data.basePort
-            })
-            return c.json({ preview })
-        } catch (sessionError) {
-            const sessionMessage = formatErrorMessage(sessionError, 'Preview start failed')
-            if (!isPreviewRpcUnavailable(sessionMessage)) {
-                return c.json({ error: sessionMessage }, resolvePreviewErrorStatus(sessionMessage))
-            }
-
-            if (!resolved.machineId) {
-                return c.json({
-                    error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`
-                }, 503)
-            }
-
-            try {
-                const preview = await engine.previewStart(resolved.machineId, {
-                    taskId: resolved.task.id,
-                    sessionId: resolved.session.id,
-                    rootPath: previewPath.rootPath,
-                    mode: previewPath.mode,
-                    basePort: parsed.data.basePort
-                })
-                return c.json({ preview })
-            } catch (machineError) {
-                const machineMessage = formatErrorMessage(machineError, 'Preview start failed')
-                const combinedMessage = isPreviewRpcUnavailable(machineMessage)
-                    ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
-                    : machineMessage
-                return c.json({ error: combinedMessage }, resolvePreviewErrorStatus(machineMessage))
-            }
+        const startAttempt = await startPreviewWithFallback({
+            engine,
+            resolved,
+            previewPath,
+            basePort: parsed.data.basePort
+        })
+        if (startAttempt.ok) {
+            return c.json({ preview: startAttempt.preview })
         }
+
+        if (!isMissingPreviewCommandError(startAttempt.rawMessage)) {
+            return c.json({ error: startAttempt.error }, startAttempt.status)
+        }
+
+        const autoSetup = await tryAutoSetupPreviewScript({
+            store: options.store,
+            engine,
+            namespace,
+            sessionId: resolved.session.id,
+            task: {
+                id: resolved.task.id,
+                title: resolved.task.title
+            },
+            mode: previewPath.mode,
+            rootPath: previewPath.rootPath,
+            basePort: parsed.data.basePort,
+            failureMessage: startAttempt.rawMessage
+        })
+        if (!autoSetup.ok) {
+            return c.json({
+                error: autoSetup.error,
+                autoSetupAttempted: true
+            }, autoSetup.status)
+        }
+
+        const retryAttempt = await startPreviewWithFallback({
+            engine,
+            resolved,
+            previewPath,
+            basePort: parsed.data.basePort
+        })
+        if (retryAttempt.ok) {
+            return c.json({
+                preview: retryAttempt.preview,
+                autoSetupAttempted: true
+            })
+        }
+
+        return c.json({
+            error: retryAttempt.error,
+            autoSetupAttempted: true
+        }, retryAttempt.status)
     })
 
     app.get('/tasks/:taskId/preview', async (c) => {

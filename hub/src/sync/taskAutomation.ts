@@ -5,6 +5,7 @@ import type { SyncEngine } from './syncEngine'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
+const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -30,6 +31,11 @@ function isInternalAutomationLocalId(localId: unknown): boolean {
 function isMergeConflictAutoResolveLocalId(localId: unknown): boolean {
     if (typeof localId !== 'string') return false
     return localId.startsWith(AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX)
+}
+
+function isPreviewSetupLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX)
 }
 
 function isReadyEventMessage(message: DecryptedMessage): boolean {
@@ -82,6 +88,7 @@ function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
     if (getMessageRole(message) !== 'user') return false
     if (isInternalAutomationLocalId(message.localId)) return false
     if (isMergeConflictAutoResolveLocalId(message.localId)) return false
+    if (isPreviewSetupLocalId(message.localId)) return false
     return true
 }
 

@@ -61,6 +61,12 @@ type MergeThreadEvent = {
     tone?: 'info' | 'success' | 'error'
 }
 
+type PreviewThreadEvent = {
+    id: string
+    text: string
+    tone?: 'info' | 'success' | 'error'
+}
+
 export function HappyThread(props: {
     api: ApiClient
     sessionId: string
@@ -88,6 +94,11 @@ export function HappyThread(props: {
     mergeActionLabel?: string
     onMergeAction?: () => void
     mergeEvents?: MergeThreadEvent[]
+    showPreviewAction?: boolean
+    previewActionDisabled?: boolean
+    previewActionLabel?: string
+    onPreviewAction?: () => void
+    previewEvents?: PreviewThreadEvent[]
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -282,6 +293,7 @@ export function HappyThread(props: {
 
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
     const mergeEvents = props.mergeEvents ?? []
+    const previewEvents = props.previewEvents ?? []
 
     return (
         <HappyChatProvider value={{
@@ -383,6 +395,35 @@ export function HappyThread(props: {
                                             disabled={props.mergeActionDisabled}
                                         >
                                             {props.mergeActionLabel ?? 'Merge'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : null}
+                            {previewEvents.map((event) => (
+                                <div key={event.id} className="py-1">
+                                    <div
+                                        className={`mx-auto w-fit max-w-[92%] rounded-md px-2 text-center text-xs ${
+                                            event.tone === 'success'
+                                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                : event.tone === 'error'
+                                                    ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                                                    : 'text-[var(--app-hint)] opacity-80'
+                                        }`}
+                                    >
+                                        {event.text}
+                                    </div>
+                                </div>
+                            ))}
+                            {props.showPreviewAction && props.onPreviewAction ? (
+                                <div className="py-2">
+                                    <div className="mx-auto w-fit max-w-[92%]">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={props.onPreviewAction}
+                                            disabled={props.previewActionDisabled}
+                                        >
+                                            {props.previewActionLabel ?? 'Preview'}
                                         </Button>
                                     </div>
                                 </div>
