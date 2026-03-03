@@ -132,6 +132,16 @@ describe('tasks merge route unexpected errors', () => {
                     conflictFiles: ['src/conflict.ts']
                 }
             },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
+            },
             async sendMessage() {
                 return
             },
@@ -186,6 +196,16 @@ describe('tasks merge route unexpected errors', () => {
                     stderr: 'fatal: unexpected repository state',
                     stdout: ''
                 }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
             }
         } as unknown as SyncEngine
 
@@ -199,5 +219,131 @@ describe('tasks merge route unexpected errors', () => {
         expect(response.status).toBe(500)
         const body = await response.json() as { error?: string }
         expect(body.error).toBe('fatal: unexpected repository state')
+    })
+
+    it('exposes merge-state based on source-vs-target diff', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-state-no-changes'
+        seedMergeTask(store, {
+            namespace: 'default',
+            projectId: 'project-merge-state-no-changes',
+            taskId,
+            sessionId: 'session-merge-state-no-changes'
+        })
+
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId: 'session-merge-state-no-changes',
+                    session: {
+                        id: 'session-merge-state-no-changes',
+                        thinking: false,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: false,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 0
+                }
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge-state`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            canMerge?: boolean
+            reason?: string
+            committedChangedCount?: number | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.canMerge).toBe(false)
+        expect(body.reason).toBe('no_changes')
+        expect(body.committedChangedCount).toBe(0)
+    })
+
+    it('does not short-circuit merge only from persisted merged marker', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-stale-marker'
+        const namespace = 'default'
+        seedMergeTask(store, {
+            namespace,
+            projectId: 'project-merge-stale-marker',
+            taskId,
+            sessionId: 'session-merge-stale-marker'
+        })
+
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            worktreeMergedAt: Date.now() - 60_000,
+            worktreeMergeCommit: 'old123'
+        })
+
+        let mergeCalls = 0
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId: 'session-merge-stale-marker',
+                    session: {
+                        id: 'session-merge-stale-marker',
+                        thinking: false,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 0
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: 'new456'
+                }
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            skippedReason?: string | null
+            commitHash?: string | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBeNull()
+        expect(body.commitHash).toBe('new456')
+        expect(mergeCalls).toBe(1)
     })
 })

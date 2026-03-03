@@ -85,6 +85,31 @@ export type TaskWorktreeMergeResponse = {
     mergedAt: number | null
     autoResolved?: boolean | null
 }
+
+export type TaskWorktreeMergeStateResponse = {
+    ok: true
+    canMerge: boolean
+    reason:
+        | 'mergeable'
+        | 'no_changes'
+        | 'already_merged'
+        | 'task_not_in_review'
+        | 'task_has_no_active_session'
+        | 'target_branch_not_configured'
+        | 'not_connected'
+        | 'session_not_found'
+        | 'session_access_denied'
+        | 'not_worktree_session'
+        | 'session_busy'
+        | 'merge_check_failed'
+    targetBranch: string | null
+    sourceBranch: string | null
+    hasWorkingTreeChanges: boolean | null
+    committedChangedCount: number | null
+    mergedAt: number | null
+    mergeCommit: string | null
+    error: string | null
+}
 export type TaskPreviewStatus = {
     active: boolean
     status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'

@@ -195,13 +195,14 @@ function isAssistantReplyMessage(message: DecryptedMessage): boolean {
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
     if (!isTaskProgressPromptMessage(message)) return false
-    if (isMergeConflictAutoResolveLocalId(message.localId)) return false
     return getMessageSentFrom(message) !== 'cli'
 }
 
 function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
     if (getMessageRole(message) !== 'user') return false
-    return !isInternalAutomationLocalId(message.localId)
+    if (isInternalAutomationLocalId(message.localId)) return false
+    if (isMergeConflictAutoResolveLocalId(message.localId)) return false
+    return true
 }
 
 type LinkedTask = {

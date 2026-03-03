@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredTask } from '../../store'
 import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
-import type { RpcGitMergeWorktreeResponse, SyncEngine } from '../../sync/syncEngine'
+import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
@@ -92,6 +92,42 @@ type TaskPreviewPathResult =
     | { ok: true; mode: 'local' | 'worktree'; rootPath: string }
     | { ok: false; status: 400; error: string }
 
+type TaskWorktreeMergeStateReason =
+    | 'mergeable'
+    | 'no_changes'
+    | 'already_merged'
+    | 'task_not_in_review'
+    | 'task_has_no_active_session'
+    | 'target_branch_not_configured'
+    | 'not_connected'
+    | 'session_not_found'
+    | 'session_access_denied'
+    | 'not_worktree_session'
+    | 'session_busy'
+    | 'merge_check_failed'
+
+type TaskWorktreeMergeState = {
+    ok: true
+    canMerge: boolean
+    reason: TaskWorktreeMergeStateReason
+    targetBranch: string | null
+    sourceBranch: string | null
+    hasWorkingTreeChanges: boolean | null
+    committedChangedCount: number | null
+    mergedAt: number | null
+    mergeCommit: string | null
+    error: string | null
+}
+
+type MergeGitState = {
+    canMerge: boolean
+    reason: 'mergeable' | 'no_changes' | 'already_merged' | 'merge_check_failed'
+    sourceBranch: string | null
+    hasWorkingTreeChanges: boolean | null
+    committedChangedCount: number | null
+    error: string | null
+}
+
 function resolveTaskPreviewPath(
     session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>,
     requestedMode: 'auto' | 'local' | 'worktree'
@@ -128,6 +164,94 @@ function resolveTaskPreviewPath(
         return { ok: true, mode: 'local', rootPath: localPath }
     }
     return { ok: false, status: 400, error: 'Session metadata is missing preview root path' }
+}
+
+function normalizeBranchName(value: string | undefined | null): string | null {
+    if (typeof value !== 'string') {
+        return null
+    }
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+}
+
+function parseMergeChangedCount(value: unknown): number | null {
+    if (typeof value !== 'number') {
+        return null
+    }
+    if (!Number.isFinite(value)) {
+        return null
+    }
+    if (value < 0) {
+        return null
+    }
+    return value
+}
+
+function extractMergeStateError(result: RpcGitMergeWorktreeStateResponse): string {
+    return pickReadableMergeError(result, 'Merge state check failed')
+}
+
+async function computeMergeGitState(options: {
+    engine: SyncEngine
+    sessionId: string
+    targetBranch: string
+    sourceBranch: string | null
+    taskMergedAt: number | null
+}): Promise<MergeGitState> {
+    let result: RpcGitMergeWorktreeStateResponse
+    try {
+        result = await options.engine.gitMergeWorktreeState(options.sessionId, {
+            targetBranch: options.targetBranch
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Merge state check failed')
+        return {
+            canMerge: false,
+            reason: 'merge_check_failed',
+            sourceBranch: options.sourceBranch,
+            hasWorkingTreeChanges: null,
+            committedChangedCount: null,
+            error: message
+        }
+    }
+
+    const sourceBranch = normalizeBranchName(result.sourceBranch) ?? options.sourceBranch
+    const hasWorkingTreeChanges = typeof result.hasWorkingTreeChanges === 'boolean'
+        ? result.hasWorkingTreeChanges
+        : null
+    const committedChangedCount = parseMergeChangedCount(result.committedChangedCount)
+
+    if (!result.success) {
+        return {
+            canMerge: false,
+            reason: 'merge_check_failed',
+            sourceBranch,
+            hasWorkingTreeChanges,
+            committedChangedCount,
+            error: extractMergeStateError(result)
+        }
+    }
+
+    const mergeable = result.mergeable === true
+    if (mergeable) {
+        return {
+            canMerge: true,
+            reason: 'mergeable',
+            sourceBranch,
+            hasWorkingTreeChanges,
+            committedChangedCount,
+            error: null
+        }
+    }
+
+    return {
+        canMerge: false,
+        reason: options.taskMergedAt ? 'already_merged' : 'no_changes',
+        sourceBranch,
+        hasWorkingTreeChanges,
+        committedChangedCount,
+        error: null
+    }
 }
 
 function shouldAutoResolveMergeConflict(result: {
@@ -929,6 +1053,121 @@ export function createTasksRoutes(options: {
         }
     })
 
+    app.get('/tasks/:taskId/worktree/merge-state', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        if (!task) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
+        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const targetBranch = normalizeBranchName(project.worktreeTargetBranch)
+        const baseState: Omit<TaskWorktreeMergeState, 'canMerge' | 'reason' | 'error'> = {
+            ok: true,
+            targetBranch,
+            sourceBranch: null,
+            hasWorkingTreeChanges: null,
+            committedChangedCount: null,
+            mergedAt: task.worktreeMergedAt ?? null,
+            mergeCommit: task.worktreeMergeCommit ?? null
+        }
+
+        if (task.status !== 'in_review') {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: 'task_not_in_review',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        if (!task.activeSessionId) {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: 'task_has_no_active_session',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        if (!targetBranch) {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: 'target_branch_not_configured',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: 'not_connected',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        const access = engine.resolveSessionAccess(task.activeSessionId, namespace)
+        if (!access.ok) {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: access.reason === 'access-denied' ? 'session_access_denied' : 'session_not_found',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        const session = access.session
+        const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
+        const stateWithSession = {
+            ...baseState,
+            sourceBranch
+        }
+
+        if (!session.metadata?.worktree || !sourceBranch) {
+            return c.json({
+                ...stateWithSession,
+                canMerge: false,
+                reason: 'not_worktree_session',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        if (session.thinking) {
+            return c.json({
+                ...stateWithSession,
+                canMerge: false,
+                reason: 'session_busy',
+                error: null
+            } satisfies TaskWorktreeMergeState)
+        }
+
+        const mergeGitState = await computeMergeGitState({
+            engine,
+            sessionId: session.id,
+            targetBranch,
+            sourceBranch,
+            taskMergedAt: task.worktreeMergedAt ?? null
+        })
+
+        return c.json({
+            ...stateWithSession,
+            canMerge: mergeGitState.canMerge,
+            reason: mergeGitState.reason,
+            sourceBranch: mergeGitState.sourceBranch,
+            hasWorkingTreeChanges: mergeGitState.hasWorkingTreeChanges,
+            committedChangedCount: mergeGitState.committedChangedCount,
+            error: mergeGitState.error
+        } satisfies TaskWorktreeMergeState)
+    })
+
     app.post('/tasks/:taskId/worktree/merge', async (c) => {
         try {
             const namespace = c.get('namespace')
@@ -948,14 +1187,6 @@ export function createTasksRoutes(options: {
             if (!task) {
                 return c.json({ error: 'Task not found' }, 404)
             }
-            if (task.worktreeMergedAt) {
-                return c.json({
-                    ok: true,
-                    commitHash: task.worktreeMergeCommit ?? null,
-                    skippedReason: 'already_merged',
-                    mergedAt: task.worktreeMergedAt
-                })
-            }
             if (!task.activeSessionId) {
                 return c.json({ error: 'Task has no active session' }, 400)
             }
@@ -965,8 +1196,8 @@ export function createTasksRoutes(options: {
                 return c.json({ error: 'Project not found' }, 404)
             }
 
-            const targetBranch = parsed.data.targetBranch
-                ?? project.worktreeTargetBranch
+            const targetBranch = normalizeBranchName(parsed.data.targetBranch)
+                ?? normalizeBranchName(project.worktreeTargetBranch)
                 ?? ''
             if (!targetBranch) {
                 return c.json({ error: 'Target branch not configured' }, 400)
@@ -990,6 +1221,28 @@ export function createTasksRoutes(options: {
 
             if (session.thinking) {
                 return c.json({ error: 'Session is busy' }, 409)
+            }
+
+            const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
+            const mergeState = await computeMergeGitState({
+                engine,
+                sessionId: session.id,
+                targetBranch,
+                sourceBranch,
+                taskMergedAt: task.worktreeMergedAt ?? null
+            })
+            if (!mergeState.canMerge) {
+                if (mergeState.reason === 'merge_check_failed') {
+                    const message = mergeState.error ?? 'Merge state check failed'
+                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+                }
+
+                return c.json({
+                    ok: true,
+                    commitHash: task.worktreeMergeCommit ?? null,
+                    skippedReason: mergeState.reason === 'already_merged' ? 'already_merged' : 'no_changes',
+                    mergedAt: task.worktreeMergedAt ?? null
+                })
             }
 
             const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)

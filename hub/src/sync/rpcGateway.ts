@@ -67,6 +67,20 @@ export type RpcGitMergeWorktreeResponse = {
     error?: string
 }
 
+export type RpcGitMergeWorktreeStateResponse = {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    hasWorkingTreeChanges?: boolean
+    committedChangedCount?: number
+    mergeable?: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 export type RpcPreviewStatus = {
     active: boolean
     status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
@@ -270,6 +284,10 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-merge-worktree', options, {
             timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
         }) as RpcGitMergeWorktreeResponse
+    }
+
+    async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {
+        return await this.sessionRpc(sessionId, 'git-merge-worktree-state', options) as RpcGitMergeWorktreeStateResponse
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {

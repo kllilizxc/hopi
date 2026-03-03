@@ -97,6 +97,7 @@ export function useMergeTaskWorktree(api: ApiClient | null): {
         onSettled: (_result, _error, input) => {
             void queryClient.invalidateQueries({ queryKey: queryKeys.task(input.taskId) })
             void queryClient.invalidateQueries({ queryKey: ['tasks'] })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.taskMergeState(input.taskId) })
         }
     })
 

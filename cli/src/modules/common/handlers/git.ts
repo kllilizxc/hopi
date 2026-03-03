@@ -70,7 +70,38 @@ interface GitMergeWorktreeResponse {
     error?: string
 }
 
+interface GitMergeWorktreeStateRequest {
+    targetBranch: string
+    timeout?: number
+}
+
+interface GitMergeWorktreeStateResponse {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    hasWorkingTreeChanges?: boolean
+    committedChangedCount?: number
+    mergeable?: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+
+function countNumstatChangedFiles(output: string): number {
+    let changed = 0
+    const lines = output.split('\n')
+    for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line) continue
+        if (!line.includes('\t')) continue
+        changed += 1
+    }
+    return changed
+}
 
 function resolveCwd(requestedCwd: string | undefined, workingDirectory: string): { cwd: string; error?: string } {
     const cwd = requestedCwd ?? workingDirectory
@@ -346,6 +377,80 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
 
         const timeout = data.timeout ?? 30_000
         return await autoCommitWorktreeIfNeeded(worktree.worktreePath, message, timeout)
+    })
+
+    rpcHandlerManager.registerHandler<GitMergeWorktreeStateRequest, GitMergeWorktreeStateResponse>('git-merge-worktree-state', async (data) => {
+        const worktree = readWorktreeEnv()
+        if (!worktree) {
+            return rpcError('Not a worktree session')
+        }
+
+        const targetBranch = typeof data.targetBranch === 'string' ? data.targetBranch.trim() : ''
+        if (!targetBranch) {
+            return rpcError('Target branch required')
+        }
+
+        const timeout = data.timeout ?? 30_000
+
+        const ensureBranch = async (branch: string): Promise<GitCommandResponse> => {
+            return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], worktree.basePath, timeout)
+        }
+
+        const targetExists = await ensureBranch(targetBranch)
+        if (!targetExists.success) {
+            return rpcError(`Target branch '${targetBranch}' not found`, {
+                stdout: targetExists.stdout,
+                stderr: targetExists.stderr,
+                exitCode: targetExists.exitCode
+            })
+        }
+
+        const sourceExists = await ensureBranch(worktree.branch)
+        if (!sourceExists.success) {
+            return rpcError(`Worktree branch '${worktree.branch}' not found`, {
+                stdout: sourceExists.stdout,
+                stderr: sourceExists.stderr,
+                exitCode: sourceExists.exitCode
+            })
+        }
+
+        const status = await runGitCommand(['status', '--porcelain'], worktree.worktreePath, timeout)
+        if (!status.success) {
+            return status
+        }
+        const hasWorkingTreeChanges = (status.stdout ?? '').trim().length > 0
+
+        const mergeBaseResult = await runGitCommand(['merge-base', targetBranch, worktree.branch], worktree.basePath, timeout)
+        if (!mergeBaseResult.success) {
+            return rpcError(`Failed to resolve merge base between '${targetBranch}' and '${worktree.branch}'`, {
+                stdout: mergeBaseResult.stdout,
+                stderr: mergeBaseResult.stderr,
+                exitCode: mergeBaseResult.exitCode
+            })
+        }
+
+        const mergeBase = (mergeBaseResult.stdout ?? '').trim()
+        if (!mergeBase) {
+            return rpcError(`Failed to resolve merge base between '${targetBranch}' and '${worktree.branch}'`)
+        }
+
+        const diff = await runGitCommand(['diff', '--numstat', `${mergeBase}..${worktree.branch}`], worktree.basePath, timeout)
+        if (!diff.success) {
+            return diff
+        }
+
+        const committedChangedCount = countNumstatChangedFiles(diff.stdout ?? '')
+        const mergeable = hasWorkingTreeChanges || committedChangedCount > 0
+
+        return {
+            success: true,
+            targetBranch,
+            sourceBranch: worktree.branch,
+            mergeBase,
+            hasWorkingTreeChanges,
+            committedChangedCount,
+            mergeable
+        }
     })
 
     rpcHandlerManager.registerHandler<GitMergeWorktreeRequest, GitMergeWorktreeResponse>('git-merge-worktree', async (data) => {

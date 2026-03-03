@@ -768,7 +768,7 @@ describe('TaskAutomation', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
 
-    it('treats merge-conflict resolution prompts as in-progress work', () => {
+    it('ignores merge-conflict auto-resolution prompts for task progress state', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -788,13 +788,17 @@ describe('TaskAutomation', () => {
             thinking: false
         })
 
+        const mergedAt = Date.now() - 1_000
         store.tasks.createTask({
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_review',
-            activeSessionId: sessionId
+            status: 'finished',
+            activeSessionId: sessionId,
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'abc123'
         })
+        store.tasks.updateTaskByNamespace(taskId, namespace, { finishedAt: mergedAt })
 
         const engine = {
             getSession(id: string) {
@@ -815,7 +819,10 @@ describe('TaskAutomation', () => {
         }, promptLocalId)
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
 
         const assistantMsg = store.messages.addMessage(sessionId, {
             role: 'agent',
@@ -829,7 +836,10 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterReady?.worktreeMergeCommit).toBe('abc123')
     })
 
     it('moves finished task back to in_progress on follow-up prompt and clears merge markers', () => {

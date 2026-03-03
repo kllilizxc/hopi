@@ -23,6 +23,7 @@ import type {
     TaskPreviewResponse,
     TaskStartSessionResponse,
     TaskWorktreeMergeResponse,
+    TaskWorktreeMergeStateResponse,
     TasksResponse,
     UploadFileResponse,
     VisibilityPayload,
@@ -416,6 +417,10 @@ export class ApiClient {
             method: 'POST',
             body: JSON.stringify(payload ?? {})
         })
+    }
+
+    async getTaskWorktreeMergeState(taskId: string): Promise<TaskWorktreeMergeStateResponse> {
+        return await this.request<TaskWorktreeMergeStateResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge-state`)
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {
