@@ -569,6 +569,7 @@ export function SessionChat(props: {
         && !task.archivedAt
         && !task.finishedAt
         && !hasPendingRequests
+        && !shouldShowMergeAction
     )
 
     const runtime = useHappyRuntime({

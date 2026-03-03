@@ -432,6 +432,61 @@ describe('TaskAutomation', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
     })
 
+    it('does not miss in_review -> in_progress when thinking=true arrives before agentState clears pending requests', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_review',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        // Simulate a transient state where the agent has resumed (thinking=true)
+        // but the pending request envelope hasn't been cleared yet.
+        session.agentState = {
+            requests: {
+                'req-1': {
+                    type: 'filesystem',
+                    title: 'allow read',
+                    createdAt: Date.now()
+                }
+            }
+        }
+        session.thinking = true
+        automation.handleEvent({ type: 'session-updated', sessionId })
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+    })
+
     it('ignores merge-conflict auto-resolution prompts for task progress state', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -568,4 +623,3 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 })
-

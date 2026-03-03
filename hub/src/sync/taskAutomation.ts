@@ -178,20 +178,22 @@ export class TaskAutomation {
         const session = this.engine.getSession(sessionId)
         if (!session) return
 
-        const previousThinking = this.lastThinkingBySessionId.get(sessionId)
         const currentThinking = Boolean(session.thinking)
-        this.lastThinkingBySessionId.set(sessionId, currentThinking)
 
         const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
-        if (hasPendingRequests) {
-            this.tryMoveToInReviewForPermissionRequest(sessionId)
+        // When the agent starts thinking again (e.g. after approvals / mode changes),
+        // the task should reflect "running" even if the agentState clears in a later tick.
+        if (currentThinking) {
+            this.tryMoveToInProgressWhenThinking(sessionId)
+            this.lastThinkingBySessionId.set(sessionId, currentThinking)
             return
         }
 
-        const startedThinking = previousThinking !== true && currentThinking === true
-        if (startedThinking) {
-            this.tryMoveToInProgressWhenThinking(sessionId)
+        if (hasPendingRequests) {
+            this.tryMoveToInReviewForPermissionRequest(sessionId)
         }
+
+        this.lastThinkingBySessionId.set(sessionId, currentThinking)
     }
 
     private handleMessageReceived(sessionId: string, message: DecryptedMessage): void {
