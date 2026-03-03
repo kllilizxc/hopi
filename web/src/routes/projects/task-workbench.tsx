@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPreviewStatus, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
@@ -407,6 +407,10 @@ function TaskDetailsPanel(props: {
     const [startOpen, setStartOpen] = useState(false)
     const [attachOpen, setAttachOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
+    const [previewStatus, setPreviewStatus] = useState<TaskPreviewStatus | null>(null)
+    const [previewBusy, setPreviewBusy] = useState(false)
+    const [previewError, setPreviewError] = useState<string | null>(null)
+    const sessionId = props.task.activeSessionId ?? null
 
     useEffect(() => {
         setTitle(props.task.title)
@@ -420,6 +424,43 @@ function TaskDetailsPanel(props: {
         setNewSubTaskPriority('medium')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.subTasks, props.task.attachments])
+
+    useEffect(() => {
+        setPreviewStatus(null)
+        setPreviewError(null)
+    }, [props.task.id])
+
+    const loadPreviewStatus = useCallback(async () => {
+        if (!api || !sessionId) {
+            setPreviewStatus(null)
+            return
+        }
+        try {
+            const response = await api.getTaskPreview(props.taskId)
+            setPreviewStatus(response.preview)
+            setPreviewError(null)
+        } catch (error) {
+            setPreviewError(error instanceof Error ? error.message : 'Failed to load preview status')
+        }
+    }, [api, sessionId, props.taskId])
+
+    useEffect(() => {
+        if (!sessionId) {
+            setPreviewStatus(null)
+            return
+        }
+        void loadPreviewStatus()
+    }, [sessionId, loadPreviewStatus])
+
+    useEffect(() => {
+        if (!sessionId || previewStatus?.status !== 'starting') {
+            return
+        }
+        const timer = setInterval(() => {
+            void loadPreviewStatus()
+        }, 2_000)
+        return () => clearInterval(timer)
+    }, [sessionId, previewStatus?.status, loadPreviewStatus])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
@@ -443,6 +484,46 @@ function TaskDetailsPanel(props: {
         addToast({ title: t('projects.task.archived'), body: title, sessionId: '', url: '' })
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [archiveTask, props.taskId, props.projectId, addToast, t, title, navigate])
+
+    const handleStartPreview = useCallback(async () => {
+        if (!api || !sessionId) {
+            return
+        }
+        setPreviewBusy(true)
+        setPreviewError(null)
+        try {
+            const response = await api.startTaskPreview(props.taskId, { mode: 'auto' })
+            setPreviewStatus(response.preview)
+            if (response.preview.url) {
+                addToast({
+                    title: 'Preview ready',
+                    body: response.preview.url,
+                    sessionId: '',
+                    url: ''
+                })
+            }
+        } catch (error) {
+            setPreviewError(error instanceof Error ? error.message : 'Failed to start preview')
+        } finally {
+            setPreviewBusy(false)
+        }
+    }, [api, sessionId, props.taskId, addToast])
+
+    const handleStopPreview = useCallback(async () => {
+        if (!api || !sessionId) {
+            return
+        }
+        setPreviewBusy(true)
+        setPreviewError(null)
+        try {
+            const response = await api.stopTaskPreview(props.taskId)
+            setPreviewStatus(response.preview)
+        } catch (error) {
+            setPreviewError(error instanceof Error ? error.message : 'Failed to stop preview')
+        } finally {
+            setPreviewBusy(false)
+        }
+    }, [api, sessionId, props.taskId])
 
     const handleAddFiles = async (files: FileList | null) => {
         if (!files || files.length === 0) return
@@ -563,7 +644,6 @@ function TaskDetailsPanel(props: {
         return ws?.label ?? ws?.path ?? resolvedWorkspaceId
     }, [props.task.workspaceId, props.projectDefaultWorkspaceId, props.workspaces, t])
 
-    const sessionId = props.task.activeSessionId ?? null
     const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
 
     return (
@@ -923,6 +1003,64 @@ function TaskDetailsPanel(props: {
                                 </Button>
                             </div>
                         )}
+
+                        {sessionId ? (
+                            <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-2">
+                                <div className="text-xs font-medium text-[var(--app-hint)]">Preview</div>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            void handleStartPreview()
+                                        }}
+                                        disabled={previewBusy}
+                                    >
+                                        {previewBusy ? 'Starting...' : 'Start Preview'}
+                                    </Button>
+                                    {previewStatus?.active ? (
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={() => {
+                                                void handleStopPreview()
+                                            }}
+                                            disabled={previewBusy}
+                                        >
+                                            Stop Preview
+                                        </Button>
+                                    ) : null}
+                                </div>
+
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    Status: {previewStatus?.status ?? 'idle'}
+                                </div>
+
+                                {previewStatus?.url ? (
+                                    <div className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2 text-xs break-all">
+                                        {previewStatus.url}
+                                    </div>
+                                ) : null}
+
+                                {previewStatus?.command ? (
+                                    <div className="text-xs text-[var(--app-hint)] break-all">
+                                        Cmd: {previewStatus.command}
+                                    </div>
+                                ) : null}
+
+                                {previewStatus?.error ? (
+                                    <div className="text-xs text-red-600">
+                                        {previewStatus.error}
+                                    </div>
+                                ) : null}
+
+                                {previewError ? (
+                                    <div className="text-xs text-red-600">
+                                        {previewError}
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
 
                         {overLimit ? (
                             <div className="text-xs text-[var(--app-hint)]">

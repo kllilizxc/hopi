@@ -24,6 +24,7 @@ import {
     type RpcGitMergeWorktreeResponse,
     type RpcListDirectoryResponse,
     type RpcPathExistsResponse,
+    type RpcPreviewStatus,
     type RpcReadFileResponse,
     type RpcUploadFileResponse
 } from './rpcGateway'
@@ -40,6 +41,7 @@ export type {
     RpcGitMergeWorktreeResponse,
     RpcListDirectoryResponse,
     RpcPathExistsResponse,
+    RpcPreviewStatus,
     RpcReadFileResponse,
     RpcUploadFileResponse
 } from './rpcGateway'
@@ -474,6 +476,24 @@ export class SyncEngine {
 
     async checkPathsExist(machineId: string, paths: string[]): Promise<Record<string, boolean>> {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
+    }
+
+    async previewStart(machineId: string, params: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStart(machineId, params)
+    }
+
+    async previewStatus(machineId: string): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStatus(machineId)
+    }
+
+    async previewStop(machineId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStop(machineId, params)
     }
 
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {

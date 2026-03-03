@@ -85,6 +85,24 @@ export type TaskWorktreeMergeResponse = {
     mergedAt: number | null
     autoResolved?: boolean | null
 }
+export type TaskPreviewStatus = {
+    active: boolean
+    status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+    taskId?: string
+    sessionId?: string
+    mode?: 'local' | 'worktree'
+    rootPath?: string
+    runPath?: string
+    command?: string
+    port?: number
+    url?: string
+    pid?: number
+    startedAt?: number
+    updatedAt: number
+    error?: string
+    logTail: string[]
+}
+export type TaskPreviewResponse = { preview: TaskPreviewStatus }
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {

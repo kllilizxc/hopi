@@ -169,7 +169,7 @@ describe('Store schema migration safety', () => {
             worktreeMergeCommit: 'abc123',
             agentFlavor: 'codex',
             subTasks: [{ id: 'st1', content: 'subtask', status: 'pending', priority: 'medium' }],
-            subTasksUpdatedAt: Date.now()
+            subTasksUpdatedAt: Date.now(),
             permissionMode: 'plan'
         })
         expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')

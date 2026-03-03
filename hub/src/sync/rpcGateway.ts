@@ -67,6 +67,24 @@ export type RpcGitMergeWorktreeResponse = {
     error?: string
 }
 
+export type RpcPreviewStatus = {
+    active: boolean
+    status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+    taskId?: string
+    sessionId?: string
+    mode?: 'local' | 'worktree'
+    rootPath?: string
+    runPath?: string
+    command?: string
+    port?: number
+    url?: string
+    pid?: number
+    startedAt?: number
+    updatedAt: number
+    error?: string
+    logTail: string[]
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -190,6 +208,24 @@ export class RpcGateway {
             exists[key] = value === true
         }
         return exists
+    }
+
+    async previewStart(machineId: string, params: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-start', params) as RpcPreviewStatus
+    }
+
+    async previewStatus(machineId: string): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-status', {}) as RpcPreviewStatus
+    }
+
+    async previewStop(machineId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-stop', params ?? {}) as RpcPreviewStatus
     }
 
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {

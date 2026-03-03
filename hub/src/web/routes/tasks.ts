@@ -2,7 +2,7 @@ import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSch
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { Store } from '../../store'
+import type { Store, StoredTask } from '../../store'
 import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
 import type { RpcGitMergeWorktreeResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
@@ -82,6 +82,53 @@ const mergeWorktreeSchema = z.object({
     targetBranch: z.string().min(1).optional(),
     conflictStrategy: z.enum(['manual', 'agent']).optional()
 })
+
+const previewStartSchema = z.object({
+    mode: z.enum(['auto', 'local', 'worktree']).optional(),
+    basePort: z.number().int().min(1).max(65535).optional()
+})
+
+type TaskPreviewPathResult =
+    | { ok: true; mode: 'local' | 'worktree'; rootPath: string }
+    | { ok: false; status: 400; error: string }
+
+function resolveTaskPreviewPath(
+    session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>,
+    requestedMode: 'auto' | 'local' | 'worktree'
+): TaskPreviewPathResult {
+    const metadata = session.metadata
+    const metadataPath = typeof metadata?.path === 'string' ? metadata.path.trim() : ''
+    const basePath = typeof metadata?.worktree?.basePath === 'string'
+        ? metadata.worktree.basePath.trim()
+        : ''
+    const worktreePath = typeof metadata?.worktree?.worktreePath === 'string'
+        ? metadata.worktree.worktreePath.trim()
+        : ''
+
+    const localPath = basePath || metadataPath
+
+    if (requestedMode === 'worktree') {
+        if (!worktreePath) {
+            return { ok: false, status: 400, error: 'Session has no worktree path for preview mode "worktree"' }
+        }
+        return { ok: true, mode: 'worktree', rootPath: worktreePath }
+    }
+
+    if (requestedMode === 'local') {
+        if (!localPath) {
+            return { ok: false, status: 400, error: 'Session has no local path available for preview mode "local"' }
+        }
+        return { ok: true, mode: 'local', rootPath: localPath }
+    }
+
+    if (worktreePath) {
+        return { ok: true, mode: 'worktree', rootPath: worktreePath }
+    }
+    if (localPath) {
+        return { ok: true, mode: 'local', rootPath: localPath }
+    }
+    return { ok: false, status: 400, error: 'Session metadata is missing preview root path' }
+}
 
 function shouldAutoResolveMergeConflict(result: {
     error?: string
@@ -379,6 +426,53 @@ function validateAttachments(attachments: Array<z.infer<typeof taskAttachmentSch
     return { ok: true }
 }
 
+function resolveTaskPreviewAccess(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+}): {
+    ok: true
+    task: StoredTask
+    session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
+    machineId: string
+} | {
+    ok: false
+    status: number
+    error: string
+} {
+    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (!task) {
+        return { ok: false, status: 404, error: 'Task not found' }
+    }
+    if (!task.activeSessionId) {
+        return { ok: false, status: 400, error: 'Task has no active session' }
+    }
+
+    const access = options.engine.resolveSessionAccess(task.activeSessionId, options.namespace)
+    if (!access.ok) {
+        return {
+            ok: false,
+            status: access.reason === 'access-denied' ? 403 : 404,
+            error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found'
+        }
+    }
+
+    const machineId = typeof access.session.metadata?.machineId === 'string'
+        ? access.session.metadata.machineId.trim()
+        : ''
+    if (!machineId) {
+        return { ok: false, status: 400, error: 'Session metadata is missing machineId' }
+    }
+
+    return {
+        ok: true,
+        task,
+        session: access.session,
+        machineId
+    }
+}
+
 export function createTasksRoutes(options: {
     store: Store
     getSyncEngine: () => SyncEngine | null
@@ -653,6 +747,134 @@ export function createTasksRoutes(options: {
         }
 
         return c.json({ task: result.task, sessionId: result.sessionId })
+    })
+
+    app.post('/tasks/:taskId/preview/start', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const json = await c.req.json().catch(() => null)
+        const parsed = previewStartSchema.safeParse(json ?? {})
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const resolved = resolveTaskPreviewAccess({
+            store: options.store,
+            engine,
+            namespace,
+            taskId
+        })
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const previewPath = resolveTaskPreviewPath(resolved.session, parsed.data.mode ?? 'auto')
+        if (!previewPath.ok) {
+            return c.json({ error: previewPath.error }, previewPath.status)
+        }
+
+        try {
+            const preview = await engine.previewStart(resolved.machineId, {
+                taskId: resolved.task.id,
+                sessionId: resolved.session.id,
+                rootPath: previewPath.rootPath,
+                mode: previewPath.mode,
+                basePort: parsed.data.basePort
+            })
+            return c.json({ preview })
+        } catch (error) {
+            const message = formatErrorMessage(error, 'Preview start failed')
+            const lowered = message.toLowerCase()
+            const status = (
+                lowered.includes('rpc handler not registered')
+                || lowered.includes('rpc socket disconnected')
+                || lowered.includes('runner offline')
+            ) ? 503 : 500
+            return c.json({ error: message }, status)
+        }
+    })
+
+    app.get('/tasks/:taskId/preview', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const resolved = resolveTaskPreviewAccess({
+            store: options.store,
+            engine,
+            namespace,
+            taskId
+        })
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        try {
+            const preview = await engine.previewStatus(resolved.machineId)
+            if (preview.taskId && preview.taskId !== resolved.task.id) {
+                return c.json({
+                    preview: {
+                        active: false,
+                        status: 'idle',
+                        updatedAt: Date.now(),
+                        logTail: []
+                    }
+                })
+            }
+            return c.json({ preview })
+        } catch (error) {
+            const message = formatErrorMessage(error, 'Preview status failed')
+            const lowered = message.toLowerCase()
+            const status = (
+                lowered.includes('rpc handler not registered')
+                || lowered.includes('rpc socket disconnected')
+                || lowered.includes('runner offline')
+            ) ? 503 : 500
+            return c.json({ error: message }, status)
+        }
+    })
+
+    app.post('/tasks/:taskId/preview/stop', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const resolved = resolveTaskPreviewAccess({
+            store: options.store,
+            engine,
+            namespace,
+            taskId
+        })
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        try {
+            const preview = await engine.previewStop(resolved.machineId, { taskId: resolved.task.id })
+            return c.json({ preview })
+        } catch (error) {
+            const message = formatErrorMessage(error, 'Preview stop failed')
+            const lowered = message.toLowerCase()
+            const status = (
+                lowered.includes('rpc handler not registered')
+                || lowered.includes('rpc socket disconnected')
+                || lowered.includes('runner offline')
+            ) ? 503 : 500
+            return c.json({ error: message }, status)
+        }
     })
 
     app.post('/tasks/:taskId/worktree/merge', async (c) => {

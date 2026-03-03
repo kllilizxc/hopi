@@ -18,6 +18,7 @@ import { isRetryableConnectionError } from '@/utils/errorUtils';
 import { cleanupRunnerState, getInstalledCliMtimeMs, isRunnerRunningCurrentlyInstalledHappyVersion, stopRunner } from './controlClient';
 import { startRunnerControlServer } from './controlServer';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
+import { PreviewManager } from './previewManager';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 
@@ -131,6 +132,7 @@ export async function startRunner(): Promise<void> {
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+    const previewManager = new PreviewManager();
 
     // Handle webhook from HAPI session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata) => {
@@ -613,6 +615,9 @@ export async function startRunner(): Promise<void> {
     apiMachine.setRPCHandlers({
       spawnSession,
       stopSession,
+      startPreview: (options) => previewManager.start(options),
+      getPreviewStatus: () => previewManager.getState(),
+      stopPreview: (options) => previewManager.stop(options),
       requestShutdown: () => requestShutdown('hapi-app')
     });
 
@@ -722,6 +727,12 @@ export async function startRunner(): Promise<void> {
         shutdownRequestedAt: Date.now(),
         shutdownSource: source
       }));
+
+      try {
+        await previewManager.stop();
+      } catch (error) {
+        logger.debug('[RUNNER RUN] Failed to stop preview during shutdown', error);
+      }
 
       // Give time for metadata update to send
       await new Promise(resolve => setTimeout(resolve, 100));

@@ -53,6 +53,63 @@ type MachineRpcHandlers = {
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
     stopSession: (sessionId: string) => boolean
     requestShutdown: () => void
+    startPreview: (options: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }) => Promise<{
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }>
+    getPreviewStatus: () => {
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }
+    stopPreview: (options?: { taskId?: string }) => Promise<{
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }>
 }
 
 interface PathExistsRequest {
@@ -99,7 +156,7 @@ export class ApiMachineClient {
         })
     }
 
-    setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
+    setRPCHandlers({ spawnSession, stopSession, requestShutdown, startPreview, getPreviewStatus, stopPreview }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
             const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, yolo, token, sessionType, worktreeName } = params || {}
 
@@ -148,6 +205,41 @@ export class ApiMachineClient {
         this.rpcHandlerManager.registerHandler('stop-runner', () => {
             setTimeout(() => requestShutdown(), 100)
             return { message: 'Runner stop request acknowledged' }
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-start', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : ''
+            const sessionId = typeof params?.sessionId === 'string' ? params.sessionId.trim() : ''
+            const rootPath = typeof params?.rootPath === 'string' ? params.rootPath.trim() : ''
+            const mode = params?.mode === 'worktree' ? 'worktree' : 'local'
+            const basePort = typeof params?.basePort === 'number' ? params.basePort : undefined
+
+            if (!taskId) {
+                throw new Error('Task ID is required')
+            }
+            if (!sessionId) {
+                throw new Error('Session ID is required')
+            }
+            if (!rootPath) {
+                throw new Error('Root path is required')
+            }
+
+            return await startPreview({
+                taskId,
+                sessionId,
+                rootPath,
+                mode,
+                basePort
+            })
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-status', () => {
+            return getPreviewStatus()
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-stop', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : undefined
+            return await stopPreview({ taskId })
         })
     }
 

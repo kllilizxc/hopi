@@ -20,6 +20,7 @@ import type {
     SkillsResponse,
     SpawnResponse,
     TaskResponse,
+    TaskPreviewResponse,
     TaskStartSessionResponse,
     TaskWorktreeMergeResponse,
     TasksResponse,
@@ -386,6 +387,27 @@ export class ApiClient {
         return await this.request<TaskStartSessionResponse>(`/api/tasks/${encodeURIComponent(taskId)}/start-session`, {
             method: 'POST',
             body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async startTaskPreview(taskId: string, payload?: {
+        mode?: 'auto' | 'local' | 'worktree'
+        basePort?: number
+    }): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview/start`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async getTaskPreview(taskId: string): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview`)
+    }
+
+    async stopTaskPreview(taskId: string): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview/stop`, {
+            method: 'POST',
+            body: JSON.stringify({})
         })
     }
 
