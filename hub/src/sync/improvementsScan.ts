@@ -9,11 +9,16 @@ import type { SyncEngine } from './syncEngine'
 export const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const MAX_IMPROVEMENTS_PER_SCAN = 3
 type ImprovementPriority = 'high' | 'medium' | 'low'
+type ImprovementCategory = 'feature' | 'architecture'
 
 const suggestionSchema = z.object({
     title: z.string().min(1).max(255),
     description: z.string().max(200_000).optional(),
     priority: z.string().max(64).optional(),
+    category: z.string().max(64).optional(),
+    type: z.string().max(64).optional(),
+    kind: z.string().max(64).optional(),
+    focus: z.string().max(64).optional(),
     workspacePath: z.string().min(1).max(4096).optional(),
     workspaceLabel: z.string().min(1).max(255).optional(),
     workspace: z.string().min(1).max(4096).optional(),
@@ -23,6 +28,7 @@ export type ImprovementsSuggestion = {
     title: string
     description?: string
     priority: ImprovementPriority
+    category: ImprovementCategory
     workspacePath?: string
     workspaceLabel?: string
 }
@@ -132,6 +138,65 @@ function inferSuggestionPriorityFromText(title: string, description?: string): I
     return 'medium'
 }
 
+function normalizeSuggestionCategory(raw: string | undefined): ImprovementCategory | null {
+    const value = raw?.trim().toLowerCase()
+    if (!value) {
+        return null
+    }
+
+    const compact = value.replace(/[\s_-]+/g, '')
+
+    if (
+        compact === 'feature'
+        || compact === 'features'
+        || compact === 'function'
+        || compact === 'functional'
+        || compact === 'functionality'
+        || compact === 'userfacing'
+        || compact === 'ux'
+        || compact === 'ui'
+        || compact === 'product'
+        || compact === 'capability'
+        || compact === 'behavior'
+        || compact === 'behaviour'
+    ) {
+        return 'feature'
+    }
+
+    if (
+        compact === 'architecture'
+        || compact === 'architectural'
+        || compact === 'arch'
+        || compact === 'codestructure'
+        || compact === 'codearchitecture'
+        || compact === 'technicaldebt'
+        || compact === 'techdebt'
+        || compact === 'refactor'
+        || compact === 'infrastructure'
+        || compact === 'infra'
+        || compact === 'maintainability'
+        || compact === 'engineering'
+    ) {
+        return 'architecture'
+    }
+
+    return null
+}
+
+function inferSuggestionCategoryFromText(title: string, description?: string): ImprovementCategory {
+    const text = `${title} ${description ?? ''}`.toLowerCase()
+
+    if (/\b(refactor|restructure|cleanup|abstraction|modular|architecture|maintainability|technical debt|coupling|decoupl|infra|infrastructure|schema)\b/.test(text)) {
+        return 'architecture'
+    }
+
+    if (/\b(feature|ux|ui|flow|experience|support|expose|add|enable|improve|user)\b/.test(text)) {
+        return 'feature'
+    }
+
+    return 'feature'
+}
+
 function mapWorkspaceHintToWorkspaceId(
     suggestion: ImprovementsSuggestion,
     workspaces: StoredWorkspace[]
@@ -189,18 +254,21 @@ function buildImprovementsPrompt(options: {
         '',
         `Task: Suggest up to ${options.maxSuggestions} follow-up improvement tasks.`,
         `- Use the system language for this session (${options.locale}) in task titles/descriptions.`,
+        '- Keep the output split close to 50/50: feature optimizations vs code architecture optimizations.',
         '- Do NOT run tools, commands, or code edits.',
         '- Do NOT include markdown fences.',
         '- Output STRICT JSON ONLY: a JSON array of objects.',
         '',
         'JSON schema:',
-        '[{"title":"string","description":"string?","priority":"high|medium|low","workspacePath":"string?","workspaceLabel":"string?"}]',
+        '[{"title":"string","description":"string?","priority":"high|medium|low","category":"feature|architecture","workspacePath":"string?","workspaceLabel":"string?"}]',
         '',
         'Rules:',
         '- Return an empty array [] if no good suggestions.',
         '- Focus on necessary, high-impact follow-ups only; fewer is better.',
         '- Keep titles short and actionable.',
         '- Include a "priority" for each item using ONLY: "high", "medium", or "low".',
+        '- Include a "category" for each item using ONLY: "feature" or "architecture".',
+        '- If the total count is odd, keep category difference at most 1.',
         '- No duplicates.'
     ].join('\n')
 }
@@ -310,7 +378,8 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
             if (!title) continue
             suggestions.push({
                 title,
-                priority: inferSuggestionPriorityFromText(title)
+                priority: inferSuggestionPriorityFromText(title),
+                category: inferSuggestionCategoryFromText(title)
             })
             continue
         }
@@ -326,6 +395,9 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
         const description = parsed.data.description?.trim()
         const priority = normalizeSuggestionPriority(parsed.data.priority)
             ?? inferSuggestionPriorityFromText(title, description)
+        const rawCategory = parsed.data.category ?? parsed.data.type ?? parsed.data.kind ?? parsed.data.focus
+        const category = normalizeSuggestionCategory(rawCategory)
+            ?? inferSuggestionCategoryFromText(title, description)
         const workspacePath = (parsed.data.workspacePath ?? parsed.data.workspace)?.trim()
         const workspaceLabel = parsed.data.workspaceLabel?.trim()
 
@@ -333,12 +405,50 @@ function coerceSuggestions(rawItems: unknown[]): ImprovementsSuggestion[] {
             title,
             description: description || undefined,
             priority,
+            category,
             workspacePath: workspacePath || undefined,
             workspaceLabel: workspaceLabel || undefined
         })
     }
 
     return suggestions
+}
+
+function selectBalancedSuggestions(suggestions: ImprovementsSuggestion[], maxSuggestions: number): ImprovementsSuggestion[] {
+    const limit = Math.max(0, Math.min(maxSuggestions, suggestions.length))
+    if (limit <= 1) {
+        return suggestions.slice(0, limit)
+    }
+
+    const selected: ImprovementsSuggestion[] = []
+    const selectedIndexes = new Set<number>()
+    const baseQuota = Math.floor(limit / 2)
+
+    const takeCategory = (category: ImprovementCategory, amount: number) => {
+        if (amount <= 0) return
+        let taken = 0
+        for (let i = 0; i < suggestions.length && taken < amount; i += 1) {
+            if (selectedIndexes.has(i)) continue
+            const suggestion = suggestions[i]
+            if (!suggestion || suggestion.category !== category) continue
+            selected.push(suggestion)
+            selectedIndexes.add(i)
+            taken += 1
+        }
+    }
+
+    takeCategory('feature', baseQuota)
+    takeCategory('architecture', baseQuota)
+
+    for (let i = 0; i < suggestions.length && selected.length < limit; i += 1) {
+        if (selectedIndexes.has(i)) continue
+        const suggestion = suggestions[i]
+        if (!suggestion) continue
+        selected.push(suggestion)
+        selectedIndexes.add(i)
+    }
+
+    return selected
 }
 
 export async function waitForAssistantCompletion(options: {
@@ -490,20 +600,22 @@ export async function runImprovementsScan(options: {
         return { ok: true, createdTaskIds: [] }
     }
 
-    const createdTaskIds: string[] = []
+    const uniqueSuggestions: ImprovementsSuggestion[] = []
     const seenTitles: Set<string> = new Set()
 
     for (const suggestion of suggestions) {
-        if (createdTaskIds.length >= maxSuggestions) {
-            break
-        }
-
         const normalized = normalizeTitle(suggestion.title)
         if (!normalized || seenTitles.has(normalized)) {
             continue
         }
         seenTitles.add(normalized)
+        uniqueSuggestions.push(suggestion)
+    }
 
+    const selectedSuggestions = selectBalancedSuggestions(uniqueSuggestions, maxSuggestions)
+    const createdTaskIds: string[] = []
+
+    for (const suggestion of selectedSuggestions) {
         const workspaceId = mapWorkspaceHintToWorkspaceId(suggestion, workspaces)
 
         const taskId = randomUUID()

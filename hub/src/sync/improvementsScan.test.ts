@@ -284,7 +284,10 @@ describe('runImprovementsScan', () => {
         expect(capturedPrompt).toContain('Suggest up to 3 follow-up improvement tasks.')
         expect(capturedPrompt).toContain('Focus on necessary, high-impact follow-ups only; fewer is better.')
         expect(capturedPrompt).toContain('"priority":"high|medium|low"')
+        expect(capturedPrompt).toContain('"category":"feature|architecture"')
+        expect(capturedPrompt).toContain('split close to 50/50')
         expect(capturedPrompt).toContain('Include a "priority" for each item using ONLY')
+        expect(capturedPrompt).toContain('Include a "category" for each item using ONLY')
     })
 
     it('prefers request locale override over session metadata locale', async () => {
@@ -357,7 +360,7 @@ describe('runImprovementsScan', () => {
         expect(capturedPrompt).not.toContain('system language for this session (en-US)')
     })
 
-    it('caps created tasks to 3 even when the scan asks for more', async () => {
+    it('keeps generated tasks mixed across feature and architecture categories', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-4'
@@ -371,6 +374,95 @@ describe('runImprovementsScan', () => {
 
         const finishedTask = store.tasks.createTask({
             id: 'task-finished-4',
+            projectId,
+            title: 'Ship project board refresh',
+            status: 'finished',
+            sortKey: 1
+        })
+
+        const { sessionId, session } = createActiveProjectSession(store, { namespace, projectId })
+
+        const engine = {
+            async sendMessage(sid: string, _payload: { text: string; localId?: string | null }) {
+                store.messages.addMessage(sid, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'message',
+                            message: JSON.stringify([
+                                {
+                                    title: 'Add board filtering presets',
+                                    category: 'feature'
+                                },
+                                {
+                                    title: 'Support archived task quick actions',
+                                    category: 'feature'
+                                },
+                                {
+                                    title: 'Refactor task query service boundaries',
+                                    category: 'architecture'
+                                },
+                                {
+                                    title: 'Split sync engine task handlers',
+                                    category: 'architecture'
+                                }
+                            ])
+                        }
+                    }
+                })
+            },
+            getSessionByNamespace(sid: string, ns: string) {
+                return sid === sessionId && ns === namespace ? session : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? [session] : []
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const result = await runImprovementsScan({
+            store,
+            engine,
+            namespace,
+            project: {
+                id: projectId,
+                name: 'HOPI',
+                improvementsMaxGeneratedNew: 5
+            },
+            finishedTask,
+            targetSessionId: sessionId,
+            maxToCreate: 5
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+
+        const created = store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            .filter((task) => task.source === 'improvements_scan')
+
+        expect(result.createdTaskIds.length).toBe(3)
+        expect(created.length).toBe(3)
+
+        const titles = created.map((task) => task.title)
+        expect(titles).toContain('Add board filtering presets')
+        expect(titles).toContain('Refactor task query service boundaries')
+    })
+
+    it('caps created tasks to 3 even when the scan asks for more', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-5'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'HOPI'
+        })
+
+        const finishedTask = store.tasks.createTask({
+            id: 'task-finished-5',
             projectId,
             title: 'Ship baseline refactor',
             status: 'finished',
