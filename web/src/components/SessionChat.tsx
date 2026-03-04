@@ -469,6 +469,14 @@ export function SessionChat(props: {
         }
     }, [appendPreviewEvent, previewActive, previewBusy, props.api, replacePreviewEvent, shouldShowPreviewAction, taskId])
 
+    const handleMergeActionClick = useCallback(() => {
+        void handleMergeAction()
+    }, [handleMergeAction])
+
+    const handlePreviewActionClick = useCallback(() => {
+        void handlePreviewAction()
+    }, [handlePreviewAction])
+
     const { abortSession, switchSession, setPermissionMode, setModelMode } = useSessionActions(
         props.api,
         props.session.id,
@@ -494,12 +502,23 @@ export function SessionChat(props: {
         })
     }, [props.session, props.api, props.onSend, props.onRefresh])
 
+    const voiceSessionRef = useRef(props.session)
+    const voiceMessagesRef = useRef(props.messages)
+
+    useEffect(() => {
+        voiceSessionRef.current = props.session
+    }, [props.session])
+
+    useEffect(() => {
+        voiceMessagesRef.current = props.messages
+    }, [props.messages])
+
     useEffect(() => {
         registerVoiceHooksStore(
-            (sessionId) => (sessionId === props.session.id ? props.session : null),
-            (sessionId) => (sessionId === props.session.id ? props.messages : [])
+            (sessionId) => (sessionId === props.session.id ? voiceSessionRef.current : null),
+            (sessionId) => (sessionId === props.session.id ? voiceMessagesRef.current : [])
         )
-    }, [props.session, props.messages])
+    }, [props.session.id])
 
     // Track and report new messages to voice assistant
     // Note: voiceHooks internally checks isVoiceSessionStarted() so we don't need to check voice.status here
@@ -832,16 +851,12 @@ export function SessionChat(props: {
                         showMergeAction={shouldShowMergeAction}
                         mergeActionDisabled={effectiveIsRunning || isMergeBusy || hasPendingRequests}
                         mergeActionLabel={isMergeBusy ? 'Merging...' : 'Merge'}
-                        onMergeAction={() => {
-                            void handleMergeAction()
-                        }}
+                        onMergeAction={handleMergeActionClick}
                         mergeEvents={mergeEvents}
                         showPreviewAction={shouldShowPreviewAction}
                         previewActionDisabled={effectiveIsRunning || previewBusy || hasPendingRequests}
                         previewActionLabel={previewActionLabel}
-                        onPreviewAction={() => {
-                            void handlePreviewAction()
-                        }}
+                        onPreviewAction={handlePreviewActionClick}
                         previewEvents={previewEvents}
                     />
 
