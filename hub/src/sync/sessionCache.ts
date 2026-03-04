@@ -173,6 +173,13 @@ export class SessionCache {
             || modeChanged
             || (now - lastBroadcastAt > 10_000)
 
+        if (modeChanged) {
+            this.syncLinkedTaskModes(session.id, session.namespace, {
+                permissionMode: payload.permissionMode,
+                modelMode: payload.modelMode
+            })
+        }
+
         if (shouldBroadcast) {
             this.lastBroadcastAtBySessionId.set(session.id, now)
             this.publisher.emit({
@@ -230,7 +237,52 @@ export class SessionCache {
             session.modelMode = config.modelMode
         }
 
+        this.syncLinkedTaskModes(sessionId, session.namespace, config)
         this.publisher.emit({ type: 'session-updated', sessionId, data: session })
+    }
+
+    private syncLinkedTaskModes(
+        sessionId: string,
+        namespace: string,
+        modes: { permissionMode?: PermissionMode; modelMode?: ModelMode }
+    ): void {
+        if (modes.permissionMode === undefined && modes.modelMode === undefined) {
+            return
+        }
+
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(
+            sessionId,
+            namespace,
+            { includeArchived: true }
+        )
+
+        for (const task of linkedTasks) {
+            const patch: { permissionMode?: PermissionMode; modelMode?: ModelMode } = {}
+
+            if (modes.permissionMode !== undefined && task.permissionMode !== modes.permissionMode) {
+                patch.permissionMode = modes.permissionMode
+            }
+            if (modes.modelMode !== undefined && task.modelMode !== modes.modelMode) {
+                patch.modelMode = modes.modelMode
+            }
+
+            if (patch.permissionMode === undefined && patch.modelMode === undefined) {
+                continue
+            }
+
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, patch)
+            if (!updated) {
+                continue
+            }
+
+            this.publisher.emit({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace,
+                data: { taskId: updated.id }
+            })
+        }
     }
 
     async renameSession(sessionId: string, name: string): Promise<void> {
