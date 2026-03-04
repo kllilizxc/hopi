@@ -119,6 +119,9 @@ function formatMergeSkippedReason(reason: string): string {
     if (reason === 'no_changes') {
         return '没有可合并的变更'
     }
+    if (reason === 'auto_retry_scheduled') {
+        return '已安排后台自动重试合并'
+    }
     return reason
 }
 

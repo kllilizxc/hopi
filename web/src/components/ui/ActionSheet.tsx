@@ -168,7 +168,7 @@ export function ActionSheet(props: ActionSheetProps) {
                         )}
                     >
                         <div
-                            className="mx-auto mb-2 h-6 w-16 touch-none flex items-center justify-center"
+                            className="mb-2 flex h-8 w-full touch-none items-center justify-center"
                             onPointerDown={handleDragPointerDown}
                             onPointerMove={handleDragPointerMove}
                             onPointerUp={finishDrag}

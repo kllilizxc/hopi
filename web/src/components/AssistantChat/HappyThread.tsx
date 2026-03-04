@@ -6,6 +6,7 @@ import { HappyChatProvider } from '@/components/AssistantChat/context'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
 import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessage'
 import { HappySystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
+import { ScrollShadow } from '@/components/ui/scroll-shadow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 import { useTranslation } from '@/lib/use-translation'
@@ -326,11 +327,12 @@ export function HappyThread(props: {
 
     return (
         <HappyChatProvider value={chatContextValue}>
-            <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
+            <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative border-0">
                 <ThreadPrimitive.Viewport asChild autoScroll={autoScrollEnabled}>
-                    <div
+                    <ScrollShadow
                         ref={viewportRef}
                         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+                        background="var(--app-bg)"
                         style={{ WebkitOverflowScrolling: 'touch' }}
                     >
                         <div className="mx-auto w-full max-w-content min-w-0 p-3">
@@ -455,7 +457,7 @@ export function HappyThread(props: {
                                 </div>
                             ) : null}
                         </div>
-                    </div>
+                    </ScrollShadow>
                 </ThreadPrimitive.Viewport>
                 <NewMessagesIndicator count={props.pendingCount} onClick={scrollToBottom} />
             </ThreadPrimitive.Root>

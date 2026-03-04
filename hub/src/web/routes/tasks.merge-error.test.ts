@@ -400,4 +400,110 @@ describe('tasks merge route unexpected errors', () => {
         expect(body.commitHash).toBe('new456')
         expect(mergeCalls).toBe(1)
     })
+
+    it('returns retry-scheduled response when post-auto-resolve retry fails transiently', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-auto-retry-scheduled'
+        const sessionId = 'session-merge-auto-retry-scheduled'
+        const namespace = 'default'
+        seedMergeTask(store, {
+            namespace,
+            projectId: 'project-merge-auto-retry-scheduled',
+            taskId,
+            sessionId
+        })
+
+        let mergeCalls = 0
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        thinking: false,
+                        active: true,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch',
+                                baseCommit: 'abc1234'
+                            }
+                        }
+                    }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: sessionId,
+                    active: true,
+                    thinking: false
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                if (mergeCalls === 1) {
+                    return {
+                        success: false,
+                        error: 'Merge conflicts detected; manual resolution required',
+                        conflictFiles: ['src/conflict.ts']
+                    }
+                }
+                if (mergeCalls === 2) {
+                    return {
+                        success: false,
+                        error: 'merge timed out'
+                    }
+                }
+                return {
+                    success: true,
+                    commitHash: 'merged789'
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
+            },
+            async gitAutocommitWorktree() {
+                return { success: true, commitHash: 'resolve456' }
+            },
+            async sendMessage() {
+                store.messages.addMessage(sessionId, {
+                    role: 'agent',
+                    content: { type: 'text', text: 'conflicts resolved' }
+                })
+            },
+            async getGitDiffNumstat() {
+                return {
+                    success: true,
+                    stdout: '1\t0\tsrc/conflict.ts'
+                }
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            skippedReason?: string | null
+            autoResolved?: boolean | null
+            autoRetryScheduled?: boolean | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBe('auto_retry_scheduled')
+        expect(body.autoResolved).toBe(true)
+        expect(body.autoRetryScheduled).toBe(true)
+    })
 })
