@@ -88,15 +88,31 @@ export function syncTaskSubTasksFromSessionTodos(options: {
 }): StoredTask | null {
     const task = resolveLinkedTask(options.store, options.session)
     if (!task) {
+        console.warn('[taskSubtasks] No linked task found for session', {
+            sessionId: options.session.id,
+            metadata: options.session.metadata
+        })
         return null
     }
 
     if (task.subTasksUpdatedAt !== null && task.subTasksUpdatedAt >= options.todosUpdatedAt) {
+        console.warn('[taskSubtasks] Skipping stale todos update', {
+            taskId: task.id,
+            taskSubTasksUpdatedAt: task.subTasksUpdatedAt,
+            todosUpdatedAt: options.todosUpdatedAt
+        })
         return null
     }
 
     const mode = options.mode ?? 'replace'
     const mergedTodos = mergeTodos(task.subTasks, options.todos, mode)
+
+    console.log('[taskSubtasks] Syncing todos to task sub-tasks', {
+        taskId: task.id,
+        mode,
+        todosCount: options.todos.length,
+        mergedCount: mergedTodos.length
+    })
 
     return options.store.tasks.updateTaskByNamespace(task.id, options.session.namespace, {
         subTasks: mergedTodos,

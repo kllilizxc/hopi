@@ -92,9 +92,17 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         if (taskToolResult) {
             const { todos, source } = taskToolResult
 
+            console.log('[sessionHandlers] Extracted task tools from message', {
+                sessionId: sid,
+                source,
+                todosCount: todos.length,
+                messageCreatedAt: msg.createdAt
+            })
+
             // Update session todos for all sources
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
             if (updated) {
+                console.log('[sessionHandlers] Session todos updated successfully', { sessionId: sid })
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
 
                 // Determine merge mode based on tool source
@@ -109,6 +117,10 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                     mode
                 })
                 if (updatedTask) {
+                    console.log('[sessionHandlers] Task sub-tasks synced successfully', {
+                        taskId: updatedTask.id,
+                        projectId: updatedTask.projectId
+                    })
                     onWebappEvent?.({
                         type: 'task-updated',
                         taskId: updatedTask.id,
@@ -116,7 +128,14 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                         namespace: session.namespace,
                         data: { taskId: updatedTask.id }
                     })
+                } else {
+                    console.warn('[sessionHandlers] Task sub-tasks sync returned null', { sessionId: sid })
                 }
+            } else {
+                console.warn('[sessionHandlers] Session todos update failed (stale timestamp?)', {
+                    sessionId: sid,
+                    todosUpdatedAt: msg.createdAt
+                })
             }
         }
 
