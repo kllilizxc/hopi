@@ -1,9 +1,42 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { renderWithProviders } from '@/test/renderWithProviders'
 import { ActionSheet, ActionSheetItem } from '@/components/ui/ActionSheet'
 
+type PointerGestureType = 'down' | 'move' | 'up' | 'cancel'
+type PointerGestureInit = {
+    pointerId: number
+    pointerType: 'touch' | 'mouse' | 'pen'
+    clientY: number
+}
+
+function fireGesturePointerEvent(target: HTMLElement, type: PointerGestureType, init: PointerGestureInit) {
+    const event = new Event(`pointer${type}`, { bubbles: true, cancelable: true })
+    Object.assign(event, {
+        pointerId: init.pointerId,
+        pointerType: init.pointerType,
+        clientY: init.clientY,
+    })
+    fireEvent(target, event)
+}
+
+function getActionSheetHandle() {
+    const dialog = screen.getByRole('dialog')
+    const handle = dialog.querySelector('[data-slot="action-sheet-handle"]')
+    expect(handle).not.toBeNull()
+
+    if (!(handle instanceof HTMLElement)) {
+        throw new Error('ActionSheet drag handle not found')
+    }
+
+    return { dialog, handle }
+}
+
 describe('ActionSheet', () => {
+    afterEach(() => {
+        vi.useRealTimers()
+    })
+
     it('does not render content when closed', () => {
         renderWithProviders(
             <ActionSheet open={false} onOpenChange={() => {}} title="Actions">
@@ -50,21 +83,32 @@ describe('ActionSheet', () => {
             </ActionSheet>
         )
 
-        const dialog = screen.getByRole('dialog')
-        const handle = dialog.querySelector('[data-slot="action-sheet-handle"]')
-        expect(handle).not.toBeNull()
-        if (!handle) {
-            return
-        }
+        const { handle } = getActionSheetHandle()
 
-        fireEvent.pointerDown(handle, { pointerId: 1, pointerType: 'touch', clientY: 100 })
-        fireEvent.pointerMove(handle, { pointerId: 1, pointerType: 'touch', clientY: 260 })
-        fireEvent.pointerUp(handle, { pointerId: 1, pointerType: 'touch', clientY: 260 })
+        fireGesturePointerEvent(handle, 'down', { pointerId: 1, pointerType: 'touch', clientY: 100 })
+        fireGesturePointerEvent(handle, 'move', { pointerId: 1, pointerType: 'touch', clientY: 260 })
+        fireGesturePointerEvent(handle, 'up', { pointerId: 1, pointerType: 'touch', clientY: 260 })
 
         expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
+    it('follows touch drag while moving handle', () => {
+        renderWithProviders(
+            <ActionSheet open onOpenChange={() => {}} title="Actions">
+                <ActionSheetItem>Delete</ActionSheetItem>
+            </ActionSheet>
+        )
+
+        const { dialog, handle } = getActionSheetHandle()
+
+        fireGesturePointerEvent(handle, 'down', { pointerId: 4, pointerType: 'touch', clientY: 100 })
+        fireGesturePointerEvent(handle, 'move', { pointerId: 4, pointerType: 'touch', clientY: 155 })
+
+        expect(dialog.style.transform).toBe('translateY(55px)')
+    })
+
     it('snaps back when dragging handle down only a little', () => {
+        vi.useFakeTimers()
         const onOpenChange = vi.fn()
         renderWithProviders(
             <ActionSheet open onOpenChange={onOpenChange} title="Actions">
@@ -72,17 +116,38 @@ describe('ActionSheet', () => {
             </ActionSheet>
         )
 
-        const dialog = screen.getByRole('dialog')
-        const handle = dialog.querySelector('[data-slot="action-sheet-handle"]')
-        expect(handle).not.toBeNull()
-        if (!handle) {
-            return
-        }
+        const { dialog, handle } = getActionSheetHandle()
 
-        fireEvent.pointerDown(handle, { pointerId: 2, pointerType: 'touch', clientY: 100 })
-        fireEvent.pointerMove(handle, { pointerId: 2, pointerType: 'touch', clientY: 130 })
-        fireEvent.pointerUp(handle, { pointerId: 2, pointerType: 'touch', clientY: 130 })
+        fireGesturePointerEvent(handle, 'down', { pointerId: 2, pointerType: 'touch', clientY: 100 })
+        fireGesturePointerEvent(handle, 'move', { pointerId: 2, pointerType: 'touch', clientY: 130 })
+        fireGesturePointerEvent(handle, 'move', { pointerId: 2, pointerType: 'touch', clientY: 130 })
+        fireGesturePointerEvent(handle, 'up', { pointerId: 2, pointerType: 'touch', clientY: 130 })
 
         expect(onOpenChange).not.toHaveBeenCalledWith(false)
+        expect(dialog.style.transition).toBe('transform 180ms cubic-bezier(0.22, 1, 0.36, 1)')
+        expect(dialog.style.transform).toBe('')
+
+        vi.advanceTimersByTime(220)
+
+        expect(dialog.style.transition).toBe('')
+        expect(dialog.style.willChange).toBe('')
+    })
+
+    it('ignores mouse pointer drags', () => {
+        const onOpenChange = vi.fn()
+        renderWithProviders(
+            <ActionSheet open onOpenChange={onOpenChange} title="Actions">
+                <ActionSheetItem>Delete</ActionSheetItem>
+            </ActionSheet>
+        )
+
+        const { dialog, handle } = getActionSheetHandle()
+
+        fireGesturePointerEvent(handle, 'down', { pointerId: 3, pointerType: 'mouse', clientY: 100 })
+        fireGesturePointerEvent(handle, 'move', { pointerId: 3, pointerType: 'mouse', clientY: 260 })
+        fireGesturePointerEvent(handle, 'up', { pointerId: 3, pointerType: 'mouse', clientY: 260 })
+
+        expect(onOpenChange).not.toHaveBeenCalledWith(false)
+        expect(dialog.style.transform).toBe('')
     })
 })

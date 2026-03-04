@@ -1,5 +1,6 @@
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { useBottomSheetDrag } from '@/hooks/useBottomSheetDrag'
 import { cn } from '@/lib/utils'
 
 export type ActionSheetProps = {
@@ -14,141 +15,11 @@ export type ActionSheetProps = {
 
 export function ActionSheet(props: ActionSheetProps) {
     const contentRef = React.useRef<HTMLDivElement | null>(null)
-    const pointerIdRef = React.useRef<number | null>(null)
-    const startYRef = React.useRef(0)
-    const dragOffsetRef = React.useRef(0)
-    const velocityRef = React.useRef(0)
-    const lastClientYRef = React.useRef(0)
-    const lastTimestampRef = React.useRef(0)
-    const settleTimerRef = React.useRef<number | null>(null)
-
-    const clearSettleTimer = React.useCallback(() => {
-        if (settleTimerRef.current === null) {
-            return
-        }
-        window.clearTimeout(settleTimerRef.current)
-        settleTimerRef.current = null
-    }, [])
-
-    const clearDragStyles = React.useCallback(() => {
-        const contentEl = contentRef.current
-        if (!contentEl) {
-            return
-        }
-        contentEl.style.transform = ''
-        contentEl.style.transition = ''
-        contentEl.style.willChange = ''
-    }, [])
-
-    const updateDragOffset = React.useCallback((offset: number) => {
-        dragOffsetRef.current = offset
-        const contentEl = contentRef.current
-        if (!contentEl) {
-            return
-        }
-        contentEl.style.transform = offset > 0 ? `translateY(${offset}px)` : ''
-    }, [])
-
-    const settleToRestPosition = React.useCallback(() => {
-        const contentEl = contentRef.current
-        if (!contentEl) {
-            return
-        }
-        clearSettleTimer()
-        contentEl.style.transition = 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)'
-        contentEl.style.transform = ''
-        settleTimerRef.current = window.setTimeout(() => {
-            clearDragStyles()
-            settleTimerRef.current = null
-        }, 200)
-    }, [clearDragStyles, clearSettleTimer])
-
-    const resetDragState = React.useCallback(() => {
-        pointerIdRef.current = null
-        startYRef.current = 0
-        velocityRef.current = 0
-        lastClientYRef.current = 0
-        lastTimestampRef.current = 0
-        dragOffsetRef.current = 0
-    }, [])
-
-    const handleDragPointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if (event.pointerType !== 'touch') {
-            return
-        }
-
-        clearSettleTimer()
-        pointerIdRef.current = event.pointerId
-        startYRef.current = event.clientY - dragOffsetRef.current
-        lastClientYRef.current = event.clientY
-        lastTimestampRef.current = event.timeStamp
-        velocityRef.current = 0
-        event.currentTarget.setPointerCapture?.(event.pointerId)
-
-        const contentEl = contentRef.current
-        if (!contentEl) {
-            return
-        }
-        contentEl.style.transition = 'none'
-        contentEl.style.willChange = 'transform'
-    }, [clearSettleTimer])
-
-    const handleDragPointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if (pointerIdRef.current !== event.pointerId) {
-            return
-        }
-
-        const offset = Math.max(0, event.clientY - startYRef.current)
-        updateDragOffset(offset)
-
-        const deltaY = event.clientY - lastClientYRef.current
-        const deltaTime = Math.max(1, event.timeStamp - lastTimestampRef.current)
-        velocityRef.current = deltaY / deltaTime
-        lastClientYRef.current = event.clientY
-        lastTimestampRef.current = event.timeStamp
-
-        if (offset > 0) {
-            event.preventDefault()
-        }
-    }, [updateDragOffset])
-
-    const finishDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>, cancelOnly = false) => {
-        if (pointerIdRef.current !== event.pointerId) {
-            return
-        }
-
-        event.currentTarget.releasePointerCapture?.(event.pointerId)
-
-        const contentEl = contentRef.current
-        const sheetHeight = contentEl?.getBoundingClientRect().height ?? 0
-        const closeThreshold = sheetHeight > 0 ? Math.max(72, Math.min(180, sheetHeight * 0.28)) : 96
-        const shouldClose = !cancelOnly && (dragOffsetRef.current >= closeThreshold || velocityRef.current > 0.9)
-
-        if (shouldClose) {
-            clearDragStyles()
-            resetDragState()
-            props.onOpenChange(false)
-            return
-        }
-
-        settleToRestPosition()
-        resetDragState()
-    }, [clearDragStyles, props.onOpenChange, resetDragState, settleToRestPosition])
-
-    React.useEffect(() => {
-        if (props.open) {
-            return
-        }
-        clearSettleTimer()
-        clearDragStyles()
-        resetDragState()
-    }, [props.open, clearDragStyles, clearSettleTimer, resetDragState])
-
-    React.useEffect(() => {
-        return () => {
-            clearSettleTimer()
-        }
-    }, [clearSettleTimer])
+    const handleDrag = useBottomSheetDrag({
+        open: props.open,
+        contentRef,
+        onClose: () => props.onOpenChange(false)
+    })
 
     return (
         <DialogPrimitive.Root open={props.open} onOpenChange={props.onOpenChange}>
@@ -169,10 +40,10 @@ export function ActionSheet(props: ActionSheetProps) {
                     >
                         <div
                             className="mb-2 flex h-8 w-full touch-none items-center justify-center"
-                            onPointerDown={handleDragPointerDown}
-                            onPointerMove={handleDragPointerMove}
-                            onPointerUp={finishDrag}
-                            onPointerCancel={(event) => finishDrag(event, true)}
+                            onPointerDown={handleDrag.onPointerDown}
+                            onPointerMove={handleDrag.onPointerMove}
+                            onPointerUp={handleDrag.onPointerUp}
+                            onPointerCancel={handleDrag.onPointerCancel}
                             data-slot="action-sheet-handle"
                             aria-hidden="true"
                         >

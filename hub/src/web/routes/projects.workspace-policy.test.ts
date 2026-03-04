@@ -181,7 +181,7 @@ describe('project workspace policy', () => {
             id: 'task-1',
             projectId,
             title: 'seed',
-            status: 'new'
+            status: 'planned'
         })
 
         const getResponse = await app.request(`/api/projects/${projectId}`)

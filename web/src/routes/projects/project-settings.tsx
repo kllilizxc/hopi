@@ -89,7 +89,7 @@ export function ProjectSettingsPage() {
     const [autoRunEnabled, setAutoRunEnabled] = useState(false)
     const [maxRunningSessions, setMaxRunningSessions] = useState(5)
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
-    const [improvementsMaxGeneratedNew, setImprovementsMaxGeneratedNew] = useState(5)
+    const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
 
@@ -109,7 +109,7 @@ export function ProjectSettingsPage() {
         setAutoRunEnabled(Boolean(project.autoRunEnabled))
         setMaxRunningSessions(project.maxRunningSessions ?? 5)
         setImprovementsEnabled(Boolean(project.improvementsEnabled))
-        setImprovementsMaxGeneratedNew(project.improvementsMaxGeneratedNew ?? 5)
+        setImprovementsMaxPendingTasks(project.improvementsMaxPendingTasks ?? 5)
     }, [project])
 
     const permissionOptions = useMemo(() => {
@@ -186,7 +186,7 @@ export function ProjectSettingsPage() {
                 autoRunEnabled,
                 maxRunningSessions,
                 improvementsEnabled,
-                improvementsMaxGeneratedNew
+                improvementsMaxPendingTasks
             }
         })
         addToast({ title: t('projects.toast.saved'), body: '', sessionId: '', url: '' })
@@ -207,7 +207,7 @@ export function ProjectSettingsPage() {
         autoRunEnabled,
         maxRunningSessions,
         improvementsEnabled,
-        improvementsMaxGeneratedNew
+        improvementsMaxPendingTasks
     ])
 
     const handleArchiveProject = useCallback(async () => {
@@ -363,13 +363,13 @@ export function ProjectSettingsPage() {
                             </label>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxGeneratedNew')}</label>
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxPendingTasks')}</label>
                                     <input
                                         type="number"
                                         min={1}
                                         max={50}
-                                        value={improvementsMaxGeneratedNew}
-                                        onChange={(e) => setImprovementsMaxGeneratedNew(Number(e.target.value))}
+                                        value={improvementsMaxPendingTasks}
+                                        onChange={(e) => setImprovementsMaxPendingTasks(Number(e.target.value))}
                                         disabled={isPending}
                                         className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                     />

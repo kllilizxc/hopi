@@ -18,7 +18,7 @@ type UpdateProjectInput = {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
     }
 }
 

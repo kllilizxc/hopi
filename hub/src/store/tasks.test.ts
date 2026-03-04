@@ -52,13 +52,13 @@ describe('Task store worktree merge fields', () => {
             id: 'task-default',
             projectId: 'project-default',
             title: 'Task Default',
-            status: 'new'
+            status: 'planned'
         })
         store.tasks.createTask({
             id: 'task-other',
             projectId: 'project-other',
             title: 'Task Other',
-            status: 'new'
+            status: 'planned'
         })
 
         expect(store.tasks.deleteTaskByNamespace('task-default', 'other')).toBe(false)
@@ -82,7 +82,7 @@ describe('Task store worktree merge fields', () => {
             id: 'task-1',
             projectId: 'project-1',
             title: 'Task',
-            status: 'new',
+            status: 'planned',
             permissionMode: 'plan'
         })
 
@@ -93,5 +93,33 @@ describe('Task store worktree merge fields', () => {
         })
 
         expect(updated?.permissionMode).toBe('default')
+    })
+
+    it('excludes unapproved improvements-scan tasks from auto-run planned queue', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-1',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-manual',
+            projectId: 'project-1',
+            title: 'Manual task',
+            status: 'planned',
+            source: 'manual'
+        })
+        store.tasks.createTask({
+            id: 'task-generated-pending',
+            projectId: 'project-1',
+            title: 'Generated pending approval',
+            status: 'planned',
+            source: 'improvements_scan'
+        })
+
+        const planned = store.tasks.listPlannedTasksByProjectAndNamespace('project-1', 'default')
+        expect(planned.map((task) => task.id)).toEqual(['task-manual'])
     })
 })

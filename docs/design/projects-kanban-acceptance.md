@@ -212,10 +212,10 @@ Config:
 Concept:
 
 - Trigger: task moved to Finished (human-approved), before auto-archive
-- Output: auto-create tasks immediately in New; user drags to Planned or deletes
-- Limit: max 5 generated New tasks (configurable)
-    - counts only `source=improvements_scan` + status=New
-    - user-created New tasks not counted
+- Output: auto-create tasks immediately in Planned (pending approval); user approves or deletes
+- Limit: max 5 pending auto-generated tasks (configurable)
+    - counts only `source=improvements_scan` + status=Planned
+    - user-created Planned tasks not counted
 
 - [x] Prompt target session selection
     - Prefer: task’s linked session (`activeSessionId`) before archive
@@ -224,7 +224,7 @@ Concept:
     - Accept: prompt requests strict JSON array of tasks (title + optional notes + workspace hint)
     - Accept: prompt forbids tool use / code edits (“suggest tasks only”)
 - [x] Parse + create tasks
-    - Accept: valid JSON creates tasks in New with `source=improvements_scan` + `sourceTaskId`
+    - Accept: valid JSON creates tasks in Planned with `source=improvements_scan` + `sourceTaskId`
     - Accept: parse failure creates 0 tasks + surfaces raw text in UI (manual copy)
 - [x] Limit enforcement
     - Accept: if already at limit, skip sending prompt; show “limit reached” toast/badge

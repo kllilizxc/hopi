@@ -225,7 +225,7 @@ export class ApiClient {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>('/api/projects', {
             method: 'POST',
@@ -246,7 +246,7 @@ export class ApiClient {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
             method: 'PATCH',
@@ -295,7 +295,7 @@ export class ApiClient {
     async createProjectTask(projectId: string, payload: {
         title: string
         description?: string
-        status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
         priority?: 'high' | 'medium' | 'low'
         workspaceId?: string
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
@@ -330,7 +330,8 @@ export class ApiClient {
     async updateTask(taskId: string, patch: {
         title?: string
         description?: string | null
-        status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        source?: 'manual'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null

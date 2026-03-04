@@ -73,7 +73,7 @@ export type StoredProject = {
     autoRunEnabled: boolean
     maxRunningSessions: number
     improvementsEnabled: boolean
-    improvementsMaxGeneratedNew: number
+    improvementsMaxPendingTasks: number
     lastImprovementsAt: number | null
     createdAt: number
     updatedAt: number

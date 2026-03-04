@@ -56,7 +56,7 @@ function createActiveProjectSession(store: Store, options: {
 }
 
 describe('tasks improvements automation', () => {
-    it('does not run duplicate improvements scans once max generated New limit is reached', async () => {
+    it('does not run duplicate improvements scans once max pending improvements limit is reached', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-improvements-limit'
@@ -67,7 +67,7 @@ describe('tasks improvements automation', () => {
             machineId: 'machine-1',
             name: 'HOPI',
             improvementsEnabled: true,
-            improvementsMaxGeneratedNew: 1
+            improvementsMaxPendingTasks: 1
         })
 
         const { sessionId, session } = createActiveProjectSession(store, { namespace, projectId })
@@ -127,10 +127,10 @@ describe('tasks improvements automation', () => {
             })
         ])
 
-        await waitFor(() => store.tasks.countGeneratedNewTasks(projectId, namespace) === 1)
+        await waitFor(() => store.tasks.countPendingImprovementsTasks(projectId, namespace) === 1)
 
         expect(sendMessageCalls).toBe(1)
-        expect(store.tasks.countGeneratedNewTasks(projectId, namespace)).toBe(1)
+        expect(store.tasks.countPendingImprovementsTasks(projectId, namespace)).toBe(1)
         expect(store.tasks.getTaskByNamespace('task-finished-a', namespace)?.archivedAt).toBeNull()
         expect(store.tasks.getTaskByNamespace('task-finished-b', namespace)?.archivedAt).toBeNull()
     })
@@ -145,7 +145,7 @@ describe('tasks improvements automation', () => {
             machineId: 'machine-1',
             name: 'Project A',
             improvementsEnabled: true,
-            improvementsMaxGeneratedNew: 1
+            improvementsMaxPendingTasks: 1
         })
         store.projects.createProject({
             id: 'project-b',
@@ -153,7 +153,7 @@ describe('tasks improvements automation', () => {
             machineId: 'machine-1',
             name: 'Project B',
             improvementsEnabled: true,
-            improvementsMaxGeneratedNew: 1
+            improvementsMaxPendingTasks: 1
         })
 
         const { sessionId: sessionAId, session: sessionA } = createActiveProjectSession(store, {

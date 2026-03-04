@@ -14,7 +14,7 @@ type CreateProjectInput = {
     autoRunEnabled?: boolean
     maxRunningSessions?: number
     improvementsEnabled?: boolean
-    improvementsMaxGeneratedNew?: number
+    improvementsMaxPendingTasks?: number
 }
 
 export function useCreateProject(api: ApiClient | null): {

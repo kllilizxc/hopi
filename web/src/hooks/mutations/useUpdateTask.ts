@@ -24,7 +24,8 @@ type UpdateTaskInput = {
     patch: {
         title?: string
         description?: string | null
-        status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        source?: 'manual'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null

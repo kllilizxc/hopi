@@ -25,7 +25,6 @@ import { ChevronDownIcon, ChevronRightIcon, PlusIcon, TaskCardMenuIcon } from '@
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = 'hapi.kanban.collapsed-columns.v1'
 const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
-    new: false,
     planned: false,
     in_progress: false,
     in_review: false,
@@ -88,13 +87,6 @@ type KanbanStatusTheme = {
 
 function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
     switch (status) {
-        case 'new':
-            return {
-                accent1: 'var(--app-kanban-new)',
-                accent2: 'var(--app-kanban-new-2)',
-                wash1: 'var(--app-kanban-new-bg)',
-                wash2: 'var(--app-kanban-new-bg-2)'
-            }
         case 'planned':
             return {
                 accent1: 'var(--app-kanban-planned)',
@@ -244,7 +236,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const { t } = useTranslation()
     const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
 
-    const isGeneratedNew = props.task.source === 'improvements_scan' && props.task.status === 'new'
+    const isGeneratedPending = props.task.source === 'improvements_scan'
     const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const useArchiveStyle = props.task.status === 'finished'
@@ -326,13 +318,13 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                     })}
                                 </Tag>
                             ) : null}
-                            {isGeneratedNew ? (
+                            {isGeneratedPending ? (
                                 <Tag size="xs" variant="warning">
                                     {t('projects.tasks.generated')}
                                 </Tag>
                             ) : null}
                         </div>
-                        {isGeneratedNew ? (
+                        {isGeneratedPending ? (
                             <div className="mt-2 flex items-center gap-1.5">
                                 <Button
                                     type="button"
@@ -460,7 +452,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
 
     const columns = useMemo(() => {
         const grouped: Record<TaskStatus, Task[]> = {
-            new: [],
             planned: [],
             in_progress: [],
             in_review: [],
@@ -471,7 +462,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             grouped[task.status].push(task)
         }
         return {
-            new: sortTasksInColumn(grouped.new),
             planned: sortTasksInColumn(grouped.planned),
             in_progress: sortTasksInColumn(grouped.in_progress),
             in_review: sortTasksInColumn(grouped.in_review),
@@ -584,12 +574,24 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         pendingGeneratedActionTaskIdRef.current = taskId
         setPendingGeneratedActionTaskId(taskId)
         try {
-            await moveTaskRef.current(taskId, 'planned', 0)
+            await updateTask({
+                taskId,
+                patch: {
+                    source: 'manual'
+                }
+            })
+        } catch (error) {
+            addToast({
+                title: t('projects.tasks.moveFailed'),
+                body: error instanceof Error ? error.message : 'Failed to approve task',
+                sessionId: '',
+                url: ''
+            })
         } finally {
             pendingGeneratedActionTaskIdRef.current = null
             setPendingGeneratedActionTaskId((current) => current === taskId ? null : current)
         }
-    }, [])
+    }, [updateTask, addToast, t])
 
     const handleRejectGeneratedTask = useCallback(async (taskId: string) => {
         if (pendingGeneratedActionTaskIdRef.current) return

@@ -525,7 +525,7 @@ export async function runImprovementsScan(options: {
     store: Store
     engine: SyncEngine
     namespace: string
-    project: { id: string; name: string; improvementsMaxGeneratedNew: number }
+    project: { id: string; name: string; improvementsMaxPendingTasks: number }
     finishedTask: StoredTask
     targetSessionId: string
     maxToCreate: number
@@ -624,7 +624,7 @@ export async function runImprovementsScan(options: {
             projectId: options.project.id,
             title: suggestion.title.trim(),
             description: suggestion.description ?? null,
-            status: 'new',
+            status: 'planned',
             priority: suggestion.priority,
             sortKey: Date.now() + createdTaskIds.length,
             workspaceId,

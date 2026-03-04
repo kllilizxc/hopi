@@ -25,9 +25,9 @@ export async function handleTaskMovedToFinished(options: {
     if (project.improvementsEnabled) {
         const scanKey = `${options.namespace}:${project.id}`
         await improvementsScanMutex.runExclusive(scanKey, async () => {
-            const currentGenerated = options.store.tasks.countGeneratedNewTasks(project.id, options.namespace)
-            const maxGenerated = project.improvementsMaxGeneratedNew ?? 5
-            const remaining = Math.max(0, maxGenerated - currentGenerated)
+            const currentPending = options.store.tasks.countPendingImprovementsTasks(project.id, options.namespace)
+            const maxPending = project.improvementsMaxPendingTasks ?? 5
+            const remaining = Math.max(0, maxPending - currentPending)
 
             if (remaining <= 0) {
                 options.engine.handleRealtimeEvent({
@@ -35,7 +35,7 @@ export async function handleTaskMovedToFinished(options: {
                     namespace: options.namespace,
                     data: {
                         title: 'Improvements scan',
-                        body: `Skipped (limit ${maxGenerated} reached)`,
+                        body: `Skipped (limit ${maxPending} reached)`,
                         sessionId: '',
                         url: ''
                     }
@@ -71,7 +71,7 @@ export async function handleTaskMovedToFinished(options: {
                         project: {
                             id: project.id,
                             name: project.name,
-                            improvementsMaxGeneratedNew: maxGenerated
+                            improvementsMaxPendingTasks: maxPending
                         },
                         finishedTask: task,
                         targetSessionId,

@@ -27,7 +27,7 @@ export class ProjectStore {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
     }): StoredProject {
         return createProject(this.db, project)
     }
@@ -61,7 +61,7 @@ export class ProjectStore {
             autoRunEnabled?: boolean
             maxRunningSessions?: number
             improvementsEnabled?: boolean
-            improvementsMaxGeneratedNew?: number
+            improvementsMaxPendingTasks?: number
             lastImprovementsAt?: number | null
             archivedAt?: number | null
         }
