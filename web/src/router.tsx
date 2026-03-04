@@ -66,9 +66,13 @@ function SessionsPage() {
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
 
     return (
-        <div className="flex h-full min-h-0">
+        <div className="relative flex h-full min-h-0 overflow-hidden">
             <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} min-w-0 w-full flex-col bg-[var(--app-bg)] lg:flex-1 lg:w-auto lg:border-r lg:border-[var(--app-divider)]`}
+                className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto ${
+                    isSessionsIndex
+                        ? 'translate-x-0'
+                        : '-translate-x-full pointer-events-none'
+                }`}
             >
                 <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
@@ -121,7 +125,11 @@ function SessionsPage() {
             </div>
 
             <div
-                className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)] lg:flex-none lg:w-full lg:max-w-content`}
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-none lg:w-full lg:max-w-content lg:translate-x-0 lg:pointer-events-auto ${
+                    isSessionsIndex
+                        ? 'translate-x-full pointer-events-none'
+                        : 'translate-x-0'
+                }`}
             >
                 <div className="flex-1 min-h-0">
                     <Outlet />
