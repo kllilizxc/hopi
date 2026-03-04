@@ -3,7 +3,9 @@ import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import type { FileSearchItem } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
 import { GitChangeList } from '@/components/GitChangeList'
+import { PageHeader } from '@/components/PageHeader'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
+import { IconButton } from '@/components/ui/icon-button'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
@@ -12,7 +14,7 @@ import { useSessionFileSearch } from '@/hooks/queries/useSessionFileSearch'
 import { encodeBase64 } from '@/lib/utils'
 import { queryKeys } from '@/lib/query-keys'
 import { useTranslation } from '@/lib/use-translation'
-import { BackIcon, FolderIcon, GitBranchIcon, RefreshIcon, SearchIcon } from '@/assets/icons'
+import { FolderIcon, GitBranchIcon, RefreshIcon, SearchIcon } from '@/assets/icons'
 import { useQueryClient } from '@tanstack/react-query'
 
 function SearchResultRow(props: {
@@ -143,29 +145,25 @@ export default function FilesPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <button
+            <PageHeader
+                title={t('projects.files.title')}
+                subtitle={subtitle}
+                onBack={goBack}
+                backLabel={t('projects.files.back')}
+                borderClassName="border-b border-[var(--app-border)]"
+                contentClassName="p-3"
+                right={(
+                    <IconButton
                         type="button"
-                        onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
-                        <BackIcon />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">{t('projects.files.title')}</div>
-                        <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
-                    </div>
-                    <button
-                        type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={handleRefresh}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                         title={t('projects.diffs.refresh')}
                     >
                         <RefreshIcon />
-                    </button>
-                </div>
-            </div>
+                    </IconButton>
+                )}
+            />
 
             <div className="bg-[var(--app-bg)]">
                 <div className="mx-auto w-full max-w-content p-3 border-b border-[var(--app-border)]">

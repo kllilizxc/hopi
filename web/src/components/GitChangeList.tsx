@@ -2,12 +2,21 @@ import { FileIcon } from '@/components/FileIcon'
 import type { GitFileStatus } from '@/types/api'
 import { Pressable } from '@/components/ui/pressable'
 
+export type GitChangeSection = {
+    key: string
+    title: string
+    titleClassName?: string
+    files: GitFileStatus[]
+    onOpenFile: (file: GitFileStatus) => void
+}
+
 type GitChangeListProps = {
-    stagedFiles: GitFileStatus[]
-    unstagedFiles: GitFileStatus[]
-    stagedTitle: string
-    unstagedTitle: string
-    onOpenFile: (path: string, staged: boolean) => void
+    sections?: GitChangeSection[]
+    stagedFiles?: GitFileStatus[]
+    unstagedFiles?: GitFileStatus[]
+    stagedTitle?: string
+    unstagedTitle?: string
+    onOpenFile?: (path: string, staged: boolean) => void
     rootLabel?: string
 }
 
@@ -59,14 +68,14 @@ function LineChanges(props: { added: number; removed: number }) {
 function GitChangeRow(props: {
     file: GitFileStatus
     rootLabel: string
-    onOpenFile: (path: string, staged: boolean) => void
+    onOpen: () => void
     showDivider: boolean
 }) {
     const subtitle = props.file.filePath || props.rootLabel
 
     return (
         <Pressable
-            onClick={() => props.onOpenFile(props.file.fullPath, props.file.isStaged)}
+            onClick={props.onOpen}
             className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
         >
             <FileIcon fileName={props.file.fileName} size={22} />
@@ -82,45 +91,54 @@ function GitChangeRow(props: {
     )
 }
 
+function resolveSections(props: GitChangeListProps): GitChangeSection[] {
+    if (props.sections) {
+        return props.sections
+    }
+    if (!props.stagedFiles || !props.unstagedFiles || !props.stagedTitle || !props.unstagedTitle || !props.onOpenFile) {
+        return []
+    }
+    const openFile = props.onOpenFile
+    return [
+        {
+            key: 'staged',
+            title: props.stagedTitle,
+            titleClassName: 'text-[var(--app-git-staged-color)]',
+            files: props.stagedFiles,
+            onOpenFile: (file) => openFile(file.fullPath, true)
+        },
+        {
+            key: 'unstaged',
+            title: props.unstagedTitle,
+            titleClassName: 'text-[var(--app-git-unstaged-color)]',
+            files: props.unstagedFiles,
+            onOpenFile: (file) => openFile(file.fullPath, false)
+        },
+    ]
+}
+
 export function GitChangeList(props: GitChangeListProps) {
     const rootLabel = props.rootLabel ?? 'project root'
-    const hasUnstagedFiles = props.unstagedFiles.length > 0
+    const sections = resolveSections(props).filter((section) => section.files.length > 0)
 
     return (
         <div>
-            {props.stagedFiles.length ? (
-                <div>
-                    <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                        {props.stagedTitle} ({props.stagedFiles.length})
+            {sections.map((section) => (
+                <div key={section.key}>
+                    <div className={`border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold ${section.titleClassName ?? 'text-[var(--app-hint)]'}`}>
+                        {section.title} ({section.files.length})
                     </div>
-                    {props.stagedFiles.map((file, index) => (
+                    {section.files.map((file, index) => (
                         <GitChangeRow
-                            key={`staged-${file.fullPath}-${index}`}
+                            key={`${section.key}-${file.fullPath}-${index}`}
                             file={file}
                             rootLabel={rootLabel}
-                            onOpenFile={props.onOpenFile}
-                            showDivider={index < props.stagedFiles.length - 1 || hasUnstagedFiles}
+                            onOpen={() => section.onOpenFile(file)}
+                            showDivider={index < section.files.length - 1}
                         />
                     ))}
                 </div>
-            ) : null}
-
-            {props.unstagedFiles.length ? (
-                <div>
-                    <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-unstaged-color)]">
-                        {props.unstagedTitle} ({props.unstagedFiles.length})
-                    </div>
-                    {props.unstagedFiles.map((file, index) => (
-                        <GitChangeRow
-                            key={`unstaged-${file.fullPath}-${index}`}
-                            file={file}
-                            rootLabel={rootLabel}
-                            onOpenFile={props.onOpenFile}
-                            showDivider={index < props.unstagedFiles.length - 1}
-                        />
-                    ))}
-                </div>
-            ) : null}
+            ))}
         </div>
     )
 }

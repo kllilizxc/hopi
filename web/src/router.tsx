@@ -296,6 +296,7 @@ function NewSessionPage() {
     const { api } = useAppContext()
     const navigate = useNavigate()
     const goBack = useAppGoBack()
+    const { t } = useTranslation()
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true)
 
@@ -320,13 +321,16 @@ function NewSessionPage() {
         <div className="flex-1 overflow-y-auto">
             <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
-                    <button
+                    <IconButton
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        aria-label={t('projects.actions.back')}
+                        title={t('projects.actions.back')}
                     >
                         <BackIcon />
-                    </button>
+                    </IconButton>
                 )}
                 <div className="flex-1 font-semibold">Create Session</div>
             </div>

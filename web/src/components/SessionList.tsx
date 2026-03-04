@@ -7,6 +7,7 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { BulbIcon, ChevronRightIcon, PlusIcon } from '@/assets/icons'
 
@@ -60,20 +61,6 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
             }
             return b.latestUpdatedAt - a.latestUpdatedAt
         })
-}
-
-function getSessionTitle(session: SessionSummary): string {
-    if (session.metadata?.name) {
-        return session.metadata.name
-    }
-    if (session.metadata?.summary?.text) {
-        return session.metadata.summary.text
-    }
-    if (session.metadata?.path) {
-        const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
-    }
-    return session.id.slice(0, 8)
 }
 
 function getTodoProgress(session: SessionSummary): { completed: number; total: number } | null {
@@ -136,7 +123,7 @@ function SessionItem(props: {
         threshold: 500
     })
 
-    const sessionName = getSessionTitle(s)
+    const sessionName = getSessionDisplayTitle(s)
     const statusDotClass = s.active
         ? (s.thinking ? 'bg-[var(--app-link)]' : 'bg-[var(--app-badge-success-text)]')
         : 'bg-[var(--app-hint)]'

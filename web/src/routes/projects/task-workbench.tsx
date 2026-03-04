@@ -5,9 +5,11 @@ import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, T
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
+import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
+import { PageHeader } from '@/components/PageHeader'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
@@ -33,7 +35,7 @@ import { TaskSessionChat } from '@/routes/projects/task-session-chat'
 import { TaskSessionDiffs } from '@/routes/projects/task-session-diffs'
 import { TaskSessionFiles } from '@/routes/projects/task-session-files'
 import { SessionTerminal } from '@/routes/sessions/terminal'
-import { BackIcon, CopyIcon } from '@/assets/icons'
+import { CopyIcon } from '@/assets/icons'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
@@ -325,10 +327,7 @@ function AttachSessionDialog(props: {
 
                     <div className="divide-y divide-[var(--app-divider)]">
                         {filtered.map((session) => {
-                            const title = session.metadata?.name
-                                ?? session.metadata?.summary?.text
-                                ?? session.metadata?.path
-                                ?? session.id.slice(0, 8)
+                            const title = getSessionDisplayTitle(session)
                             const linked = Boolean(session.metadata?.taskId)
 
                             return (
@@ -1007,27 +1006,13 @@ function WorkbenchHeader(props: {
     copyLabel: string
 }) {
     return (
-        <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
-            <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                    <IconButton
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={props.onBack}
-                        aria-label={props.backLabel}
-                        title={props.backLabel}
-                    >
-                        <BackIcon />
-                    </IconButton>
-                    <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{props.title}</div>
-                        {props.subtitle ? (
-                            <div className="text-[10px] text-[var(--app-hint)] truncate">{props.subtitle}</div>
-                        ) : null}
-                    </div>
-                </div>
-
+        <PageHeader
+            title={props.title}
+            subtitle={props.subtitle}
+            onBack={props.onBack}
+            backLabel={props.backLabel}
+            subtitleClassName="text-[10px] text-[var(--app-hint)] truncate"
+            right={(
                 <IconButton
                     type="button"
                     variant="ghost"
@@ -1039,8 +1024,8 @@ function WorkbenchHeader(props: {
                 >
                     <CopyIcon className={props.copied ? 'text-[var(--app-link)]' : undefined} />
                 </IconButton>
-            </div>
-        </div>
+            )}
+        />
     )
 }
 

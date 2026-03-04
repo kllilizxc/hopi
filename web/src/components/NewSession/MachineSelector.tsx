@@ -1,13 +1,8 @@
 import type { Machine } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
+import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { ChevronDownIcon } from '@/assets/icons'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
 
 export function MachineSelector(props: {
     machines: Machine[]
@@ -20,12 +15,12 @@ export function MachineSelector(props: {
 
     const options = props.machines.map((m) => ({
         value: m.id,
-        label: `${getMachineTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
+        label: `${getMachineDisplayTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
     }))
 
     const selectedMachine = props.machineId ? props.machines.find((m) => m.id === props.machineId) : null
     const selectedLabel = selectedMachine
-        ? `${getMachineTitle(selectedMachine)}${selectedMachine.metadata?.platform ? ` (${selectedMachine.metadata.platform})` : ''}`
+        ? `${getMachineDisplayTitle(selectedMachine)}${selectedMachine.metadata?.platform ? ` (${selectedMachine.metadata.platform})` : ''}`
         : props.isLoading
             ? t('loading.machines')
             : props.machines.length === 0
@@ -62,4 +57,3 @@ export function MachineSelector(props: {
         </div>
     )
 }
-
