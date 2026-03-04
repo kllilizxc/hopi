@@ -7,9 +7,7 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
-import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { IconButton } from '@/components/ui/icon-button'
 import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
@@ -20,9 +18,8 @@ import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
-import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import type { AgentType } from '@/components/NewSession/types'
-import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
+import { NewTaskDialog } from './kanban-new-task-dialog'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
@@ -161,17 +158,6 @@ function computeInsertedSortKey(above: Task | null, below: Task | null): number 
     return Date.now()
 }
 
-function parseTaskDraft(value: string): { title: string; description?: string } {
-    const normalized = value.replace(/\r\n/g, '\n')
-    const [rawTitle = '', ...descriptionLines] = normalized.split('\n')
-    const title = rawTitle.trim()
-    const description = descriptionLines.join('\n').trim()
-    return {
-        title,
-        description: description ? description : undefined
-    }
-}
-
 type DragState = {
     taskId: string
     fromStatus: TaskStatus
@@ -203,25 +189,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
 
     const [createOpen, setCreateOpen] = useState(false)
-    const [newTaskDraft, setNewTaskDraft] = useState('')
-    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
-    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(defaultTaskAgent)
-    const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => (
-        resolveTaskPermissionModeForFlavor(defaultTaskAgent, projectDefaultPermissionMode)
-    ))
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
-    const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
-    const newTaskPermissionOptions = useMemo(
-        () => getTaskPermissionModeOptionsForFlavor(newTaskAgent),
-        [newTaskAgent]
-    )
-
-    useEffect(() => {
-        if (newTaskPermissionOptions.some((option) => option.mode === newTaskPermissionMode)) {
-            return
-        }
-        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, projectDefaultPermissionMode))
-    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, projectDefaultPermissionMode])
 
     const [dragState, setDragState] = useState<DragState | null>(null)
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -539,27 +507,24 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         setDropTargetSynced
     ])
 
-    const openCreateModal = () => {
-        setNewTaskDraft('')
-        setNewTaskPriority('')
-        setNewTaskAgent(defaultTaskAgent)
-        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(defaultTaskAgent, projectDefaultPermissionMode))
-        setCreateOpen(true)
-    }
-
-    const handleCreateModal = async () => {
-        if (isCreatingTask || !parsedNewTaskDraft.title) return
+    const handleNewTaskCreate = useCallback(async (data: {
+        title: string
+        description: string | undefined
+        priority: TaskPriority | ''
+        agent: AgentType
+        permissionMode: PermissionMode
+    }) => {
         const created = await handleCreateTask(
-            parsedNewTaskDraft.title,
-            parsedNewTaskDraft.description,
-            newTaskPriority || null,
-            newTaskAgent,
-            newTaskPermissionMode
+            data.title,
+            data.description,
+            data.priority || null,
+            data.agent,
+            data.permissionMode
         )
         if (created) {
             setCreateOpen(false)
         }
-    }
+    }, [handleCreateTask])
 
     const handleBoardDragOver = useCallback((event: React.DragEvent) => {
         if (!dragState) return
@@ -965,98 +930,21 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 type="button"
                 variant="accent"
                 size="md"
-                onClick={openCreateModal}
+                onClick={() => setCreateOpen(true)}
                 className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow,opacity] duration-150 hover:opacity-90 hover:shadow-xl hover:-translate-y-[1px] active:opacity-80 active:translate-y-0 active:shadow-lg"
                 aria-label={t('projects.tasks.create')}
             >
                 <PlusIcon className="h-6 w-6" />
             </IconButton>
 
-            <Dialog open={createOpen} onOpenChange={(open) => setCreateOpen(open)}>
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{t('projects.tasks.create')}</DialogTitle>
-                        <DialogDescription>{t('projects.tasks.createHint')}</DialogDescription>
-                    </DialogHeader>
-
-                    <form
-                        className="mt-4"
-                        onSubmit={(event) => {
-                            event.preventDefault()
-                            void handleCreateModal()
-                        }}
-                    >
-                        <div className="space-y-3">
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.tasks.details')}
-                                </label>
-                                <textarea
-                                    value={newTaskDraft}
-                                    onChange={(e) => setNewTaskDraft(e.target.value)}
-                                    disabled={isCreatingTask}
-                                    rows={6}
-                                    placeholder={t('projects.tasks.detailsPlaceholder')}
-                                    className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.task.priority')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('projects.task.priority')}
-                                    value={newTaskPriority}
-                                    options={[
-                                        { value: '', label: t('projects.task.priority.none') },
-                                        { value: 'high', label: t('projects.task.priority.high') },
-                                        { value: 'medium', label: t('projects.task.priority.medium') },
-                                        { value: 'low', label: t('projects.task.priority.low') },
-                                    ]}
-                                    onValueChange={(value) => setNewTaskPriority((value as TaskPriority) || '')}
-                                    disabled={isCreatingTask}
-                                    align="start"
-                                />
-                            </div>
-                            <AgentSelector
-                                agent={newTaskAgent}
-                                isDisabled={isCreatingTask}
-                                onAgentChange={setNewTaskAgent}
-                            />
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('misc.permissionMode')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('misc.permissionMode')}
-                                    value={newTaskPermissionMode}
-                                    options={newTaskPermissionOptions.map((opt) => ({
-                                        value: opt.mode as PermissionMode,
-                                        label: opt.label,
-                                    }))}
-                                    onValueChange={(value) => setNewTaskPermissionMode(value as PermissionMode)}
-                                    disabled={isCreatingTask}
-                                    align="start"
-                                />
-                                {newTaskPermissionMode === 'plan' ? (
-                                    <div className="text-xs text-[var(--app-hint)]">
-                                        {t('projects.tasks.planModeHint')}
-                                    </div>
-                                ) : null}
-                            </div>
-                        </div>
-
-                        <div className="mt-5 flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={() => setCreateOpen(false)} disabled={isCreatingTask}>
-                                {t('button.cancel')}
-                            </Button>
-                            <Button type="submit" variant="secondary" disabled={isCreatingTask || !parsedNewTaskDraft.title}>
-                                {isCreatingTask ? t('projects.tasks.creating') : t('projects.tasks.create')}
-                            </Button>
-                        </div>
-                    </form>
-                </DialogContent>
-            </Dialog>
+            <NewTaskDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                defaultAgent={defaultTaskAgent}
+                defaultPermissionMode={projectDefaultPermissionMode}
+                isCreating={isCreatingTask}
+                onCreate={handleNewTaskCreate}
+            />
 
         </div>
     )
