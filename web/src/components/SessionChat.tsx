@@ -164,12 +164,19 @@ async function waitForTaskMerged(api: ApiClient, taskId: string): Promise<boolea
 }
 
 function isInterruptedEvent(event: AgentEvent): boolean {
+    // Check for explicit error event type
+    if (event.type === 'error') {
+        return true
+    }
+
+    // Check for API errors that have exhausted retries
     if (event.type === 'api-error') {
         const retryAttempt = typeof event.retryAttempt === 'number' ? event.retryAttempt : null
         const maxRetries = typeof event.maxRetries === 'number' ? event.maxRetries : null
         return retryAttempt !== null && maxRetries !== null && maxRetries > 0 && retryAttempt >= maxRetries
     }
 
+    // Fallback: check for error messages in legacy 'message' type events
     if (event.type !== 'message' || typeof event.message !== 'string') {
         return false
     }
@@ -245,13 +252,6 @@ export function SessionChat(props: {
         props.api,
         taskId,
         { enabled: shouldQueryMergeState }
-    )
-    const shouldShowMergeAction = Boolean(
-        shouldQueryMergeState
-        && !isMergeStateLoading
-        && mergeState?.canMerge
-        && !mergeActionHidden
-        && !hasPendingRequests
     )
     const isMergeBusy = isMergePending || isMergeFinalizing
 
@@ -628,6 +628,30 @@ export function SessionChat(props: {
         blocksByIdRef.current = reconciled.byId
     }, [reconciled.byId])
 
+    // Check if the last event message indicates an error/interruption
+    const hasErrorInLastMessages = useMemo(() => {
+        for (let i = normalizedMessages.length - 1; i >= 0; i--) {
+            const msg = normalizedMessages[i]
+            if (msg.role === 'event' && isInterruptedEvent(msg.content)) {
+                return true
+            }
+            // Stop checking after we see an assistant or user message
+            if (msg.role === 'user' || msg.role === 'agent') {
+                break
+            }
+        }
+        return false
+    }, [normalizedMessages])
+
+    const shouldShowMergeAction = Boolean(
+        shouldQueryMergeState
+        && !isMergeStateLoading
+        && mergeState?.canMerge
+        && !mergeActionHidden
+        && !hasPendingRequests
+        && !hasErrorInLastMessages
+    )
+
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
         try {
@@ -720,6 +744,7 @@ export function SessionChat(props: {
 
     const effectiveIsRunning = props.session.thinking
         || (!ignoreRunningFallback && shouldTreatSessionAsRunningFallback(props.session, normalizedMessages))
+
     const showContinueAction = Boolean(
         taskId
         && task
@@ -727,7 +752,7 @@ export function SessionChat(props: {
         && !task.archivedAt
         && !task.finishedAt
         && !hasPendingRequests
-        && !shouldShowMergeAction
+        && (hasErrorInLastMessages || !shouldShowMergeAction)
     )
 
     const runtime = useHappyRuntime({

@@ -168,8 +168,9 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             } catch (error) {
                 logger.warn('[opencode-remote] prompt failed', error);
                 session.sendSessionEvent({
-                    type: 'message',
-                    message: 'OpenCode prompt failed. Check logs for details.'
+                    type: 'error',
+                    message: 'OpenCode prompt failed. Check logs for details.',
+                    reason: 'prompt-failed'
                 });
                 messageBuffer.addMessage('OpenCode prompt failed', 'status');
             } finally {

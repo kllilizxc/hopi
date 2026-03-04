@@ -11,6 +11,7 @@ export type UsageData = {
 export type AgentEvent =
     | { type: 'switch'; mode: 'local' | 'remote' }
     | { type: 'message'; message: string }
+    | { type: 'error'; message: string; reason?: 'aborted' | 'process-exited' | 'prompt-failed' | 'task-failed' | 'unknown' }
     | { type: 'title-changed'; title: string }
     | { type: 'limit-reached'; endsAt: number }
     | { type: 'ready'; forLocalKey?: string; hasAssistantReply?: boolean }

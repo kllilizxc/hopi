@@ -439,13 +439,13 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     session.consumeOneTimeFlags();
 
                     if (!this.exitReason && controller.signal.aborted) {
-                        session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
+                        session.client.sendSessionEvent({ type: 'error', message: 'Aborted by user', reason: 'aborted' });
                         emitReadyForInFlightTurn();
                     }
                 } catch (e) {
                     logger.debug('[remote]: launch error', e);
                     if (!this.exitReason) {
-                        session.client.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                        session.client.sendSessionEvent({ type: 'error', message: 'Process exited unexpectedly', reason: 'process-exited' });
                         emitReadyForInFlightTurn();
                         continue;
                     }

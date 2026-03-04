@@ -464,6 +464,10 @@ export class ApiSessionClient extends EventEmitter {
         type: 'message'
         message: string
     } | {
+        type: 'error'
+        message: string
+        reason?: 'aborted' | 'process-exited' | 'prompt-failed' | 'task-failed' | 'unknown'
+    } | {
         type: 'permission-mode-changed'
         mode: SessionPermissionMode
     } | {

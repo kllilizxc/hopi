@@ -147,8 +147,9 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             } catch (error) {
                 logger.warn('[gemini-remote] prompt failed', error);
                 session.sendSessionEvent({
-                    type: 'message',
-                    message: 'Gemini prompt failed. Check logs for details.'
+                    type: 'error',
+                    message: 'Gemini prompt failed. Check logs for details.',
+                    reason: 'prompt-failed'
                 });
                 messageBuffer.addMessage('Gemini prompt failed', 'status');
             } finally {
