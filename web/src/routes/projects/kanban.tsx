@@ -8,7 +8,9 @@ import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ActionSheet, ActionSheetItem } from '@/components/ui/ActionSheet'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
+import { IconButton } from '@/components/ui/icon-button'
 import { useAppContext } from '@/lib/app-context'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
@@ -16,7 +18,7 @@ import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
-import { TaskCardMenuIcon } from '@/assets/icons'
+import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import type { AgentType } from '@/components/NewSession/types'
@@ -170,60 +172,6 @@ function parseTaskDraft(value: string): { title: string; description?: string } 
     }
 }
 
-function TaskMoveSheet(props: {
-    isOpen: boolean
-    currentStatus: TaskStatus
-    onClose: () => void
-    onMove: (status: TaskStatus) => void
-}) {
-    const { t } = useTranslation()
-
-    return (
-        <ActionSheet
-            open={props.isOpen}
-            onOpenChange={(open) => {
-                if (!open) {
-                    props.onClose()
-                }
-            }}
-            title={t('projects.tasks.moveTo')}
-        >
-            <div className="flex flex-col gap-1">
-                {KANBAN_COLUMNS.map((col) => {
-                    const theme = getKanbanStatusTheme(col.status)
-                    const isCurrent = col.status === props.currentStatus
-
-                    return (
-                        <ActionSheetItem
-                            key={col.status}
-                            icon={
-                                <span
-                                    className="h-2.5 w-2.5 rounded-full"
-                                    style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
-                                />
-                            }
-                            onClick={() => {
-                                props.onMove(col.status)
-                                props.onClose()
-                            }}
-                            disabled={isCurrent}
-                        >
-                            <span className="flex w-full items-center justify-between gap-3">
-                                <span className="min-w-0 flex-1 truncate">{t(col.titleKey)}</span>
-                                {isCurrent ? (
-                                    <span className="shrink-0 text-[10px] text-[var(--app-hint)]">
-                                        {t('projects.tasks.current')}
-                                    </span>
-                                ) : null}
-                            </span>
-                        </ActionSheetItem>
-                    )
-                })}
-            </div>
-        </ActionSheet>
-    )
-}
-
 type DragState = {
     taskId: string
     fromStatus: TaskStatus
@@ -247,7 +195,9 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
     const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
-    const selectedTaskId = taskRouteMatch?.projectId === props.projectId ? taskRouteMatch.taskId : null
+    const selectedTaskId = taskRouteMatch && taskRouteMatch.projectId === props.projectId
+        ? taskRouteMatch.taskId
+        : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
@@ -926,10 +876,12 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                             </div>
                                                             {isGeneratedNew ? (
                                                                 <div className="mt-2 flex items-center gap-1.5">
-                                                                    <button
+                                                                    <Button
                                                                         type="button"
+                                                                        size="sm"
                                                                         draggable={false}
-                                                                        className="rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-2 py-1 text-[11px] font-medium text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50"
+                                                                        variant="secondary"
+                                                                        className="h-7 px-2 py-1 text-[11px]"
                                                                         onClick={(event) => {
                                                                             event.preventDefault()
                                                                             event.stopPropagation()
@@ -938,11 +890,13 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                                         disabled={isGeneratedActionPending}
                                                                     >
                                                                         {t('projects.tasks.approve')}
-                                                                    </button>
-                                                                    <button
+                                                                    </Button>
+                                                                    <Button
                                                                         type="button"
+                                                                        size="sm"
                                                                         draggable={false}
-                                                                        className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] px-2 py-1 text-[11px] font-medium text-[var(--app-badge-error-text)] hover:opacity-90 disabled:opacity-50"
+                                                                        variant="destructive"
+                                                                        className="h-7 px-2 py-1 text-[11px]"
                                                                         onClick={(event) => {
                                                                             event.preventDefault()
                                                                             event.stopPropagation()
@@ -951,21 +905,50 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                                                         disabled={isGeneratedActionPending}
                                                                     >
                                                                         {t('projects.tasks.reject')}
-                                                                    </button>
+                                                                    </Button>
                                                                 </div>
                                                             ) : null}
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            className="shrink-0 rounded-md p-1 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                                                            onClick={(event) => {
-                                                                event.stopPropagation()
-                                                                setMoveSheetTaskId(task.id)
+                                                        <AdaptiveSelect
+                                                            title={t('projects.tasks.moveTo')}
+                                                            value={task.status}
+                                                            options={KANBAN_COLUMNS.map((col) => {
+                                                                const theme = getKanbanStatusTheme(col.status)
+                                                                const isCurrent = col.status === task.status
+
+                                                                return {
+                                                                    value: col.status,
+                                                                    label: t(col.titleKey),
+                                                                    disabled: isCurrent,
+                                                                    icon: (
+                                                                        <span
+                                                                            className="h-2.5 w-2.5 rounded-full"
+                                                                            style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
+                                                                        />
+                                                                    )
+                                                                }
+                                                            })}
+                                                            onValueChange={(value) => {
+                                                                void moveTask(task.id, value as TaskStatus, 0)
                                                             }}
-                                                            aria-label={t('projects.tasks.moveTo')}
-                                                        >
-                                                            <TaskCardMenuIcon />
-                                                        </button>
+                                                            open={moveSheetTaskId === task.id}
+                                                            onOpenChange={(open) => setMoveSheetTaskId(open ? task.id : null)}
+                                                            align="end"
+                                                            trigger={
+                                                                <IconButton
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="xs"
+                                                                    className="shrink-0 rounded-md"
+                                                                    onClick={(event) => {
+                                                                        event.stopPropagation()
+                                                                    }}
+                                                                    aria-label={t('projects.tasks.moveTo')}
+                                                                >
+                                                                    <TaskCardMenuIcon />
+                                                                </IconButton>
+                                                            }
+                                                        />
                                                     </div>
                                                 </div>
                                             </div>
@@ -978,14 +961,16 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 </div>
             </div>
 
-            <button
+            <IconButton
                 type="button"
+                variant="accent"
+                size="md"
                 onClick={openCreateModal}
-                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 rounded-full bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow,opacity] duration-150 hover:opacity-90 hover:shadow-xl hover:-translate-y-[1px] active:opacity-80 active:translate-y-0 active:shadow-lg"
+                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow,opacity] duration-150 hover:opacity-90 hover:shadow-xl hover:-translate-y-[1px] active:opacity-80 active:translate-y-0 active:shadow-lg"
                 aria-label={t('projects.tasks.create')}
             >
-                +
-            </button>
+                <PlusIcon className="h-6 w-6" />
+            </IconButton>
 
             <Dialog open={createOpen} onOpenChange={(open) => setCreateOpen(open)}>
                 <DialogContent className="max-w-md">
@@ -1019,17 +1004,19 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.priority')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.task.priority')}
                                     value={newTaskPriority}
-                                    onChange={(e) => setNewTaskPriority((e.target.value as TaskPriority) || '')}
+                                    options={[
+                                        { value: '', label: t('projects.task.priority.none') },
+                                        { value: 'high', label: t('projects.task.priority.high') },
+                                        { value: 'medium', label: t('projects.task.priority.medium') },
+                                        { value: 'low', label: t('projects.task.priority.low') },
+                                    ]}
+                                    onValueChange={(value) => setNewTaskPriority((value as TaskPriority) || '')}
                                     disabled={isCreatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="">{t('projects.task.priority.none')}</option>
-                                    <option value="high">{t('projects.task.priority.high')}</option>
-                                    <option value="medium">{t('projects.task.priority.medium')}</option>
-                                    <option value="low">{t('projects.task.priority.low')}</option>
-                                </select>
+                                    align="start"
+                                />
                             </div>
                             <AgentSelector
                                 agent={newTaskAgent}
@@ -1040,18 +1027,17 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('misc.permissionMode')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('misc.permissionMode')}
                                     value={newTaskPermissionMode}
-                                    onChange={(e) => setNewTaskPermissionMode(e.target.value as PermissionMode)}
+                                    options={newTaskPermissionOptions.map((opt) => ({
+                                        value: opt.mode as PermissionMode,
+                                        label: opt.label,
+                                    }))}
+                                    onValueChange={(value) => setNewTaskPermissionMode(value as PermissionMode)}
                                     disabled={isCreatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    {newTaskPermissionOptions.map((option) => (
-                                        <option key={option.mode} value={option.mode}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                                 {newTaskPermissionMode === 'plan' ? (
                                     <div className="text-xs text-[var(--app-hint)]">
                                         {t('projects.tasks.planModeHint')}
@@ -1072,15 +1058,6 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 </DialogContent>
             </Dialog>
 
-            <TaskMoveSheet
-                isOpen={Boolean(moveSheetTaskId)}
-                currentStatus={(moveSheetTaskId && tasksById.get(moveSheetTaskId)?.status) ?? 'new'}
-                onClose={() => setMoveSheetTaskId(null)}
-                onMove={(status) => {
-                    if (!moveSheetTaskId) return
-                    void moveTask(moveSheetTaskId, status, 0)
-                }}
-            />
         </div>
     )
 }

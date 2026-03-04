@@ -142,77 +142,83 @@ function SessionItem(props: {
         : 'bg-[var(--app-hint)]'
     return (
         <>
-            <button
-                type="button"
-                {...longPressHandlers}
-                className={`session-list-item flex w-full flex-col gap-1.5 px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
+            <div
+                className={`session-list-item flex w-full items-start gap-2 px-3 py-3 text-left transition-colors select-none ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
                 style={{ WebkitTouchCallout: 'none' }}
-                aria-current={selected ? 'page' : undefined}
             >
-                <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                        <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-                            <span
-                                className={`h-2 w-2 rounded-full ${statusDotClass}`}
-                            />
-                        </span>
-                        <div className="truncate text-base font-medium">
-                            {sessionName}
+                <button
+                    type="button"
+                    {...longPressHandlers}
+                    className="min-w-0 flex-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                    aria-current={selected ? 'page' : undefined}
+                >
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
+                                <span
+                                    className={`h-2 w-2 rounded-full ${statusDotClass}`}
+                                />
+                            </span>
+                            <div className="truncate text-base font-medium">
+                                {sessionName}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 text-xs">
+                            {s.thinking ? (
+                                <span className="text-[var(--app-link)] animate-pulse">
+                                    {t('session.item.thinking')}
+                                </span>
+                            ) : null}
+                            {(() => {
+                                const progress = getTodoProgress(s)
+                                if (!progress) return null
+                                return (
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <BulbIcon className="h-3 w-3" />
+                                        {progress.completed}/{progress.total}
+                                    </span>
+                                )
+                            })()}
+                            {s.pendingRequestsCount > 0 ? (
+                                <span className="text-[var(--app-badge-warning-text)]">
+                                    {t('session.item.pending')} {s.pendingRequestsCount}
+                                </span>
+                            ) : null}
+                            <span className="text-[var(--app-hint)]">
+                                {formatRelativeTime(s.updatedAt, t)}
+                            </span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0 text-xs">
-                        {s.thinking ? (
-                            <span className="text-[var(--app-link)] animate-pulse">
-                                {t('session.item.thinking')}
-                            </span>
-                        ) : null}
-                        {(() => {
-                            const progress = getTodoProgress(s)
-                            if (!progress) return null
-                            return (
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <BulbIcon className="h-3 w-3" />
-                                    {progress.completed}/{progress.total}
-                                </span>
-                            )
-                        })()}
-                        {s.pendingRequestsCount > 0 ? (
-                            <span className="text-[var(--app-badge-warning-text)]">
-                                {t('session.item.pending')} {s.pendingRequestsCount}
-                            </span>
-                        ) : null}
-                        <span className="text-[var(--app-hint)]">
-                            {formatRelativeTime(s.updatedAt, t)}
-                        </span>
-                    </div>
-                </div>
-                {showPath ? (
-                    <div className="truncate text-xs text-[var(--app-hint)]">
-                        {s.metadata?.path ?? s.id}
-                    </div>
-                ) : null}
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-hint)]">
-                    <span className="inline-flex items-center gap-2">
-                        <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
-                            ❖
-                        </span>
-                        {getAgentLabel(s)}
-                    </span>
-                    <span>{t('session.item.modelMode')}: {s.modelMode || 'default'}</span>
-                    {s.metadata?.worktree?.branch ? (
-                        <span>{t('session.item.worktree')}: {s.metadata.worktree.branch}</span>
+                    {showPath ? (
+                        <div className="truncate text-xs text-[var(--app-hint)]">
+                            {s.metadata?.path ?? s.id}
+                        </div>
                     ) : null}
-                </div>
-            </button>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--app-hint)]">
+                        <span className="inline-flex items-center gap-2">
+                            <span className="flex h-4 w-4 items-center justify-center" aria-hidden="true">
+                                ❖
+                            </span>
+                            {getAgentLabel(s)}
+                        </span>
+                        <span>{t('session.item.modelMode')}: {s.modelMode || 'default'}</span>
+                        {s.metadata?.worktree?.branch ? (
+                            <span>{t('session.item.worktree')}: {s.metadata.worktree.branch}</span>
+                        ) : null}
+                    </div>
+                </button>
 
-            <SessionActionMenu
-                isOpen={menuOpen}
-                onClose={() => setMenuOpen(false)}
-                sessionActive={s.active}
-                onRename={() => setRenameOpen(true)}
-                onArchive={() => setArchiveOpen(true)}
-                onDelete={() => setDeleteOpen(true)}
-            />
+                <div className="shrink-0 pt-0.5">
+                    <SessionActionMenu
+                        open={menuOpen}
+                        onOpenChange={setMenuOpen}
+                        sessionActive={s.active}
+                        onRename={() => setRenameOpen(true)}
+                        onArchive={() => setArchiveOpen(true)}
+                        onDelete={() => setDeleteOpen(true)}
+                    />
+                </div>
+            </div>
 
             <RenameSessionDialog
                 isOpen={renameOpen}

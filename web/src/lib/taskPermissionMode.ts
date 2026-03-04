@@ -28,5 +28,5 @@ export function resolveTaskPermissionModeForFlavor(
     if (preferredMode && options.some((option) => option.mode === preferredMode)) {
         return preferredMode
     }
-    return options[0]?.mode ?? 'default'
+    return (options[0]?.mode as PermissionMode | undefined) ?? 'default'
 }

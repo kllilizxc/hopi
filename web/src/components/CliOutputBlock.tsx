@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { stripAnsiAndControls } from '@/components/assistant-ui/markdown-utils'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Pressable } from '@/components/ui/pressable'
 import { useTranslation } from '@/lib/use-translation'
 import { CliIcon, DetailsIcon } from '@/assets/icons'
 
@@ -95,7 +96,7 @@ export function CliOutputBlock(props: { text: string }) {
             <CardHeader className="p-3 space-y-0">
                 <Dialog>
                     <DialogTrigger asChild>
-                        <button type="button" className="w-full text-left">
+                        <Pressable className="w-full text-left">
                             <div className="flex flex-col gap-1">
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0 flex items-center gap-2">
@@ -111,7 +112,7 @@ export function CliOutputBlock(props: { text: string }) {
                                     </span>
                                 </div>
                             </div>
-                        </button>
+                        </Pressable>
                     </DialogTrigger>
                     <DialogContent className="max-w-2xl">
                         <DialogHeader>

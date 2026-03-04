@@ -2,6 +2,7 @@ import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { useShikiHighlighter } from '@/lib/shiki'
 import { CopyIcon, CheckIcon } from '@/components/icons'
 import { useTranslation } from '@/lib/use-translation'
+import { IconButton } from '@/components/ui/icon-button'
 
 export function CodeBlock(props: {
     code: string
@@ -16,14 +17,16 @@ export function CodeBlock(props: {
     return (
         <div className="relative min-w-0 max-w-full">
             {showCopyButton ? (
-                <button
+                <IconButton
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     onClick={() => copy(props.code)}
-                    className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] transition-colors"
+                    className="absolute right-1.5 top-1.5 rounded-md"
                     title={t('code.copy')}
                 >
                     {copied ? <CheckIcon className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />}
-                </button>
+                </IconButton>
             ) : null}
 
             <div className="min-w-0 w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md bg-[var(--app-code-bg)]">

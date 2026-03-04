@@ -10,8 +10,12 @@ import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
+import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { IconButton } from '@/components/ui/icon-button'
+import { Pressable } from '@/components/ui/pressable'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { useArchiveTask } from '@/hooks/mutations/useArchiveTask'
 import { useAttachTaskSession } from '@/hooks/mutations/useAttachTaskSession'
@@ -194,18 +198,17 @@ function StartSessionDialog(props: {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('projects.sessions.workspace')}
                         </label>
-                        <select
+                        <AdaptiveSelectField
+                            title={t('projects.sessions.workspace')}
                             value={workspaceId}
-                            onChange={(e) => setWorkspaceId(e.target.value)}
+                            options={props.workspaces.map((ws) => ({
+                                value: ws.id,
+                                label: (ws.label ?? ws.path) || ws.id,
+                            }))}
+                            onValueChange={setWorkspaceId}
                             disabled={isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        >
-                            {props.workspaces.map((ws) => (
-                                <option key={ws.id} value={ws.id}>
-                                    {(ws.label ?? ws.path) || ws.id}
-                                </option>
-                            ))}
-                        </select>
+                            align="start"
+                        />
                     </div>
 
                     <AgentSelector agent={agent} isDisabled={isPending} onAgentChange={setAgent} />
@@ -215,18 +218,17 @@ function StartSessionDialog(props: {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('misc.permissionMode')}
                         </label>
-                        <select
+                        <AdaptiveSelectField
+                            title={t('misc.permissionMode')}
                             value={permissionMode}
-                            onChange={(e) => setPermissionMode(e.target.value as PermissionMode)}
+                            options={permissionOptions.map((opt) => ({
+                                value: opt.mode as PermissionMode,
+                                label: opt.label,
+                            }))}
+                            onValueChange={(value) => setPermissionMode(value as PermissionMode)}
                             disabled={isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        >
-                            {permissionOptions.map((option) => (
-                                <option key={option.mode} value={option.mode}>
-                                    {option.label}
-                                </option>
-                            ))}
-                        </select>
+                            align="start"
+                        />
                     </div>
 
                     <YoloToggle yoloMode={yolo} isDisabled={isPending} onToggle={setYolo} />
@@ -295,13 +297,8 @@ function AttachSessionDialog(props: {
                 </DialogHeader>
 
                 <div className="mt-4 px-3">
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={unassignedOnly}
-                            onChange={(e) => setUnassignedOnly(e.target.checked)}
-                            disabled={isPending}
-                        />
+                    <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                        <Checkbox checked={unassignedOnly} onCheckedChange={setUnassignedOnly} disabled={isPending} />
                         {t('projects.sessions.unassignedOnly')}
                     </label>
                 </div>
@@ -334,9 +331,8 @@ function AttachSessionDialog(props: {
                             const linked = Boolean(session.metadata?.taskId)
 
                             return (
-                                <button
+                                <Pressable
                                     key={session.id}
-                                    type="button"
                                     onClick={() => handleAttach(session.id)}
                                     disabled={isPending}
                                     className="w-full px-4 py-3 text-left hover:bg-[var(--app-subtle-bg)] transition-colors disabled:opacity-50"
@@ -355,7 +351,7 @@ function AttachSessionDialog(props: {
                                             </Badge>
                                         </div>
                                     </div>
-                                </button>
+                                </Pressable>
                             )
                         })}
                     </div>
@@ -492,7 +488,7 @@ function TaskDetailsPanel(props: {
     }, [savePatch])
 
     const handleToggleSubTask = useCallback(async (id: string, checked: boolean) => {
-        const next = subTasks.map((subTask) => {
+        const next = subTasks.map<TodoItem>((subTask) => {
             if (subTask.id !== id) return subTask
             return { ...subTask, status: checked ? 'completed' : 'pending' }
         })
@@ -500,7 +496,7 @@ function TaskDetailsPanel(props: {
     }, [subTasks, persistSubTasks])
 
     const handleSubTaskPriorityChange = useCallback(async (id: string, value: TaskPriority) => {
-        const next = subTasks.map((subTask) => {
+        const next = subTasks.map<TodoItem>((subTask) => {
             if (subTask.id !== id) return subTask
             return { ...subTask, priority: value }
         })
@@ -508,7 +504,7 @@ function TaskDetailsPanel(props: {
     }, [subTasks, persistSubTasks])
 
     const handleSubTaskContentChange = useCallback((id: string, value: string) => {
-        setSubTasks((current) => current.map((subTask) => {
+        setSubTasks((current) => current.map<TodoItem>((subTask) => {
             if (subTask.id !== id) return subTask
             return { ...subTask, content: value }
         }))
@@ -597,14 +593,17 @@ function TaskDetailsPanel(props: {
                                 </div>
                             </div>
 
-                            <button
+                            <IconButton
                                 type="button"
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => void copy(window.location.href)}
-                                className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] transition-colors"
+                                className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
                                 title={t('projects.task.copyLink')}
+                                aria-label={t('projects.task.copyLink')}
                             >
                                 <CopyIcon className={copied ? 'text-[var(--app-link)]' : undefined} />
-                            </button>
+                            </IconButton>
                         </div>
 
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -612,93 +611,92 @@ function TaskDetailsPanel(props: {
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.status')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.task.status')}
                                     value={status}
-                                    onChange={(e) => {
-                                        const next = e.target.value as TaskStatus
+                                    options={TASK_STATUS_ORDER.map((s) => ({
+                                        value: s,
+                                        label: t(TASK_STATUS_TITLE_KEY_BY_STATUS[s]),
+                                    }))}
+                                    onValueChange={(value) => {
+                                        const next = value as TaskStatus
                                         setStatus(next)
                                         void savePatch({ status: next, sortKey: Date.now() })
                                     }}
                                     disabled={isUpdatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    {TASK_STATUS_ORDER.map((s) => (
-                                        <option key={s} value={s}>
-                                            {t(TASK_STATUS_TITLE_KEY_BY_STATUS[s])}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.priority')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.task.priority')}
                                     value={priority}
-                                    onChange={(e) => {
-                                        const next = (e.target.value as TaskPriority) || ''
+                                    options={[
+                                        { value: '', label: t('projects.task.priority.none') },
+                                        { value: 'high', label: t('projects.task.priority.high') },
+                                        { value: 'medium', label: t('projects.task.priority.medium') },
+                                        { value: 'low', label: t('projects.task.priority.low') },
+                                    ]}
+                                    onValueChange={(value) => {
+                                        const next = (value as TaskPriority) || ''
                                         setPriority(next)
                                         void savePatch({ priority: next || null })
                                     }}
                                     disabled={isUpdatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="">{t('projects.task.priority.none')}</option>
-                                    <option value="high">{t('projects.task.priority.high')}</option>
-                                    <option value="medium">{t('projects.task.priority.medium')}</option>
-                                    <option value="low">{t('projects.task.priority.low')}</option>
-                                </select>
+                                    align="start"
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('projects.task.workspace')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.task.workspace')}
                                     value={workspaceId}
-                                    onChange={(e) => {
-                                        const value = e.target.value
-                                        setWorkspaceId(value)
-                                        void savePatch({ workspaceId: value || null })
+                                    options={[
+                                        { value: '', label: t('projects.task.workspace.projectDefault') },
+                                        ...props.workspaces.map((ws) => ({
+                                            value: ws.id,
+                                            label: (ws.label ?? ws.path) || ws.id,
+                                        })),
+                                    ]}
+                                    onValueChange={(value) => {
+                                        const next = value as string
+                                        setWorkspaceId(next)
+                                        void savePatch({ workspaceId: next || null })
                                     }}
                                     disabled={isUpdatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="">
-                                        {t('projects.task.workspace.projectDefault')}
-                                    </option>
-                                    {props.workspaces.map((ws) => (
-                                        <option key={ws.id} value={ws.id}>
-                                            {(ws.label ?? ws.path) || ws.id}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">
                                     {t('newSession.agent')}
                                 </label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('newSession.agent')}
                                     value={agentFlavor}
-                                    onChange={(e) => {
-                                        const value = e.target.value as AgentType | ''
-                                        setAgentFlavor(value)
-                                        void savePatch({ agentFlavor: value || null })
+                                    options={[
+                                        { value: '', label: t('projects.task.agent.projectDefault') },
+                                        ...TASK_AGENT_OPTIONS.map((agent) => ({
+                                            value: agent,
+                                            label: getAgentFlavorLabel(agent),
+                                        })),
+                                    ]}
+                                    onValueChange={(value) => {
+                                        const next = value as AgentType | ''
+                                        setAgentFlavor(next)
+                                        void savePatch({ agentFlavor: next || null })
                                     }}
                                     disabled={isUpdatingTask}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="">
-                                        {t('projects.task.agent.projectDefault')}
-                                    </option>
-                                    {TASK_AGENT_OPTIONS.map((agent) => (
-                                        <option key={agent} value={agent}>
-                                            {getAgentFlavorLabel(agent)}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                             </div>
                         </div>
 
@@ -737,12 +735,11 @@ function TaskDetailsPanel(props: {
                             <div className="flex flex-col gap-2">
                                 {subTasks.map((subTask) => (
                                     <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
-                                        <label className="flex items-center gap-2 md:w-auto">
-                                            <input
-                                                type="checkbox"
+                                        <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
+                                            <Checkbox
                                                 checked={subTask.status === 'completed'}
-                                                onChange={(e) => {
-                                                    void handleToggleSubTask(subTask.id, e.target.checked)
+                                                onCheckedChange={(checked) => {
+                                                    void handleToggleSubTask(subTask.id, checked)
                                                 }}
                                                 disabled={isUpdatingTask}
                                             />
@@ -767,18 +764,22 @@ function TaskDetailsPanel(props: {
                                         />
 
                                         <div className="flex items-center gap-2 md:w-auto">
-                                            <select
+                                            <AdaptiveSelectField
+                                                title={t('projects.task.priority')}
                                                 value={subTask.priority}
-                                                onChange={(e) => {
-                                                    void handleSubTaskPriorityChange(subTask.id, e.target.value as TaskPriority)
+                                                options={[
+                                                    { value: 'high', label: t('projects.task.priority.high') },
+                                                    { value: 'medium', label: t('projects.task.priority.medium') },
+                                                    { value: 'low', label: t('projects.task.priority.low') },
+                                                ]}
+                                                onValueChange={(value) => {
+                                                    void handleSubTaskPriorityChange(subTask.id, value as TaskPriority)
                                                 }}
                                                 disabled={isUpdatingTask}
-                                                className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                            >
-                                                <option value="high">{t('projects.task.priority.high')}</option>
-                                                <option value="medium">{t('projects.task.priority.medium')}</option>
-                                                <option value="low">{t('projects.task.priority.low')}</option>
-                                            </select>
+                                                align="end"
+                                                size="sm"
+                                                triggerClassName="min-w-[120px]"
+                                            />
 
                                             <Button
                                                 type="button"
@@ -811,16 +812,20 @@ function TaskDetailsPanel(props: {
                                 placeholder={t('projects.task.subtasks.placeholder')}
                                 className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
-                            <select
+                            <AdaptiveSelectField
+                                title={t('projects.task.priority')}
                                 value={newSubTaskPriority}
-                                onChange={(e) => setNewSubTaskPriority(e.target.value as TaskPriority)}
+                                options={[
+                                    { value: 'high', label: t('projects.task.priority.high') },
+                                    { value: 'medium', label: t('projects.task.priority.medium') },
+                                    { value: 'low', label: t('projects.task.priority.low') },
+                                ]}
+                                onValueChange={(value) => setNewSubTaskPriority(value as TaskPriority)}
                                 disabled={isUpdatingTask}
-                                className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            >
-                                <option value="high">{t('projects.task.priority.high')}</option>
-                                <option value="medium">{t('projects.task.priority.medium')}</option>
-                                <option value="low">{t('projects.task.priority.low')}</option>
-                            </select>
+                                align="end"
+                                size="sm"
+                                triggerClassName="min-w-[120px]"
+                            />
                             <Button
                                 type="button"
                                 variant="secondary"
@@ -996,18 +1001,23 @@ function WorkbenchHeader(props: {
     onBack: () => void
     onCopyLink: () => void
     copied: boolean
+    backLabel: string
+    copyLabel: string
 }) {
     return (
         <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
             <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
                 <div className="flex items-center gap-2 min-w-0">
-                    <button
+                    <IconButton
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={props.onBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        aria-label={props.backLabel}
+                        title={props.backLabel}
                     >
                         <BackIcon />
-                    </button>
+                    </IconButton>
                     <div className="min-w-0">
                         <div className="text-sm font-semibold truncate">{props.title}</div>
                         {props.subtitle ? (
@@ -1016,13 +1026,17 @@ function WorkbenchHeader(props: {
                     </div>
                 </div>
 
-                <button
+                <IconButton
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={props.onCopyLink}
-                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)] transition-colors"
+                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
+                    aria-label={props.copyLabel}
+                    title={props.copyLabel}
                 >
                     <CopyIcon className={props.copied ? 'text-[var(--app-link)]' : undefined} />
-                </button>
+                </IconButton>
             </div>
         </div>
     )
@@ -1035,8 +1049,7 @@ function TabButton(props: {
     onClick: () => void
 }) {
     return (
-        <button
-            type="button"
+        <Pressable
             disabled={props.disabled}
             onClick={props.onClick}
             className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${
@@ -1048,7 +1061,7 @@ function TabButton(props: {
             }`}
         >
             {props.label}
-        </button>
+        </Pressable>
     )
 }
 
@@ -1129,6 +1142,8 @@ export function TaskWorkbench(props: {
                     onBack={handleBack}
                     onCopyLink={() => void copy(window.location.href)}
                     copied={copied}
+                    backLabel={t('projects.actions.back')}
+                    copyLabel={t('projects.task.copyLink')}
                 />
             ) : null}
 

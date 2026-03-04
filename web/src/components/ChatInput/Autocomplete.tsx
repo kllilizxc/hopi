@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
+import { Pressable } from '@/components/ui/pressable'
 
 interface AutocompleteProps {
     suggestions: readonly Suggestion[]
@@ -31,9 +32,8 @@ export const Autocomplete = memo(function Autocomplete(props: AutocompleteProps)
     return (
         <div className="py-1" ref={listRef}>
             {suggestions.map((suggestion, index) => (
-                <button
+                <Pressable
                     key={suggestion.key}
-                    type="button"
                     data-suggestion-index={index}
                     className={`flex w-full cursor-pointer flex-col items-start gap-0.5 px-3 py-2 text-left text-sm transition-colors ${
                         index === selectedIndex
@@ -53,7 +53,7 @@ export const Autocomplete = memo(function Autocomplete(props: AutocompleteProps)
                             {suggestion.description}
                         </span>
                     )}
-                </button>
+                </Pressable>
             ))}
         </div>
     )

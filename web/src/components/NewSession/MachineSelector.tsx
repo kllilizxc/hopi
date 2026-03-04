@@ -1,8 +1,7 @@
 import type { Machine } from '@/types/api'
-import { useState } from 'react'
 import { useTranslation } from '@/lib/use-translation'
 import { ChevronDownIcon } from '@/assets/icons'
-import { ActionSheetSelect } from '@/components/ui/ActionSheetSelect'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
 
 function getMachineTitle(machine: Machine): string {
     if (machine.metadata?.displayName) return machine.metadata.displayName
@@ -18,7 +17,6 @@ export function MachineSelector(props: {
     onChange: (machineId: string) => void
 }) {
     const { t } = useTranslation()
-    const [open, setOpen] = useState(false)
 
     const options = props.machines.map((m) => ({
         value: m.id,
@@ -41,28 +39,27 @@ export function MachineSelector(props: {
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.machine')}
             </label>
-            <button
-                type="button"
-                disabled={isPickerDisabled}
-                onClick={() => setOpen(true)}
-                className="flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-3 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
-                aria-expanded={open}
-                aria-haspopup="dialog"
-            >
-                <span className="min-w-0 flex-1 truncate text-left">
-                    {selectedLabel || t('newSession.machine')}
-                </span>
-                <ChevronDownIcon className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-            </button>
-
-            <ActionSheetSelect
-                open={open}
-                onOpenChange={setOpen}
+            <AdaptiveSelect
                 title={t('newSession.machine')}
                 value={props.machineId ?? options[0]?.value ?? ''}
                 options={options}
                 onValueChange={(nextId) => props.onChange(nextId)}
+                disabled={isPickerDisabled}
+                align="start"
+                trigger={
+                    <button
+                        type="button"
+                        disabled={isPickerDisabled}
+                        className="group flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-3 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <span className="min-w-0 flex-1 truncate text-left">
+                            {selectedLabel || t('newSession.machine')}
+                        </span>
+                        <ChevronDownIcon className="shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+                    </button>
+                }
             />
         </div>
     )
 }
+

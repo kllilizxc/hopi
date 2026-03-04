@@ -1,10 +1,11 @@
 import { useTranslation } from '@/lib/use-translation'
-import { ArchiveIcon, EditIcon, ImportIcon, TrashIcon } from '@/assets/icons'
-import { ActionSheet, ActionSheetItem } from '@/components/ui/ActionSheet'
+import { ArchiveIcon, EditIcon, ImportIcon, TaskCardMenuIcon, TrashIcon } from '@/assets/icons'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { IconButton } from '@/components/ui/icon-button'
 
 type SessionActionMenuProps = {
-    isOpen: boolean
-    onClose: () => void
+    open: boolean
+    onOpenChange: (open: boolean) => void
     sessionActive: boolean
     onRename: () => void
     onArchive: () => void
@@ -15,8 +16,8 @@ type SessionActionMenuProps = {
 export function SessionActionMenu(props: SessionActionMenuProps) {
     const { t } = useTranslation()
     const {
-        isOpen,
-        onClose,
+        open,
+        onOpenChange,
         sessionActive,
         onRename,
         onArchive,
@@ -24,59 +25,71 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
         onImportAsTask,
     } = props
 
-    const handleRename = () => {
-        onClose()
-        onRename()
-    }
-
-    const handleArchive = () => {
-        onClose()
-        onArchive()
-    }
-
-    const handleDelete = () => {
-        onClose()
-        onDelete()
-    }
-
-    const handleImport = () => {
-        if (!onImportAsTask) return
-        onClose()
-        onImportAsTask()
-    }
+    const options = [
+        ...(onImportAsTask
+            ? [{
+                value: 'import' as const,
+                label: t('session.action.importTask'),
+                icon: <ImportIcon />,
+            }]
+            : []),
+        {
+            value: 'rename' as const,
+            label: t('session.action.rename'),
+            icon: <EditIcon />,
+        },
+        sessionActive
+            ? {
+                value: 'archive' as const,
+                label: t('session.action.archive'),
+                icon: <ArchiveIcon />,
+                destructive: true,
+            }
+            : {
+                value: 'delete' as const,
+                label: t('session.action.delete'),
+                icon: <TrashIcon />,
+                destructive: true,
+            },
+    ]
 
     return (
-        <ActionSheet
-            open={isOpen}
-            onOpenChange={(open) => {
-                if (!open) {
-                    onClose()
+        <AdaptiveSelect
+            title={t('session.more')}
+            value={null}
+            options={options}
+            onValueChange={(value) => {
+                onOpenChange(false)
+                switch (value) {
+                    case 'import':
+                        onImportAsTask?.()
+                        return
+                    case 'rename':
+                        onRename()
+                        return
+                    case 'archive':
+                        onArchive()
+                        return
+                    case 'delete':
+                        onDelete()
+                        return
+                    default:
+                        return
                 }
             }}
-            title={t('session.more')}
-        >
-            <div className="flex flex-col gap-1">
-                {onImportAsTask ? (
-                    <ActionSheetItem icon={<ImportIcon />} onClick={handleImport}>
-                        {t('session.action.importTask')}
-                    </ActionSheetItem>
-                ) : null}
-
-                <ActionSheetItem icon={<EditIcon />} onClick={handleRename}>
-                    {t('session.action.rename')}
-                </ActionSheetItem>
-
-                {sessionActive ? (
-                    <ActionSheetItem destructive icon={<ArchiveIcon />} onClick={handleArchive}>
-                        {t('session.action.archive')}
-                    </ActionSheetItem>
-                ) : (
-                    <ActionSheetItem destructive icon={<TrashIcon />} onClick={handleDelete}>
-                        {t('session.action.delete')}
-                    </ActionSheetItem>
-                )}
-            </div>
-        </ActionSheet>
+            open={open}
+            onOpenChange={onOpenChange}
+            align="end"
+            trigger={(
+                <IconButton
+                    type="button"
+                    variant="ghost"
+                    size="md"
+                    aria-label={t('session.more')}
+                >
+                    <TaskCardMenuIcon />
+                </IconButton>
+            )}
+        />
     )
 }
-

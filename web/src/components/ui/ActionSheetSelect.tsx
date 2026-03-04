@@ -8,6 +8,7 @@ export type ActionSheetSelectOption<TValue extends string | number | null> = {
     label: string
     disabled?: boolean
     icon?: React.ReactNode
+    destructive?: boolean
 }
 
 export type ActionSheetSelectProps<TValue extends string | number | null> = {
@@ -39,6 +40,7 @@ export function ActionSheetSelect<TValue extends string | number | null>(props: 
                         <ActionSheetItem
                             key={key}
                             icon={opt.icon}
+                            destructive={opt.destructive}
                             disabled={opt.disabled}
                             onClick={() => {
                                 if (opt.disabled) return
@@ -62,4 +64,3 @@ export function ActionSheetSelect<TValue extends string | number | null>(props: 
         </ActionSheet>
     )
 }
-

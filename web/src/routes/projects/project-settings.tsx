@@ -8,7 +8,10 @@ import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
+import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { IconButton } from '@/components/ui/icon-button'
 import { useProject } from '@/hooks/queries/useProject'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { useArchiveProject } from '@/hooks/mutations/useArchiveProject'
@@ -114,6 +117,13 @@ export function ProjectSettingsPage() {
         return getPermissionModeOptionsForFlavor(defaultAgentFlavor)
     }, [defaultAgentFlavor])
 
+    const agentFlavorOptions = useMemo(() => ([
+        { value: 'claude' as const, label: t('agent.claude') },
+        { value: 'codex' as const, label: t('agent.codex') },
+        { value: 'gemini' as const, label: t('agent.gemini') },
+        { value: 'opencode' as const, label: t('agent.opencode') },
+    ]), [t])
+
     const modelModes = useMemo(() => {
         return getModelModesForFlavor(defaultAgentFlavor)
     }, [defaultAgentFlavor])
@@ -212,14 +222,15 @@ export function ProjectSettingsPage() {
         <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
             <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
                 <div className="flex items-center gap-2 min-w-0">
-                    <button
+                    <IconButton
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => navigate({ to: '/projects/$projectId', params: { projectId } })}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                         aria-label={t('projects.actions.back')}
                     >
                         <BackIcon />
-                    </button>
+                    </IconButton>
                     <div className="min-w-0">
                         <div className="text-sm font-semibold truncate">{t('projects.settings.title')}</div>
                         <div className="text-[10px] text-[var(--app-hint)] truncate">
@@ -295,63 +306,55 @@ export function ProjectSettingsPage() {
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.defaults.agent')}</label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.defaults.agent')}
                                     value={defaultAgentFlavor}
-                                    onChange={(e) => setDefaultAgentFlavor(e.target.value as AgentFlavor)}
+                                    options={agentFlavorOptions}
+                                    onValueChange={(value) => setDefaultAgentFlavor(value as AgentFlavor)}
                                     disabled={isPending}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="claude">{t('agent.claude')}</option>
-                                    <option value="codex">{t('agent.codex')}</option>
-                                    <option value="gemini">{t('agent.gemini')}</option>
-                                    <option value="opencode">{t('agent.opencode')}</option>
-                                </select>
+                                    align="start"
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">{t('misc.permissionMode')}</label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('misc.permissionMode')}
                                     value={defaultPermissionMode}
-                                    onChange={(e) => setDefaultPermissionMode(e.target.value as PermissionMode)}
+                                    options={permissionOptions.map((opt) => ({
+                                        value: opt.mode as PermissionMode,
+                                        label: opt.label,
+                                    }))}
+                                    onValueChange={(value) => setDefaultPermissionMode(value as PermissionMode)}
                                     disabled={isPending}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    {permissionOptions.map((option) => (
-                                        <option key={option.mode} value={option.mode}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                             </div>
 
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.defaults.modelMode')}</label>
-                                <select
+                                <AdaptiveSelectField
+                                    title={t('projects.defaults.modelMode')}
                                     value={defaultModelMode}
-                                    onChange={(e) => setDefaultModelMode(e.target.value as ModelMode)}
+                                    options={[
+                                        { value: 'default' as const, label: t('misc.default') },
+                                        ...modelModes.map((mode) => ({
+                                            value: mode as ModelMode,
+                                            label: mode,
+                                        })),
+                                    ]}
+                                    onValueChange={(value) => setDefaultModelMode(value as ModelMode)}
                                     disabled={isPending || defaultAgentFlavor !== 'claude'}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                >
-                                    <option value="default">{t('misc.default')}</option>
-                                    {modelModes.map((mode) => (
-                                        <option key={mode} value={mode}>
-                                            {mode}
-                                        </option>
-                                    ))}
-                                </select>
+                                    align="start"
+                                />
                             </div>
                         </div>
 
                         <div className="space-y-2">
                             <div className="text-sm font-semibold">{t('projects.automation.title')}</div>
 
-                            <label className="flex items-center gap-2 text-sm">
-                                <input
-                                    type="checkbox"
-                                    checked={autoRunEnabled}
-                                    onChange={(e) => setAutoRunEnabled(e.target.checked)}
-                                    disabled={isPending}
-                                />
+                            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={isPending} />
                                 {t('projects.automation.autoRun')}
                             </label>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -369,13 +372,8 @@ export function ProjectSettingsPage() {
                                 </div>
                             </div>
 
-                            <label className="flex items-center gap-2 text-sm">
-                                <input
-                                    type="checkbox"
-                                    checked={improvementsEnabled}
-                                    onChange={(e) => setImprovementsEnabled(e.target.checked)}
-                                    disabled={isPending}
-                                />
+                            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                <Checkbox checked={improvementsEnabled} onCheckedChange={setImprovementsEnabled} disabled={isPending} />
                                 {t('projects.automation.improvements')}
                             </label>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -397,12 +395,10 @@ export function ProjectSettingsPage() {
                         <div className="space-y-2">
                             <div className="text-sm font-semibold">{t('projects.worktree.title')}</div>
 
-                            <label className="flex items-center gap-2 text-sm">
-                                <input
-                                    type="checkbox"
+                            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                <Checkbox
                                     checked={defaultSessionType === 'worktree'}
-                                    onChange={(e) => {
-                                        const enabled = e.target.checked
+                                    onCheckedChange={(enabled) => {
                                         setDefaultSessionType(enabled ? 'worktree' : 'simple')
                                         if (!enabled) {
                                             setWorktreeAutoCommitMode('off')
@@ -428,22 +424,20 @@ export function ProjectSettingsPage() {
                                 </div>
                             </div>
 
-                            <label className="flex items-center gap-2 text-sm">
-                                <input
-                                    type="checkbox"
+                            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                <Checkbox
                                     checked={worktreeAutoCommitMode === 'per_conversation'}
-                                    onChange={(e) => setWorktreeAutoCommitMode(e.target.checked ? 'per_conversation' : 'off')}
+                                    onCheckedChange={(enabled) => setWorktreeAutoCommitMode(enabled ? 'per_conversation' : 'off')}
                                     disabled={isPending || defaultSessionType !== 'worktree'}
                                 />
                                 {t('projects.worktree.autoCommit')}
                             </label>
                             <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.autoCommitHint')}</div>
 
-                            <label className="flex items-center gap-2 text-sm">
-                                <input
-                                    type="checkbox"
+                            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                                <Checkbox
                                     checked={worktreeCleanupAfterMerge}
-                                    onChange={(e) => setWorktreeCleanupAfterMerge(e.target.checked)}
+                                    onCheckedChange={setWorktreeCleanupAfterMerge}
                                     disabled={isPending || defaultSessionType !== 'worktree'}
                                 />
                                 {t('projects.worktree.cleanup')}

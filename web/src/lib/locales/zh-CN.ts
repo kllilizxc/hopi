@@ -134,6 +134,9 @@ export default {
   'projects.task.preview.port': '端口',
   'projects.task.preview.ready': '预览已就绪',
   'projects.task.preview.stop': '停止预览',
+  'projects.task.preview.status': '状态',
+  'projects.task.preview.command': '命令',
+  'projects.task.preview.logs': '日志',
 
   'projects.task.archive.title': '归档任务',
   'projects.task.archive.hint': '归档任务会从看板隐藏。',

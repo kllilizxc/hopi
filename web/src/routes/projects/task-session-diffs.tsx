@@ -6,6 +6,8 @@ import { FileIcon } from '@/components/FileIcon'
 import { LoadingState } from '@/components/LoadingState'
 import { BackIcon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
+import { Pressable } from '@/components/ui/pressable'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useSession } from '@/hooks/queries/useSession'
 import { parseNumStat } from '@/lib/gitParsers'
@@ -81,8 +83,7 @@ function GitFileRow(props: {
     const subtitle = props.file.filePath || 'project root'
 
     return (
-        <button
-            type="button"
+        <Pressable
             onClick={props.onOpen}
             className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
         >
@@ -95,7 +96,7 @@ function GitFileRow(props: {
                 <LineChanges added={props.file.linesAdded} removed={props.file.linesRemoved} />
                 <StatusBadge status={props.file.status} />
             </div>
-        </button>
+        </Pressable>
     )
 }
 
@@ -213,15 +214,16 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                 <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
                     <div className="flex items-center gap-2 min-w-0">
                         {props.onBack ? (
-                            <button
+                            <IconButton
                                 type="button"
+                                variant="ghost"
+                                size="xs"
                                 onClick={props.onBack}
-                                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                                 aria-label={t('projects.files.back')}
                                 title={t('projects.files.back')}
                             >
                                 <BackIcon className="h-5 w-5" />
-                            </button>
+                            </IconButton>
                         ) : null}
                         <div className="min-w-0">
                             <div className="text-sm font-semibold truncate">{t('projects.diffs.title')}</div>

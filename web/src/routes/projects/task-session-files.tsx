@@ -3,6 +3,7 @@ import type { ApiClient } from '@/api/client'
 import { LoadingState } from '@/components/LoadingState'
 import { BackIcon } from '@/components/icons'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
+import { IconButton } from '@/components/ui/icon-button'
 import { useSession } from '@/hooks/queries/useSession'
 import { useTranslation } from '@/lib/use-translation'
 import { SessionFileViewer } from '@/routes/projects/session-file-viewer'
@@ -54,15 +55,16 @@ export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: stri
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-2">
                     {props.onBack ? (
-                        <button
+                        <IconButton
                             type="button"
+                            variant="ghost"
+                            size="xs"
                             onClick={props.onBack}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                             aria-label={t('projects.files.back')}
                             title={t('projects.files.back')}
                         >
                             <BackIcon className="h-5 w-5" />
-                        </button>
+                        </IconButton>
                     ) : null}
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold truncate">{t('projects.files.title')}</div>

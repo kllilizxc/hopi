@@ -1,14 +1,25 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as ts from 'typescript'
 
 const TESTING_LIBRARY_MODULE = '@testing-library/react'
 const RENDER_HELPER_IMPORT = '@/test/renderWithProviders'
 const TEST_FILE_PATTERN = /\.(test|spec)\.(ts|tsx)$/
-const SRC_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
-const POLICY_TEST_PATH = fileURLToPath(import.meta.url)
+const SRC_ROOT = (() => {
+    const candidates = [
+        path.resolve(process.cwd(), 'src'),
+        path.resolve(process.cwd(), 'web/src'),
+    ]
+
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) return candidate
+    }
+
+    return candidates[0]
+})()
+
+const POLICY_TEST_PATH = path.resolve(SRC_ROOT, 'test/render-policy.test.ts')
 
 function collectTestFiles(dirPath: string): string[] {
     const entries = readdirSync(dirPath, { withFileTypes: true })

@@ -1,5 +1,6 @@
 import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
+import { SegmentedControl } from '@/components/ui/segmented-control'
 
 export function AgentSelector(props: {
     agent: AgentType
@@ -13,25 +14,18 @@ export function AgentSelector(props: {
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.agent')}
             </label>
-            <div className="flex gap-3">
-                {(['claude', 'codex', 'gemini', 'opencode'] as const).map((agentType) => (
-                    <label
-                        key={agentType}
-                        className="flex items-center gap-1.5 cursor-pointer"
-                    >
-                        <input
-                            type="radio"
-                            name="agent"
-                            value={agentType}
-                            checked={props.agent === agentType}
-                            onChange={() => props.onAgentChange(agentType)}
-                            disabled={props.isDisabled}
-                            className="accent-[var(--app-link)]"
-                        />
-                        <span className="text-sm capitalize">{agentType}</span>
-                    </label>
-                ))}
-            </div>
+            <SegmentedControl.Root
+                value={props.agent}
+                onValueChange={(value) => props.onAgentChange(value as AgentType)}
+                disabled={props.isDisabled}
+                size="2"
+                variant="surface"
+            >
+                <SegmentedControl.Item value="claude">{t('agent.claude')}</SegmentedControl.Item>
+                <SegmentedControl.Item value="codex">{t('agent.codex')}</SegmentedControl.Item>
+                <SegmentedControl.Item value="gemini">{t('agent.gemini')}</SegmentedControl.Item>
+                <SegmentedControl.Item value="opencode">{t('agent.opencode')}</SegmentedControl.Item>
+            </SegmentedControl.Root>
         </div>
     )
 }

@@ -134,6 +134,9 @@ export default {
   'projects.task.preview.port': 'Port',
   'projects.task.preview.ready': 'Preview ready',
   'projects.task.preview.stop': 'Stop preview',
+  'projects.task.preview.status': 'Status',
+  'projects.task.preview.command': 'Cmd',
+  'projects.task.preview.logs': 'Logs',
 
   'projects.task.archive.title': 'Archive task',
   'projects.task.archive.hint': 'Archived tasks are hidden from the board.',

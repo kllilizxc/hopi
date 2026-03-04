@@ -5,7 +5,7 @@ Goal
 - keep Telegram WebApp colors; `--tg-theme-*` stays source-of-truth
 - light/dark; theme system (user override + presets)
 - smooth + efficient motion; `prefers-reduced-motion` support
-- mobile-first; all menus/actions -> bottom sheet (ActionSheet)
+- mobile-first; menus/actions -> bottom sheet on touch, dropdown on desktop (adaptive)
 
 Non-goals
 - feature expansion; new routes; new major UI paradigms
@@ -161,6 +161,25 @@ Acceptance
       - subtle gradient / noise; low contrast; no purple bias
 - [x] Mobile scroll/keyboard edge cases
       - sheet scroll; textarea focus; overscroll; iOS Safari quirks
+
+
+## Milestone 8: Desktop-Friendly Pickers + Non-Native Form Controls
+- [x] Add `web/src/components/ui/checkbox.tsx` (Radix primitive + app-token styling)
+- [x] Replace visible native checkboxes in Projects UI with `Checkbox`
+      - `web/src/routes/projects/layout.tsx`
+      - `web/src/routes/projects/project-settings.tsx`
+      - `web/src/routes/projects/task-workbench.tsx`
+- [x] Add `web/src/components/ui/AdaptiveSelect.tsx`
+      - touch => ActionSheetSelect
+      - desktop => DropdownMenu (non-modal)
+- [x] Migrate existing ActionSheetSelect callsites to AdaptiveSelect
+      - `web/src/routes/settings/index.tsx`
+      - `web/src/components/LanguageSwitcher.tsx`
+      - `web/src/components/NewSession/MachineSelector.tsx`
+      - `web/src/components/NewSession/ModelSelector.tsx`
+- [x] Follow-up: replace native radio inputs with a `ui/SegmentedControl` wrapper (Radix Themes)
+- [x] Follow-up: replace native `<select>` with `AdaptiveSelect`/`AdaptiveSelectField` (Projects + dialogs)
+- [x] Follow-up: Adaptive action menus (touch sheet + desktop dropdown) for `SessionActionMenu` and Kanban move menu
 
 
 ## Verification Checklist

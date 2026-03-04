@@ -8,7 +8,11 @@ import { LoadingState } from '@/components/LoadingState'
 import { BackIcon, ProjectIcon, SessionIcon } from '@/components/icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { IconButton } from '@/components/ui/icon-button'
+import { Pressable } from '@/components/ui/pressable'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
@@ -67,6 +71,19 @@ function CreateProjectDialog(props: {
     const [workspacePath, setWorkspacePath] = useState('')
     const [workspaceLabel, setWorkspaceLabel] = useState('')
     const [workspaces, setWorkspaces] = useState<Array<{ path: string; label?: string }>>([])
+
+    const machineOptions = useMemo(() => {
+        if (props.isMachinesLoading) {
+            return [{ value: '', label: t('loading.machines'), disabled: true }]
+        }
+        if (props.machines.length === 0) {
+            return [{ value: '', label: t('misc.noMachines'), disabled: true }]
+        }
+        return props.machines.map((m) => ({
+            value: m.id,
+            label: `${getMachineTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
+        }))
+    }, [props.isMachinesLoading, props.machines, t])
 
     useEffect(() => {
         if (!props.isOpen) return
@@ -133,25 +150,14 @@ function CreateProjectDialog(props: {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('misc.machine')}
                         </label>
-                        <select
+                        <AdaptiveSelectField
+                            title={t('misc.machine')}
                             value={machineId}
-                            onChange={(e) => setMachineId(e.target.value)}
-                            disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        >
-                            {props.isMachinesLoading ? (
-                                <option value="">{t('loading.machines')}</option>
-                            ) : null}
-                            {!props.isMachinesLoading && props.machines.length === 0 ? (
-                                <option value="">{t('misc.noMachines')}</option>
-                            ) : null}
-                            {props.machines.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                    {getMachineTitle(m)}
-                                    {m.metadata?.platform ? ` (${m.metadata.platform})` : ''}
-                                </option>
-                            ))}
-                        </select>
+                            options={machineOptions}
+                            onValueChange={setMachineId}
+                            disabled={props.isPending || props.isMachinesLoading || props.machines.length === 0}
+                            align="start"
+                        />
                     </div>
 
                     <div className="space-y-1.5">
@@ -334,12 +340,8 @@ function ProjectsListPanel(props: {
                 <div className="text-xs text-[var(--app-hint)]">
                     {t('projects.count', { n: visibleProjects.length })}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-[var(--app-hint)]">
-                    <input
-                        type="checkbox"
-                        checked={showArchived}
-                        onChange={(e) => setShowArchived(e.target.checked)}
-                    />
+                <label className="flex items-center gap-2 text-xs text-[var(--app-hint)] cursor-pointer select-none">
+                    <Checkbox checked={showArchived} onCheckedChange={setShowArchived} />
                     {t('projects.actions.showArchived')}
                 </label>
             </div>
@@ -374,9 +376,8 @@ function ProjectsListPanel(props: {
                             const machineVariant = machine?.active ? 'success' : 'default'
 
                             return (
-                                <button
+                                <Pressable
                                     key={project.id}
-                                    type="button"
                                     onClick={() => props.onSelectProject(project.id)}
                                     className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
                                 >
@@ -401,7 +402,7 @@ function ProjectsListPanel(props: {
                                             ) : null}
                                         </div>
                                     </div>
-                                </button>
+                                </Pressable>
                             )
                         })}
                     </div>
@@ -427,15 +428,16 @@ function ProjectBoardPanel(props: {
                 title={project?.name ?? t('projects.board.title')}
                 fullWidth
                 left={
-                    <button
+                    <IconButton
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={props.onBackToProjects}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
                         aria-label={t('projects.actions.back')}
                         title={t('projects.actions.back')}
                     >
                         <BackIcon className="h-5 w-5" />
-                    </button>
+                    </IconButton>
                 }
                 right={
                     <>

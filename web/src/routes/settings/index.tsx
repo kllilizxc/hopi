@@ -7,7 +7,7 @@ import { useTheme, type Appearance, type ThemePreset } from '@/hooks/useTheme'
 import { useMotionPreference, type MotionPreference } from '@/hooks/useMotionPreference'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 import { BackIcon, CheckIcon, ChevronDownIcon } from '@/assets/icons'
-import { ActionSheetSelect } from '@/components/ui/ActionSheetSelect'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
 import { IconButton } from '@/components/ui/icon-button'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
@@ -21,7 +21,6 @@ export default function SettingsPage() {
     const { t, locale, setLocale } = useTranslation()
     const goBack = useAppGoBack()
     const { appearance, setAppearance, preset, setPreset } = useTheme()
-    const [openSheet, setOpenSheet] = useState<'language' | 'font' | 'motion' | 'voice' | 'preset' | null>(null)
     const { fontScale, setFontScale } = useFontScale()
     const { preference: motionPreference, setPreference: setMotionPreference } = useMotionPreference()
 
@@ -69,29 +68,24 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.language.title')}
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOpenSheet('language')
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            aria-expanded={openSheet === 'language'}
-                            aria-haspopup="dialog"
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <span>{currentLocale?.nativeLabel}</span>
-                                <ChevronDownIcon className={`transition-transform ${openSheet === 'language' ? 'rotate-180' : ''}`} />
-                            </span>
-                        </button>
-
-                        <ActionSheetSelect
-                            open={openSheet === 'language'}
-                            onOpenChange={(open) => setOpenSheet(open ? 'language' : null)}
+                        <AdaptiveSelect
                             title={t('settings.language.title')}
                             value={locale}
                             options={locales.map((loc) => ({ value: loc.value, label: loc.nativeLabel }))}
                             onValueChange={(nextLocale: Locale) => setLocale(nextLocale)}
+                            align="end"
+                            trigger={(
+                                <button
+                                    type="button"
+                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <span>{currentLocale?.nativeLabel}</span>
+                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+                                    </span>
+                                </button>
+                            )}
                         />
                     </div>
 
@@ -100,54 +94,44 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.display.title')}
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOpenSheet('font')
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            aria-expanded={openSheet === 'font'}
-                            aria-haspopup="dialog"
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <span>{currentFontScaleLabel}</span>
-                                <ChevronDownIcon className={`transition-transform ${openSheet === 'font' ? 'rotate-180' : ''}`} />
-                            </span>
-                        </button>
-
-                        <ActionSheetSelect
-                            open={openSheet === 'font'}
-                            onOpenChange={(open) => setOpenSheet(open ? 'font' : null)}
+                        <AdaptiveSelect
                             title={t('settings.display.fontSize')}
                             value={fontScale}
                             options={fontScaleOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
                             onValueChange={(nextScale: FontScale) => setFontScale(nextScale)}
+                            align="end"
+                            trigger={(
+                                <button
+                                    type="button"
+                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <span>{currentFontScaleLabel}</span>
+                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+                                    </span>
+                                </button>
+                            )}
                         />
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOpenSheet('motion')
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            aria-expanded={openSheet === 'motion'}
-                            aria-haspopup="dialog"
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.display.motion')}</span>
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <span>{currentMotionLabel}</span>
-                                <ChevronDownIcon className={`transition-transform ${openSheet === 'motion' ? 'rotate-180' : ''}`} />
-                            </span>
-                        </button>
-
-                        <ActionSheetSelect
-                            open={openSheet === 'motion'}
-                            onOpenChange={(open) => setOpenSheet(open ? 'motion' : null)}
+                        <AdaptiveSelect
                             title={t('settings.display.motion')}
                             value={motionPreference}
                             options={motionOptions}
                             onValueChange={(nextPref: MotionPreference) => setMotionPreference(nextPref)}
+                            align="end"
+                            trigger={(
+                                <button
+                                    type="button"
+                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{t('settings.display.motion')}</span>
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <span>{currentMotionLabel}</span>
+                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+                                    </span>
+                                </button>
+                            )}
                         />
                     </div>
 
@@ -175,29 +159,24 @@ export default function SettingsPage() {
                             )
                         })}
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOpenSheet('preset')
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            aria-expanded={openSheet === 'preset'}
-                            aria-haspopup="dialog"
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.theme.preset')}</span>
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <span>{currentPresetLabel}</span>
-                                <ChevronDownIcon className={`transition-transform ${openSheet === 'preset' ? 'rotate-180' : ''}`} />
-                            </span>
-                        </button>
-
-                        <ActionSheetSelect
-                            open={openSheet === 'preset'}
-                            onOpenChange={(open) => setOpenSheet(open ? 'preset' : null)}
+                        <AdaptiveSelect
                             title={t('settings.theme.preset')}
                             value={preset}
                             options={presetOptions}
                             onValueChange={(nextPreset: ThemePreset) => setPreset(nextPreset)}
+                            align="end"
+                            trigger={(
+                                <button
+                                    type="button"
+                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{t('settings.theme.preset')}</span>
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <span>{currentPresetLabel}</span>
+                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+                                    </span>
+                                </button>
+                            )}
                         />
                     </div>
 
@@ -206,31 +185,7 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.voice.title')}
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setOpenSheet('voice')
-                            }}
-                            className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                            aria-expanded={openSheet === 'voice'}
-                            aria-haspopup="dialog"
-                        >
-                            <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
-                            <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                <span>
-                                    {currentVoiceLanguage
-                                        ? currentVoiceLanguage.code === null
-                                            ? t('settings.voice.autoDetect')
-                                            : getLanguageDisplayName(currentVoiceLanguage)
-                                        : t('settings.voice.autoDetect')}
-                                </span>
-                                <ChevronDownIcon className={`transition-transform ${openSheet === 'voice' ? 'rotate-180' : ''}`} />
-                            </span>
-                        </button>
-
-                        <ActionSheetSelect
-                            open={openSheet === 'voice'}
-                            onOpenChange={(open) => setOpenSheet(open ? 'voice' : null)}
+                        <AdaptiveSelect
                             title={t('settings.voice.title')}
                             value={voiceLanguage}
                             options={voiceLanguages.map((lang) => ({
@@ -245,6 +200,25 @@ export default function SettingsPage() {
                                     localStorage.setItem('hapi-voice-lang', nextCode)
                                 }
                             }}
+                            align="end"
+                            trigger={(
+                                <button
+                                    type="button"
+                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
+                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
+                                        <span>
+                                            {currentVoiceLanguage
+                                                ? currentVoiceLanguage.code === null
+                                                    ? t('settings.voice.autoDetect')
+                                                    : getLanguageDisplayName(currentVoiceLanguage)
+                                                : t('settings.voice.autoDetect')}
+                                        </span>
+                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+                                    </span>
+                                </button>
+                            )}
                         />
                     </div>
 

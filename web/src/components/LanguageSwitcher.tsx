@@ -1,7 +1,6 @@
-import { useState } from 'react'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { LanguageIcon } from '@/assets/icons'
-import { ActionSheetSelect } from '@/components/ui/ActionSheetSelect'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
 import { IconButton } from '@/components/ui/icon-button'
 
 const locales: { value: Locale; label: string }[] = [
@@ -11,28 +10,24 @@ const locales: { value: Locale; label: string }[] = [
 
 export function LanguageSwitcher() {
     const { locale, setLocale, t } = useTranslation()
-    const [open, setOpen] = useState(false)
 
     return (
         <div>
-            <IconButton
-                type="button"
-                onClick={() => setOpen(true)}
-                title={t('language.title')}
-                aria-label={t('language.title')}
-                aria-expanded={open}
-                aria-haspopup="dialog"
-            >
-                <LanguageIcon />
-            </IconButton>
-
-            <ActionSheetSelect
-                open={open}
-                onOpenChange={setOpen}
+            <AdaptiveSelect
                 title={t('language.title')}
                 value={locale}
                 options={locales.map((loc) => ({ value: loc.value, label: loc.label }))}
                 onValueChange={(nextLocale: Locale) => setLocale(nextLocale)}
+                align="end"
+                trigger={
+                    <IconButton
+                        type="button"
+                        title={t('language.title')}
+                        aria-label={t('language.title')}
+                    >
+                        <LanguageIcon />
+                    </IconButton>
+                }
             />
         </div>
     )

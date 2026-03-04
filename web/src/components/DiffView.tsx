@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { usePointerFocusRing } from '@/hooks/usePointerFocusRing'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
+import { Pressable } from '@/components/ui/pressable'
 
 export function DiffView(props: {
     oldString: string
@@ -41,8 +42,7 @@ export function DiffView(props: {
     return (
         <Dialog>
             <DialogTrigger asChild>
-                <button
-                    type="button"
+                <Pressable
                     className={cn(
                         'w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                         suppressFocusRing && 'focus-visible:ring-0'
@@ -68,7 +68,7 @@ export function DiffView(props: {
                             </div>
                         </div>
                     </div>
-                </button>
+                </Pressable>
             </DialogTrigger>
             <DialogContent className="max-w-4xl">
                 <DialogHeader>

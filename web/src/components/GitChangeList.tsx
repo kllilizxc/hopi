@@ -1,5 +1,6 @@
 import { FileIcon } from '@/components/FileIcon'
 import type { GitFileStatus } from '@/types/api'
+import { Pressable } from '@/components/ui/pressable'
 
 type GitChangeListProps = {
     stagedFiles: GitFileStatus[]
@@ -64,8 +65,7 @@ function GitChangeRow(props: {
     const subtitle = props.file.filePath || props.rootLabel
 
     return (
-        <button
-            type="button"
+        <Pressable
             onClick={() => props.onOpenFile(props.file.fullPath, props.file.isStaged)}
             className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
         >
@@ -78,7 +78,7 @@ function GitChangeRow(props: {
                 <LineChanges added={props.file.linesAdded} removed={props.file.linesRemoved} />
                 <StatusBadge status={props.file.status} />
             </div>
-        </button>
+        </Pressable>
     )
 }
 
