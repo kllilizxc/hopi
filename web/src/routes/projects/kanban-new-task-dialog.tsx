@@ -185,7 +185,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                 </DialogHeader>
 
                 <form className="mt-4" onSubmit={handleSubmit}>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         <div className="space-y-1.5">
                             <label className="text-xs font-medium text-[var(--app-hint)]">
                                 {t('projects.tasks.details')}
@@ -213,17 +213,23 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                                 align="start"
                             />
                         </div>
-                        <AgentSelector
-                            agent={newTaskAgent}
-                            isDisabled={props.isCreating}
-                            onAgentChange={setNewTaskAgent}
-                        />
-                        <ModelSelector
-                            agent={newTaskAgent}
-                            model={newTaskModel}
-                            isDisabled={props.isCreating}
-                            onModelChange={setNewTaskModel}
-                        />
+                        <div className="space-y-1.5">
+                            <AgentSelector
+                                agent={newTaskAgent}
+                                isDisabled={props.isCreating}
+                                onAgentChange={setNewTaskAgent}
+                                compact
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <ModelSelector
+                                agent={newTaskAgent}
+                                model={newTaskModel}
+                                isDisabled={props.isCreating}
+                                onModelChange={setNewTaskModel}
+                                compact
+                            />
+                        </div>
                         <div className="space-y-1.5">
                             <label className="text-xs font-medium text-[var(--app-hint)]">
                                 {t('misc.permissionMode')}

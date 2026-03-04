@@ -3,15 +3,18 @@ import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 
-const AgentSelectorComponent = (props: {
+type AgentSelectorProps = {
     agent: AgentType
     isDisabled: boolean
     onAgentChange: (value: AgentType) => void
-}) => {
+    compact?: boolean
+}
+
+const AgentSelectorComponent = (props: AgentSelectorProps) => {
     const { t } = useTranslation()
 
-    return (
-        <div className="flex flex-col gap-1.5 px-3 py-3">
+    const content = (
+        <>
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.agent')}
             </label>
@@ -27,6 +30,16 @@ const AgentSelectorComponent = (props: {
                 <SegmentedControl.Item value="gemini">{t('agent.gemini')}</SegmentedControl.Item>
                 <SegmentedControl.Item value="opencode">{t('agent.opencode')}</SegmentedControl.Item>
             </SegmentedControl.Root>
+        </>
+    )
+
+    if (props.compact) {
+        return content
+    }
+
+    return (
+        <div className="flex flex-col gap-1.5 px-3 py-3">
+            {content}
         </div>
     )
 }
