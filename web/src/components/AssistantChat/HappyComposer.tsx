@@ -563,7 +563,8 @@ export function HappyComposer(props: {
         permissionModeOptions,
         handlePermissionChange,
         handleModelChange,
-        handleSuggestionSelect
+        handleSuggestionSelect,
+        t
     ])
 
     return (

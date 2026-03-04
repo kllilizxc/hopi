@@ -38,7 +38,7 @@ function AssistantTypingIndicator() {
     )
 }
 
-export function HappyAssistantMessage() {
+export const HappyAssistantMessage = () => {
     const showTypingIndicator = useAssistantState(({ message }) => message.isLast && message.status?.type === 'running')
     const isCliOutput = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined

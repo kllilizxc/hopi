@@ -603,13 +603,17 @@ export function SessionChat(props: {
             cache.set(message.id, { source: message, normalized: next })
             if (next) normalized.push(next)
         }
-        for (const id of cache.keys()) {
-            if (!seen.has(id)) {
-                cache.delete(id)
+        // Only clean up cache entries that are no longer in the message list
+        // This prevents unnecessary cache churn
+        if (cache.size > seen.size * 2) {
+            for (const id of cache.keys()) {
+                if (!seen.has(id)) {
+                    cache.delete(id)
+                }
             }
         }
         return normalized
-    }, [props.messages])
+    }, [props.messages, props.session.id])
 
     const reduced = useMemo(
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),

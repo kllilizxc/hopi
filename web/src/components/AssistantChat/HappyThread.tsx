@@ -147,28 +147,39 @@ export function HappyThread(props: {
         if (!viewport) return
 
         const THRESHOLD_PX = 120
+        let rafId: number | null = null
 
         const handleScroll = () => {
-            const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-            const isNearBottom = distanceFromBottom < THRESHOLD_PX
+            if (rafId !== null) return
 
-            if (isNearBottom) {
-                if (!autoScrollEnabledRef.current) setAutoScrollEnabled(true)
-            } else if (autoScrollEnabledRef.current) {
-                setAutoScrollEnabled(false)
-            }
+            rafId = requestAnimationFrame(() => {
+                rafId = null
+                const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+                const isNearBottom = distanceFromBottom < THRESHOLD_PX
 
-            if (isNearBottom !== atBottomRef.current) {
-                atBottomRef.current = isNearBottom
-                onAtBottomChangeRef.current(isNearBottom)
                 if (isNearBottom) {
-                    onFlushPendingRef.current()
+                    if (!autoScrollEnabledRef.current) setAutoScrollEnabled(true)
+                } else if (autoScrollEnabledRef.current) {
+                    setAutoScrollEnabled(false)
                 }
-            }
+
+                if (isNearBottom !== atBottomRef.current) {
+                    atBottomRef.current = isNearBottom
+                    onAtBottomChangeRef.current(isNearBottom)
+                    if (isNearBottom) {
+                        onFlushPendingRef.current()
+                    }
+                }
+            })
         }
 
         viewport.addEventListener('scroll', handleScroll, { passive: true })
-        return () => viewport.removeEventListener('scroll', handleScroll)
+        return () => {
+            viewport.removeEventListener('scroll', handleScroll)
+            if (rafId !== null) {
+                cancelAnimationFrame(rafId)
+            }
+        }
     }, []) // Stable: no dependencies, reads from refs
 
     // Scroll to bottom handler for the indicator button
