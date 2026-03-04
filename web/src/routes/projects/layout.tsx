@@ -547,18 +547,22 @@ export default function ProjectsPage() {
     }, [selectedProjectId, createTask, addToast, t])
 
     return (
-        <div className="flex h-full min-h-0">
+        <div className="relative flex h-full min-h-0 overflow-hidden">
             <div
-                className={`${shouldShowLeftOnMobile ? 'flex' : 'hidden lg:flex'} min-w-0 w-full flex-col bg-[var(--app-bg)] lg:flex-1 lg:w-auto lg:border-r lg:border-[var(--app-divider)]`}
+                className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out ${
+                    shouldShowLeftOnMobile
+                        ? 'translate-x-0'
+                        : '-translate-x-full pointer-events-none'
+                } lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto`}
             >
                 {selectedProjectId ? (
-                        <ProjectBoardPanel
-                            projectId={selectedProjectId}
-                            onBackToProjects={() => navigate({ to: '/projects' })}
-                            onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
-                            onGoToSessions={() => navigate({ to: '/sessions' })}
-                            onOpenNewTask={() => setNewTaskOpen(true)}
-                        />
+                    <ProjectBoardPanel
+                        projectId={selectedProjectId}
+                        onBackToProjects={() => navigate({ to: '/projects' })}
+                        onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
+                        onGoToSessions={() => navigate({ to: '/sessions' })}
+                        onOpenNewTask={() => setNewTaskOpen(true)}
+                    />
                 ) : (
                     <ProjectsListPanel
                         onSelectProject={(projectId) => navigate({ to: '/projects/$projectId', params: { projectId } })}
@@ -570,17 +574,15 @@ export default function ProjectsPage() {
             </div>
 
             <div
-                className={`${shouldShowRightPanel ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition duration-200 ease-out lg:flex-none lg:w-full ${
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[transform,opacity,max-width] duration-200 ease-out ${
                     shouldShowRightPanel
-                        ? 'lg:max-w-content lg:opacity-100 lg:translate-x-0'
-                        : 'lg:max-w-[0px] lg:opacity-0 lg:translate-x-2 lg:pointer-events-none'
-                }`}
+                        ? 'translate-x-0 opacity-100 pointer-events-auto lg:max-w-content lg:translate-x-0 lg:opacity-100'
+                        : 'translate-x-full opacity-100 pointer-events-none lg:max-w-[0px] lg:translate-x-2 lg:opacity-0 lg:pointer-events-none'
+                } lg:static lg:z-auto lg:flex-none lg:w-full`}
             >
-                {shouldShowRightPanel ? (
-                    <div className="flex-1 min-h-0">
-                        <Outlet />
-                    </div>
-                ) : null}
+                <div className="flex-1 min-h-0">
+                    <Outlet />
+                </div>
             </div>
 
             <CreateProjectDialog
