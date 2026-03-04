@@ -1,7 +1,6 @@
 import { memo } from 'react'
 import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
-import { SegmentedControl } from '@/components/ui/segmented-control'
 
 type AgentSelectorProps = {
     agent: AgentType
@@ -9,6 +8,8 @@ type AgentSelectorProps = {
     onAgentChange: (value: AgentType) => void
     compact?: boolean
 }
+
+const AGENTS: AgentType[] = ['claude', 'codex', 'gemini', 'opencode']
 
 const AgentSelectorComponent = (props: AgentSelectorProps) => {
     const { t } = useTranslation()
@@ -18,18 +19,28 @@ const AgentSelectorComponent = (props: AgentSelectorProps) => {
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.agent')}
             </label>
-            <SegmentedControl.Root
-                value={props.agent}
-                onValueChange={(value) => props.onAgentChange(value as AgentType)}
-                disabled={props.isDisabled}
-                size="2"
-                variant="surface"
-            >
-                <SegmentedControl.Item value="claude">{t('agent.claude')}</SegmentedControl.Item>
-                <SegmentedControl.Item value="codex">{t('agent.codex')}</SegmentedControl.Item>
-                <SegmentedControl.Item value="gemini">{t('agent.gemini')}</SegmentedControl.Item>
-                <SegmentedControl.Item value="opencode">{t('agent.opencode')}</SegmentedControl.Item>
-            </SegmentedControl.Root>
+            <div className="inline-flex w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-1">
+                {AGENTS.map((agent) => (
+                    <button
+                        key={agent}
+                        type="button"
+                        disabled={props.isDisabled}
+                        onClick={() => props.onAgentChange(agent)}
+                        className={`
+                            flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-all
+                            focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] focus:ring-offset-1
+                            disabled:cursor-not-allowed disabled:opacity-50
+                            ${
+                                props.agent === agent
+                                    ? 'bg-[var(--app-link)] text-white shadow-sm'
+                                    : 'text-[var(--app-fg)] hover:bg-[var(--app-hover)]'
+                            }
+                        `}
+                    >
+                        {t(`agent.${agent}`)}
+                    </button>
+                ))}
+            </div>
         </>
     )
 
