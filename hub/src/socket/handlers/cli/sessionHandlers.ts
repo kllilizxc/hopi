@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
-import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
+import { extractTaskToolsFromMessage } from '../../../sync/taskTools'
 import { syncTaskSubTasksFromSessionTodos } from '../../../sync/taskSubtasks'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { AccessErrorReason, AccessResult } from './types'
@@ -88,17 +88,25 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const msg = store.messages.addMessage(sid, content, localId)
 
-        const todos = extractTodoWriteTodosFromMessageContent(content)
-        if (todos) {
+        const taskToolResult = extractTaskToolsFromMessage(content)
+        if (taskToolResult) {
+            const { todos, source } = taskToolResult
+
+            // Update session todos for all sources
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
             if (updated) {
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+
+                // Determine merge mode based on tool source
+                // TodoWrite replaces all, TaskCreate/TaskUpdate merge incrementally
+                const mode = source === 'TodoWrite' ? 'replace' : 'merge'
 
                 const updatedTask = syncTaskSubTasksFromSessionTodos({
                     store,
                     session,
                     todos,
-                    todosUpdatedAt: msg.createdAt
+                    todosUpdatedAt: msg.createdAt,
+                    mode
                 })
                 if (updatedTask) {
                     onWebappEvent?.({

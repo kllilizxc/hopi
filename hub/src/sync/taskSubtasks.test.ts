@@ -146,4 +146,119 @@ describe('syncTaskSubTasksFromSessionTodos', () => {
         expect(updatedTask?.id).toBe(taskId)
         expect(updatedTask?.subTasks).toEqual(buildTodos('active-link'))
     })
+
+    it('replaces all subtasks in replace mode', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'in_progress',
+            subTasks: buildTodos('old')
+        })
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-1',
+            { path: '/tmp', host: 'local', taskId, projectId },
+            null,
+            namespace
+        )
+
+        const newTodos = buildTodos('new')
+        const updatedTask = syncTaskSubTasksFromSessionTodos({
+            store,
+            session: {
+                id: storedSession.id,
+                namespace,
+                metadata: storedSession.metadata
+            },
+            todos: newTodos,
+            todosUpdatedAt: Date.now(),
+            mode: 'replace'
+        })
+
+        expect(updatedTask?.subTasks).toEqual(newTodos)
+        expect(Array.isArray(updatedTask?.subTasks) ? updatedTask.subTasks.length : 0).toBe(2)
+    })
+
+    it('merges subtasks in merge mode', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'in_progress',
+            subTasks: [
+                { id: 'task-1', content: 'Old task', status: 'pending', priority: 'low' },
+                { id: 'task-2', content: 'Keep this', status: 'completed', priority: 'medium' }
+            ]
+        })
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-1',
+            { path: '/tmp', host: 'local', taskId, projectId },
+            null,
+            namespace
+        )
+
+        const newTodos: TodoItem[] = [
+            { id: 'task-1', content: 'Updated task', status: 'in_progress', priority: 'high' },
+            { id: 'task-3', content: 'New task', status: 'pending', priority: 'medium' }
+        ]
+
+        const updatedTask = syncTaskSubTasksFromSessionTodos({
+            store,
+            session: {
+                id: storedSession.id,
+                namespace,
+                metadata: storedSession.metadata
+            },
+            todos: newTodos,
+            todosUpdatedAt: Date.now(),
+            mode: 'merge'
+        })
+
+        expect(Array.isArray(updatedTask?.subTasks) ? updatedTask.subTasks.length : 0).toBe(3)
+
+        const subTasks = Array.isArray(updatedTask?.subTasks) ? updatedTask.subTasks : []
+        const subTasksMap = new Map(subTasks.map(t => [t.id, t]))
+        expect(subTasksMap.get('task-1')).toEqual({
+            id: 'task-1',
+            content: 'Updated task',
+            status: 'in_progress',
+            priority: 'high'
+        })
+        expect(subTasksMap.get('task-2')).toEqual({
+            id: 'task-2',
+            content: 'Keep this',
+            status: 'completed',
+            priority: 'medium'
+        })
+        expect(subTasksMap.get('task-3')).toEqual({
+            id: 'task-3',
+            content: 'New task',
+            status: 'pending',
+            priority: 'medium'
+        })
+    })
 })

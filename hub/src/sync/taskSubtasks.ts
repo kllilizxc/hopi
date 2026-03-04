@@ -52,11 +52,39 @@ function resolveLinkedTask(store: Store, session: Pick<StoredSession, 'id' | 'na
     return pickTaskCandidate(candidates, metadataLink.projectId)
 }
 
+/**
+ * Merge new todos with existing subtasks
+ * - For full replacement (TodoWrite), replace all
+ * - For incremental updates (TaskCreate/TaskUpdate), merge by id
+ */
+function mergeTodos(existing: unknown, incoming: TodoItem[], mode: 'replace' | 'merge'): TodoItem[] {
+    if (mode === 'replace') {
+        return incoming
+    }
+
+    // Merge mode: update existing by id, append new ones
+    const existingMap = new Map<string, TodoItem>()
+    if (Array.isArray(existing)) {
+        for (const todo of existing) {
+            if (todo && typeof todo === 'object' && 'id' in todo && typeof todo.id === 'string') {
+                existingMap.set(todo.id, todo as TodoItem)
+            }
+        }
+    }
+
+    for (const todo of incoming) {
+        existingMap.set(todo.id, todo)
+    }
+
+    return Array.from(existingMap.values())
+}
+
 export function syncTaskSubTasksFromSessionTodos(options: {
     store: Store
     session: Pick<StoredSession, 'id' | 'namespace' | 'metadata'>
     todos: TodoItem[]
     todosUpdatedAt: number
+    mode?: 'replace' | 'merge'
 }): StoredTask | null {
     const task = resolveLinkedTask(options.store, options.session)
     if (!task) {
@@ -67,8 +95,11 @@ export function syncTaskSubTasksFromSessionTodos(options: {
         return null
     }
 
+    const mode = options.mode ?? 'replace'
+    const mergedTodos = mergeTodos(task.subTasks, options.todos, mode)
+
     return options.store.tasks.updateTaskByNamespace(task.id, options.session.namespace, {
-        subTasks: options.todos,
+        subTasks: mergedTodos,
         subTasksUpdatedAt: options.todosUpdatedAt
     })
 }
