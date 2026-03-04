@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
@@ -415,7 +415,7 @@ function ProjectsListPanel(props: {
     )
 }
 
-function ProjectBoardPanel(props: {
+const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     projectId: string
     onBackToProjects: () => void
     onOpenSettings: () => void
@@ -462,7 +462,7 @@ function ProjectBoardPanel(props: {
             </div>
         </div>
     )
-}
+})
 
 export default function ProjectsPage() {
     const navigate = useNavigate()

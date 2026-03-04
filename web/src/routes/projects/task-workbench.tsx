@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
 import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
@@ -1065,7 +1065,7 @@ function TabButton(props: {
     )
 }
 
-export function TaskWorkbench(props: {
+export const TaskWorkbench = memo(function TaskWorkbench(props: {
     projectId: string
     taskId: string
     tab: TaskWorkbenchTab
@@ -1222,4 +1222,4 @@ export function TaskWorkbench(props: {
             </div>
         </div>
     )
-}
+})

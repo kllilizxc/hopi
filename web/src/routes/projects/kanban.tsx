@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import type { PermissionMode, Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
@@ -167,7 +167,7 @@ type DropTarget = {
     index: number
 }
 
-export function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: () => void }) {
+export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: () => void }) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
@@ -179,10 +179,13 @@ export function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: ()
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
-    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
-    const selectedTaskId = taskRouteMatch && taskRouteMatch.projectId === props.projectId
-        ? taskRouteMatch.taskId
-        : null
+
+    const selectedTaskId = useMemo(() => {
+        const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+        return taskRouteMatch && taskRouteMatch.projectId === props.projectId
+            ? taskRouteMatch.taskId
+            : null
+    }, [matchRoute, props.projectId])
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
@@ -920,4 +923,4 @@ export function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: ()
 
         </div>
     )
-}
+})
