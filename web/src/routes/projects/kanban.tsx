@@ -181,12 +181,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
-    const selectedTaskId = useMemo(() => {
-        const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
-        return taskRouteMatch && taskRouteMatch.projectId === props.projectId
-            ? taskRouteMatch.taskId
-            : null
-    }, [matchRoute, props.projectId])
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const selectedTaskId = taskRouteMatch && taskRouteMatch.projectId === props.projectId
+        ? taskRouteMatch.taskId
+        : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
@@ -913,7 +911,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 variant="accent"
                 size="md"
                 onClick={props.onOpenNewTask}
-                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow,opacity] duration-150 hover:opacity-90 hover:shadow-xl hover:-translate-y-[1px] active:opacity-80 active:translate-y-0 active:shadow-lg"
+                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow] duration-150 hover:shadow-xl hover:-translate-y-[1px] active:opacity-90 active:translate-y-0 active:shadow-lg"
                 aria-label={t('projects.tasks.create')}
             >
                 <PlusIcon className="h-6 w-6" />

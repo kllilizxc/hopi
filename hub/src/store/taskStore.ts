@@ -89,6 +89,7 @@ export class TaskStore {
             subTasksUpdatedAt?: number | null
             worktreeMergedAt?: number | null
             worktreeMergeCommit?: string | null
+            mergedDiffSnapshot?: unknown
             finishedAt?: number | null
             archivedAt?: number | null
         }

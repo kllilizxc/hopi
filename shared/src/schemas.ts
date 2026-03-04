@@ -208,6 +208,26 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>
 
+export const GitFileStatusSchema = z.object({
+    fileName: z.string(),
+    filePath: z.string(),
+    fullPath: z.string(),
+    status: z.enum(['added', 'deleted', 'modified', 'renamed', 'untracked', 'conflicted']),
+    isStaged: z.boolean(),
+    linesAdded: z.number(),
+    linesRemoved: z.number()
+})
+
+export type GitFileStatus = z.infer<typeof GitFileStatusSchema>
+
+export const MergedDiffSnapshotSchema = z.object({
+    files: z.array(GitFileStatusSchema),
+    capturedAt: z.number(),
+    baseCommit: z.string().optional()
+})
+
+export type MergedDiffSnapshot = z.infer<typeof MergedDiffSnapshotSchema>
+
 export const TaskSchema = z.object({
     id: z.string(),
     projectId: z.string(),
@@ -228,6 +248,7 @@ export const TaskSchema = z.object({
     subTasksUpdatedAt: z.number().nullable().optional(),
     worktreeMergedAt: z.number().nullable().optional(),
     worktreeMergeCommit: z.string().nullable().optional(),
+    mergedDiffSnapshot: MergedDiffSnapshotSchema.nullable().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     finishedAt: z.number().nullable().optional(),

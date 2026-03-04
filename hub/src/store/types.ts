@@ -110,6 +110,7 @@ export type StoredTask = {
     subTasksUpdatedAt: number | null
     worktreeMergedAt: number | null
     worktreeMergeCommit: string | null
+    mergedDiffSnapshot: unknown | null
     createdAt: number
     updatedAt: number
     finishedAt: number | null

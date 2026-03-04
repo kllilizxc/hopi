@@ -23,6 +23,7 @@ type DbTaskRow = {
     sub_tasks_updated_at: number | null
     worktree_merged_at: number | null
     worktree_merge_commit: string | null
+    merged_diff_snapshot: string | null
     created_at: number
     updated_at: number
     finished_at: number | null
@@ -50,6 +51,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         subTasksUpdatedAt: row.sub_tasks_updated_at,
         worktreeMergedAt: row.worktree_merged_at,
         worktreeMergeCommit: row.worktree_merge_commit,
+        mergedDiffSnapshot: safeJsonParse(row.merged_diff_snapshot),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         finishedAt: row.finished_at,
@@ -227,6 +229,7 @@ export function updateTaskByNamespace(
         subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
+        mergedDiffSnapshot?: unknown
         finishedAt?: number | null
         archivedAt?: number | null
     }
@@ -266,6 +269,11 @@ export function updateTaskByNamespace(
             : patch.worktreeMergeCommit !== undefined
                 ? patch.worktreeMergeCommit
                 : current.worktreeMergeCommit,
+        mergedDiffSnapshot: activeSessionChanged
+            ? null
+            : patch.mergedDiffSnapshot !== undefined
+                ? patch.mergedDiffSnapshot
+                : current.mergedDiffSnapshot,
         finishedAt: patch.finishedAt !== undefined ? patch.finishedAt : current.finishedAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
@@ -287,6 +295,7 @@ export function updateTaskByNamespace(
             sub_tasks_updated_at = @sub_tasks_updated_at,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
+            merged_diff_snapshot = @merged_diff_snapshot,
             finished_at = @finished_at,
             archived_at = @archived_at,
             updated_at = @updated_at
@@ -309,6 +318,7 @@ export function updateTaskByNamespace(
         sub_tasks_updated_at: next.subTasksUpdatedAt,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
+        merged_diff_snapshot: next.mergedDiffSnapshot !== undefined && next.mergedDiffSnapshot !== null ? JSON.stringify(next.mergedDiffSnapshot) : null,
         finished_at: next.finishedAt,
         archived_at: next.archivedAt,
         updated_at: now
