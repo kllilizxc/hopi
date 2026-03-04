@@ -84,6 +84,7 @@ export type TaskWorktreeMergeResponse = {
     skippedReason: string | null
     mergedAt: number | null
     autoResolved?: boolean | null
+    autoRetryScheduled?: boolean | null
 }
 
 export type TaskWorktreeMergeStateResponse = {

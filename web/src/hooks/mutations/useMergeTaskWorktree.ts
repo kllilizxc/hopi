@@ -14,7 +14,9 @@ type MergeTaskWorktreeInput = {
 function applyMergeResultToTask(task: Task, result: TaskWorktreeMergeResponse): Task {
     const mergedAt = result.mergedAt ?? task.worktreeMergedAt ?? null
     const mergeCommit = result.commitHash ?? task.worktreeMergeCommit ?? null
-    const shouldMarkFinished = task.status === 'in_review' && result.skippedReason !== 'already_merged'
+    const shouldMarkFinished = task.status === 'in_review'
+        && result.skippedReason !== 'already_merged'
+        && result.skippedReason !== 'auto_retry_scheduled'
     const nextStatus = shouldMarkFinished ? 'finished' : task.status
     const nextFinishedAt = shouldMarkFinished
         ? (result.mergedAt ?? task.finishedAt ?? Date.now())

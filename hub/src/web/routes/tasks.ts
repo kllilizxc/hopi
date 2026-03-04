@@ -14,8 +14,12 @@ import { handleTaskMovedToFinished } from './taskFinishAutomation'
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
 const AUTO_MERGE_CONFLICT_TIMEOUT_MS = 180_000
+const AUTO_MERGE_BACKGROUND_RETRY_TIMEOUT_MS = 180_000
+const AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS = 4_000
+const AUTO_MERGE_BACKGROUND_RETRY_MAX_ATTEMPTS = 30
 const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
 const AUTO_PREVIEW_SETUP_TIMEOUT_MS = 240_000
+const inFlightAutoMergeRetryKeys = new Set<string>()
 
 function estimateDataUrlBytes(dataUrl: string): number {
     const comma = dataUrl.indexOf(',')
@@ -86,6 +90,133 @@ function parseDiffNumstat(output: string): Array<{
     }
 
     return files
+}
+
+function waitWithUnrefTimer(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms)
+        if (typeof timer === 'object' && timer && 'unref' in timer && typeof timer.unref === 'function') {
+            timer.unref()
+        }
+    })
+}
+
+function buildWorktreeMergeCommitMessage(task: Pick<StoredTask, 'id' | 'title'>): string {
+    return `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
+}
+
+function emitRealtimeToast(options: {
+    engine: SyncEngine
+    namespace: string
+    title: string
+    body: string
+    sessionId?: string
+}): void {
+    const handler = (options.engine as unknown as {
+        handleRealtimeEvent?: (event: unknown) => void
+    }).handleRealtimeEvent
+
+    if (typeof handler !== 'function') {
+        return
+    }
+
+    handler({
+        type: 'toast',
+        namespace: options.namespace,
+        data: {
+            title: options.title,
+            body: options.body,
+            sessionId: options.sessionId ?? '',
+            url: ''
+        }
+    })
+}
+
+function emitTaskUpdatedEvent(options: {
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+    projectId: string
+    worktreeMergedAt: number | null
+}): void {
+    const handler = (options.engine as unknown as {
+        handleRealtimeEvent?: (event: unknown) => void
+    }).handleRealtimeEvent
+
+    if (typeof handler !== 'function') {
+        return
+    }
+
+    handler({
+        type: 'task-updated',
+        taskId: options.taskId,
+        projectId: options.projectId,
+        namespace: options.namespace,
+        data: { taskId: options.taskId, worktreeMergedAt: options.worktreeMergedAt }
+    })
+}
+
+async function persistSuccessfulTaskMerge(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTask
+    sessionId: string
+    sessionMetadataWorktreeBaseCommit: string | undefined
+    mergeResult: RpcGitMergeWorktreeResponse
+    preferredLocale?: string
+}): Promise<StoredTask | null> {
+    const mergedAt = Date.now()
+    const statusChangingToFinished = options.task.status === 'in_review'
+
+    let diffSnapshot: unknown = null
+    try {
+        const baseCommit = options.sessionMetadataWorktreeBaseCommit
+        if (baseCommit) {
+            const diffResult = await options.engine.getGitDiffNumstat(options.sessionId, { baseRef: baseCommit })
+            if (diffResult.success && diffResult.stdout) {
+                const files = parseDiffNumstat(diffResult.stdout)
+                diffSnapshot = {
+                    files,
+                    capturedAt: mergedAt,
+                    baseCommit
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('[Tasks] Failed to capture diff snapshot:', error)
+    }
+
+    const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
+        worktreeMergedAt: mergedAt,
+        worktreeMergeCommit: options.mergeResult.commitHash ?? null,
+        mergedDiffSnapshot: diffSnapshot,
+        status: statusChangingToFinished ? 'finished' : undefined,
+        finishedAt: statusChangingToFinished ? mergedAt : undefined
+    })
+    if (!updatedTask) {
+        return null
+    }
+
+    if (statusChangingToFinished) {
+        void handleTaskMovedToFinished({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            taskId: options.task.id,
+            preferredLocale: options.preferredLocale
+        })
+    }
+
+    emitTaskUpdatedEvent({
+        engine: options.engine,
+        namespace: options.namespace,
+        taskId: options.task.id,
+        projectId: updatedTask.projectId,
+        worktreeMergedAt: updatedTask.worktreeMergedAt
+    })
+
+    return updatedTask
 }
 
 const taskAttachmentSchema = z.object({
@@ -355,7 +486,7 @@ function createMergeConflictPrompt(options: {
         '1) Merge target branch INTO current worktree branch to get its latest changes.',
         '2) Resolve any conflicts with minimal/safe edits aligned to task intent.',
         '3) Ensure git status is clean and all conflict resolutions are committed.',
-        '4) After this, the system will retry merging worktree INTO target (which should succeed).',
+        '4) After this, the system will retry merging worktree INTO target. If immediate retry fails, it may continue retrying in background for a short window.',
         '5) Reply with a brief summary of conflict decisions.',
         '',
         'Important:',
@@ -373,6 +504,7 @@ type AutoResolveMergeConflictResult =
         conflictFiles: string[]
         stdout?: string
         stderr?: string
+        retryableAfterAutoResolve?: boolean
     }
 
 async function tryAutoResolveMergeConflict(options: {
@@ -491,17 +623,173 @@ async function tryAutoResolveMergeConflict(options: {
     }
 
     if (!retryResult.success) {
+        const status = getMergeWorktreeErrorStatus(retryResult)
         return {
             ok: false,
-            status: getMergeWorktreeErrorStatus(retryResult),
+            status,
             error: retryResult.error ?? 'Merge failed after agent conflict auto-resolution',
             conflictFiles: retryResult.conflictFiles ?? options.conflictFiles,
             stdout: retryResult.stdout,
-            stderr: retryResult.stderr
+            stderr: retryResult.stderr,
+            retryableAfterAutoResolve: status >= 500
         }
     }
 
     return { ok: true, mergeResult: retryResult }
+}
+
+function isRetryableAutoMergeFailureStatus(status: number): boolean {
+    return status >= 500
+}
+
+function buildAutoMergeRetryKey(namespace: string, taskId: string): string {
+    return `${namespace}:${taskId}`
+}
+
+function scheduleBackgroundAutoMergeRetry(options: {
+    store: Store
+    getSyncEngine: () => SyncEngine | null
+    namespace: string
+    taskId: string
+    targetBranch: string
+    preferredLocale?: string
+}): boolean {
+    const key = buildAutoMergeRetryKey(options.namespace, options.taskId)
+    if (inFlightAutoMergeRetryKeys.has(key)) {
+        return false
+    }
+    inFlightAutoMergeRetryKeys.add(key)
+
+    void (async () => {
+        const startedAt = Date.now()
+        try {
+            for (let attempt = 1; attempt <= AUTO_MERGE_BACKGROUND_RETRY_MAX_ATTEMPTS; attempt += 1) {
+                if (Date.now() - startedAt > AUTO_MERGE_BACKGROUND_RETRY_TIMEOUT_MS) {
+                    const engine = options.getSyncEngine()
+                    if (engine) {
+                        emitRealtimeToast({
+                            engine,
+                            namespace: options.namespace,
+                            title: 'Merge retry timed out',
+                            body: 'Automatic merge retry timed out. Please retry merge manually.'
+                        })
+                    }
+                    return
+                }
+
+                const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                if (!task || task.archivedAt) {
+                    return
+                }
+                if (task.worktreeMergedAt) {
+                    return
+                }
+                if (!task.activeSessionId) {
+                    return
+                }
+
+                const engine = options.getSyncEngine()
+                if (!engine) {
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                const access = engine.resolveSessionAccess(task.activeSessionId, options.namespace)
+                if (!access.ok) {
+                    if (access.reason === 'access-denied') {
+                        return
+                    }
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                const session = access.session
+                if (!session.metadata?.worktree) {
+                    return
+                }
+
+                const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+                if (session.thinking || hasPendingRequests) {
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
+                const mergeState = await computeMergeGitState({
+                    engine,
+                    sessionId: session.id,
+                    targetBranch: options.targetBranch,
+                    sourceBranch,
+                    taskMergedAt: task.worktreeMergedAt ?? null
+                })
+
+                if (!mergeState.canMerge) {
+                    if (mergeState.reason === 'already_merged' || mergeState.reason === 'no_changes') {
+                        return
+                    }
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                const commitMessage = buildWorktreeMergeCommitMessage(task)
+                let result: RpcGitMergeWorktreeResponse
+                try {
+                    result = await engine.gitMergeWorktree(session.id, {
+                        targetBranch: options.targetBranch,
+                        commitMessage
+                    })
+                } catch (error) {
+                    console.warn('[Tasks] Background merge retry failed unexpectedly:', error)
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                if (!result.success) {
+                    const status = getMergeWorktreeErrorStatus(result)
+                    if (!isRetryableAutoMergeFailureStatus(status)) {
+                        emitRealtimeToast({
+                            engine,
+                            namespace: options.namespace,
+                            title: 'Merge retry stopped',
+                            body: `Automatic merge retry stopped: ${pickReadableMergeError(result, 'Merge failed')}`,
+                            sessionId: session.id
+                        })
+                        return
+                    }
+
+                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
+                    continue
+                }
+
+                const updatedTask = await persistSuccessfulTaskMerge({
+                    store: options.store,
+                    engine,
+                    namespace: options.namespace,
+                    task,
+                    sessionId: session.id,
+                    sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
+                    mergeResult: result,
+                    preferredLocale: options.preferredLocale
+                })
+                if (updatedTask) {
+                    emitRealtimeToast({
+                        engine,
+                        namespace: options.namespace,
+                        title: 'Merge completed',
+                        body: `Automatic retry merged task "${updatedTask.title}" successfully.`,
+                        sessionId: session.id
+                    })
+                }
+                return
+            }
+        } catch (error) {
+            console.error('[Tasks] Unexpected background merge retry error:', error)
+        } finally {
+            inFlightAutoMergeRetryKeys.delete(key)
+        }
+    })()
+
+    return true
 }
 
 function resolveRequestLocale(rawLocale: string | undefined): string | undefined {
@@ -1537,7 +1825,7 @@ export function createTasksRoutes(options: {
                 })
             }
 
-            const commitMessage = `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
+            const commitMessage = buildWorktreeMergeCommitMessage(task)
             let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
             let autoResolved = false
             try {
@@ -1575,6 +1863,28 @@ export function createTasksRoutes(options: {
                 }
 
                 if (!autoResolution.ok) {
+                    if (autoResolution.retryableAfterAutoResolve) {
+                        const scheduled = scheduleBackgroundAutoMergeRetry({
+                            store: options.store,
+                            getSyncEngine: options.getSyncEngine,
+                            namespace,
+                            taskId: task.id,
+                            targetBranch,
+                            preferredLocale
+                        })
+
+                        if (scheduled) {
+                            return c.json({
+                                ok: true,
+                                commitHash: null,
+                                skippedReason: 'auto_retry_scheduled',
+                                mergedAt: task.worktreeMergedAt ?? null,
+                                autoResolved: true,
+                                autoRetryScheduled: true
+                            })
+                        }
+                    }
+
                     const payload: {
                         error: string
                         conflictFiles: string[]
@@ -1639,56 +1949,19 @@ export function createTasksRoutes(options: {
                 return c.json(payload, status)
             }
 
-            const mergedAt = Date.now()
-            const statusChangingToFinished = task.status === 'in_review'
-
-            // Capture diff snapshot before updating task
-            let diffSnapshot: unknown = null
-            try {
-                const baseCommit = session.metadata.worktree.baseCommit
-                if (baseCommit) {
-                    const diffResult = await engine.getGitDiffNumstat(session.id, { baseRef: baseCommit })
-                    if (diffResult.success && diffResult.stdout) {
-                        const files = parseDiffNumstat(diffResult.stdout)
-                        diffSnapshot = {
-                            files,
-                            capturedAt: mergedAt,
-                            baseCommit
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn('[Tasks] Failed to capture diff snapshot:', error)
-            }
-
-            const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
-                worktreeMergedAt: mergedAt,
-                worktreeMergeCommit: result.commitHash ?? null,
-                mergedDiffSnapshot: diffSnapshot,
-                status: statusChangingToFinished ? 'finished' : undefined,
-                finishedAt: statusChangingToFinished ? mergedAt : undefined
+            const updatedTask = await persistSuccessfulTaskMerge({
+                store: options.store,
+                engine,
+                namespace,
+                task,
+                sessionId: session.id,
+                sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
+                mergeResult: result,
+                preferredLocale
             })
             if (!updatedTask) {
                 return c.json({ error: 'Task not found' }, 404)
             }
-
-            if (statusChangingToFinished) {
-                void handleTaskMovedToFinished({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    taskId,
-                    preferredLocale
-                })
-            }
-
-            engine.handleRealtimeEvent({
-                type: 'task-updated',
-                taskId,
-                projectId: updatedTask.projectId,
-                namespace,
-                data: { taskId, worktreeMergedAt: updatedTask.worktreeMergedAt }
-            })
 
             return c.json({
                 ok: true,
