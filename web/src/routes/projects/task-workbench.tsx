@@ -23,7 +23,7 @@ import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useSessions } from '@/hooks/queries/useSessions'
-import { useTask } from '@/hooks/queries/useTask'
+import { useTask, useTaskActiveSessionId } from '@/hooks/queries/useTask'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import { ModelSelector } from '@/components/NewSession/ModelSelector'
@@ -1078,13 +1078,17 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     const navigate = useNavigate()
     const { api } = useAppContext()
     const { copy, copied } = useCopyToClipboard()
-    const { task, isLoading: taskLoading, error: taskError } = useTask(api, props.taskId)
-    const { project, isLoading: projectLoading, error: projectError } = useProject(api, props.projectId)
-    const { workspaces, isLoading: workspacesLoading, error: workspacesError } = useWorkspaces(api, props.projectId)
-
-    const sessionId = task?.activeSessionId ?? null
+    const {
+        activeSessionId: sessionId,
+        isLoading: taskSessionLoading,
+        error: taskSessionError
+    } = useTaskActiveSessionId(api, props.taskId)
     const hasSession = Boolean(sessionId)
     const activeTab: TaskWorkbenchTab = props.forceTask ? 'task' : (props.tab === 'task' && hasSession ? 'chat' : props.tab)
+    const shouldLoadTaskDetails = activeTab === 'task' && !taskSessionLoading
+    const { task, isLoading: taskLoading, error: taskError } = useTask(api, shouldLoadTaskDetails ? props.taskId : null)
+    const { project, isLoading: projectLoading, error: projectError } = useProject(api, shouldLoadTaskDetails ? props.projectId : null)
+    const { workspaces, isLoading: workspacesLoading, error: workspacesError } = useWorkspaces(api, shouldLoadTaskDetails ? props.projectId : null)
 
     const handleBack = useCallback(() => {
         if (props.forceTask) {
@@ -1108,6 +1112,27 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [navigate, props.projectId])
 
+    const handleOpenFiles = useCallback(() => {
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/files',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [navigate, props.projectId, props.taskId])
+
+    const handleOpenDiffs = useCallback(() => {
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/diffs',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [navigate, props.projectId, props.taskId])
+
+    const handleOpenTerminal = useCallback(() => {
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/terminal',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [navigate, props.projectId, props.taskId])
+
     const projectDefaults = useMemo(() => {
         const agent = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
         const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
@@ -1115,7 +1140,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         return { agent, permissionMode, modelMode }
     }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModelMode])
 
-    if (taskLoading || projectLoading || workspacesLoading) {
+    if (taskSessionLoading || (shouldLoadTaskDetails && (taskLoading || projectLoading || workspacesLoading))) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading')} className="text-sm" />
@@ -1123,16 +1148,19 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         )
     }
 
-    if (taskError || projectError || workspacesError || !task || !project) {
+    if (
+        taskSessionError
+        || (shouldLoadTaskDetails && (taskError || projectError || workspacesError || !task || !project))
+    ) {
         return (
             <div className="h-full flex items-center justify-center p-4 text-sm text-red-600">
-                {taskError ?? projectError ?? workspacesError ?? t('projects.task.loadError')}
+                {taskSessionError ?? taskError ?? projectError ?? workspacesError ?? t('projects.task.loadError')}
             </div>
         )
     }
 
-    const headerTitle = task.title
-    const headerSubtitle = project.name
+    const headerTitle = task?.title ?? ''
+    const headerSubtitle = project?.name
 
     const showWorkbenchHeader = activeTab === 'task'
 
@@ -1152,15 +1180,17 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
 
             <div className="flex-1 min-h-0">
                 {activeTab === 'task' ? (
-                    <TaskDetailsPanel
-                        projectId={props.projectId}
-                        taskId={props.taskId}
-                        task={task}
-                        workspaces={workspaces}
-                        projectDefaultWorkspaceId={project.defaultWorkspaceId ?? null}
-                        projectMachineId={project.machineId}
-                        projectDefaults={projectDefaults}
-                    />
+                    task && project ? (
+                        <TaskDetailsPanel
+                            projectId={props.projectId}
+                            taskId={props.taskId}
+                            task={task}
+                            workspaces={workspaces}
+                            projectDefaultWorkspaceId={project.defaultWorkspaceId ?? null}
+                            projectMachineId={project.machineId}
+                            projectDefaults={projectDefaults}
+                        />
+                    ) : null
                 ) : activeTab === 'chat' ? (
                     sessionId ? (
                         <TaskSessionChat
@@ -1169,24 +1199,9 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
                             taskId={props.taskId}
                             sessionId={sessionId}
                             onBack={handleBackToProject}
-                            onViewFiles={() => {
-                                void navigate({
-                                    to: '/projects/$projectId/tasks/$taskId/files',
-                                    params: { projectId: props.projectId, taskId: props.taskId }
-                                })
-                            }}
-                            onViewDiffs={() => {
-                                void navigate({
-                                    to: '/projects/$projectId/tasks/$taskId/diffs',
-                                    params: { projectId: props.projectId, taskId: props.taskId }
-                                })
-                            }}
-                            onViewTerminal={() => {
-                                void navigate({
-                                    to: '/projects/$projectId/tasks/$taskId/terminal',
-                                    params: { projectId: props.projectId, taskId: props.taskId }
-                                })
-                            }}
+                            onViewFiles={handleOpenFiles}
+                            onViewDiffs={handleOpenDiffs}
+                            onViewTerminal={handleOpenTerminal}
                         />
                     ) : (
                         <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">

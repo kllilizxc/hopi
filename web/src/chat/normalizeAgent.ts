@@ -1,6 +1,10 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
 import { asNumber, asString, isObject } from '@hapi/protocol'
 
+function asBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null
+}
+
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
     const date = asNumber(value.date)
@@ -347,6 +351,8 @@ export function normalizeAgentRecord(
 
         if (data.type === 'tool-call-result' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
+            const isError = asBoolean(data.is_error) ?? false
+            const isPartial = asBoolean(data.is_partial ?? data.partial) ?? false
             return {
                 id: messageId,
                 localId,
@@ -357,7 +363,8 @@ export function normalizeAgentRecord(
                     type: 'tool-result',
                     tool_use_id: data.callId,
                     content: data.output,
-                    is_error: false,
+                    is_error: isError,
+                    is_partial: isPartial,
                     uuid,
                     parentUUID: null
                 }],

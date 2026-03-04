@@ -87,7 +87,24 @@ describe('AppServerEventConverter', () => {
             command: 'ls'
         }]);
 
-        converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'ok' });
+        const firstDelta = converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'ok' });
+        expect(firstDelta).toEqual([{
+            type: 'exec_command_output_delta',
+            call_id: 'cmd-1',
+            command: 'ls',
+            output: 'ok',
+            delta: 'ok'
+        }]);
+
+        const secondDelta = converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: ' done' });
+        expect(secondDelta).toEqual([{
+            type: 'exec_command_output_delta',
+            call_id: 'cmd-1',
+            command: 'ls',
+            output: 'ok done',
+            delta: ' done'
+        }]);
+
         const completed = converter.handleNotification('item/completed', {
             item: { id: 'cmd-1', type: 'commandExecution', exitCode: 0 }
         });
@@ -96,7 +113,7 @@ describe('AppServerEventConverter', () => {
             type: 'exec_command_end',
             call_id: 'cmd-1',
             command: 'ls',
-            output: 'ok',
+            output: 'ok done',
             exit_code: 0
         }]);
     });
