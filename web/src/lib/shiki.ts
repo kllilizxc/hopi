@@ -88,6 +88,11 @@ export const langAlias: Record<string, string> = {
     makefile: 'make',
 }
 
+export type ShikiHighlighterOptions = {
+    enabled?: boolean
+    debounceMs?: number
+}
+
 // Singleton highlighter instance
 let highlighterPromise: Promise<HighlighterCore> | null = null
 
@@ -115,12 +120,20 @@ function resolveLanguage(lang: string | undefined): string {
  */
 export function useShikiHighlighter(
     code: string,
-    language: string | undefined
+    language: string | undefined,
+    options?: ShikiHighlighterOptions
 ): ReactNode | null {
     const [highlighted, setHighlighted] = useState<ReactNode | null>(null)
+    const enabled = options?.enabled ?? true
+    const debounceMs = options?.debounceMs ?? 50
     const lang = useMemo(() => resolveLanguage(language), [language])
 
     useEffect(() => {
+        if (!enabled) {
+            setHighlighted(null)
+            return
+        }
+
         let cancelled = false
 
         async function highlight() {
@@ -153,12 +166,12 @@ export function useShikiHighlighter(
         }
 
         // Debounce highlighting
-        const timer = setTimeout(highlight, 50)
+        const timer = setTimeout(highlight, debounceMs)
         return () => {
             cancelled = true
             clearTimeout(timer)
         }
-    }, [code, lang])
+    }, [code, debounceMs, enabled, lang])
 
     return highlighted
 }
