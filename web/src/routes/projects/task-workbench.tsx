@@ -107,6 +107,7 @@ function StartSessionDialog(props: {
     machineId: string
     taskAgentFlavor: AgentType | null
     taskPermissionMode: PermissionMode | null
+    taskModelMode: string | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
@@ -125,7 +126,7 @@ function StartSessionDialog(props: {
     const initialWorkspaceId = props.taskWorkspaceId ?? props.defaultWorkspaceId ?? props.workspaces[0]?.id ?? ''
     const initialAgent = props.taskAgentFlavor ?? props.projectDefaults.agent
     const initialModel = (() => {
-        const mode = props.projectDefaults.modelMode
+        const mode = props.taskModelMode ?? props.projectDefaults.modelMode
         if (initialAgent === 'claude' && (mode === 'sonnet' || mode === 'opus')) {
             return mode
         }
@@ -954,6 +955,7 @@ function TaskDetailsPanel(props: {
                 machineId={props.projectMachineId}
                 taskAgentFlavor={agentFlavor || null}
                 taskPermissionMode={props.task.permissionMode ?? null}
+                taskModelMode={props.task.modelMode ?? null}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}
