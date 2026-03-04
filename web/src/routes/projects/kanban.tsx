@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
 import type { ActionSheetSelectOption } from '@/components/ui/ActionSheetSelect'
 import { IconButton } from '@/components/ui/icon-button'
+import { ScrollShadow } from '@/components/ui/scroll-shadow'
 import { useAppContext } from '@/lib/app-context'
 import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
@@ -877,10 +878,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 'var(--app-secondary-bg)'
                             ].join(', ')
                         } as React.CSSProperties
-                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm ring-1 ring-inset ring-[var(--app-divider)] transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-[280px]'}`
+                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-[280px]'}`
                         const headerClass = isCollapsed
-                            ? 'px-2 py-2 border-b border-[var(--app-divider)] flex flex-col items-center gap-2 backdrop-blur-sm'
-                            : 'px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-2 backdrop-blur-sm'
+                            ? 'px-2 py-2 flex flex-col items-center gap-2 backdrop-blur-sm'
+                            : 'px-3 py-2 flex items-center justify-between gap-2 backdrop-blur-sm'
                         const columnToggleLabel = isCollapsed ? t('projects.columns.expand') : t('projects.columns.collapse')
 
                         return (
@@ -953,8 +954,9 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 </div>
 
                                 {isCollapsed ? null : (
-                                    <div
+                                    <ScrollShadow
                                         className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
+                                        background="var(--app-secondary-bg)"
                                         onDragOver={(event) => {
                                             event.preventDefault()
                                             if (!dragStateRef.current) return
@@ -988,7 +990,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                                 />
                                             )
                                         })}
-                                    </div>
+                                    </ScrollShadow>
                                 )}
                             </div>
                         )
