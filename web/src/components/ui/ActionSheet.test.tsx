@@ -41,4 +41,48 @@ describe('ActionSheet', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
         expect(onClick).toHaveBeenCalledTimes(1)
     })
+
+    it('closes when dragging handle down past threshold', () => {
+        const onOpenChange = vi.fn()
+        renderWithProviders(
+            <ActionSheet open onOpenChange={onOpenChange} title="Actions">
+                <ActionSheetItem>Delete</ActionSheetItem>
+            </ActionSheet>
+        )
+
+        const dialog = screen.getByRole('dialog')
+        const handle = dialog.querySelector('[data-slot="action-sheet-handle"]')
+        expect(handle).not.toBeNull()
+        if (!handle) {
+            return
+        }
+
+        fireEvent.pointerDown(handle, { pointerId: 1, pointerType: 'touch', clientY: 100 })
+        fireEvent.pointerMove(handle, { pointerId: 1, pointerType: 'touch', clientY: 260 })
+        fireEvent.pointerUp(handle, { pointerId: 1, pointerType: 'touch', clientY: 260 })
+
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it('snaps back when dragging handle down only a little', () => {
+        const onOpenChange = vi.fn()
+        renderWithProviders(
+            <ActionSheet open onOpenChange={onOpenChange} title="Actions">
+                <ActionSheetItem>Delete</ActionSheetItem>
+            </ActionSheet>
+        )
+
+        const dialog = screen.getByRole('dialog')
+        const handle = dialog.querySelector('[data-slot="action-sheet-handle"]')
+        expect(handle).not.toBeNull()
+        if (!handle) {
+            return
+        }
+
+        fireEvent.pointerDown(handle, { pointerId: 2, pointerType: 'touch', clientY: 100 })
+        fireEvent.pointerMove(handle, { pointerId: 2, pointerType: 'touch', clientY: 130 })
+        fireEvent.pointerUp(handle, { pointerId: 2, pointerType: 'touch', clientY: 130 })
+
+        expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    })
 })
