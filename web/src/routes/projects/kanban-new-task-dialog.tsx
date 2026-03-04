@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import { ModelSelector } from '@/components/NewSession/ModelSelector'
-import type { AgentType } from '@/components/NewSession/types'
+import { MODEL_OPTIONS, type AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
 function getTaskDraftTitle(draft: string): string {
@@ -50,6 +50,10 @@ type NewTaskDialogProps = {
 }
 
 const STORAGE_KEY = 'hapi:newTaskDialog:lastOptions'
+const DEFAULT_AGENT: AgentType = 'claude'
+const VALID_AGENTS: ReadonlySet<AgentType> = new Set(['claude', 'codex', 'gemini', 'opencode'])
+const VALID_PRIORITIES: ReadonlySet<TaskPriority | ''> = new Set(['', 'high', 'medium', 'low'])
+const VALID_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan'])
 
 type StoredOptions = {
     priority: TaskPriority | ''
@@ -58,12 +62,52 @@ type StoredOptions = {
     permissionMode: PermissionMode
 }
 
-function loadStoredOptions(): StoredOptions | null {
+type LoadStoredOptionsResult = {
+    hasStoredOptions: boolean
+    options: Partial<StoredOptions>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+function loadStoredOptions(): LoadStoredOptionsResult {
+    const empty = { hasStoredOptions: false, options: {} } as const
     try {
-        const stored = localStorage.getItem(STORAGE_KEY)
-        return stored ? JSON.parse(stored) : null
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw === null) {
+            return empty
+        }
+
+        let parsed: unknown
+        try {
+            parsed = JSON.parse(raw)
+        } catch {
+            return { hasStoredOptions: true, options: {} }
+        }
+
+        if (!isRecord(parsed)) {
+            return { hasStoredOptions: true, options: {} }
+        }
+
+        const options: Partial<StoredOptions> = {}
+
+        if (typeof parsed.agent === 'string' && VALID_AGENTS.has(parsed.agent as AgentType)) {
+            options.agent = parsed.agent as AgentType
+        }
+        if (typeof parsed.priority === 'string' && VALID_PRIORITIES.has(parsed.priority as TaskPriority | '')) {
+            options.priority = parsed.priority as TaskPriority | ''
+        }
+        if (typeof parsed.model === 'string') {
+            options.model = parsed.model
+        }
+        if (typeof parsed.permissionMode === 'string' && VALID_PERMISSION_MODES.has(parsed.permissionMode as PermissionMode)) {
+            options.permissionMode = parsed.permissionMode as PermissionMode
+        }
+
+        return { hasStoredOptions: true, options }
     } catch {
-        return null
+        return empty
     }
 }
 
@@ -80,16 +124,18 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null)
     const hasTitleRef = useRef(false)
     const [hasTitle, setHasTitle] = useState(false)
+    const { hasStoredOptions, options: storedOptions } = useMemo(() => loadStoredOptions(), [])
+    const defaultPermissionPreference = hasStoredOptions ? null : props.defaultPermissionMode
+    const initialAgent = storedOptions.agent ?? (hasStoredOptions ? DEFAULT_AGENT : props.defaultAgent)
 
-    const stored = loadStoredOptions()
-    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>(stored?.priority ?? '')
-    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(stored?.agent ?? props.defaultAgent)
-    const [newTaskModel, setNewTaskModel] = useState(stored?.model ?? 'auto')
+    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>(storedOptions.priority ?? '')
+    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(initialAgent)
+    const [newTaskModel, setNewTaskModel] = useState(storedOptions.model ?? 'auto')
     const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => {
-        if (stored?.permissionMode) {
-            return stored.permissionMode
+        if (storedOptions.permissionMode) {
+            return storedOptions.permissionMode
         }
-        return resolveTaskPermissionModeForFlavor(props.defaultAgent, props.defaultPermissionMode)
+        return resolveTaskPermissionModeForFlavor(initialAgent, defaultPermissionPreference)
     })
 
     const newTaskPermissionOptions = useMemo(
@@ -101,12 +147,30 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         if (newTaskPermissionOptions.some((option) => option.mode === newTaskPermissionMode)) {
             return
         }
-        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, props.defaultPermissionMode))
-    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, props.defaultPermissionMode])
+        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, defaultPermissionPreference))
+    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, defaultPermissionPreference])
 
     useEffect(() => {
-        setNewTaskModel('auto')
-    }, [newTaskAgent])
+        const options = MODEL_OPTIONS[newTaskAgent]
+        if (options.length === 0) {
+            if (newTaskModel !== 'auto') {
+                setNewTaskModel('auto')
+            }
+            return
+        }
+        if (!options.some((option) => option.value === newTaskModel)) {
+            setNewTaskModel('auto')
+        }
+    }, [newTaskAgent, newTaskModel])
+
+    useEffect(() => {
+        saveStoredOptions({
+            priority: newTaskPriority,
+            agent: newTaskAgent,
+            model: newTaskModel,
+            permissionMode: newTaskPermissionMode
+        })
+    }, [newTaskPriority, newTaskAgent, newTaskModel, newTaskPermissionMode])
 
     // Reset only task details when dialog closes
     useEffect(() => {
@@ -126,14 +190,6 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         if (!parsed.title) {
             return
         }
-
-        // Save options for next time
-        saveStoredOptions({
-            priority: newTaskPriority,
-            agent: newTaskAgent,
-            model: newTaskModel,
-            permissionMode: newTaskPermissionMode
-        })
 
         props.onCreate({
             title: parsed.title,
