@@ -32,7 +32,7 @@ const AgentSelectorComponent = (props: AgentSelectorProps) => {
                             disabled:cursor-not-allowed disabled:opacity-50
                             ${
                                 props.agent === agent
-                                    ? 'bg-[var(--app-link)] text-white shadow-sm'
+                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)] shadow-sm'
                                     : 'text-[var(--app-fg)] hover:bg-[var(--app-hover)]'
                             }
                         `}
