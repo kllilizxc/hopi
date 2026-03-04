@@ -65,10 +65,11 @@ function deriveCorsOrigins(publicUrl: string): string[] {
         const parsedPublicUrl = new URL(publicUrl)
         const origins = new Set<string>([parsedPublicUrl.origin])
 
-        // Local dev commonly serves web from Vite while hub runs on 3006.
+        // Local dev commonly serves the web UI from an arbitrary port (Vite/preview/etc),
+        // while the hub runs on 3006.
         if (parsedPublicUrl.hostname === 'localhost' || parsedPublicUrl.hostname === '127.0.0.1') {
-            origins.add('http://localhost:5173')
-            origins.add('http://127.0.0.1:5173')
+            origins.add('http://localhost:*')
+            origins.add('http://127.0.0.1:*')
         }
 
         return Array.from(origins)

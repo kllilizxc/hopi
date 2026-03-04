@@ -1,5 +1,4 @@
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -30,6 +29,7 @@ import type { WebSocketData } from '@socket.io/bun-engine'
 import { loadEmbeddedAssetMap, type EmbeddedWebAsset } from './embeddedAssets'
 import { isBunCompiled } from '../utils/bunCompiled'
 import type { Store } from '../store'
+import { createCorsMiddleware } from './middleware/cors'
 
 function findWebappDistDir(): { distDir: string; indexHtmlPath: string } {
     const candidates = [
@@ -77,9 +77,8 @@ function createWebApp(options: {
     app.get('/health', (c) => c.json({ status: 'ok', protocolVersion: PROTOCOL_VERSION }))
 
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
-    const corsOriginOption = corsOrigins.includes('*') ? '*' : corsOrigins
-    const corsMiddleware = cors({
-        origin: corsOriginOption,
+    const corsMiddleware = createCorsMiddleware({
+        allowedOrigins: corsOrigins,
         allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
         allowHeaders: ['authorization', 'content-type']
     })

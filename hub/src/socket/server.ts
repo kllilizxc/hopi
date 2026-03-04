@@ -6,6 +6,7 @@ import type { Store } from '../store'
 import { configuration } from '../configuration'
 import { constantTimeEquals } from '../utils/crypto'
 import { parseAccessToken } from '../utils/accessToken'
+import { createCorsOriginChecker } from '../utils/corsOrigins'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
 import { RpcRegistry } from './rpcRegistry'
@@ -47,8 +48,15 @@ export function createSocketServer(deps: SocketServerDeps): {
     rpcRegistry: RpcRegistry
 } {
     const corsOrigins = deps.corsOrigins ?? configuration.corsOrigins
+    const isOriginAllowed = createCorsOriginChecker(corsOrigins)
     const allowAllOrigins = corsOrigins.includes('*')
-    const corsOriginOption = allowAllOrigins ? '*' : corsOrigins
+
+    type CorsOriginCallback = (error: Error | null, allow?: boolean) => void
+    const corsOriginOption = allowAllOrigins
+        ? '*'
+        : (origin: string | undefined, callback: CorsOriginCallback) => {
+            callback(null, isOriginAllowed(origin))
+        }
     const corsOptions = {
         origin: corsOriginOption,
         methods: ['GET', 'POST'],
@@ -64,7 +72,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         cors: corsOptions,
         allowRequest: async (req) => {
             const origin = req.headers.get('origin')
-            if (!origin || allowAllOrigins || corsOrigins.includes(origin)) {
+            if (isOriginAllowed(origin)) {
                 return
             }
             throw 'Origin not allowed'

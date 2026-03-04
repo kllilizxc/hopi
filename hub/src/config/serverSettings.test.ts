@@ -25,8 +25,8 @@ describe('loadServerSettings CORS defaults', () => {
             const result = await loadServerSettings(dataDir)
             expect(result.settings.corsOrigins).toEqual([
                 'http://localhost:3006',
-                'http://localhost:5173',
-                'http://127.0.0.1:5173'
+                'http://localhost:*',
+                'http://127.0.0.1:*'
             ])
         })
     })
