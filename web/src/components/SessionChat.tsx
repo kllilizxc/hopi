@@ -247,7 +247,7 @@ export function SessionChat(props: {
         : `session:${props.session.id}`
     const { task } = useTask(props.api, taskId)
     const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
-    const shouldQueryMergeState = Boolean(taskId && task?.status === 'in_review' && !hasPendingRequests)
+    const shouldQueryMergeState = Boolean(taskId && !hasPendingRequests)
     const { state: mergeState, isLoading: isMergeStateLoading } = useTaskWorktreeMergeState(
         props.api,
         taskId,
@@ -668,7 +668,6 @@ export function SessionChat(props: {
         && mergeState?.canMerge
         && !mergeActionHidden
         && !hasPendingRequests
-        && !hasErrorInLastMessages
     )
 
     // Permission mode change handler

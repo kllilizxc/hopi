@@ -9,6 +9,7 @@ function seedMergeTask(store: Store, options: {
     projectId: string
     taskId: string
     sessionId: string
+    status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
 }): void {
     store.projects.createProject({
         id: options.projectId,
@@ -23,7 +24,7 @@ function seedMergeTask(store: Store, options: {
         id: options.taskId,
         projectId: options.projectId,
         title: 'Merge Task',
-        status: 'in_review',
+        status: options.status ?? 'in_review',
         activeSessionId: options.sessionId
     })
 }
@@ -273,6 +274,59 @@ describe('tasks merge route unexpected errors', () => {
         expect(body.canMerge).toBe(false)
         expect(body.reason).toBe('no_changes')
         expect(body.committedChangedCount).toBe(0)
+    })
+
+    it('keeps merge-state checks available regardless of task status', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-state-planned'
+        seedMergeTask(store, {
+            namespace: 'default',
+            projectId: 'project-merge-state-planned',
+            taskId,
+            sessionId: 'session-merge-state-planned',
+            status: 'planned'
+        })
+
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId: 'session-merge-state-planned',
+                    session: {
+                        id: 'session-merge-state-planned',
+                        thinking: false,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 2
+                }
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge-state`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            canMerge?: boolean
+            reason?: string
+            committedChangedCount?: number | null
+        }
+        expect(body.canMerge).toBe(true)
+        expect(body.reason).toBe('mergeable')
+        expect(body.committedChangedCount).toBe(2)
     })
 
     it('does not short-circuit merge only from persisted merged marker', async () => {

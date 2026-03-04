@@ -1363,15 +1363,6 @@ export function createTasksRoutes(options: {
             mergeCommit: task.worktreeMergeCommit ?? null
         }
 
-        if (task.status !== 'in_review') {
-            return c.json({
-                ...baseState,
-                canMerge: false,
-                reason: 'task_not_in_review',
-                error: null
-            } satisfies TaskWorktreeMergeState)
-        }
-
         if (!task.activeSessionId) {
             return c.json({
                 ...baseState,
