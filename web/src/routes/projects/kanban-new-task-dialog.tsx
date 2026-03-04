@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
+import { ModelSelector } from '@/components/NewSession/ModelSelector'
 import type { AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
@@ -34,6 +35,7 @@ type NewTaskDialogProps = {
         priority: TaskPriority | ''
         agent: AgentType
         permissionMode: PermissionMode
+        model: string
     }) => void
 }
 
@@ -42,6 +44,7 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
     const [newTaskDraft, setNewTaskDraft] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
     const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(props.defaultAgent)
+    const [newTaskModel, setNewTaskModel] = useState('auto')
     const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => (
         resolveTaskPermissionModeForFlavor(props.defaultAgent, props.defaultPermissionMode)
     ))
@@ -59,12 +62,17 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
         setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, props.defaultPermissionMode))
     }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, props.defaultPermissionMode])
 
+    useEffect(() => {
+        setNewTaskModel('auto')
+    }, [newTaskAgent])
+
     // Reset form when dialog closes
     useEffect(() => {
         if (!props.open) {
             setNewTaskDraft('')
             setNewTaskPriority('')
             setNewTaskAgent(props.defaultAgent)
+            setNewTaskModel('auto')
             setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(props.defaultAgent, props.defaultPermissionMode))
         }
     }, [props.open, props.defaultAgent, props.defaultPermissionMode])
@@ -76,7 +84,8 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
             description: parsedNewTaskDraft.description,
             priority: newTaskPriority,
             agent: newTaskAgent,
-            permissionMode: newTaskPermissionMode
+            permissionMode: newTaskPermissionMode,
+            model: newTaskModel
         })
     }
 
@@ -125,6 +134,12 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
                             agent={newTaskAgent}
                             isDisabled={props.isCreating}
                             onAgentChange={setNewTaskAgent}
+                        />
+                        <ModelSelector
+                            agent={newTaskAgent}
+                            model={newTaskModel}
+                            isDisabled={props.isCreating}
+                            onModelChange={setNewTaskModel}
                         />
                         <div className="space-y-1.5">
                             <label className="text-xs font-medium text-[var(--app-hint)]">

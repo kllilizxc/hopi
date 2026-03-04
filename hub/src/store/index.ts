@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 6
+const SCHEMA_VERSION: number = 7
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -146,6 +146,19 @@ export class Store {
         if (currentVersion === 5 && SCHEMA_VERSION === 6) {
             this.migrateFromV4ToV5()
             this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 7) {
+            this.migrateFromV6ToV7()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 7) {
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -340,6 +353,7 @@ export class Store {
                 workspace_id TEXT,
                 agent_flavor TEXT,
                 permission_mode TEXT,
+                model_mode TEXT,
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
@@ -463,6 +477,9 @@ export class Store {
         if (SCHEMA_VERSION >= 6) {
             this.migrateFromV5ToV6()
         }
+        if (SCHEMA_VERSION >= 7) {
+            this.migrateFromV6ToV7()
+        }
     }
 
     private migrateFromV4ToV5(): void {
@@ -512,6 +529,16 @@ export class Store {
         }
         if (!taskColumns.has('sub_tasks_updated_at')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN sub_tasks_updated_at INTEGER')
+        }
+    }
+
+    private migrateFromV6ToV7(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v6 to v7 migration.')
+        }
+        if (!taskColumns.has('model_mode')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN model_mode TEXT')
         }
     }
 

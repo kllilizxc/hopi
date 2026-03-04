@@ -355,7 +355,8 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         description?: string,
         priority?: TaskPriority | null,
         agentFlavor?: AgentType,
-        permissionMode?: PermissionMode
+        permissionMode?: PermissionMode,
+        model?: string
     ) => {
         const trimmed = title.trim()
         if (!trimmed) return
@@ -375,6 +376,7 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 status: 'new',
                 agentFlavor: agentFlavor ?? defaultTaskAgent,
                 permissionMode,
+                modelMode: model !== 'auto' ? model : undefined,
                 sortKey
             })
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
@@ -513,13 +515,15 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         priority: TaskPriority | ''
         agent: AgentType
         permissionMode: PermissionMode
+        model: string
     }) => {
         const created = await handleCreateTask(
             data.title,
             data.description,
             data.priority || null,
             data.agent,
-            data.permissionMode
+            data.permissionMode,
+            data.model
         )
         if (created) {
             setCreateOpen(false)

@@ -44,6 +44,7 @@ const createTaskSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     agentFlavor: AgentFlavorSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
+    modelMode: ModelModeSchema.optional(),
     sortKey: z.number().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
     subTasks: z.array(TodoItemSchema).optional()
@@ -57,6 +58,7 @@ const updateTaskSchema = z.object({
     workspaceId: z.string().min(1).nullable().optional(),
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     permissionMode: PermissionModeSchema.nullable().optional(),
+    modelMode: ModelModeSchema.nullable().optional(),
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
@@ -859,6 +861,7 @@ export function createTasksRoutes(options: {
             workspaceId: parsed.data.workspaceId ?? null,
             agentFlavor: parsed.data.agentFlavor ?? null,
             permissionMode: parsed.data.permissionMode ?? null,
+            modelMode: parsed.data.modelMode ?? null,
             attachments: attachments.length > 0 ? attachments : undefined,
             subTasks: parsed.data.subTasks,
             subTasksUpdatedAt: parsed.data.subTasks ? Date.now() : null,

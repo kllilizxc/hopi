@@ -58,6 +58,7 @@ export class TaskStore {
         workspaceId?: string | null
         agentFlavor?: string | null
         permissionMode?: string | null
+        modelMode?: string | null
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
@@ -82,6 +83,7 @@ export class TaskStore {
             workspaceId?: string | null
             agentFlavor?: string | null
             permissionMode?: string | null
+            modelMode?: string | null
             attachments?: unknown
             subTasks?: unknown
             subTasksUpdatedAt?: number | null

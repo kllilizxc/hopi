@@ -102,6 +102,7 @@ export type StoredTask = {
     workspaceId: string | null
     agentFlavor: string | null
     permissionMode: string | null
+    modelMode: string | null
     attachments: unknown | null
     source: string | null
     sourceTaskId: string | null

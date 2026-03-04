@@ -300,6 +300,7 @@ export class ApiClient {
         workspaceId?: string
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         permissionMode?: PermissionMode
+        modelMode?: string
         sortKey?: number
         attachments?: Array<{
             id: string

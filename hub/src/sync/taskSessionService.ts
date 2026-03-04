@@ -96,6 +96,9 @@ export async function startSessionFromTask(options: {
         if (overrides.model && overrides.model !== 'auto') {
             return overrides.model
         }
+        if (task.modelMode && task.modelMode !== 'default') {
+            return task.modelMode
+        }
         if (agent === 'claude' && project.defaultModelMode && project.defaultModelMode !== 'default') {
             return project.defaultModelMode
         }
