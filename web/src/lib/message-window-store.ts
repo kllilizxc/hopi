@@ -37,6 +37,12 @@ type PendingVisibilityCacheEntry = {
 const states = new Map<string, InternalState>()
 const listeners = new Map<string, Set<() => void>>()
 const pendingVisibilityCacheBySession = new Map<string, Map<string, PendingVisibilityCacheEntry>>()
+const incomingBufferBySession = new Map<string, DecryptedMessage[]>()
+const ingestFlushTimerBySession = new Map<string, ReturnType<typeof setTimeout>>()
+
+// Coalesce rapid-fire message updates (streaming) into a single store update.
+const INGEST_FLUSH_DELAY_MS = 32
+const MAX_BUFFERED_INGEST_MESSAGES = 200
 
 export function getActiveMessageWindowSessionIds(): string[] {
     return Array.from(listeners.keys())
@@ -54,6 +60,65 @@ function getPendingVisibilityCache(sessionId: string): Map<string, PendingVisibi
 
 function clearPendingVisibilityCache(sessionId: string): void {
     pendingVisibilityCacheBySession.delete(sessionId)
+}
+
+function clearIngestFlushTimer(sessionId: string): void {
+    const handle = ingestFlushTimerBySession.get(sessionId)
+    if (handle === undefined) {
+        return
+    }
+    clearTimeout(handle)
+    ingestFlushTimerBySession.delete(sessionId)
+}
+
+function clearIncomingBuffer(sessionId: string): void {
+    clearIngestFlushTimer(sessionId)
+    incomingBufferBySession.delete(sessionId)
+}
+
+function flushIncomingBuffer(sessionId: string): void {
+    clearIngestFlushTimer(sessionId)
+
+    const subs = listeners.get(sessionId)
+    if (!subs || subs.size === 0) {
+        incomingBufferBySession.delete(sessionId)
+        return
+    }
+
+    const queued = incomingBufferBySession.get(sessionId)
+    if (!queued || queued.length === 0) {
+        incomingBufferBySession.delete(sessionId)
+        return
+    }
+    incomingBufferBySession.delete(sessionId)
+
+    updateState(sessionId, (prev) => {
+        if (prev.atBottom) {
+            const merged = mergeMessages(prev.messages, queued)
+            const trimmed = trimVisible(merged, 'append')
+            const pending = filterPendingAgainstVisible(prev.pending, trimmed)
+            return buildState(prev, { messages: trimmed, pending })
+        }
+
+        const pendingResult = mergeIntoPending(prev, queued)
+        return buildState(prev, {
+            pending: pendingResult.pending,
+            pendingVisibleCount: pendingResult.pendingVisibleCount,
+            pendingOverflowCount: pendingResult.pendingOverflowCount,
+            pendingOverflowVisibleCount: pendingResult.pendingOverflowVisibleCount,
+            warning: pendingResult.warning,
+        })
+    })
+}
+
+function scheduleIncomingBufferFlush(sessionId: string): void {
+    if (ingestFlushTimerBySession.has(sessionId)) {
+        return
+    }
+    const handle = setTimeout(() => {
+        flushIncomingBuffer(sessionId)
+    }, INGEST_FLUSH_DELAY_MS)
+    ingestFlushTimerBySession.set(sessionId, handle)
 }
 
 function isVisiblePendingMessage(sessionId: string, message: DecryptedMessage): boolean {
@@ -289,12 +354,14 @@ export function subscribeMessageWindow(sessionId: string, listener: () => void):
             listeners.delete(sessionId)
             states.delete(sessionId)
             clearPendingVisibilityCache(sessionId)
+            clearIncomingBuffer(sessionId)
         }
     }
 }
 
 export function clearMessageWindow(sessionId: string): void {
     clearPendingVisibilityCache(sessionId)
+    clearIncomingBuffer(sessionId)
     if (!states.has(sessionId)) {
         return
     }
@@ -396,22 +463,21 @@ export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMes
     if (!subs || subs.size === 0) {
         return
     }
-    updateState(sessionId, (prev) => {
-        if (prev.atBottom) {
-            const merged = mergeMessages(prev.messages, incoming)
-            const trimmed = trimVisible(merged, 'append')
-            const pending = filterPendingAgainstVisible(prev.pending, trimmed)
-            return buildState(prev, { messages: trimmed, pending })
-        }
-        const pendingResult = mergeIntoPending(prev, incoming)
-        return buildState(prev, {
-            pending: pendingResult.pending,
-            pendingVisibleCount: pendingResult.pendingVisibleCount,
-            pendingOverflowCount: pendingResult.pendingOverflowCount,
-            pendingOverflowVisibleCount: pendingResult.pendingOverflowVisibleCount,
-            warning: pendingResult.warning,
-        })
-    })
+
+    const buffered = incomingBufferBySession.get(sessionId)
+    if (buffered) {
+        buffered.push(...incoming)
+    } else {
+        incomingBufferBySession.set(sessionId, [...incoming])
+    }
+
+    const size = incomingBufferBySession.get(sessionId)?.length ?? 0
+    if (size >= MAX_BUFFERED_INGEST_MESSAGES) {
+        flushIncomingBuffer(sessionId)
+        return
+    }
+
+    scheduleIncomingBufferFlush(sessionId)
 }
 
 export function flushPendingMessages(sessionId: string): boolean {

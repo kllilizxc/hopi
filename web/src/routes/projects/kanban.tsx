@@ -1,16 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import type { PermissionMode, Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
+import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import type { ActionSheetSelectOption } from '@/components/ui/ActionSheetSelect'
 import { IconButton } from '@/components/ui/icon-button'
 import { useAppContext } from '@/lib/app-context'
-import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
@@ -33,21 +33,6 @@ function asTaskStatus(value: string | undefined): TaskStatus | null {
 
 function getTaskPriorityLabelKey(priority: TaskPriority): string {
     return `projects.task.priority.${priority}`
-}
-
-function getTaskPriorityClass(priority: TaskPriority): string {
-    switch (priority) {
-        case 'high':
-            return 'border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] text-[var(--app-badge-error-text)]'
-        case 'medium':
-            return 'border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]'
-        case 'low':
-            return 'border-[var(--app-border)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)]'
-        default: {
-            const _exhaustive: never = priority
-            return _exhaustive
-        }
-    }
 }
 
 type KanbanStatusTheme = {
@@ -168,6 +153,208 @@ type DropTarget = {
     index: number
 }
 
+type TouchDragState = {
+    taskId: string
+    touchId: number
+    startX: number
+    startY: number
+    longPressTimer: ReturnType<typeof setTimeout> | null
+    dragStarted: boolean
+}
+
+const ACTIVE_TASK_CARD_BACKGROUND = [
+    'radial-gradient(140% 120% at 0% 0%, var(--kanban-wash-1) 0%, transparent 62%)',
+    'radial-gradient(130% 110% at 100% 0%, var(--kanban-wash-2) 0%, transparent 58%)',
+    'var(--app-bg)'
+].join(', ')
+
+const ARCHIVE_TASK_CARD_BACKGROUND = [
+    'radial-gradient(150% 120% at 0% 0%, var(--app-kanban-archive-bg) 0%, transparent 64%)',
+    'radial-gradient(140% 120% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 62%)',
+    'var(--app-bg)'
+].join(', ')
+
+type KanbanTaskCardProps = {
+    task: Task
+    index: number
+    columnStatus: TaskStatus
+    isSelectedTask: boolean
+    isDragging: boolean
+    isGeneratedActionPending: boolean
+    defaultTaskAgent: AgentType
+    moveOptions: ActionSheetSelectOption<TaskStatus>[]
+    onStartDrag: (taskId: string, fromStatus: TaskStatus, index: number) => void
+    onEndDrag: () => void
+    onHoverDropTarget: (status: TaskStatus, index: number) => void
+    onActivateTask: (task: Task) => void
+    onMoveTask: (taskId: string, toStatus: TaskStatus, toIndex: number) => void | Promise<void>
+    onApproveGeneratedTask: (taskId: string) => void | Promise<void>
+    onRejectGeneratedTask: (taskId: string) => void | Promise<void>
+    onTaskTouchStart: (event: React.TouchEvent<HTMLDivElement>, task: Task, columnStatus: TaskStatus, index: number) => void
+    onTaskTouchMove: (event: React.TouchEvent<HTMLDivElement>, taskId: string) => void
+    onTaskTouchEnd: (taskId: string) => void
+    onTaskTouchCancel: (taskId: string) => void
+}
+
+const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) {
+    const { t } = useTranslation()
+    const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
+
+    const isGeneratedNew = props.task.source === 'improvements_scan' && props.task.status === 'new'
+    const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
+    const usesProjectDefaultAgent = !props.task.agentFlavor
+    const useArchiveStyle = props.task.status === 'finished'
+    const subTaskProgress = getTaskSubTaskProgress(props.task)
+    const cardBackground = useArchiveStyle ? ARCHIVE_TASK_CARD_BACKGROUND : ACTIVE_TASK_CARD_BACKGROUND
+
+    return (
+        <div className="relative">
+            {props.isSelectedTask ? (
+                <div
+                    aria-hidden
+                    className="pointer-events-none absolute -inset-0.5 rounded-2xl"
+                    style={{
+                        boxShadow: '0 0 0 1px var(--kanban-accent-1), 0 0 0 4px var(--kanban-wash-1)'
+                    }}
+                />
+            ) : null}
+            <div
+                draggable
+                data-kanban-task-id={props.task.id}
+                data-kanban-task-index={props.index}
+                data-kanban-column-status={props.columnStatus}
+                onDragStart={(event) => {
+                    event.dataTransfer.setData('text/plain', props.task.id)
+                    props.onStartDrag(props.task.id, props.task.status, props.index)
+                }}
+                onDragEnd={props.onEndDrag}
+                onDragOver={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    const before = event.clientY < rect.top + rect.height / 2
+                    props.onHoverDropTarget(props.columnStatus, before ? props.index : props.index + 1)
+                }}
+                onDoubleClick={() => props.onActivateTask(props.task)}
+                onClick={() => props.onActivateTask(props.task)}
+                onTouchStart={(event) => props.onTaskTouchStart(event, props.task, props.columnStatus, props.index)}
+                onTouchMove={(event) => props.onTaskTouchMove(event, props.task.id)}
+                onTouchEnd={() => props.onTaskTouchEnd(props.task.id)}
+                onTouchCancel={() => props.onTaskTouchCancel(props.task.id)}
+                onContextMenu={(event) => {
+                    event.preventDefault()
+                    setIsMoveMenuOpen(true)
+                }}
+                className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
+                    ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
+                    : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
+                    } ${props.isDragging ? 'opacity-60' : ''
+                    }`}
+                style={{
+                    background: cardBackground
+                }}
+            >
+                <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium break-words leading-snug">
+                            {props.task.title}
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {props.task.activeSessionId ? (
+                                <div className="text-[10px] text-[var(--app-hint)]">
+                                    {t('projects.tasks.hasSession')}
+                                </div>
+                            ) : null}
+                            <Tag size="xs" variant="default">
+                                {getAgentFlavorLabel(cardAgentFlavor)}
+                                {usesProjectDefaultAgent ? ` · ${t('projects.task.agent.projectDefault')}` : ''}
+                            </Tag>
+                            {props.task.priority ? (
+                                <Tag size="xs" variant={props.task.priority === 'high' ? 'error' : props.task.priority === 'medium' ? 'warning' : 'default'}>
+                                    {t(getTaskPriorityLabelKey(props.task.priority))}
+                                </Tag>
+                            ) : null}
+                            {subTaskProgress ? (
+                                <Tag size="xs" variant={subTaskProgress.completed === subTaskProgress.total ? 'success' : 'default'}>
+                                    {t('projects.tasks.subtasksProgress', {
+                                        completed: subTaskProgress.completed,
+                                        total: subTaskProgress.total
+                                    })}
+                                </Tag>
+                            ) : null}
+                            {isGeneratedNew ? (
+                                <Tag size="xs" variant="warning">
+                                    {t('projects.tasks.generated')}
+                                </Tag>
+                            ) : null}
+                        </div>
+                        {isGeneratedNew ? (
+                            <div className="mt-2 flex items-center gap-1.5">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    draggable={false}
+                                    variant="secondary"
+                                    className="h-7 px-2 py-1 text-[11px]"
+                                    onClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        props.onApproveGeneratedTask(props.task.id)
+                                    }}
+                                    disabled={props.isGeneratedActionPending}
+                                >
+                                    {t('projects.tasks.approve')}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    draggable={false}
+                                    variant="destructive"
+                                    className="h-7 px-2 py-1 text-[11px]"
+                                    onClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        props.onRejectGeneratedTask(props.task.id)
+                                    }}
+                                    disabled={props.isGeneratedActionPending}
+                                >
+                                    {t('projects.tasks.reject')}
+                                </Button>
+                            </div>
+                        ) : null}
+                    </div>
+                    <AdaptiveSelect
+                        title={t('projects.tasks.moveTo')}
+                        value={props.task.status}
+                        options={props.moveOptions}
+                        onValueChange={(value) => {
+                            props.onMoveTask(props.task.id, value, 0)
+                            setIsMoveMenuOpen(false)
+                        }}
+                        open={isMoveMenuOpen}
+                        onOpenChange={setIsMoveMenuOpen}
+                        align="end"
+                        trigger={
+                            <IconButton
+                                type="button"
+                                variant="ghost"
+                                size="xs"
+                                className="shrink-0 rounded-md"
+                                onClick={(event) => {
+                                    event.stopPropagation()
+                                }}
+                                aria-label={t('projects.tasks.moveTo')}
+                            >
+                                <TaskCardMenuIcon />
+                            </IconButton>
+                        }
+                    />
+                </div>
+            </div>
+        </div>
+    )
+})
+
 export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: () => void }) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
@@ -177,7 +364,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const { t } = useTranslation()
     const { project } = useProject(api, props.projectId)
     const { tasks, isLoading, error } = useTasks(api, props.projectId)
-    const { createTask, isPending: isCreatingTask } = useCreateTask(api)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
@@ -187,36 +373,25 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
-    const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
 
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
+    const pendingGeneratedActionTaskIdRef = useRef<string | null>(null)
 
-    const [dragState, setDragState] = useState<DragState | null>(null)
-    const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+    const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
     const boardScrollRef = useRef<HTMLDivElement | null>(null)
     const dragStateRef = useRef<DragState | null>(null)
     const dropTargetRef = useRef<DropTarget | null>(null)
     const suppressClickRef = useRef(false)
-    const touchDragRef = useRef<{
-        taskId: string
-        touchId: number
-        startX: number
-        startY: number
-        longPressTimer: ReturnType<typeof setTimeout> | null
-        dragStarted: boolean
-    } | null>(null)
+    const touchDragRef = useRef<TouchDragState | null>(null)
     const touchCleanupRef = useRef<(() => void) | null>(null)
 
-    const [moveSheetTaskId, setMoveSheetTaskId] = useState<string | null>(null)
-
-    const setDragStateSynced = useCallback((next: DragState | null) => {
+    const setDragStateRef = useCallback((next: DragState | null) => {
         dragStateRef.current = next
-        setDragState(next)
+        setDraggingTaskId(next?.taskId ?? null)
     }, [])
 
-    const setDropTargetSynced = useCallback((next: DropTarget | null) => {
+    const setDropTargetRef = useCallback((next: DropTarget | null) => {
         dropTargetRef.current = next
-        setDropTarget(next)
     }, [])
 
     const tasksById = useMemo(() => {
@@ -248,6 +423,31 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             finished: sortTasksInColumn(grouped.finished),
         }
     }, [tasks])
+
+    const moveOptionsByStatus = useMemo<Record<TaskStatus, ActionSheetSelectOption<TaskStatus>[]>>(() => {
+        const baseOptions: Array<ActionSheetSelectOption<TaskStatus> & { value: TaskStatus }> = KANBAN_COLUMNS.map((col) => {
+            const theme = getKanbanStatusTheme(col.status)
+            return {
+                value: col.status,
+                label: t(col.titleKey),
+                icon: (
+                    <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
+                    />
+                )
+            }
+        })
+
+        const grouped = {} as Record<TaskStatus, ActionSheetSelectOption<TaskStatus>[]>
+        for (const status of TASK_STATUS_VALUES) {
+            grouped[status] = baseOptions.map((option) => ({
+                ...option,
+                disabled: option.value === status
+            }))
+        }
+        return grouped
+    }, [t])
 
     const columnsRef = useRef(columns)
     useEffect(() => {
@@ -324,17 +524,20 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     }, [moveTask])
 
     const handleApproveGeneratedTask = useCallback(async (taskId: string) => {
-        if (pendingGeneratedActionTaskId) return
+        if (pendingGeneratedActionTaskIdRef.current) return
+        pendingGeneratedActionTaskIdRef.current = taskId
         setPendingGeneratedActionTaskId(taskId)
         try {
-            await moveTask(taskId, 'planned', 0)
+            await moveTaskRef.current(taskId, 'planned', 0)
         } finally {
+            pendingGeneratedActionTaskIdRef.current = null
             setPendingGeneratedActionTaskId((current) => current === taskId ? null : current)
         }
-    }, [moveTask, pendingGeneratedActionTaskId])
+    }, [])
 
     const handleRejectGeneratedTask = useCallback(async (taskId: string) => {
-        if (pendingGeneratedActionTaskId) return
+        if (pendingGeneratedActionTaskIdRef.current) return
+        pendingGeneratedActionTaskIdRef.current = taskId
         setPendingGeneratedActionTaskId(taskId)
         try {
             await deleteTask({ taskId, projectId: props.projectId })
@@ -346,51 +549,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 url: ''
             })
         } finally {
+            pendingGeneratedActionTaskIdRef.current = null
             setPendingGeneratedActionTaskId((current) => current === taskId ? null : current)
         }
-    }, [pendingGeneratedActionTaskId, deleteTask, props.projectId, addToast, t])
-
-    const handleCreateTask = useCallback(async (
-        title: string,
-        description?: string,
-        priority?: TaskPriority | null,
-        agentFlavor?: AgentType,
-        permissionMode?: PermissionMode,
-        model?: string
-    ) => {
-        const trimmed = title.trim()
-        if (!trimmed) return
-
-        const sortKey = (() => {
-            const top = columns.new[0]
-            if (!top) return Date.now()
-            return getTaskOrderValue(top) + 1
-        })()
-
-        try {
-            const created = await createTask({
-                projectId: props.projectId,
-                title: trimmed,
-                description: description?.trim() ? description.trim() : undefined,
-                priority: priority ?? undefined,
-                status: 'new',
-                agentFlavor: agentFlavor ?? defaultTaskAgent,
-                permissionMode,
-                modelMode: model !== 'auto' ? model : undefined,
-                sortKey
-            })
-            addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
-            return created
-        } catch (error) {
-            addToast({
-                title: t('projects.tasks.createFailed'),
-                body: error instanceof Error ? error.message : 'Failed to create task',
-                sessionId: '',
-                url: ''
-            })
-            return null
-        }
-    }, [createTask, props.projectId, addToast, t, columns.new, defaultTaskAgent])
+    }, [deleteTask, props.projectId, addToast, t])
 
     const computeDropTargetFromPoint = useCallback((clientX: number, clientY: number): DropTarget | null => {
         const hit = document.elementFromPoint(clientX, clientY)
@@ -442,8 +604,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     }, [])
 
     const beginTouchDrag = useCallback((taskId: string, fromStatus: TaskStatus, touchId: number, initialTarget: DropTarget) => {
-        setDragStateSynced({ taskId, fromStatus })
-        setDropTargetSynced(initialTarget)
+        setDragStateRef({ taskId, fromStatus })
+        setDropTargetRef(initialTarget)
 
         const handleTouchMove = (event: TouchEvent) => {
             const touch = Array.from(event.touches).find((t) => t.identifier === touchId)
@@ -453,7 +615,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             handleBoardAutoScroll(touch.clientX)
 
             const target = computeDropTargetFromPoint(touch.clientX, touch.clientY)
-            setDropTargetSynced(target)
+            setDropTargetRef(target)
         }
 
         const finish = (options: { shouldMove: boolean }) => {
@@ -471,8 +633,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 }
             }
 
-            setDragStateSynced(null)
-            setDropTargetSynced(null)
+            setDragStateRef(null)
+            setDropTargetRef(null)
             suppressClickRef.current = true
         }
 
@@ -505,12 +667,12 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         clearTouchListeners,
         computeDropTargetFromPoint,
         handleBoardAutoScroll,
-        setDragStateSynced,
-        setDropTargetSynced
+        setDragStateRef,
+        setDropTargetRef
     ])
 
     const handleBoardDragOver = useCallback((event: React.DragEvent) => {
-        if (!dragState) return
+        if (!dragStateRef.current) return
         const el = boardScrollRef.current
         if (!el) return
         const rect = el.getBoundingClientRect()
@@ -521,7 +683,98 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         } else if (event.clientX > rect.right - edge) {
             el.scrollLeft += speed
         }
-    }, [dragState])
+    }, [])
+
+    const handleTaskDragStart = useCallback((taskId: string, fromStatus: TaskStatus, index: number) => {
+        setDragStateRef({ taskId, fromStatus })
+        setDropTargetRef({ status: fromStatus, index })
+    }, [setDragStateRef, setDropTargetRef])
+
+    const handleTaskDragEnd = useCallback(() => {
+        setDragStateRef(null)
+        setDropTargetRef(null)
+    }, [setDragStateRef, setDropTargetRef])
+
+    const handleTaskDropHover = useCallback((status: TaskStatus, index: number) => {
+        if (!dragStateRef.current) return
+        setDropTargetRef({ status, index })
+    }, [setDropTargetRef])
+
+    const handleTaskActivate = useCallback((task: Task) => {
+        if (suppressClickRef.current) {
+            suppressClickRef.current = false
+            return
+        }
+        const to = task.activeSessionId
+            ? '/projects/$projectId/tasks/$taskId/chat'
+            : '/projects/$projectId/tasks/$taskId'
+        void navigate({
+            to,
+            params: { projectId: props.projectId, taskId: task.id }
+        })
+    }, [navigate, props.projectId])
+
+    const handleTaskTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>, task: Task, columnStatus: TaskStatus, index: number) => {
+        if (event.touches.length !== 1) return
+        if (dragStateRef.current) return
+        if (touchDragRef.current) return
+
+        const target = event.target as HTMLElement
+        if (target.closest('button')) return
+
+        const touch = event.touches[0]
+        const touchId = touch.identifier
+
+        const timer = setTimeout(() => {
+            const state = touchDragRef.current
+            if (!state) return
+            if (state.touchId !== touchId) return
+            state.dragStarted = true
+            beginTouchDrag(task.id, task.status, touchId, { status: columnStatus, index })
+        }, 180)
+
+        touchDragRef.current = {
+            taskId: task.id,
+            touchId,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            longPressTimer: timer,
+            dragStarted: false
+        }
+    }, [beginTouchDrag])
+
+    const handleTaskTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>, taskId: string) => {
+        const state = touchDragRef.current
+        if (!state) return
+        if (state.taskId !== taskId) return
+        if (state.dragStarted) return
+
+        const touch = Array.from(event.touches).find((entry) => entry.identifier === state.touchId)
+        if (!touch) return
+
+        const dx = touch.clientX - state.startX
+        const dy = touch.clientY - state.startY
+        const distance = Math.hypot(dx, dy)
+        if (distance < 10) return
+
+        clearTouchDrag()
+    }, [clearTouchDrag])
+
+    const handleTaskTouchEnd = useCallback((taskId: string) => {
+        const state = touchDragRef.current
+        if (!state) return
+        if (state.taskId !== taskId) return
+        if (state.dragStarted) return
+        clearTouchDrag()
+    }, [clearTouchDrag])
+
+    const handleTaskTouchCancel = useCallback((taskId: string) => {
+        const state = touchDragRef.current
+        if (!state) return
+        if (state.taskId !== taskId) return
+        if (state.dragStarted) return
+        clearTouchDrag()
+    }, [clearTouchDrag])
 
     useEffect(() => {
         return () => {
@@ -578,9 +831,9 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 data-kanban-column-status={col.status}
                                 onDragOver={(event) => {
                                     event.preventDefault()
-                                    if (!dragState) return
+                                    if (!dragStateRef.current) return
                                     if (event.target !== event.currentTarget) return
-                                    setDropTargetSynced({ status: col.status, index: colTasks.length })
+                                    setDropTargetRef({ status: col.status, index: colTasks.length })
                                 }}
                                 onDrop={() => {
                                     const drag = dragStateRef.current
@@ -592,8 +845,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                         : { status: col.status, index: colTasks.length }
 
                                     void moveTask(drag.taskId, target.status, target.index)
-                                    setDragStateSynced(null)
-                                    setDropTargetSynced(null)
+                                    setDragStateRef(null)
+                                    setDropTargetRef(null)
                                 }}
                             >
                                 <div
@@ -626,277 +879,35 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                     className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
                                     onDragOver={(event) => {
                                         event.preventDefault()
-                                        if (!dragState) return
+                                        if (!dragStateRef.current) return
                                         if (event.target !== event.currentTarget) return
-                                        setDropTargetSynced({ status: col.status, index: colTasks.length })
+                                        setDropTargetRef({ status: col.status, index: colTasks.length })
                                     }}
                                 >
                                     {colTasks.map((task, index) => {
-                                        const isDragging = dragState?.taskId === task.id
-                                        const isSelectedTask = selectedTaskId === task.id
-                                        const isGeneratedNew = task.source === 'improvements_scan' && task.status === 'new'
-                                        const isGeneratedActionPending = pendingGeneratedActionTaskId === task.id
-                                        const cardAgentFlavor: AgentType = (task.agentFlavor as AgentType | null) ?? defaultTaskAgent
-                                        const usesProjectDefaultAgent = !task.agentFlavor
-                                        const useArchiveStyle = task.status === 'finished'
-                                        const subTaskProgress = getTaskSubTaskProgress(task)
-                                        const cardBackground = useArchiveStyle
-                                            ? [
-                                                'radial-gradient(150% 120% at 0% 0%, var(--app-kanban-archive-bg) 0%, transparent 64%)',
-                                                'radial-gradient(140% 120% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 62%)',
-                                                'var(--app-bg)'
-                                            ].join(', ')
-                                            : [
-                                                'radial-gradient(140% 120% at 0% 0%, var(--kanban-wash-1) 0%, transparent 62%)',
-                                                'radial-gradient(130% 110% at 100% 0%, var(--kanban-wash-2) 0%, transparent 58%)',
-                                                'var(--app-bg)'
-                                            ].join(', ')
-
                                         return (
-                                            <div key={task.id} className="relative">
-                                                {isSelectedTask ? (
-                                                    <div
-                                                        aria-hidden
-                                                        className="pointer-events-none absolute -inset-0.5 rounded-2xl"
-                                                        style={{
-                                                            boxShadow: '0 0 0 1px var(--kanban-accent-1), 0 0 0 4px var(--kanban-wash-1)'
-                                                        }}
-                                                    />
-                                                ) : null}
-                                                <div
-                                                    draggable
-                                                    data-kanban-task-id={task.id}
-                                                    data-kanban-task-index={index}
-                                                    data-kanban-column-status={col.status}
-                                                    onDragStart={(event) => {
-                                                        event.dataTransfer.setData('text/plain', task.id)
-                                                        setDragStateSynced({ taskId: task.id, fromStatus: task.status })
-                                                        setDropTargetSynced({ status: task.status, index })
-                                                    }}
-                                                    onDragEnd={() => {
-                                                        setDragStateSynced(null)
-                                                        setDropTargetSynced(null)
-                                                    }}
-                                                    onDragOver={(event) => {
-                                                        event.preventDefault()
-                                                        event.stopPropagation()
-                                                        if (!dragState) return
-                                                        const rect = event.currentTarget.getBoundingClientRect()
-                                                        const before = event.clientY < rect.top + rect.height / 2
-                                                        setDropTargetSynced({
-                                                            status: col.status,
-                                                            index: before ? index : index + 1
-                                                        })
-                                                    }}
-                                                    onDoubleClick={() => {
-                                                        if (suppressClickRef.current) {
-                                                            suppressClickRef.current = false
-                                                            return
-                                                        }
-                                                        const to = task.activeSessionId
-                                                            ? '/projects/$projectId/tasks/$taskId/chat'
-                                                            : '/projects/$projectId/tasks/$taskId'
-                                                        void navigate({
-                                                            to,
-                                                            params: { projectId: props.projectId, taskId: task.id }
-                                                        })
-                                                    }}
-                                                    onClick={() => {
-                                                        if (suppressClickRef.current) {
-                                                            suppressClickRef.current = false
-                                                            return
-                                                        }
-                                                        const to = task.activeSessionId
-                                                            ? '/projects/$projectId/tasks/$taskId/chat'
-                                                            : '/projects/$projectId/tasks/$taskId'
-                                                        void navigate({
-                                                            to,
-                                                            params: { projectId: props.projectId, taskId: task.id }
-                                                        })
-                                                    }}
-                                                    onTouchStart={(event) => {
-                                                        if (event.touches.length !== 1) return
-                                                        if (dragStateRef.current) return
-                                                        if (touchDragRef.current) return
-
-                                                        const target = event.target as HTMLElement
-                                                        if (target.closest('button')) return
-
-                                                        const touch = event.touches[0]
-                                                        const touchId = touch.identifier
-
-                                                        const timer = setTimeout(() => {
-                                                            const state = touchDragRef.current
-                                                            if (!state) return
-                                                            if (state.touchId !== touchId) return
-                                                            state.dragStarted = true
-                                                            beginTouchDrag(task.id, task.status, touchId, { status: col.status, index })
-                                                        }, 180)
-
-                                                        touchDragRef.current = {
-                                                            taskId: task.id,
-                                                            touchId,
-                                                            startX: touch.clientX,
-                                                            startY: touch.clientY,
-                                                            longPressTimer: timer,
-                                                            dragStarted: false
-                                                        }
-                                                    }}
-                                                    onTouchMove={(event) => {
-                                                        const state = touchDragRef.current
-                                                        if (!state) return
-                                                        if (state.taskId !== task.id) return
-                                                        if (state.dragStarted) return
-
-                                                        const touch = Array.from(event.touches).find((t) => t.identifier === state.touchId)
-                                                        if (!touch) return
-
-                                                        const dx = touch.clientX - state.startX
-                                                        const dy = touch.clientY - state.startY
-                                                        const distance = Math.hypot(dx, dy)
-                                                        if (distance < 10) return
-
-                                                        clearTouchDrag()
-                                                    }}
-                                                    onTouchEnd={() => {
-                                                        const state = touchDragRef.current
-                                                        if (!state) return
-                                                        if (state.taskId !== task.id) return
-                                                        if (state.dragStarted) return
-                                                        clearTouchDrag()
-                                                    }}
-                                                    onTouchCancel={() => {
-                                                        const state = touchDragRef.current
-                                                        if (!state) return
-                                                        if (state.taskId !== task.id) return
-                                                        if (state.dragStarted) return
-                                                        clearTouchDrag()
-                                                    }}
-                                                    onContextMenu={(event) => {
-                                                        event.preventDefault()
-                                                        setMoveSheetTaskId(task.id)
-                                                    }}
-                                                    className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
-                                                        ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
-                                                        : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
-                                                        } ${isDragging ? 'opacity-60' : ''
-                                                        }`}
-                                                    style={{
-                                                        background: cardBackground
-                                                    }}
-                                                >
-                                                    <div className="flex items-start justify-between gap-2">
-                                                        <div className="min-w-0 flex-1">
-                                                            <div className="text-sm font-medium break-words leading-snug">
-                                                                {task.title}
-                                                            </div>
-                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                                                {task.activeSessionId ? (
-                                                                    <div className="text-[10px] text-[var(--app-hint)]">
-                                                                        {t('projects.tasks.hasSession')}
-                                                                    </div>
-                                                                ) : null}
-                                                                <Tag size="xs" variant="default">
-                                                                    {getAgentFlavorLabel(cardAgentFlavor)}
-                                                                    {usesProjectDefaultAgent ? ` · ${t('projects.task.agent.projectDefault')}` : ''}
-                                                                </Tag>
-                                                                {task.priority ? (
-                                                                    <Tag size="xs" variant={task.priority === 'high' ? 'error' : task.priority === 'medium' ? 'warning' : 'default'}>
-                                                                        {t(getTaskPriorityLabelKey(task.priority))}
-                                                                    </Tag>
-                                                                ) : null}
-                                                                {subTaskProgress ? (
-                                                                    <Tag size="xs" variant={subTaskProgress.completed === subTaskProgress.total ? 'success' : 'default'}>
-                                                                        {t('projects.tasks.subtasksProgress', {
-                                                                            completed: subTaskProgress.completed,
-                                                                            total: subTaskProgress.total
-                                                                        })}
-                                                                    </Tag>
-                                                                ) : null}
-                                                                {isGeneratedNew ? (
-                                                                    <Tag size="xs" variant="warning">
-                                                                        {t('projects.tasks.generated')}
-                                                                    </Tag>
-                                                                ) : null}
-                                                            </div>
-                                                            {isGeneratedNew ? (
-                                                                <div className="mt-2 flex items-center gap-1.5">
-                                                                    <Button
-                                                                        type="button"
-                                                                        size="sm"
-                                                                        draggable={false}
-                                                                        variant="secondary"
-                                                                        className="h-7 px-2 py-1 text-[11px]"
-                                                                        onClick={(event) => {
-                                                                            event.preventDefault()
-                                                                            event.stopPropagation()
-                                                                            void handleApproveGeneratedTask(task.id)
-                                                                        }}
-                                                                        disabled={isGeneratedActionPending}
-                                                                    >
-                                                                        {t('projects.tasks.approve')}
-                                                                    </Button>
-                                                                    <Button
-                                                                        type="button"
-                                                                        size="sm"
-                                                                        draggable={false}
-                                                                        variant="destructive"
-                                                                        className="h-7 px-2 py-1 text-[11px]"
-                                                                        onClick={(event) => {
-                                                                            event.preventDefault()
-                                                                            event.stopPropagation()
-                                                                            void handleRejectGeneratedTask(task.id)
-                                                                        }}
-                                                                        disabled={isGeneratedActionPending}
-                                                                    >
-                                                                        {t('projects.tasks.reject')}
-                                                                    </Button>
-                                                                </div>
-                                                            ) : null}
-                                                        </div>
-                                                        <AdaptiveSelect
-                                                            title={t('projects.tasks.moveTo')}
-                                                            value={task.status}
-                                                            options={KANBAN_COLUMNS.map((col) => {
-                                                                const theme = getKanbanStatusTheme(col.status)
-                                                                const isCurrent = col.status === task.status
-
-                                                                return {
-                                                                    value: col.status,
-                                                                    label: t(col.titleKey),
-                                                                    disabled: isCurrent,
-                                                                    icon: (
-                                                                        <span
-                                                                            className="h-2.5 w-2.5 rounded-full"
-                                                                            style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
-                                                                        />
-                                                                    )
-                                                                }
-                                                            })}
-                                                            onValueChange={(value) => {
-                                                                void moveTask(task.id, value as TaskStatus, 0)
-                                                            }}
-                                                            open={moveSheetTaskId === task.id}
-                                                            onOpenChange={(open) => setMoveSheetTaskId(open ? task.id : null)}
-                                                            align="end"
-                                                            trigger={
-                                                                <IconButton
-                                                                    type="button"
-                                                                    variant="ghost"
-                                                                    size="xs"
-                                                                    className="shrink-0 rounded-md"
-                                                                    onClick={(event) => {
-                                                                        event.stopPropagation()
-                                                                    }}
-                                                                    aria-label={t('projects.tasks.moveTo')}
-                                                                >
-                                                                    <TaskCardMenuIcon />
-                                                                </IconButton>
-                                                            }
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <KanbanTaskCard
+                                                key={task.id}
+                                                task={task}
+                                                index={index}
+                                                columnStatus={col.status}
+                                                isSelectedTask={selectedTaskId === task.id}
+                                                isDragging={draggingTaskId === task.id}
+                                                isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
+                                                defaultTaskAgent={defaultTaskAgent}
+                                                moveOptions={moveOptionsByStatus[task.status]}
+                                                onStartDrag={handleTaskDragStart}
+                                                onEndDrag={handleTaskDragEnd}
+                                                onHoverDropTarget={handleTaskDropHover}
+                                                onActivateTask={handleTaskActivate}
+                                                onMoveTask={moveTask}
+                                                onApproveGeneratedTask={handleApproveGeneratedTask}
+                                                onRejectGeneratedTask={handleRejectGeneratedTask}
+                                                onTaskTouchStart={handleTaskTouchStart}
+                                                onTaskTouchMove={handleTaskTouchMove}
+                                                onTaskTouchEnd={handleTaskTouchEnd}
+                                                onTaskTouchCancel={handleTaskTouchCancel}
+                                            />
                                         )
                                     })}
                                 </div>
@@ -911,7 +922,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 variant="accent"
                 size="md"
                 onClick={props.onOpenNewTask}
-                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-button)] text-[var(--app-button-text)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow] duration-150 hover:shadow-xl hover:-translate-y-[1px] active:opacity-90 active:translate-y-0 active:shadow-lg"
+                className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-button)] text-[var(--app-button-text)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow] duration-150 hover:bg-[var(--app-button)] hover:shadow-xl hover:-translate-y-[1px] active:opacity-90 active:translate-y-0 active:shadow-lg"
                 aria-label={t('projects.tasks.create')}
             >
                 <PlusIcon className="h-6 w-6" />

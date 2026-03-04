@@ -113,10 +113,7 @@ function applySessionRealtimePatch(queryClient: QueryClient, event: SessionUpdat
             nextSession.thinking = patch.thinking
             changed = true
         }
-        if (patch.activeAt !== undefined && nextSession.activeAt !== patch.activeAt) {
-            nextSession.activeAt = patch.activeAt
-            changed = true
-        }
+        // activeAt only affects list ordering; patching detail sessions causes unnecessary chat-panel rerenders.
         if (patch.permissionMode !== undefined && nextSession.permissionMode !== patch.permissionMode) {
             nextSession.permissionMode = patch.permissionMode
             changed = true

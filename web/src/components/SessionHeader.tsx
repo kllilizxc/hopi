@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Session } from '@/types/api'
 import { isTelegramApp } from '@/hooks/useTelegram'
@@ -20,13 +20,15 @@ function getSessionTitle(session: Session): string {
     return session.id.slice(0, 8)
 }
 
-export function SessionHeader(props: {
+type SessionHeaderProps = {
     session: Session
     onBack: () => void
     onViewFiles?: () => void
     onViewDiffs?: () => void
     onSessionDeleted?: () => void
-}) {
+}
+
+function SessionHeaderImpl(props: SessionHeaderProps) {
     const { t } = useTranslation()
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
@@ -108,3 +110,24 @@ export function SessionHeader(props: {
         </>
     )
 }
+
+function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeaderProps): boolean {
+    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs) {
+        return false
+    }
+
+    const prevSession = prev.session
+    const nextSession = next.session
+
+    return prevSession.id === nextSession.id
+        && prevSession.modelMode === nextSession.modelMode
+        && prevSession.metadata?.name === nextSession.metadata?.name
+        && prevSession.metadata?.summary?.text === nextSession.metadata?.summary?.text
+        && prevSession.metadata?.path === nextSession.metadata?.path
+        && prevSession.metadata?.flavor === nextSession.metadata?.flavor
+        && prevSession.metadata?.worktree?.branch === nextSession.metadata?.worktree?.branch
+        && prevSession.metadata?.projectId === nextSession.metadata?.projectId
+        && prevSession.metadata?.taskId === nextSession.metadata?.taskId
+}
+
+export const SessionHeader = memo(SessionHeaderImpl, areSessionHeaderPropsEqual)
