@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PermissionMode, TaskPriority } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
@@ -9,14 +9,24 @@ import { ModelSelector } from '@/components/NewSession/ModelSelector'
 import type { AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 
-function parseTaskDraft(draft: string): { title: string; description: string | null } {
+function getTaskDraftTitle(draft: string): string {
     const trimmed = draft.trim()
     if (!trimmed) {
-        return { title: '', description: null }
+        return ''
+    }
+    const newlineIndex = trimmed.indexOf('\n')
+    const titleLine = newlineIndex === -1 ? trimmed : trimmed.slice(0, newlineIndex)
+    return titleLine.trim()
+}
+
+function parseTaskDraft(draft: string): { title: string; description: string | undefined } {
+    const trimmed = draft.trim()
+    if (!trimmed) {
+        return { title: '', description: undefined }
     }
     const lines = trimmed.split('\n')
     const title = lines[0].trim()
-    const description = lines.slice(1).join('\n').trim() || null
+    const description = lines.slice(1).join('\n').trim()
     return {
         title,
         description: description ? description : undefined
@@ -41,7 +51,9 @@ type NewTaskDialogProps = {
 
 const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     const { t } = useTranslation()
-    const [newTaskDraft, setNewTaskDraft] = useState('')
+    const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+    const hasTitleRef = useRef(false)
+    const [hasTitle, setHasTitle] = useState(false)
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
     const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(props.defaultAgent)
     const [newTaskModel, setNewTaskModel] = useState('auto')
@@ -49,7 +61,6 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         resolveTaskPermissionModeForFlavor(props.defaultAgent, props.defaultPermissionMode)
     ))
 
-    const parsedNewTaskDraft = useMemo(() => parseTaskDraft(newTaskDraft), [newTaskDraft])
     const newTaskPermissionOptions = useMemo(
         () => getTaskPermissionModeOptionsForFlavor(newTaskAgent),
         [newTaskAgent]
@@ -69,7 +80,11 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     // Reset form when dialog closes
     useEffect(() => {
         if (!props.open) {
-            setNewTaskDraft('')
+            hasTitleRef.current = false
+            setHasTitle(false)
+            if (draftTextareaRef.current) {
+                draftTextareaRef.current.value = ''
+            }
             setNewTaskPriority('')
             setNewTaskAgent(props.defaultAgent)
             setNewTaskModel('auto')
@@ -79,18 +94,31 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
 
     const handleSubmit = useCallback((event: React.FormEvent) => {
         event.preventDefault()
+        const draft = draftTextareaRef.current?.value ?? ''
+        const parsed = parseTaskDraft(draft)
+        if (!parsed.title) {
+            return
+        }
         props.onCreate({
-            title: parsedNewTaskDraft.title,
-            description: parsedNewTaskDraft.description,
+            title: parsed.title,
+            description: parsed.description,
             priority: newTaskPriority,
             agent: newTaskAgent,
             permissionMode: newTaskPermissionMode,
             model: newTaskModel
         })
-    }, [props.onCreate, parsedNewTaskDraft, newTaskPriority, newTaskAgent, newTaskPermissionMode, newTaskModel])
+    }, [props.onCreate, newTaskPriority, newTaskAgent, newTaskPermissionMode, newTaskModel])
 
     const handlePriorityChange = useCallback((value: string) => {
         setNewTaskPriority((value as TaskPriority) || '')
+    }, [])
+
+    const handleDraftChange = useCallback((nextDraft: string) => {
+        const nextHasTitle = Boolean(getTaskDraftTitle(nextDraft))
+        if (nextHasTitle !== hasTitleRef.current) {
+            hasTitleRef.current = nextHasTitle
+            setHasTitle(nextHasTitle)
+        }
     }, [])
 
     const handlePermissionModeChange = useCallback((value: string) => {
@@ -127,8 +155,9 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                                 {t('projects.tasks.details')}
                             </label>
                             <textarea
-                                value={newTaskDraft}
-                                onChange={(e) => setNewTaskDraft(e.target.value)}
+                                ref={draftTextareaRef}
+                                defaultValue=""
+                                onChange={(e) => handleDraftChange(e.target.value)}
                                 disabled={props.isCreating}
                                 rows={6}
                                 placeholder={t('projects.tasks.detailsPlaceholder')}
@@ -183,7 +212,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                         <Button type="button" variant="secondary" onClick={() => props.onOpenChange(false)} disabled={props.isCreating}>
                             {t('button.cancel')}
                         </Button>
-                        <Button type="submit" variant="secondary" disabled={props.isCreating || !parsedNewTaskDraft.title}>
+                        <Button type="submit" variant="secondary" disabled={props.isCreating || !hasTitle}>
                             {props.isCreating ? t('projects.tasks.creating') : t('projects.tasks.create')}
                         </Button>
                     </div>
