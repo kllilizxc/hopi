@@ -335,6 +335,7 @@ export class ApiClient {
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
+        modelMode?: ModelMode | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: Array<{

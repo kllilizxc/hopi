@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { getModelModesForFlavor, isModelModeAllowedForFlavor, MODEL_MODE_LABELS } from '@hapi/protocol'
+import { useMatchRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
+import type { AgentFlavor, ModelMode, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
@@ -93,14 +94,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
     })
 }
 
-type StartSessionConfig = {
-    workspaceId: string
-    agent: AgentType
-    model: string
-    yolo: boolean
-    permissionMode: PermissionMode
-}
-
 function StartSessionDialog(props: {
     isOpen: boolean
     onClose: () => void
@@ -109,11 +102,11 @@ function StartSessionDialog(props: {
     machineId: string
     taskAgentFlavor: AgentType | null
     taskPermissionMode: PermissionMode | null
-    taskModelMode: string | null
+    taskModelMode: ModelMode | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
-        modelMode: string | null
+        modelMode: ModelMode | null
     }
     workspaces: Workspace[]
     defaultWorkspaceId: string | null
@@ -377,7 +370,7 @@ function TaskDetailsPanel(props: {
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
-        modelMode: string | null
+        modelMode: ModelMode | null
     }
 }) {
     const navigate = useNavigate()
@@ -394,6 +387,7 @@ function TaskDetailsPanel(props: {
     const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
+    const [modelMode, setModelMode] = useState<ModelMode>((props.task.modelMode as ModelMode | null) ?? 'default')
     const [subTasks, setSubTasks] = useState<TodoItem[]>(normalizeTaskSubTasks(props.task.subTasks))
     const [newSubTaskContent, setNewSubTaskContent] = useState('')
     const [newSubTaskPriority, setNewSubTaskPriority] = useState<TaskPriority>('medium')
@@ -412,14 +406,62 @@ function TaskDetailsPanel(props: {
         setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
         setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
+        setModelMode((props.task.modelMode as ModelMode | null) ?? 'default')
         setSubTasks(normalizeTaskSubTasks(props.task.subTasks))
         setNewSubTaskContent('')
         setNewSubTaskPriority('medium')
         setAttachments(Array.isArray(props.task.attachments) ? props.task.attachments : [])
-    }, [props.task.id, props.task.title, props.task.description, props.task.status, props.task.priority, props.task.workspaceId, props.task.agentFlavor, props.task.subTasks, props.task.attachments])
+    }, [props.task.id, props.task.updatedAt])
+
+    const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
+    const modelModeOptions = useMemo(() => {
+        const modes = getModelModesForFlavor(effectiveAgentFlavor)
+        return modes.map((mode) => ({
+            value: mode as ModelMode,
+            label: MODEL_MODE_LABELS[mode as ModelMode] ?? mode,
+        }))
+    }, [effectiveAgentFlavor])
+    const canEditModelMode = modelModeOptions.length > 0
+
+    const statusOptions = useMemo(() => TASK_STATUS_ORDER.map((taskStatus) => ({
+        value: taskStatus,
+        label: t(TASK_STATUS_TITLE_KEY_BY_STATUS[taskStatus]),
+    })), [t])
+
+    const priorityOptions = useMemo(() => ([
+        { value: '', label: t('projects.task.priority.none') },
+        { value: 'high', label: t('projects.task.priority.high') },
+        { value: 'medium', label: t('projects.task.priority.medium') },
+        { value: 'low', label: t('projects.task.priority.low') },
+    ]), [t])
+
+    const workspaceOptions = useMemo(() => ([
+        { value: '', label: t('projects.task.workspace.projectDefault') },
+        ...props.workspaces.map((ws) => ({
+            value: ws.id,
+            label: (ws.label ?? ws.path) || ws.id,
+        })),
+    ]), [props.workspaces, t])
+
+    const agentOptions = useMemo(() => ([
+        { value: '', label: t('projects.task.agent.projectDefault') },
+        ...TASK_AGENT_OPTIONS.map((agent) => ({
+            value: agent,
+            label: getAgentFlavorLabel(agent),
+        })),
+    ]), [t])
 
     const totalBytes = useMemo(() => getAttachmentsSizeBytes(attachments), [attachments])
     const overLimit = totalBytes > MAX_TASK_ATTACHMENTS_BYTES
+
+    const effectiveWorkspaceLabel = useMemo(() => {
+        const resolvedWorkspaceId = workspaceId || props.projectDefaultWorkspaceId
+        if (!resolvedWorkspaceId) {
+            return t('projects.task.workspace.none')
+        }
+        const ws = props.workspaces.find((w) => w.id === resolvedWorkspaceId)
+        return ws?.label ?? ws?.path ?? resolvedWorkspaceId
+    }, [workspaceId, props.projectDefaultWorkspaceId, props.workspaces, t])
 
     const savePatch = useCallback(async (patch: Parameters<typeof updateTask>[0]['patch']) => {
         try {
@@ -441,13 +483,41 @@ function TaskDetailsPanel(props: {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [archiveTask, props.taskId, props.projectId, addToast, t, title, navigate])
 
+    const handleAgentFlavorChange = useCallback((value: string) => {
+        const next = value as AgentType | ''
+        const resolvedNextAgent = (next || props.projectDefaults.agent) as AgentType
+
+        setAgentFlavor(next)
+        void savePatch({ agentFlavor: next || null })
+
+        if (resolvedNextAgent !== 'claude' && modelMode !== 'default') {
+            setModelMode('default')
+            void savePatch({ modelMode: null })
+            return
+        }
+
+        if (resolvedNextAgent === 'claude' && !isModelModeAllowedForFlavor(modelMode, resolvedNextAgent)) {
+            setModelMode('default')
+            void savePatch({ modelMode: null })
+        }
+    }, [modelMode, props.projectDefaults.agent, savePatch])
+
+    const handleModelModeChange = useCallback((value: string) => {
+        const next = value as ModelMode
+        setModelMode(next)
+        void savePatch({
+            modelMode: effectiveAgentFlavor === 'claude' && next !== 'default' ? next : null
+        })
+    }, [effectiveAgentFlavor, savePatch])
+
     const handleAddFiles = async (files: FileList | null) => {
         if (!files || files.length === 0) return
         setAttachmentsBusy(true)
         try {
             const next: TaskAttachment[] = [...attachments]
+            let usedBytes = getAttachmentsSizeBytes(next)
             for (const file of Array.from(files)) {
-                if (next.reduce((sum, a) => sum + a.size, 0) + file.size > MAX_TASK_ATTACHMENTS_BYTES) {
+                if (usedBytes + file.size > MAX_TASK_ATTACHMENTS_BYTES) {
                     addToast({
                         title: t('projects.task.attachments.limitTitle'),
                         body: t('projects.task.attachments.limitBody'),
@@ -468,6 +538,7 @@ function TaskDetailsPanel(props: {
                     dataUrl,
                     previewUrl: file.type.startsWith('image/') ? dataUrl : undefined
                 })
+                usedBytes += file.size
             }
             setAttachments(next)
             await savePatch({ attachments: next })
@@ -551,398 +622,390 @@ function TaskDetailsPanel(props: {
         await persistSubTasks(next)
     }, [newSubTaskContent, newSubTaskPriority, subTasks, persistSubTasks])
 
-    const effectiveWorkspaceLabel = useMemo(() => {
-        const resolvedWorkspaceId = props.task.workspaceId ?? props.projectDefaultWorkspaceId
-        if (!resolvedWorkspaceId) {
-            return t('projects.task.workspace.none')
-        }
-        const ws = props.workspaces.find((w) => w.id === resolvedWorkspaceId)
-        return ws?.label ?? ws?.path ?? resolvedWorkspaceId
-    }, [props.task.workspaceId, props.projectDefaultWorkspaceId, props.workspaces, t])
-
-    const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
-
     return (
         <div className="h-full flex flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto">
-                <div className="mx-auto w-full max-w-content p-4 space-y-6">
-                    <section className="space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                                <input
-                                    type="text"
-                                    value={title}
-                                    onChange={(e) => setTitle(e.target.value)}
-                                    onBlur={() => {
-                                        if (title.trim() && title.trim() !== props.task.title) {
-                                            void savePatch({ title: title.trim() })
-                                        }
-                                    }}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
-                                    disabled={isUpdatingTask}
-                                />
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
-                                    <Tag variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Tag>
-                                    <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Tag>
-                                    {props.task.priority ? (
-                                        <Tag variant={getTaskPriorityTagVariant(props.task.priority)}>
-                                            {t(getTaskPriorityLabelKey(props.task.priority))}
-                                        </Tag>
-                                    ) : null}
-                                    {sessionId ? <Tag variant="success">{t('projects.task.sessionLinked')}</Tag> : <Tag variant="warning">{t('projects.task.noSession')}</Tag>}
-                                </div>
-                            </div>
-
-                            <IconButton
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => void copy(window.location.href)}
-                                className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
-                                title={t('projects.task.copyLink')}
-                                aria-label={t('projects.task.copyLink')}
-                            >
-                                <CopyIcon className={copied ? 'text-[var(--app-link)]' : undefined} />
-                            </IconButton>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.task.status')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('projects.task.status')}
-                                    value={status}
-                                    options={TASK_STATUS_ORDER.map((s) => ({
-                                        value: s,
-                                        label: t(TASK_STATUS_TITLE_KEY_BY_STATUS[s]),
-                                    }))}
-                                    onValueChange={(value) => {
-                                        const next = value as TaskStatus
-                                        setStatus(next)
-                                        void savePatch({ status: next, sortKey: Date.now() })
-                                    }}
-                                    disabled={isUpdatingTask}
-                                    align="start"
-                                />
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.task.priority')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('projects.task.priority')}
-                                    value={priority}
-                                    options={[
-                                        { value: '', label: t('projects.task.priority.none') },
-                                        { value: 'high', label: t('projects.task.priority.high') },
-                                        { value: 'medium', label: t('projects.task.priority.medium') },
-                                        { value: 'low', label: t('projects.task.priority.low') },
-                                    ]}
-                                    onValueChange={(value) => {
-                                        const next = (value as TaskPriority) || ''
-                                        setPriority(next)
-                                        void savePatch({ priority: next || null })
-                                    }}
-                                    disabled={isUpdatingTask}
-                                    align="start"
-                                />
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('projects.task.workspace')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('projects.task.workspace')}
-                                    value={workspaceId}
-                                    options={[
-                                        { value: '', label: t('projects.task.workspace.projectDefault') },
-                                        ...props.workspaces.map((ws) => ({
-                                            value: ws.id,
-                                            label: (ws.label ?? ws.path) || ws.id,
-                                        })),
-                                    ]}
-                                    onValueChange={(value) => {
-                                        const next = value as string
-                                        setWorkspaceId(next)
-                                        void savePatch({ workspaceId: next || null })
-                                    }}
-                                    disabled={isUpdatingTask}
-                                    align="start"
-                                />
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">
-                                    {t('newSession.agent')}
-                                </label>
-                                <AdaptiveSelectField
-                                    title={t('newSession.agent')}
-                                    value={agentFlavor}
-                                    options={[
-                                        { value: '', label: t('projects.task.agent.projectDefault') },
-                                        ...TASK_AGENT_OPTIONS.map((agent) => ({
-                                            value: agent,
-                                            label: getAgentFlavorLabel(agent),
-                                        })),
-                                    ]}
-                                    onValueChange={(value) => {
-                                        const next = value as AgentType | ''
-                                        setAgentFlavor(next)
-                                        void savePatch({ agentFlavor: next || null })
-                                    }}
-                                    disabled={isUpdatingTask}
-                                    align="start"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="text-xs font-medium text-[var(--app-hint)]">
-                                {t('projects.task.description')}
-                            </label>
-                            <textarea
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                onBlur={() => {
-                                    const next = description.trim() ? description.trim() : ''
-                                    const prev = (props.task.description ?? '').trim()
-                                    if (next !== prev) {
-                                        void savePatch({ description: next ? next : null })
-                                    }
-                                }}
-                                rows={8}
-                                disabled={isUpdatingTask}
-                                className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            />
-                        </div>
-                    </section>
-
-                    <section className="space-y-3">
-                        <div>
-                            <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
-                            <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
-                        </div>
-
-                        {subTasks.length === 0 ? (
-                            <div className="text-sm text-[var(--app-hint)]">
-                                {t('projects.task.subtasks.empty')}
-                            </div>
-                        ) : (
-                            <div className="flex flex-col gap-2">
-                                {subTasks.map((subTask) => (
-                                    <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
-                                        <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
-                                            <Checkbox
-                                                checked={subTask.status === 'completed'}
-                                                onCheckedChange={(checked) => {
-                                                    void handleToggleSubTask(subTask.id, checked)
-                                                }}
-                                                disabled={isUpdatingTask}
-                                            />
-                                            <span className="text-xs text-[var(--app-hint)]">
-                                                {subTask.status === 'completed'
-                                                    ? t('projects.task.subtasks.status.completed')
-                                                    : subTask.status === 'in_progress'
-                                                        ? t('projects.task.subtasks.status.inProgress')
-                                                        : t('projects.task.subtasks.status.pending')}
-                                            </span>
-                                        </label>
-
+                <div className="mx-auto w-full max-w-content p-4">
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                        <div className="space-y-6">
+                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 min-w-0">
                                         <input
                                             type="text"
-                                            value={subTask.content}
-                                            onChange={(e) => handleSubTaskContentChange(subTask.id, e.target.value)}
+                                            value={title}
+                                            onChange={(e) => setTitle(e.target.value)}
                                             onBlur={() => {
-                                                void handleSubTaskContentBlur(subTask.id)
+                                                if (title.trim() && title.trim() !== props.task.title) {
+                                                    void savePatch({ title: title.trim() })
+                                                }
                                             }}
+                                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                                             disabled={isUpdatingTask}
-                                            className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
                                         />
-
-                                        <div className="flex items-center gap-2 md:w-auto">
-                                            <AdaptiveSelectField
-                                                title={t('projects.task.priority')}
-                                                value={subTask.priority}
-                                                options={[
-                                                    { value: 'high', label: t('projects.task.priority.high') },
-                                                    { value: 'medium', label: t('projects.task.priority.medium') },
-                                                    { value: 'low', label: t('projects.task.priority.low') },
-                                                ]}
-                                                onValueChange={(value) => {
-                                                    void handleSubTaskPriorityChange(subTask.id, value as TaskPriority)
-                                                }}
-                                                disabled={isUpdatingTask}
-                                                align="end"
-                                                size="sm"
-                                                triggerClassName="min-w-[120px]"
-                                            />
-
-                                            <Button
-                                                type="button"
-                                                variant="secondary"
-                                                onClick={() => {
-                                                    void handleRemoveSubTask(subTask.id)
-                                                }}
-                                                disabled={isUpdatingTask}
-                                            >
-                                                {t('projects.task.subtasks.remove')}
-                                            </Button>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
+                                            <Tag variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Tag>
+                                            <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Tag>
+                                            {canEditModelMode && modelMode !== 'default' ? (
+                                                <Tag variant="default">{t('newSession.model')}: {MODEL_MODE_LABELS[modelMode]}</Tag>
+                                            ) : null}
+                                            {props.task.priority ? (
+                                                <Tag variant={getTaskPriorityTagVariant(props.task.priority)}>
+                                                    {t(getTaskPriorityLabelKey(props.task.priority))}
+                                                </Tag>
+                                            ) : null}
+                                            {sessionId ? <Tag variant="success">{t('projects.task.sessionLinked')}</Tag> : <Tag variant="warning">{t('projects.task.noSession')}</Tag>}
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        )}
 
-                        <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
-                            <input
-                                type="text"
-                                value={newSubTaskContent}
-                                onChange={(e) => setNewSubTaskContent(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        e.preventDefault()
-                                        void handleAddSubTask()
-                                    }
-                                }}
-                                disabled={isUpdatingTask}
-                                placeholder={t('projects.task.subtasks.placeholder')}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            />
-                            <AdaptiveSelectField
-                                title={t('projects.task.priority')}
-                                value={newSubTaskPriority}
-                                options={[
-                                    { value: 'high', label: t('projects.task.priority.high') },
-                                    { value: 'medium', label: t('projects.task.priority.medium') },
-                                    { value: 'low', label: t('projects.task.priority.low') },
-                                ]}
-                                onValueChange={(value) => setNewSubTaskPriority(value as TaskPriority)}
-                                disabled={isUpdatingTask}
-                                align="end"
-                                size="sm"
-                                triggerClassName="min-w-[120px]"
-                            />
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() => {
-                                    void handleAddSubTask()
-                                }}
-                                disabled={isUpdatingTask || !newSubTaskContent.trim()}
-                            >
-                                {t('projects.task.subtasks.add')}
-                            </Button>
-                        </div>
-                    </section>
-
-                    <section className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
-                                <div className="text-xs text-[var(--app-hint)]">
-                                    {t('projects.task.attachments.budget', { used: formatBytes(totalBytes), max: formatBytes(MAX_TASK_ATTACHMENTS_BYTES) })}
+                                    <IconButton
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => void copy(window.location.href)}
+                                        className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
+                                        title={t('projects.task.copyLink')}
+                                        aria-label={t('projects.task.copyLink')}
+                                    >
+                                        <CopyIcon className={copied ? 'text-[var(--app-link)]' : undefined} />
+                                    </IconButton>
                                 </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    multiple
-                                    disabled={isUpdatingTask || attachmentsBusy}
-                                    onChange={(e) => {
-                                        void handleAddFiles(e.target.files)
-                                        e.currentTarget.value = ''
-                                    }}
-                                    className="hidden"
-                                />
-                                <Button
-                                    type="button"
-                                    variant="secondary"
-                                    disabled={isUpdatingTask || attachmentsBusy}
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    {t('projects.task.attachments.add')}
-                                </Button>
-                            </div>
-                        </div>
 
-                        {overLimit ? (
-                            <div className="rounded-md bg-amber-500/10 p-2 text-xs text-[var(--app-hint)]">
-                                {t('projects.task.attachments.overLimit')}
-                            </div>
-                        ) : null}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                                        {t('projects.task.description')}
+                                    </label>
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        onBlur={() => {
+                                            const next = description.trim() ? description.trim() : ''
+                                            const prev = (props.task.description ?? '').trim()
+                                            if (next !== prev) {
+                                                void savePatch({ description: next ? next : null })
+                                            }
+                                        }}
+                                        rows={8}
+                                        disabled={isUpdatingTask}
+                                        className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                    />
+                                </div>
+                            </section>
 
-                        {attachments.length === 0 ? (
-                            <div className="text-sm text-[var(--app-hint)]">
-                                {t('projects.task.attachments.empty')}
-                            </div>
-                        ) : (
-                            <div className="flex flex-col gap-2">
-                                {attachments.map((att) => (
-                                    <div key={att.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
-                                        <div className="min-w-0">
-                                            <div className="text-sm font-medium truncate">{att.filename}</div>
-                                            <div className="text-xs text-[var(--app-hint)]">
-                                                {formatBytes(att.size)} · {att.mimeType}
+                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                                <div>
+                                    <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
+                                    <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
+                                </div>
+
+                                {subTasks.length === 0 ? (
+                                    <div className="text-sm text-[var(--app-hint)]">
+                                        {t('projects.task.subtasks.empty')}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-2">
+                                        {subTasks.map((subTask) => (
+                                            <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
+                                                <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
+                                                    <Checkbox
+                                                        checked={subTask.status === 'completed'}
+                                                        onCheckedChange={(checked) => {
+                                                            void handleToggleSubTask(subTask.id, checked)
+                                                        }}
+                                                        disabled={isUpdatingTask}
+                                                    />
+                                                    <span className="text-xs text-[var(--app-hint)]">
+                                                        {subTask.status === 'completed'
+                                                            ? t('projects.task.subtasks.status.completed')
+                                                            : subTask.status === 'in_progress'
+                                                                ? t('projects.task.subtasks.status.inProgress')
+                                                                : t('projects.task.subtasks.status.pending')}
+                                                    </span>
+                                                </label>
+
+                                                <input
+                                                    type="text"
+                                                    value={subTask.content}
+                                                    onChange={(e) => handleSubTaskContentChange(subTask.id, e.target.value)}
+                                                    onBlur={() => {
+                                                        void handleSubTaskContentBlur(subTask.id)
+                                                    }}
+                                                    disabled={isUpdatingTask}
+                                                    className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
+                                                />
+
+                                                <div className="flex items-center gap-2 md:w-auto">
+                                                    <AdaptiveSelectField
+                                                        title={t('projects.task.priority')}
+                                                        value={subTask.priority}
+                                                        options={[
+                                                            { value: 'high', label: t('projects.task.priority.high') },
+                                                            { value: 'medium', label: t('projects.task.priority.medium') },
+                                                            { value: 'low', label: t('projects.task.priority.low') },
+                                                        ]}
+                                                        onValueChange={(value) => {
+                                                            void handleSubTaskPriorityChange(subTask.id, value as TaskPriority)
+                                                        }}
+                                                        disabled={isUpdatingTask}
+                                                        align="end"
+                                                        size="sm"
+                                                        triggerClassName="min-w-[120px]"
+                                                    />
+
+                                                    <Button
+                                                        type="button"
+                                                        variant="secondary"
+                                                        onClick={() => {
+                                                            void handleRemoveSubTask(subTask.id)
+                                                        }}
+                                                        disabled={isUpdatingTask}
+                                                    >
+                                                        {t('projects.task.subtasks.remove')}
+                                                    </Button>
+                                                </div>
                                             </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+                                    <input
+                                        type="text"
+                                        value={newSubTaskContent}
+                                        onChange={(e) => setNewSubTaskContent(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
+                                                void handleAddSubTask()
+                                            }
+                                        }}
+                                        disabled={isUpdatingTask}
+                                        placeholder={t('projects.task.subtasks.placeholder')}
+                                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                    />
+                                    <AdaptiveSelectField
+                                        title={t('projects.task.priority')}
+                                        value={newSubTaskPriority}
+                                        options={[
+                                            { value: 'high', label: t('projects.task.priority.high') },
+                                            { value: 'medium', label: t('projects.task.priority.medium') },
+                                            { value: 'low', label: t('projects.task.priority.low') },
+                                        ]}
+                                        onValueChange={(value) => setNewSubTaskPriority(value as TaskPriority)}
+                                        disabled={isUpdatingTask}
+                                        align="end"
+                                        size="sm"
+                                        triggerClassName="min-w-[120px]"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            void handleAddSubTask()
+                                        }}
+                                        disabled={isUpdatingTask || !newSubTaskContent.trim()}
+                                    >
+                                        {t('projects.task.subtasks.add')}
+                                    </Button>
+                                </div>
+                            </section>
+
+                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
+                                        <div className="text-xs text-[var(--app-hint)]">
+                                            {t('projects.task.attachments.budget', { used: formatBytes(totalBytes), max: formatBytes(MAX_TASK_ATTACHMENTS_BYTES) })}
                                         </div>
-                                        <Button type="button" variant="secondary" onClick={() => void handleRemoveAttachment(att.id)} disabled={isUpdatingTask || attachmentsBusy}>
-                                            {t('projects.task.attachments.remove')}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            multiple
+                                            disabled={isUpdatingTask || attachmentsBusy}
+                                            onChange={(e) => {
+                                                void handleAddFiles(e.target.files)
+                                                e.currentTarget.value = ''
+                                            }}
+                                            className="hidden"
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            disabled={isUpdatingTask || attachmentsBusy}
+                                            onClick={() => fileInputRef.current?.click()}
+                                        >
+                                            {t('projects.task.attachments.add')}
                                         </Button>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </section>
+                                </div>
 
-                    <section className="space-y-3">
-                        <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
+                                {overLimit ? (
+                                    <div className="rounded-md bg-amber-500/10 p-2 text-xs text-[var(--app-hint)]">
+                                        {t('projects.task.attachments.overLimit')}
+                                    </div>
+                                ) : null}
 
-                        {sessionId ? (
-                            <div className="flex flex-wrap gap-2">
-                                <Button
-                                    type="button"
-                                    variant="secondary"
-                                    onClick={() => void navigate({
-                                        to: '/projects/$projectId/tasks/$taskId/chat',
-                                        params: { projectId: props.projectId, taskId: props.taskId }
-                                    })}
-                                >
-                                    {t('projects.sessions.openChat')}
-                                </Button>
-                                <Button type="button" variant="secondary" onClick={() => setStartOpen(true)}>
-                                    {t('projects.sessions.startNew')}
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="flex flex-wrap gap-2">
-                                <Button type="button" variant="secondary" onClick={() => setStartOpen(true)} disabled={isUpdatingTask || overLimit}>
-                                    {t('projects.sessions.start')}
-                                </Button>
-                                <Button type="button" variant="secondary" onClick={() => setAttachOpen(true)} disabled={isUpdatingTask}>
-                                    {t('projects.sessions.attach')}
-                                </Button>
-                            </div>
-                        )}
+                                {attachments.length === 0 ? (
+                                    <div className="text-sm text-[var(--app-hint)]">
+                                        {t('projects.task.attachments.empty')}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-2">
+                                        {attachments.map((att) => (
+                                            <div key={att.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium truncate">{att.filename}</div>
+                                                    <div className="text-xs text-[var(--app-hint)]">
+                                                        {formatBytes(att.size)} · {att.mimeType}
+                                                    </div>
+                                                </div>
+                                                <Button type="button" variant="secondary" onClick={() => void handleRemoveAttachment(att.id)} disabled={isUpdatingTask || attachmentsBusy}>
+                                                    {t('projects.task.attachments.remove')}
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+                        </div>
 
-                        {overLimit ? (
-                            <div className="text-xs text-[var(--app-hint)]">
-                                {t('projects.task.attachments.mustFix')}
-                            </div>
-                        ) : null}
-                    </section>
+                        <aside className="space-y-4 xl:sticky xl:top-4 self-start">
+                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                                <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
 
-                    <section className="space-y-2">
-                        <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
-                        <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
-                        <Button type="button" variant="destructive" onClick={() => setArchiveOpen(true)} disabled={isUpdatingTask || isArchiving}>
-                            {t('projects.task.archive.action')}
-                        </Button>
-                    </section>
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                                        {t('projects.task.status')}
+                                    </label>
+                                    <AdaptiveSelectField
+                                        title={t('projects.task.status')}
+                                        value={status}
+                                        options={statusOptions}
+                                        onValueChange={(value) => {
+                                            const next = value as TaskStatus
+                                            setStatus(next)
+                                            void savePatch({ status: next, sortKey: Date.now() })
+                                        }}
+                                        disabled={isUpdatingTask}
+                                        align="start"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                                        {t('projects.task.priority')}
+                                    </label>
+                                    <AdaptiveSelectField
+                                        title={t('projects.task.priority')}
+                                        value={priority}
+                                        options={priorityOptions}
+                                        onValueChange={(value) => {
+                                            const next = (value as TaskPriority) || ''
+                                            setPriority(next)
+                                            void savePatch({ priority: next || null })
+                                        }}
+                                        disabled={isUpdatingTask}
+                                        align="start"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                                        {t('projects.task.workspace')}
+                                    </label>
+                                    <AdaptiveSelectField
+                                        title={t('projects.task.workspace')}
+                                        value={workspaceId}
+                                        options={workspaceOptions}
+                                        onValueChange={(value) => {
+                                            const next = value as string
+                                            setWorkspaceId(next)
+                                            void savePatch({ workspaceId: next || null })
+                                        }}
+                                        disabled={isUpdatingTask}
+                                        align="start"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                                        {t('newSession.agent')}
+                                    </label>
+                                    <AdaptiveSelectField
+                                        title={t('newSession.agent')}
+                                        value={agentFlavor}
+                                        options={agentOptions}
+                                        onValueChange={handleAgentFlavorChange}
+                                        disabled={isUpdatingTask}
+                                        align="start"
+                                    />
+                                </div>
+
+                                {canEditModelMode ? (
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                                            {t('newSession.model')}
+                                        </label>
+                                        <AdaptiveSelectField
+                                            title={t('newSession.model')}
+                                            value={modelMode}
+                                            options={modelModeOptions}
+                                            onValueChange={handleModelModeChange}
+                                            disabled={isUpdatingTask}
+                                            align="start"
+                                        />
+                                    </div>
+                                ) : null}
+                            </section>
+
+                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                                <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
+
+                                {sessionId ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={() => void navigate({
+                                                to: '/projects/$projectId/tasks/$taskId/chat',
+                                                params: { projectId: props.projectId, taskId: props.taskId }
+                                            })}
+                                        >
+                                            {t('projects.sessions.openChat')}
+                                        </Button>
+                                        <Button type="button" variant="secondary" onClick={() => setStartOpen(true)}>
+                                            {t('projects.sessions.startNew')}
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button type="button" variant="secondary" onClick={() => setStartOpen(true)} disabled={isUpdatingTask || overLimit}>
+                                            {t('projects.sessions.start')}
+                                        </Button>
+                                        <Button type="button" variant="secondary" onClick={() => setAttachOpen(true)} disabled={isUpdatingTask}>
+                                            {t('projects.sessions.attach')}
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {overLimit ? (
+                                    <div className="text-xs text-[var(--app-hint)]">
+                                        {t('projects.task.attachments.mustFix')}
+                                    </div>
+                                ) : null}
+                            </section>
+
+                            <section className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/20 p-3">
+                                <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
+                                <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
+                                <Button type="button" variant="destructive" onClick={() => setArchiveOpen(true)} disabled={isUpdatingTask || isArchiving}>
+                                    {t('projects.task.archive.action')}
+                                </Button>
+                            </section>
+                        </aside>
+                    </div>
                 </div>
             </div>
 
@@ -954,11 +1017,11 @@ function TaskDetailsPanel(props: {
                 machineId={props.projectMachineId}
                 taskAgentFlavor={agentFlavor || null}
                 taskPermissionMode={props.task.permissionMode ?? null}
-                taskModelMode={props.task.modelMode ?? null}
+                taskModelMode={modelMode === 'default' ? null : modelMode}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}
-                taskWorkspaceId={props.task.workspaceId ?? null}
+                taskWorkspaceId={workspaceId || null}
                 onStarted={() => {
                     void navigate({
                         to: '/projects/$projectId/tasks/$taskId/chat',
@@ -1053,6 +1116,26 @@ function TabButton(props: {
     )
 }
 
+export function TaskWorkbenchRoute() {
+    const { projectId, taskId } = useParams({ from: '/projects/$projectId/tasks/$taskId' })
+    const matchRoute = useMatchRoute()
+
+    const forceTask = Boolean(matchRoute({ to: '/projects/$projectId/tasks/$taskId/task' }))
+    const tab: TaskWorkbenchTab = forceTask
+        ? 'task'
+        : matchRoute({ to: '/projects/$projectId/tasks/$taskId/files' })
+            ? 'files'
+            : matchRoute({ to: '/projects/$projectId/tasks/$taskId/diffs' })
+                ? 'diffs'
+                : matchRoute({ to: '/projects/$projectId/tasks/$taskId/terminal' })
+                    ? 'terminal'
+                    : matchRoute({ to: '/projects/$projectId/tasks/$taskId/chat' })
+                        ? 'chat'
+                        : 'task'
+
+    return <TaskWorkbench projectId={projectId} taskId={taskId} tab={tab} forceTask={forceTask} />
+}
+
 export const TaskWorkbench = memo(function TaskWorkbench(props: {
     projectId: string
     taskId: string
@@ -1091,37 +1174,55 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
             return
         }
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
-    }, [navigate, props.projectId, props.taskId, props.tab])
+    }, [navigate, props.forceTask, props.projectId, props.taskId, props.tab])
 
     const handleBackToProject = useCallback(() => {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [navigate, props.projectId])
 
+    const handleOpenTask = useCallback(() => {
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/task',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [navigate, props.projectId, props.taskId])
+
+    const handleOpenChat = useCallback(() => {
+        if (!hasSession) return
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/chat',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [hasSession, navigate, props.projectId, props.taskId])
+
     const handleOpenFiles = useCallback(() => {
+        if (!hasSession) return
         void navigate({
             to: '/projects/$projectId/tasks/$taskId/files',
             params: { projectId: props.projectId, taskId: props.taskId }
         })
-    }, [navigate, props.projectId, props.taskId])
+    }, [hasSession, navigate, props.projectId, props.taskId])
 
     const handleOpenDiffs = useCallback(() => {
+        if (!hasSession) return
         void navigate({
             to: '/projects/$projectId/tasks/$taskId/diffs',
             params: { projectId: props.projectId, taskId: props.taskId }
         })
-    }, [navigate, props.projectId, props.taskId])
+    }, [hasSession, navigate, props.projectId, props.taskId])
 
     const handleOpenTerminal = useCallback(() => {
+        if (!hasSession) return
         void navigate({
             to: '/projects/$projectId/tasks/$taskId/terminal',
             params: { projectId: props.projectId, taskId: props.taskId }
         })
-    }, [navigate, props.projectId, props.taskId])
+    }, [hasSession, navigate, props.projectId, props.taskId])
 
     const projectDefaults = useMemo(() => {
         const agent = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
         const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
-        const modelMode = project?.defaultModelMode ? String(project.defaultModelMode) : null
+        const modelMode = (project?.defaultModelMode as ModelMode | null) ?? null
         return { agent, permissionMode, modelMode }
     }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModelMode])
 
@@ -1161,6 +1262,42 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
                     backLabel={t('projects.actions.back')}
                     copyLabel={t('projects.task.copyLink')}
                 />
+            ) : null}
+
+            {!props.forceTask ? (
+                <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)]">
+                    <div className="mx-auto flex w-full max-w-content flex-wrap gap-2 px-3 py-2">
+                        <TabButton
+                            label={t('projects.workbench.tab.task')}
+                            active={activeTab === 'task'}
+                            onClick={handleOpenTask}
+                        />
+                        <TabButton
+                            label={t('projects.workbench.tab.chat')}
+                            active={activeTab === 'chat'}
+                            disabled={!hasSession}
+                            onClick={handleOpenChat}
+                        />
+                        <TabButton
+                            label={t('projects.workbench.tab.terminal')}
+                            active={activeTab === 'terminal'}
+                            disabled={!hasSession}
+                            onClick={handleOpenTerminal}
+                        />
+                        <TabButton
+                            label={t('projects.workbench.tab.diffs')}
+                            active={activeTab === 'diffs'}
+                            disabled={!hasSession}
+                            onClick={handleOpenDiffs}
+                        />
+                        <TabButton
+                            label={t('projects.workbench.tab.files')}
+                            active={activeTab === 'files'}
+                            disabled={!hasSession}
+                            onClick={handleOpenFiles}
+                        />
+                    </div>
+                </div>
             ) : null}
 
             <div className="flex-1 min-h-0">
