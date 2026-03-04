@@ -6,15 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { SegmentedControl } from '@/components/ui/segmented-control'
+import { getMachineDisplayTitle } from '@/lib/displayNames'
 
 type SessionType = 'simple' | 'worktree'
-
-function getMachineTitle(machine: Machine | null): string {
-    if (!machine) return 'Machine'
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
 
 export function SpawnSession(props: {
     api: ApiClient
@@ -30,7 +24,7 @@ export function SpawnSession(props: {
     const [error, setError] = useState<string | null>(null)
     const { spawnSession, isPending, error: spawnError } = useSpawnSession(props.api)
 
-    const machineTitle = useMemo(() => getMachineTitle(props.machine), [props.machine])
+    const machineTitle = useMemo(() => getMachineDisplayTitle(props.machine, 'Machine'), [props.machine])
 
     async function spawn() {
         const trimmed = directory.trim()

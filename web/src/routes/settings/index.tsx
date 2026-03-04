@@ -6,9 +6,9 @@ import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFo
 import { useTheme, type Appearance, type ThemePreset } from '@/hooks/useTheme'
 import { useMotionPreference, type MotionPreference } from '@/hooks/useMotionPreference'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
-import { BackIcon, CheckIcon, ChevronDownIcon } from '@/assets/icons'
-import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
-import { IconButton } from '@/components/ui/icon-button'
+import { CheckIcon } from '@/assets/icons'
+import { PageHeader } from '@/components/PageHeader'
+import { SettingsSelectRow } from '@/components/SettingsSelectRow'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
     { value: 'en', nativeLabel: 'English' },
@@ -52,14 +52,13 @@ export default function SettingsPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <IconButton type="button" onClick={goBack}>
-                        <BackIcon />
-                    </IconButton>
-                    <div className="flex-1 font-semibold">{t('settings.title')}</div>
-                </div>
-            </div>
+            <PageHeader
+                title={t('settings.title')}
+                onBack={goBack}
+                backLabel={t('projects.actions.back')}
+                borderClassName="border-b border-[var(--app-border)]"
+                contentClassName="p-3"
+            />
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">
@@ -68,24 +67,13 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.language.title')}
                         </div>
-                        <AdaptiveSelect
+                        <SettingsSelectRow
                             title={t('settings.language.title')}
+                            label={t('settings.language.label')}
                             value={locale}
+                            valueLabel={currentLocale?.nativeLabel ?? ''}
                             options={locales.map((loc) => ({ value: loc.value, label: loc.nativeLabel }))}
                             onValueChange={(nextLocale: Locale) => setLocale(nextLocale)}
-                            align="end"
-                            trigger={(
-                                <button
-                                    type="button"
-                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                >
-                                    <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
-                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                        <span>{currentLocale?.nativeLabel}</span>
-                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-                                    </span>
-                                </button>
-                            )}
                         />
                     </div>
 
@@ -94,44 +82,22 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.display.title')}
                         </div>
-                        <AdaptiveSelect
+                        <SettingsSelectRow
                             title={t('settings.display.fontSize')}
+                            label={t('settings.display.fontSize')}
                             value={fontScale}
+                            valueLabel={currentFontScaleLabel}
                             options={fontScaleOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
                             onValueChange={(nextScale: FontScale) => setFontScale(nextScale)}
-                            align="end"
-                            trigger={(
-                                <button
-                                    type="button"
-                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                >
-                                    <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
-                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                        <span>{currentFontScaleLabel}</span>
-                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-                                    </span>
-                                </button>
-                            )}
                         />
 
-                        <AdaptiveSelect
+                        <SettingsSelectRow
                             title={t('settings.display.motion')}
+                            label={t('settings.display.motion')}
                             value={motionPreference}
+                            valueLabel={currentMotionLabel}
                             options={motionOptions}
                             onValueChange={(nextPref: MotionPreference) => setMotionPreference(nextPref)}
-                            align="end"
-                            trigger={(
-                                <button
-                                    type="button"
-                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                >
-                                    <span className="text-[var(--app-fg)]">{t('settings.display.motion')}</span>
-                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                        <span>{currentMotionLabel}</span>
-                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-                                    </span>
-                                </button>
-                            )}
                         />
                     </div>
 
@@ -159,24 +125,13 @@ export default function SettingsPage() {
                             )
                         })}
 
-                        <AdaptiveSelect
+                        <SettingsSelectRow
                             title={t('settings.theme.preset')}
+                            label={t('settings.theme.preset')}
                             value={preset}
+                            valueLabel={currentPresetLabel}
                             options={presetOptions}
                             onValueChange={(nextPreset: ThemePreset) => setPreset(nextPreset)}
-                            align="end"
-                            trigger={(
-                                <button
-                                    type="button"
-                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                >
-                                    <span className="text-[var(--app-fg)]">{t('settings.theme.preset')}</span>
-                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                        <span>{currentPresetLabel}</span>
-                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-                                    </span>
-                                </button>
-                            )}
                         />
                     </div>
 
@@ -185,9 +140,17 @@ export default function SettingsPage() {
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.voice.title')}
                         </div>
-                        <AdaptiveSelect
+                        <SettingsSelectRow
                             title={t('settings.voice.title')}
+                            label={t('settings.voice.language')}
                             value={voiceLanguage}
+                            valueLabel={
+                                currentVoiceLanguage
+                                    ? currentVoiceLanguage.code === null
+                                        ? t('settings.voice.autoDetect')
+                                        : getLanguageDisplayName(currentVoiceLanguage)
+                                    : t('settings.voice.autoDetect')
+                            }
                             options={voiceLanguages.map((lang) => ({
                                 value: lang.code,
                                 label: lang.code === null ? t('settings.voice.autoDetect') : getLanguageDisplayName(lang),
@@ -200,25 +163,6 @@ export default function SettingsPage() {
                                     localStorage.setItem('hapi-voice-lang', nextCode)
                                 }
                             }}
-                            align="end"
-                            trigger={(
-                                <button
-                                    type="button"
-                                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                >
-                                    <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
-                                    <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                        <span>
-                                            {currentVoiceLanguage
-                                                ? currentVoiceLanguage.code === null
-                                                    ? t('settings.voice.autoDetect')
-                                                    : getLanguageDisplayName(currentVoiceLanguage)
-                                                : t('settings.voice.autoDetect')}
-                                        </span>
-                                        <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-                                    </span>
-                                </button>
-                            )}
                         />
                     </div>
 

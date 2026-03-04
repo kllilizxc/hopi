@@ -2,12 +2,10 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { GitCommandResponse, GitFileStatus } from '@/types/api'
-import { FileIcon } from '@/components/FileIcon'
+import { GitChangeList, type GitChangeSection } from '@/components/GitChangeList'
 import { LoadingState } from '@/components/LoadingState'
-import { BackIcon } from '@/components/icons'
+import { PageHeader } from '@/components/PageHeader'
 import { Button } from '@/components/ui/button'
-import { IconButton } from '@/components/ui/icon-button'
-import { Pressable } from '@/components/ui/pressable'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useSession } from '@/hooks/queries/useSession'
 import { useTask } from '@/hooks/queries/useTask'
@@ -15,91 +13,6 @@ import { parseNumStat } from '@/lib/gitParsers'
 import { queryKeys } from '@/lib/query-keys'
 import { useTranslation } from '@/lib/use-translation'
 import { SessionFileViewer } from '@/routes/projects/session-file-viewer'
-
-function StatusBadge(props: { status: GitFileStatus['status'] }) {
-    const label = useMemo(() => {
-        switch (props.status) {
-            case 'added':
-                return 'A'
-            case 'deleted':
-                return 'D'
-            case 'renamed':
-                return 'R'
-            case 'untracked':
-                return '?'
-            case 'conflicted':
-                return 'U'
-            default:
-                return 'M'
-        }
-    }, [props.status])
-
-    const color = useMemo(() => {
-        switch (props.status) {
-            case 'added':
-                return 'var(--app-git-staged-color)'
-            case 'deleted':
-                return 'var(--app-git-deleted-color)'
-            case 'renamed':
-                return 'var(--app-git-renamed-color)'
-            case 'untracked':
-                return 'var(--app-git-untracked-color)'
-            case 'conflicted':
-                return 'var(--app-git-deleted-color)'
-            default:
-                return 'var(--app-git-unstaged-color)'
-        }
-    }, [props.status])
-
-    return (
-        <span
-            className="inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[10px] font-semibold"
-            style={{ color, borderColor: color }}
-        >
-            {label}
-        </span>
-    )
-}
-
-function LineChanges(props: { added: number; removed: number }) {
-    if (!props.added && !props.removed) return null
-
-    return (
-        <span className="flex items-center gap-1 text-[11px] font-mono">
-            {props.added ? (
-                <span className="text-[var(--app-diff-added-text)]">+{props.added}</span>
-            ) : null}
-            {props.removed ? (
-                <span className="text-[var(--app-diff-removed-text)]">-{props.removed}</span>
-            ) : null}
-        </span>
-    )
-}
-
-function GitFileRow(props: {
-    file: GitFileStatus
-    onOpen: () => void
-    showDivider: boolean
-}) {
-    const subtitle = props.file.filePath || 'project root'
-
-    return (
-        <Pressable
-            onClick={props.onOpen}
-            className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
-        >
-            <FileIcon fileName={props.file.fileName} size={22} />
-            <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{props.file.fileName}</div>
-                <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
-            </div>
-            <div className="flex items-center gap-2">
-                <LineChanges added={props.file.linesAdded} removed={props.file.linesRemoved} />
-                <StatusBadge status={props.file.status} />
-            </div>
-        </Pressable>
-    )
-}
 
 function normalizeNumstatPath(rawPath: string): string {
     const trimmed = rawPath.trim()
@@ -183,6 +96,55 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         diffScope?: 'staged' | 'unstaged' | 'committed'
     } | null>(null)
 
+    const changeSections = useMemo<GitChangeSection[]>(() => {
+        const sections: GitChangeSection[] = []
+        if (gitStatus?.stagedFiles.length) {
+            sections.push({
+                key: 'staged',
+                title: t('projects.diffs.staged'),
+                titleClassName: 'text-[var(--app-git-staged-color)]',
+                files: gitStatus.stagedFiles,
+                onOpenFile: (file) => setOpenFile({ path: file.fullPath, staged: true, diffScope: 'staged' }),
+            })
+        }
+        if (gitStatus?.unstagedFiles.length) {
+            sections.push({
+                key: 'unstaged',
+                title: t('projects.diffs.unstaged'),
+                titleClassName: 'text-[var(--app-git-unstaged-color)]',
+                files: gitStatus.unstagedFiles,
+                onOpenFile: (file) => setOpenFile({ path: file.fullPath, staged: false, diffScope: 'unstaged' }),
+            })
+        }
+        if (showSessionDiff) {
+            sections.push({
+                key: 'committed',
+                title: t('projects.diffs.sinceSessionStart'),
+                titleClassName: 'text-[var(--app-git-staged-color)]',
+                files: sessionDiffFiles,
+                onOpenFile: (file) => setOpenFile({
+                    path: file.fullPath,
+                    baseRef: worktreeBaseCommit,
+                    diffScope: 'committed'
+                }),
+            })
+        }
+        if (mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0) {
+            sections.push({
+                key: 'merged',
+                title: t('projects.diffs.merged'),
+                titleClassName: 'text-[var(--app-git-staged-color)]',
+                files: mergedDiffSnapshot.files,
+                onOpenFile: (file) => setOpenFile({
+                    path: file.fullPath,
+                    baseRef: mergedDiffSnapshot.baseCommit,
+                    diffScope: 'committed'
+                }),
+            })
+        }
+        return sections
+    }, [gitStatus, mergedDiffSnapshot, sessionDiffFiles, showSessionDiff, t, worktreeBaseCommit])
+
     if (openFile) {
         return (
             <SessionFileViewer
@@ -216,33 +178,17 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
 
     return (
         <div className="h-full flex flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
-                <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                        {props.onBack ? (
-                            <IconButton
-                                type="button"
-                                variant="ghost"
-                                size="xs"
-                                onClick={props.onBack}
-                                aria-label={t('projects.files.back')}
-                                title={t('projects.files.back')}
-                            >
-                                <BackIcon className="h-5 w-5" />
-                            </IconButton>
-                        ) : null}
-                        <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate">{t('projects.diffs.title')}</div>
-                            <div className="text-xs text-[var(--app-hint)] truncate">
-                                {gitStatus?.branch ? t('projects.diffs.branch', { name: gitStatus.branch }) : t('projects.diffs.noBranch')}
-                            </div>
-                        </div>
-                    </div>
+            <PageHeader
+                title={t('projects.diffs.title')}
+                subtitle={gitStatus?.branch ? t('projects.diffs.branch', { name: gitStatus.branch }) : t('projects.diffs.noBranch')}
+                onBack={props.onBack}
+                backLabel={t('projects.files.back')}
+                right={(
                     <Button type="button" variant="secondary" onClick={() => void handleRefresh()}>
                         {t('projects.diffs.refresh')}
                     </Button>
-                </div>
-            </div>
+                )}
+            />
 
             {combinedError ? (
                 <div className="px-3 py-2 border-b border-[var(--app-divider)] bg-amber-500/10 text-xs text-[var(--app-hint)]">
@@ -252,76 +198,11 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">
-                    {gitStatus?.stagedFiles.length ? (
-                        <div>
-                            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                                {t('projects.diffs.staged')} ({gitStatus.stagedFiles.length})
-                            </div>
-                            {gitStatus.stagedFiles.map((file, index) => (
-                                <GitFileRow
-                                    key={`staged-${file.fullPath}-${index}`}
-                                    file={file}
-                                    onOpen={() => setOpenFile({ path: file.fullPath, staged: true, diffScope: 'staged' })}
-                                    showDivider={index < gitStatus.stagedFiles.length - 1 || gitStatus.unstagedFiles.length > 0}
-                                />
-                            ))}
-                        </div>
-                    ) : null}
-
-                    {gitStatus?.unstagedFiles.length ? (
-                        <div>
-                            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-unstaged-color)]">
-                                {t('projects.diffs.unstaged')} ({gitStatus.unstagedFiles.length})
-                            </div>
-                            {gitStatus.unstagedFiles.map((file, index) => (
-                                <GitFileRow
-                                    key={`unstaged-${file.fullPath}-${index}`}
-                                    file={file}
-                                    onOpen={() => setOpenFile({ path: file.fullPath, staged: false, diffScope: 'unstaged' })}
-                                    showDivider={index < gitStatus.unstagedFiles.length - 1}
-                                />
-                            ))}
-                        </div>
-                    ) : null}
-
-                    {showSessionDiff ? (
-                        <div>
-                            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                                {t('projects.diffs.sinceSessionStart')} ({sessionDiffFiles.length})
-                            </div>
-                            {sessionDiffFiles.map((file, index) => (
-                                <GitFileRow
-                                    key={`committed-${file.fullPath}-${index}`}
-                                    file={file}
-                                    onOpen={() => setOpenFile({
-                                        path: file.fullPath,
-                                        baseRef: worktreeBaseCommit,
-                                        diffScope: 'committed'
-                                    })}
-                                    showDivider={index < sessionDiffFiles.length - 1}
-                                />
-                            ))}
-                        </div>
-                    ) : null}
-
-                    {mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0 ? (
-                        <div>
-                            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
-                                {t('projects.diffs.merged')} ({mergedDiffSnapshot.files.length})
-                            </div>
-                            {mergedDiffSnapshot.files.map((file, index) => (
-                                <GitFileRow
-                                    key={`merged-${file.fullPath}-${index}`}
-                                    file={file}
-                                    onOpen={() => setOpenFile({
-                                        path: file.fullPath,
-                                        baseRef: mergedDiffSnapshot.baseCommit,
-                                        diffScope: 'committed'
-                                    })}
-                                    showDivider={index < mergedDiffSnapshot.files.length - 1}
-                                />
-                            ))}
-                        </div>
+                    {changeSections.length > 0 ? (
+                        <GitChangeList
+                            sections={changeSections}
+                            rootLabel={t('session.files.projectRoot')}
+                        />
                     ) : null}
 
                     {!gitStatus ? (

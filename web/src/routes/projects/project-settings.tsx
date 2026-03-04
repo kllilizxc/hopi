@@ -6,17 +6,16 @@ import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
+import { PageHeader } from '@/components/PageHeader'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { IconButton } from '@/components/ui/icon-button'
 import { useProject } from '@/hooks/queries/useProject'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { useArchiveProject } from '@/hooks/mutations/useArchiveProject'
 import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
-import { BackIcon } from '@/assets/icons'
 
 function WorkspacesBadge(props: { ok: boolean; label: string }) {
     return (
@@ -219,27 +218,13 @@ export function ProjectSettingsPage() {
     }, [project, archiveProject, addToast, t, navigate])
 
     const header = (
-        <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
-            <div className="mx-auto w-full max-w-content flex items-center justify-between gap-3 px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                    <IconButton
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => navigate({ to: '/projects/$projectId', params: { projectId } })}
-                        aria-label={t('projects.actions.back')}
-                    >
-                        <BackIcon />
-                    </IconButton>
-                    <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{t('projects.settings.title')}</div>
-                        <div className="text-[10px] text-[var(--app-hint)] truncate">
-                            {project?.name ?? projectId}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <PageHeader
+            title={t('projects.settings.title')}
+            subtitle={project?.name ?? projectId}
+            onBack={() => navigate({ to: '/projects/$projectId', params: { projectId } })}
+            backLabel={t('projects.actions.back')}
+            subtitleClassName="text-[10px] text-[var(--app-hint)] truncate"
+        />
     )
 
     if (projectLoading || workspacesLoading) {

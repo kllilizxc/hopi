@@ -8,7 +8,7 @@ import { useSession } from '@/hooks/queries/useSession'
 import { useTerminalSocket } from '@/hooks/useTerminalSocket'
 import { useLongPress } from '@/hooks/useLongPress'
 import { useTranslation } from '@/lib/use-translation'
-import { BackIcon } from '@/assets/icons'
+import { PageHeader } from '@/components/PageHeader'
 import { TerminalView } from '@/components/Terminal/TerminalView'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
@@ -462,22 +462,15 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
     return (
         <div className="flex h-full flex-col">
             {props.embedded ? null : (
-                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                        <button
-                            type="button"
-                            onClick={props.onBack ?? goBack}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        >
-                            <BackIcon />
-                        </button>
-                        <div className="min-w-0 flex-1">
-                            <div className="truncate font-semibold">{t('projects.workbench.tab.terminal')}</div>
-                            <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
-                        </div>
-                        <ConnectionIndicator status={status} />
-                    </div>
-                </div>
+                <PageHeader
+                    title={t('projects.workbench.tab.terminal')}
+                    subtitle={subtitle}
+                    onBack={props.onBack ?? goBack}
+                    backLabel={t('projects.files.back')}
+                    borderClassName="border-b border-[var(--app-border)]"
+                    contentClassName="p-3"
+                    right={<ConnectionIndicator status={status} />}
+                />
             )}
 
             {session.active ? null : (

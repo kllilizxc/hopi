@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import { LoadingState } from '@/components/LoadingState'
-import { BackIcon } from '@/components/icons'
+import { PageHeader } from '@/components/PageHeader'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
-import { IconButton } from '@/components/ui/icon-button'
 import { useSession } from '@/hooks/queries/useSession'
 import { useTranslation } from '@/lib/use-translation'
 import { SessionFileViewer } from '@/routes/projects/session-file-viewer'
@@ -52,28 +51,12 @@ export function TaskSessionFiles(props: { api: ApiClient | null; sessionId: stri
 
     return (
         <div className="h-full flex flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] border-b border-[var(--app-divider)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-2">
-                    {props.onBack ? (
-                        <IconButton
-                            type="button"
-                            variant="ghost"
-                            size="xs"
-                            onClick={props.onBack}
-                            aria-label={t('projects.files.back')}
-                            title={t('projects.files.back')}
-                        >
-                            <BackIcon className="h-5 w-5" />
-                        </IconButton>
-                    ) : null}
-                    <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold truncate">{t('projects.files.title')}</div>
-                        <div className="text-xs text-[var(--app-hint)] truncate">
-                            {session?.metadata?.path ?? props.sessionId}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <PageHeader
+                title={t('projects.files.title')}
+                subtitle={session?.metadata?.path ?? props.sessionId}
+                onBack={props.onBack}
+                backLabel={t('projects.files.back')}
+            />
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
+import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
@@ -21,12 +22,6 @@ import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import type { AgentType } from '@/components/NewSession/types'
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
 
 function TopBar(props: {
     title: string
@@ -84,7 +79,7 @@ function CreateProjectDialog(props: {
         }
         return props.machines.map((m) => ({
             value: m.id,
-            label: `${getMachineTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
+            label: `${getMachineDisplayTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
         }))
     }, [props.isMachinesLoading, props.machines, t])
 
@@ -375,7 +370,7 @@ function ProjectsListPanel(props: {
                     <div className="flex flex-col gap-2">
                         {visibleProjects.map((project) => {
                             const machine = machineById.get(project.machineId) ?? null
-                            const machineLabel = machine ? getMachineTitle(machine) : project.machineId.slice(0, 8)
+                            const machineLabel = machine ? getMachineDisplayTitle(machine) : project.machineId.slice(0, 8)
                             const machineVariant = machine?.active ? 'success' : 'default'
 
                             return (

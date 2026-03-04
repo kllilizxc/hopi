@@ -2,23 +2,10 @@ import { memo, useMemo } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Session } from '@/types/api'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { BackIcon, DiffIcon, FilesIcon, TaskIcon } from '@/assets/icons'
 import { IconButton } from '@/components/ui/icon-button'
-
-function getSessionTitle(session: Session): string {
-    if (session.metadata?.name) {
-        return session.metadata.name
-    }
-    if (session.metadata?.summary?.text) {
-        return session.metadata.summary.text
-    }
-    if (session.metadata?.path) {
-        const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
-    }
-    return session.id.slice(0, 8)
-}
 
 type SessionHeaderProps = {
     session: Session
@@ -33,7 +20,7 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
     const { session } = props
-    const title = useMemo(() => getSessionTitle(session), [session])
+    const title = useMemo(() => getSessionDisplayTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
 
     const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
