@@ -29,6 +29,8 @@ export function SessionFileDiffContent(props: {
     contentCopyVariant?: 'icon' | 'button'
 }) {
     const { copied: contentCopied, copy: copyContent } = useCopyToClipboard()
+    const isDiffMode = props.viewer.displayMode === 'diff'
+    const isFileMode = props.viewer.displayMode === 'file'
 
     const diffErrorMessage = props.viewer.diffError
         ? `${props.labels.diffUnavailablePrefix}${props.viewer.diffError}`
@@ -93,13 +95,13 @@ export function SessionFileDiffContent(props: {
                         <div className="text-sm text-[var(--app-hint)]">{props.labels.noPath}</div>
                     ) : props.viewer.loading ? (
                         <FileContentSkeleton label={props.labels.loading} />
-                    ) : props.viewer.fileError ? (
-                        <div className={cn(fileErrorClassName)}>{props.viewer.fileError}</div>
-                    ) : props.viewer.binaryFile ? (
-                        <div className="text-sm text-[var(--app-hint)]">{props.labels.binary}</div>
-                    ) : props.viewer.displayMode === 'diff' && props.viewer.hasDiffContent ? (
+                    ) : isDiffMode && props.viewer.hasDiffContent ? (
                         <DiffDisplay diffContent={props.viewer.diffContent} />
-                    ) : props.viewer.displayMode === 'file' ? (
+                    ) : isFileMode && props.viewer.fileError ? (
+                        <div className={cn(fileErrorClassName)}>{props.viewer.fileError}</div>
+                    ) : isFileMode && props.viewer.binaryFile ? (
+                        <div className="text-sm text-[var(--app-hint)]">{props.labels.binary}</div>
+                    ) : isFileMode ? (
                         props.viewer.decodedContent ? (
                             <>
                                 <div className="relative min-w-0 max-w-full">

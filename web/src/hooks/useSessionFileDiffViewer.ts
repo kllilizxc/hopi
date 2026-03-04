@@ -63,6 +63,12 @@ function getQueryErrorMessage(value: unknown, fallback: string): string | null {
     return value ? fallback : null
 }
 
+function isRpcUnavailableError(message: string | null): boolean {
+    if (!message) return false
+    const lowered = message.toLowerCase()
+    return lowered.includes('rpc handler not registered') || lowered.includes('rpc socket disconnected')
+}
+
 export function useSessionFileDiffViewer(params: {
     api: ApiClient | null
     sessionId: string
@@ -71,6 +77,8 @@ export function useSessionFileDiffViewer(params: {
     baseRef?: string
 }): UseSessionFileDiffViewerResult {
     const missingPath = !params.filePath
+    const [displayMode, setDisplayMode] = useState<FileViewerDisplayMode>('diff')
+    const shouldAutoFallbackToFile = params.staged === undefined && !params.baseRef
 
     const diffQuery = useQuery({
         queryKey: queryKeys.gitFileDiff(params.sessionId, params.filePath, {
@@ -97,7 +105,7 @@ export function useSessionFileDiffViewer(params: {
             }
             return await params.api.readSessionFile(params.sessionId, params.filePath)
         },
-        enabled: Boolean(params.api && params.sessionId && params.filePath)
+        enabled: Boolean(params.api && params.sessionId && params.filePath && displayMode === 'file')
     })
 
     const diffContent = diffQuery.data?.success ? (diffQuery.data.stdout ?? '') : ''
@@ -136,8 +144,6 @@ export function useSessionFileDiffViewer(params: {
 
     const diffSuccess = diffQuery.data?.success === true
 
-    const [displayMode, setDisplayMode] = useState<FileViewerDisplayMode>('diff')
-
     useEffect(() => {
         setDisplayMode('diff')
     }, [params.filePath, params.sessionId, params.staged, params.baseRef])
@@ -147,10 +153,14 @@ export function useSessionFileDiffViewer(params: {
             return
         }
 
-        if (diffSuccess || diffError) {
+        if (!shouldAutoFallbackToFile) {
+            return
+        }
+
+        if (diffSuccess || (diffError && !isRpcUnavailableError(diffError))) {
             setDisplayMode('file')
         }
-    }, [diffContent, diffSuccess, diffError])
+    }, [diffContent, diffSuccess, diffError, shouldAutoFallbackToFile])
 
     const fileName = useMemo(
         () => params.filePath.split('/').pop() || params.filePath || 'File',
@@ -161,7 +171,7 @@ export function useSessionFileDiffViewer(params: {
         fileName,
         displayMode,
         setDisplayMode,
-        loading: diffQuery.isLoading || fileQuery.isLoading,
+        loading: diffQuery.isLoading || (displayMode === 'file' && fileQuery.isLoading),
         missingPath,
         hasDiffContent: Boolean(diffContent),
         diffContent,

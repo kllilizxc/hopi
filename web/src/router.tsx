@@ -36,12 +36,7 @@ import ProjectsPage, {
     ProjectOverviewPage,
     ProjectSettingsPage,
     ProjectsIndexPage,
-    TaskChatPage,
-    TaskPanelPage,
-    TaskDiffsPage,
-    TaskDetailPage,
-    TaskFilesPage,
-    TaskTerminalPage,
+    TaskWorkbenchRoute,
 } from '@/routes/projects'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
@@ -389,7 +384,7 @@ const projectDetailIndexRoute = createRoute({
 const projectTaskRoute = createRoute({
     getParentRoute: () => projectDetailRoute,
     path: 'tasks/$taskId',
-    component: () => <Outlet />,
+    component: TaskWorkbenchRoute,
 })
 
 const projectSettingsRoute = createRoute({
@@ -401,37 +396,37 @@ const projectSettingsRoute = createRoute({
 const projectTaskIndexRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: '/',
-    component: TaskDetailPage,
+    component: () => null,
 })
 
 const projectTaskPanelRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'task',
-    component: TaskPanelPage,
+    component: () => null,
 })
 
 const projectTaskChatRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'chat',
-    component: TaskChatPage,
+    component: () => null,
 })
 
 const projectTaskTerminalRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'terminal',
-    component: TaskTerminalPage,
+    component: () => null,
 })
 
 const projectTaskDiffsRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'diffs',
-    component: TaskDiffsPage,
+    component: () => null,
 })
 
 const projectTaskFilesRoute = createRoute({
     getParentRoute: () => projectTaskRoute,
     path: 'files',
-    component: TaskFilesPage,
+    component: () => null,
 })
 
 const sessionsRoute = createRoute({

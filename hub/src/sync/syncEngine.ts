@@ -7,6 +7,7 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
@@ -61,6 +62,7 @@ function shouldRetrySessionConfigApply(error: unknown): boolean {
 }
 
 export class SyncEngine {
+    private readonly store: Store
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
@@ -76,13 +78,14 @@ export class SyncEngine {
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager
     ) {
+        this.store = store
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
-        this.sessionCache = new SessionCache(store, this.eventPublisher)
-        this.machineCache = new MachineCache(store, this.eventPublisher)
-        this.messageService = new MessageService(store, io, this.eventPublisher)
+        this.sessionCache = new SessionCache(this.store, this.eventPublisher)
+        this.machineCache = new MachineCache(this.store, this.eventPublisher)
+        this.messageService = new MessageService(this.store, io, this.eventPublisher)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
-        this.taskAutomation = new TaskAutomation(store, this)
-        this.autoRunScheduler = new AutoRunScheduler(store, this)
+        this.taskAutomation = new TaskAutomation(this.store, this)
+        this.autoRunScheduler = new AutoRunScheduler(this.store, this)
         this.eventPublisher.subscribe((event) => this.taskAutomation.handleEvent(event))
         this.eventPublisher.subscribe((event) => this.autoRunScheduler.handleEvent(event))
         this.reloadAll()
@@ -421,8 +424,37 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
+        const taskModeFallback = (() => {
+            const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(
+                access.sessionId,
+                namespace,
+                { includeArchived: true }
+            )
+            const linkedTask = linkedTasks[0]
+            if (!linkedTask) {
+                return null
+            }
+            return {
+                permissionMode: typeof linkedTask.permissionMode === 'string'
+                    ? linkedTask.permissionMode as PermissionMode
+                    : undefined,
+                modelMode: typeof linkedTask.modelMode === 'string'
+                    ? linkedTask.modelMode as ModelMode
+                    : undefined
+            }
+        })()
+
+        const fallbackPermissionMode = taskModeFallback?.permissionMode
+        const fallbackModelMode = taskModeFallback?.modelMode
+
         const previousPermissionMode = session.permissionMode
+            ?? (fallbackPermissionMode && isPermissionModeAllowedForFlavor(fallbackPermissionMode, flavor)
+                ? fallbackPermissionMode
+                : undefined)
         const previousModelMode = session.modelMode
+            ?? (fallbackModelMode && isModelModeAllowedForFlavor(fallbackModelMode, flavor)
+                ? fallbackModelMode
+                : undefined)
         const resumeWithYolo = previousPermissionMode === 'yolo' ? true : undefined
 
         const spawnResult = await this.rpcGateway.spawnSession(

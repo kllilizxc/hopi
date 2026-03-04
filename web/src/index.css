@@ -84,7 +84,7 @@
     --app-scrollbar-track: transparent;
     --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
     --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
-    --app-scroll-shadow: rgba(15, 23, 42, 0.22);
+    --app-scroll-shadow: var(--app-divider);
 
     /* Viewport + motion tokens (mobile + Telegram-friendly) */
     --app-viewport-h: var(--tg-viewport-height, 100dvh);
@@ -177,7 +177,7 @@
     --app-kanban-archive-border: rgba(156, 163, 175, 0.36);
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
-    --app-scroll-shadow: rgba(0, 0, 0, 0.42);
+    --app-scroll-shadow: var(--app-divider);
 
     color-scheme: dark;
 }
@@ -279,22 +279,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
 }
 
 .scroll-shadow-y {
-    --scroll-shadow-bg: var(--app-bg);
     --scroll-shadow-color: var(--app-scroll-shadow);
-    --scroll-shadow-cover-size: 24px;
-    --scroll-shadow-edge-size: 14px;
-    background:
-        linear-gradient(var(--scroll-shadow-bg) 32%, transparent) top,
-        linear-gradient(transparent, var(--scroll-shadow-bg) 68%) bottom,
-        radial-gradient(farthest-side at 50% 0, var(--scroll-shadow-color), transparent) top,
-        radial-gradient(farthest-side at 50% 100%, var(--scroll-shadow-color), transparent) bottom;
-    background-repeat: no-repeat;
-    background-size:
-        100% var(--scroll-shadow-cover-size),
-        100% var(--scroll-shadow-cover-size),
-        100% var(--scroll-shadow-edge-size),
-        100% var(--scroll-shadow-edge-size);
-    background-attachment: local, local, scroll, scroll;
+    transition: box-shadow var(--app-motion-duration-micro) var(--app-motion-ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {

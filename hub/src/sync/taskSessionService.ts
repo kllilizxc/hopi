@@ -110,6 +110,7 @@ export async function startSessionFromTask(options: {
         ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? undefined
     const modelMode = overrides.modelMode
+        ?? (task.modelMode as z.infer<typeof ModelModeSchema> | null)
         ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
         ?? undefined
     const inferredYolo = permissionMode === 'yolo' && isPermissionModeAllowedForFlavor(permissionMode, agent)

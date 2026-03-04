@@ -332,7 +332,6 @@ export function HappyThread(props: {
                     <ScrollShadow
                         ref={viewportRef}
                         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-                        background="var(--app-bg)"
                         style={{ WebkitOverflowScrolling: 'touch' }}
                     >
                         <div className="mx-auto w-full max-w-content min-w-0 p-3">
