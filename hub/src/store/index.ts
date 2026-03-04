@@ -170,6 +170,7 @@ export class Store {
         }
 
         if (currentVersion === 5 && SCHEMA_VERSION === 7) {
+            this.migrateFromV4ToV5()
             this.migrateFromV5ToV6()
             this.migrateFromV6ToV7()
             this.setUserVersion(SCHEMA_VERSION)
@@ -177,6 +178,7 @@ export class Store {
         }
 
         if (currentVersion === 5 && SCHEMA_VERSION === 8) {
+            this.migrateFromV4ToV5()
             this.migrateFromV5ToV6()
             this.migrateFromV6ToV7()
             this.migrateFromV7ToV8()
@@ -339,7 +341,7 @@ export class Store {
                 auto_run_enabled INTEGER NOT NULL DEFAULT 0,
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
-                improvements_max_generated_new INTEGER NOT NULL DEFAULT 5,
+                improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
                 last_improvements_at INTEGER,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
@@ -568,6 +570,19 @@ export class Store {
     }
 
     private migrateFromV7ToV8(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v7 to v8 migration.')
+        }
+        const hasPendingLimitColumn = projectColumns.has('improvements_max_pending_tasks')
+        const hasLegacyGeneratedColumn = projectColumns.has('improvements_max_generated_new')
+        if (!hasPendingLimitColumn) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5')
+        }
+        if (hasLegacyGeneratedColumn) {
+            this.db.exec('UPDATE projects SET improvements_max_pending_tasks = COALESCE(improvements_max_generated_new, improvements_max_pending_tasks)')
+        }
+
         const taskColumns = this.getColumnNames('tasks')
         if (taskColumns.size === 0) {
             throw new Error('SQLite schema missing tasks table for v7 to v8 migration.')
@@ -575,6 +590,7 @@ export class Store {
         if (!taskColumns.has('merged_diff_snapshot')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN merged_diff_snapshot TEXT')
         }
+        this.db.exec("UPDATE tasks SET status = 'planned' WHERE status = 'new'")
     }
 
     private getMachineColumnNames(): Set<string> {

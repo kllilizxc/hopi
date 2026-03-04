@@ -9,7 +9,7 @@ function seedMergeTask(store: Store, options: {
     projectId: string
     taskId: string
     sessionId: string
-    status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
+    status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
 }): void {
     store.projects.createProject({
         id: options.projectId,

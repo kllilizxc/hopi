@@ -528,7 +528,7 @@ export default function ProjectsPage() {
                 title: data.title,
                 description: data.description,
                 priority: data.priority || undefined,
-                status: 'new',
+                status: 'planned',
                 agentFlavor: data.agent,
                 permissionMode: data.permissionMode,
                 model: data.model,

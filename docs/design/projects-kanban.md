@@ -8,7 +8,7 @@ Status: planning draft
 Replace primary navigation: `Session list → Session chat` with:
 
 1. Project list (create/select)
-2. Project board (Kanban: New / Planned / In Progress / In Review / Finished / Blocked)
+2. Project board (Kanban: Planned / In Progress / In Review / Finished / Blocked)
 3. Task card detail (edit, move, assign)
 4. Task chat view (only if task has working session)
 
@@ -75,7 +75,7 @@ Fields (suggested):
     - `maxRunningSessions` (number; default 5)
         - definition: count sessions with `thinking=true` in this project
     - `improvementsEnabled` (boolean; default false)
-    - `improvementsMaxGeneratedNew` (number; default 5)
+    - `improvementsMaxPendingTasks` (number; default 5)
     - `lastImprovementsAt` (number; optional)
 - `createdAt`, `updatedAt`
 - `archivedAt` (nullable)
@@ -104,7 +104,7 @@ Fields (suggested):
 - `projectId`
 - `title` (string; required)
 - `description` (string; optional; markdown)
-- `status` (`new` | `planned` | `in_progress` | `in_review` | `blocked` | `finished`)
+- `status` (`planned` | `in_progress` | `in_review` | `blocked` | `finished`)
 - `priority` (`low` | `medium` | `high`) optional v1
 - `sortKey` (number/string; for column ordering)
 - `activeSessionId` (string nullable; link to `Session.id`)
@@ -169,7 +169,7 @@ Session attach flow:
 
 Automation (auto-run + improvements scan):
 
-- `POST /api/projects/:projectId/improvements/scan` (manual; creates tasks in `new` up to `improvementsMaxGeneratedNew`)
+- `POST /api/projects/:projectId/improvements/scan` (manual; creates pending improvements tasks up to `improvementsMaxPendingTasks`)
 - `POST /api/projects/:projectId/auto-run/tick` (optional; forces auto-run scheduler to run now)
 
 SSE events (extend existing `SyncEvent`):
@@ -335,7 +335,7 @@ Preference: wrapper route for consistent nav + breadcrumbs.
 Create modal/sheet:
 
 - Title
-- Status default `new`
+- Status default `planned`
 - Workspace (default project default)
 - Optional description
 - Images/files attachments (optional; appear in task detail + first prompt when starting session)
@@ -497,7 +497,7 @@ Web:
 - Link task ↔ session via “Start session” and “Attach existing”
 - Open chat for linked session; return to task + board
 - Move task to Finished auto-archives linked session
-- If improvements enabled: moving task → `finished` can create up to N auto-generated tasks in `new`
+- If improvements enabled: moving task → `finished` can create up to N pending auto-generated tasks in `planned`
 - If auto-run enabled: planned queue starts sessions up to `maxRunningSessions`
 - Desktop: board + detail panel usable without route churn
 - Mobile: projects → board → task → chat flow; no unusable DnD dependency
@@ -541,17 +541,17 @@ Improvements scan (instead of periodic heartbeat):
     - Prefer reusing the task’s linked session (`task.activeSessionId`) right before archiving
     - Fallback: reuse latest active session in project
     - Send a prompt that includes the finished task title/notes and asks for up to N improvement tasks (structured output)
-    - Parse output and auto-create tasks in `new`
+    - Parse output and auto-create tasks in `planned` (pending approval)
 - Limits:
-    - Max generated tasks in `new` (default 5; configurable)
+    - Max pending auto-generated tasks in `planned` (default 5; configurable)
         - counts only `source=improvements_scan` tasks
-        - user-created `new` tasks not included
+        - user-created planned tasks not included
         - if limit reached, stop generating
-        - if limit already reached: skip sending the scan prompt (no new tasks possible)
+        - if limit already reached: skip sending the scan prompt (no additional pending tasks possible)
     - Dedupe by normalized title (best-effort)
 - UX:
-    - Suggested tasks appear in `new` immediately
-    - User drags to `planned` to queue for auto-run (or deletes)
+    - Suggested tasks appear in `planned` immediately, marked as pending approval
+    - User approves to queue for auto-run (or rejects/deletes)
 - Optional UI:
     - “Generate improvements” button (manual) in project settings or task detail
     - Banner/toast when generation skipped due to limit

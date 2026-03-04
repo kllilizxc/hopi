@@ -23,7 +23,7 @@ type CreateTaskInput = {
     projectId: string
     title: string
     description?: string
-    status?: 'new' | 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+    status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
     priority?: 'high' | 'medium' | 'low'
     workspaceId?: string
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'

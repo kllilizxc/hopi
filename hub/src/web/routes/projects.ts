@@ -24,7 +24,7 @@ const createProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
-    improvementsMaxGeneratedNew: z.number().int().min(1).max(50).optional()
+    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional()
 })
 
 const updateProjectSchema = z.object({
@@ -41,7 +41,7 @@ const updateProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
-    improvementsMaxGeneratedNew: z.number().int().min(1).max(50).optional()
+    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional()
 })
 
 const listQuerySchema = z.object({
@@ -127,7 +127,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxGeneratedNew: parsed.data.improvementsMaxGeneratedNew
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
 
         const createdWorkspaces: StoredWorkspace[] = []
@@ -242,7 +242,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxGeneratedNew: parsed.data.improvementsMaxGeneratedNew
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
 
         if (!updated) {

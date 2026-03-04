@@ -224,6 +224,7 @@ export function updateTaskByNamespace(
         agentFlavor?: string | null
         permissionMode?: string | null
         modelMode?: string | null
+        source?: string | null
         attachments?: unknown
         subTasks?: unknown
         subTasksUpdatedAt?: number | null
@@ -254,6 +255,7 @@ export function updateTaskByNamespace(
         agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
         permissionMode: patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode,
         modelMode: patch.modelMode !== undefined ? patch.modelMode : current.modelMode,
+        source: patch.source !== undefined ? patch.source : current.source,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
         subTasks: patch.subTasks !== undefined ? patch.subTasks : current.subTasks,
         subTasksUpdatedAt: patch.subTasksUpdatedAt !== undefined
@@ -290,6 +292,7 @@ export function updateTaskByNamespace(
             agent_flavor = @agent_flavor,
             permission_mode = @permission_mode,
             model_mode = @model_mode,
+            source = @source,
             attachments = @attachments,
             sub_tasks = @sub_tasks,
             sub_tasks_updated_at = @sub_tasks_updated_at,
@@ -313,6 +316,7 @@ export function updateTaskByNamespace(
         agent_flavor: next.agentFlavor,
         permission_mode: next.permissionMode,
         model_mode: next.modelMode,
+        source: next.source,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
         sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,
         sub_tasks_updated_at: next.subTasksUpdatedAt,
@@ -348,14 +352,14 @@ export function deleteTaskByNamespace(db: Database, taskId: string, namespace: s
     return result.changes > 0
 }
 
-export function countGeneratedNewTasks(db: Database, projectId: string, namespace: string): number {
+export function countPendingImprovementsTasks(db: Database, projectId: string, namespace: string): number {
     const row = db.prepare(`
         SELECT COUNT(1) AS count
         FROM tasks t
         JOIN projects p ON p.id = t.project_id
         WHERE t.project_id = ?
             AND p.namespace = ?
-            AND t.status = 'new'
+            AND t.status = 'planned'
             AND t.archived_at IS NULL
             AND t.source = 'improvements_scan'
     `).get(projectId, namespace) as { count: number } | undefined
@@ -379,6 +383,7 @@ export function listPlannedTasksByProjectAndNamespace(
         WHERE t.project_id = ?
             AND p.namespace = ?
             AND t.status = 'planned'
+            AND (t.source IS NULL OR t.source != 'improvements_scan')
             AND t.archived_at IS NULL
             AND t.active_session_id IS NULL
         ORDER BY

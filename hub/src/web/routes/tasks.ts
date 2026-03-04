@@ -242,6 +242,7 @@ const updateTaskSchema = z.object({
     title: z.string().min(1).max(255).optional(),
     description: z.string().max(200_000).nullable().optional(),
     status: TaskStatusSchema.optional(),
+    source: z.literal('manual').optional(),
     priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
     workspaceId: z.string().min(1).nullable().optional(),
     agentFlavor: AgentFlavorSchema.nullable().optional(),
@@ -1203,7 +1204,7 @@ export function createTasksRoutes(options: {
             projectId,
             title: parsed.data.title,
             description: parsed.data.description ?? null,
-            status: parsed.data.status ?? 'new',
+            status: parsed.data.status ?? 'planned',
             priority: parsed.data.priority ?? null,
             sortKey: parsed.data.sortKey ?? Date.now(),
             workspaceId: parsed.data.workspaceId ?? null,
@@ -1266,6 +1267,7 @@ export function createTasksRoutes(options: {
             title: parsed.data.title,
             description: parsed.data.description,
             status: parsed.data.status,
+            source: parsed.data.source,
             priority: parsed.data.priority,
             workspaceId: parsed.data.workspaceId,
             agentFlavor: parsed.data.agentFlavor,
@@ -1330,8 +1332,8 @@ export function createTasksRoutes(options: {
         if (!existing) {
             return c.json({ error: 'Task not found' }, 404)
         }
-        if (existing.source !== 'improvements_scan' || existing.status !== 'new') {
-            return c.json({ error: 'Only auto-generated new tasks can be rejected' }, 409)
+        if (existing.source !== 'improvements_scan') {
+            return c.json({ error: 'Only pending auto-generated tasks can be rejected' }, 409)
         }
 
         const ok = options.store.tasks.deleteTaskByNamespace(taskId, namespace)

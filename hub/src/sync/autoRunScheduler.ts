@@ -9,6 +9,19 @@ function toProjectKey(namespace: string, projectId: string): ProjectKey {
     return `${namespace}:${projectId}`
 }
 
+function isTaskAutoRunnable(task: {
+    status: string
+    archivedAt: number | null
+    activeSessionId: string | null
+    source: string | null
+}): boolean {
+    if (task.status !== 'planned') return false
+    if (task.archivedAt) return false
+    if (task.activeSessionId) return false
+    if (task.source === 'improvements_scan') return false
+    return true
+}
+
 export class AutoRunScheduler {
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly tickTimers: Map<ProjectKey, NodeJS.Timeout> = new Map()
@@ -76,7 +89,7 @@ export class AutoRunScheduler {
 
         if ((event.type === 'task-added' || event.type === 'task-updated') && event.projectId && event.taskId && event.namespace) {
             const task = this.store.tasks.getTaskByNamespace(event.taskId, event.namespace)
-            if (task?.status === 'planned' && !task.archivedAt) {
+            if (task && isTaskAutoRunnable(task)) {
                 this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
             }
         }
@@ -119,9 +132,7 @@ export class AutoRunScheduler {
                 if (started >= capacity) {
                     break
                 }
-                if (task.archivedAt) continue
-                if (task.status !== 'planned') continue
-                if (task.activeSessionId) continue
+                if (!isTaskAutoRunnable(task)) continue
 
                 const result = await startSessionFromTask({
                     store: this.store,
@@ -164,4 +175,3 @@ export class AutoRunScheduler {
         }
     }
 }
-

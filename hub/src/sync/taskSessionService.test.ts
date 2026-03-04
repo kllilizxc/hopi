@@ -33,7 +33,8 @@ describe('startSessionFromTask', () => {
             projectId,
             title: 'Task',
             status: 'planned',
-            workspaceId
+            workspaceId,
+            source: 'improvements_scan'
         })
 
         const spawned = store.sessions.getOrCreateSession(
@@ -96,6 +97,9 @@ describe('startSessionFromTask', () => {
         resolveSendMessage?.()
         const result = await pending
         expect(result.ok).toBe(true)
+        if (result.ok) {
+            expect(result.task.source).toBe('manual')
+        }
     })
 
     it('uses task agent flavor when no start-session override is provided', async () => {

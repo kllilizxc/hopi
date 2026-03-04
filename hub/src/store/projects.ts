@@ -19,7 +19,8 @@ type DbProjectRow = {
     auto_run_enabled: number
     max_running_sessions: number
     improvements_enabled: number
-    improvements_max_generated_new: number
+    improvements_max_pending_tasks?: number
+    improvements_max_generated_new?: number
     last_improvements_at: number | null
     created_at: number
     updated_at: number
@@ -52,7 +53,7 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         autoRunEnabled: Boolean(row.auto_run_enabled),
         maxRunningSessions: row.max_running_sessions,
         improvementsEnabled: Boolean(row.improvements_enabled),
-        improvementsMaxGeneratedNew: row.improvements_max_generated_new,
+        improvementsMaxPendingTasks: row.improvements_max_pending_tasks ?? row.improvements_max_generated_new ?? 5,
         lastImprovementsAt: row.last_improvements_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -79,7 +80,7 @@ export function createProject(
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
     }
 ): StoredProject {
     const now = Date.now()
@@ -90,7 +91,7 @@ export function createProject(
             default_agent_flavor, default_permission_mode, default_model_mode,
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
             auto_run_enabled, max_running_sessions,
-            improvements_enabled, improvements_max_generated_new,
+            improvements_enabled, improvements_max_pending_tasks,
             created_at, updated_at, archived_at
         ) VALUES (
             @id, @namespace, @machine_id,
@@ -98,7 +99,7 @@ export function createProject(
             @default_agent_flavor, @default_permission_mode, @default_model_mode,
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
             @auto_run_enabled, @max_running_sessions,
-            @improvements_enabled, @improvements_max_generated_new,
+            @improvements_enabled, @improvements_max_pending_tasks,
             @created_at, @updated_at, NULL
         )
     `).run({
@@ -118,7 +119,7 @@ export function createProject(
         auto_run_enabled: project.autoRunEnabled ? 1 : 0,
         max_running_sessions: project.maxRunningSessions ?? 5,
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
-        improvements_max_generated_new: project.improvementsMaxGeneratedNew ?? 5,
+        improvements_max_pending_tasks: project.improvementsMaxPendingTasks ?? 5,
         created_at: now,
         updated_at: now
     })
@@ -176,7 +177,7 @@ export function updateProject(
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         improvementsEnabled?: boolean
-        improvementsMaxGeneratedNew?: number
+        improvementsMaxPendingTasks?: number
         lastImprovementsAt?: number | null
         archivedAt?: number | null
     }
@@ -201,7 +202,7 @@ export function updateProject(
         autoRunEnabled: patch.autoRunEnabled !== undefined ? patch.autoRunEnabled : current.autoRunEnabled,
         maxRunningSessions: patch.maxRunningSessions ?? current.maxRunningSessions,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
-        improvementsMaxGeneratedNew: patch.improvementsMaxGeneratedNew ?? current.improvementsMaxGeneratedNew,
+        improvementsMaxPendingTasks: patch.improvementsMaxPendingTasks ?? current.improvementsMaxPendingTasks,
         lastImprovementsAt: patch.lastImprovementsAt !== undefined ? patch.lastImprovementsAt : current.lastImprovementsAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
@@ -222,7 +223,7 @@ export function updateProject(
             auto_run_enabled = @auto_run_enabled,
             max_running_sessions = @max_running_sessions,
             improvements_enabled = @improvements_enabled,
-            improvements_max_generated_new = @improvements_max_generated_new,
+            improvements_max_pending_tasks = @improvements_max_pending_tasks,
             last_improvements_at = @last_improvements_at,
             updated_at = @updated_at,
             archived_at = @archived_at
@@ -243,7 +244,7 @@ export function updateProject(
         auto_run_enabled: next.autoRunEnabled ? 1 : 0,
         max_running_sessions: next.maxRunningSessions,
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
-        improvements_max_generated_new: next.improvementsMaxGeneratedNew,
+        improvements_max_pending_tasks: next.improvementsMaxPendingTasks,
         last_improvements_at: next.lastImprovementsAt,
         updated_at: now,
         archived_at: next.archivedAt

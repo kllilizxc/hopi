@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite'
 import type { StoredTask } from './types'
 import {
     archiveTaskByNamespace,
-    countGeneratedNewTasks,
+    countPendingImprovementsTasks,
     createTask,
     deleteTaskByNamespace,
     getTask,
@@ -84,6 +84,7 @@ export class TaskStore {
             agentFlavor?: string | null
             permissionMode?: string | null
             modelMode?: string | null
+            source?: string | null
             attachments?: unknown
             subTasks?: unknown
             subTasksUpdatedAt?: number | null
@@ -105,7 +106,7 @@ export class TaskStore {
         return deleteTaskByNamespace(this.db, taskId, namespace)
     }
 
-    countGeneratedNewTasks(projectId: string, namespace: string): number {
-        return countGeneratedNewTasks(this.db, projectId, namespace)
+    countPendingImprovementsTasks(projectId: string, namespace: string): number {
+        return countPendingImprovementsTasks(this.db, projectId, namespace)
     }
 }

@@ -183,7 +183,8 @@ export async function startSessionFromTask(options: {
 
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
         activeSessionId: spawn.sessionId,
-        status: 'in_progress'
+        status: 'in_progress',
+        source: task.source === 'improvements_scan' ? 'manual' : undefined
     })
     if (!updatedTask) {
         return { ok: false, error: 'Task not found' }

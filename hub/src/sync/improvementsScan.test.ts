@@ -45,7 +45,7 @@ function createActiveProjectSession(store: Store, options: {
 }
 
 describe('runImprovementsScan', () => {
-    it('creates New tasks from codex agent JSON response', async () => {
+    it('creates planned tasks from codex agent JSON response', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -118,7 +118,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 5
+                improvementsMaxPendingTasks: 5
             },
             finishedTask,
             targetSessionId: sessionId,
@@ -134,7 +134,7 @@ describe('runImprovementsScan', () => {
             .filter((task) => task.source === 'improvements_scan')
 
         expect(generated.length).toBe(2)
-        expect(generated.every((task) => task.status === 'new')).toBe(true)
+        expect(generated.every((task) => task.status === 'planned')).toBe(true)
         expect(generated.every((task) => task.workspaceId === workspaceId)).toBe(true)
         const first = generated.find((task) => task.title === '统一归档态视觉规范')
         const second = generated.find((task) => task.title === '增加归档样式回归用例')
@@ -142,7 +142,7 @@ describe('runImprovementsScan', () => {
         expect(second?.priority).toBe('low')
     })
 
-    it('creates New tasks from claude output assistant JSON response', async () => {
+    it('creates planned tasks from claude output assistant JSON response', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-2'
@@ -197,7 +197,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 5
+                improvementsMaxPendingTasks: 5
             },
             finishedTask,
             targetSessionId: sessionId,
@@ -210,7 +210,7 @@ describe('runImprovementsScan', () => {
         expect(result.createdTaskIds.length).toBe(1)
         const created = store.tasks.getTaskByNamespace(result.createdTaskIds[0]!, namespace)
         expect(created?.title).toBe('优化归档卡片可读性')
-        expect(created?.status).toBe('new')
+        expect(created?.status).toBe('planned')
         expect(created?.priority).toBe('medium')
         expect(created?.source).toBe('improvements_scan')
     })
@@ -272,7 +272,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 5
+                improvementsMaxPendingTasks: 5
             },
             finishedTask,
             targetSessionId: sessionId,
@@ -347,7 +347,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 5
+                improvementsMaxPendingTasks: 5
             },
             finishedTask,
             targetSessionId: sessionId,
@@ -428,7 +428,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 5
+                improvementsMaxPendingTasks: 5
             },
             finishedTask,
             targetSessionId: sessionId,
@@ -506,7 +506,7 @@ describe('runImprovementsScan', () => {
             project: {
                 id: projectId,
                 name: 'HOPI',
-                improvementsMaxGeneratedNew: 10
+                improvementsMaxPendingTasks: 10
             },
             finishedTask,
             targetSessionId: sessionId,
