@@ -6,6 +6,7 @@ import {
     type FormEvent as ReactFormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
     type SyntheticEvent as ReactSyntheticEvent,
+    memo,
     useCallback,
     useEffect,
     useMemo,
@@ -46,7 +47,7 @@ function setDraftForScope(scope: string, text: string): void {
     }
 }
 
-export function HappyComposer(props: {
+export const HappyComposer = memo(function HappyComposer(props: {
     draftScope: string
     disabled?: boolean
     permissionMode?: PermissionMode
@@ -384,15 +385,28 @@ export function HappyComposer(props: {
             start: e.target.selectionStart,
             end: e.target.selectionEnd
         }
-        setInputState({ text: e.target.value, selection })
+        const newText = e.target.value
+        setInputState(prev => {
+            // Skip update if text and selection haven't changed
+            if (prev.text === newText && prev.selection.start === selection.start && prev.selection.end === selection.end) {
+                return prev
+            }
+            return { text: newText, selection }
+        })
     }, [])
 
     const handleSelect = useCallback((e: ReactSyntheticEvent<HTMLTextAreaElement>) => {
         const target = e.target as HTMLTextAreaElement
-        setInputState(prev => ({
-            ...prev,
-            selection: { start: target.selectionStart, end: target.selectionEnd }
-        }))
+        setInputState(prev => {
+            // Skip update if selection hasn't changed
+            if (prev.selection.start === target.selectionStart && prev.selection.end === target.selectionEnd) {
+                return prev
+            }
+            return {
+                ...prev,
+                selection: { start: target.selectionStart, end: target.selectionEnd }
+            }
+        })
     }, [])
 
     const handlePaste = useCallback(async (e: ReactClipboardEvent<HTMLTextAreaElement>) => {
@@ -636,4 +650,4 @@ export function HappyComposer(props: {
             </div>
         </div>
     )
-}
+})

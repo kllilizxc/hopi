@@ -120,9 +120,9 @@ export function TaskSessionChat(props: {
 
     const getAutocompleteSuggestions = useCallback(async (query: string) => {
         if (query.startsWith('$')) {
-            return await getSkillSuggestions(query)
+            return getSkillSuggestions(query)
         }
-        return await getSlashSuggestions(query)
+        return getSlashSuggestions(query)
     }, [getSkillSuggestions, getSlashSuggestions])
 
     const refreshSession = useCallback(() => {

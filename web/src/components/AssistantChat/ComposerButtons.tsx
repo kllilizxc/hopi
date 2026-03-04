@@ -1,4 +1,5 @@
 import { ComposerPrimitive } from '@assistant-ui/react'
+import { memo } from 'react'
 import type { ConversationStatus } from '@/realtime/types'
 import { useTranslation } from '@/lib/use-translation'
 import {
@@ -14,7 +15,7 @@ import {
     VoiceAssistantIcon
 } from '@/assets/icons'
 
-function UnifiedButton(props: {
+const UnifiedButton = memo(function UnifiedButton(props: {
     canSend: boolean
     voiceStatus: ConversationStatus
     voiceEnabled: boolean
@@ -82,9 +83,9 @@ function UnifiedButton(props: {
             {icon}
         </button>
     )
-}
+})
 
-export function ComposerButtons(props: {
+export const ComposerButtons = memo(function ComposerButtons(props: {
     canSend: boolean
     controlsDisabled: boolean
     showSettingsButton: boolean
@@ -201,4 +202,4 @@ export function ComposerButtons(props: {
             />
         </div>
     )
-}
+})

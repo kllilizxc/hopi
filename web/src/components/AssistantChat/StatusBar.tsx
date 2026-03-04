@@ -1,6 +1,6 @@
 import { getPermissionModeLabel, getPermissionModeTone, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import type { PermissionModeTone } from '@hapi/protocol'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import type { AgentState, ModelMode, PermissionMode } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
@@ -101,7 +101,7 @@ function getContextWarning(contextSize: number, maxContextSize: number, t: (key:
     }
 }
 
-export function StatusBar(props: {
+export const StatusBar = memo(function StatusBar(props: {
     active: boolean
     thinking: boolean
     agentState: AgentState | null | undefined
@@ -163,4 +163,4 @@ export function StatusBar(props: {
             ) : null}
         </div>
     )
-}
+})
