@@ -32,6 +32,7 @@ import { isBunCompiled, projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 import { HAPI_CLI_WORKING_DIRECTORY_ENV } from '@/utils/workingDirectory';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 /**
  * Resolve the TypeScript entrypoint for development mode.
@@ -109,6 +110,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   
   const { command: spawnCommand, args: spawnArgs } = getHappyCliCommand(args);
   const spawnOptions: SpawnOptions = { ...options };
+  const normalizedTargetCwd = normalizeCwd(options.cwd) ?? process.cwd();
 
   // Sanity check that the entrypoint path exists
   if (!isBunCompiled()) {
@@ -136,6 +138,22 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
       }
     }
   }
-  
-  return spawn(spawnCommand, spawnArgs, spawnOptions);
+
+  // Apply strict workspace write sandboxing when enabled (macOS: sandbox-exec, Linux: bwrap).
+  // We treat the *target* cwd (not necessarily spawnOptions.cwd) as the workspace root.
+  const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+    workspaceRoot: normalizedTargetCwd,
+    command: spawnCommand,
+    args: spawnArgs,
+    cwd: (normalizeCwd(spawnOptions.cwd) ?? process.cwd()),
+    env: (spawnOptions.env ?? process.env) as NodeJS.ProcessEnv,
+    shell: spawnOptions.shell
+  });
+
+  return spawn(wrapped.command, wrapped.args, {
+    ...spawnOptions,
+    cwd: wrapped.cwd,
+    env: wrapped.env,
+    shell: wrapped.shell ?? spawnOptions.shell
+  });
 }

@@ -5,6 +5,7 @@ import { AcpMessageHandler } from './AcpMessageHandler';
 import { logger } from '@/ui/logger';
 import { withRetry } from '@/utils/time';
 import packageJson from '../../../../package.json';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
 type PendingPermission = {
     resolve: (result: { outcome: { outcome: string; optionId?: string } }) => void;
@@ -32,15 +33,18 @@ export class AcpSdkBackend implements AgentBackend {
     private static readonly PRE_PROMPT_UPDATE_QUIET_PERIOD_MS = 200;
     private static readonly PRE_PROMPT_UPDATE_DRAIN_TIMEOUT_MS = 1200;
 
-    constructor(private readonly options: { command: string; args?: string[]; env?: Record<string, string> }) {}
+    constructor(private readonly options: { command: string; args?: string[]; env?: NodeJS.ProcessEnv; cwd?: string; workspaceRoot?: string }) {}
 
     async initialize(): Promise<void> {
         if (this.transport) return;
 
+        const cwd = this.options.cwd ?? resolveCliWorkingDirectory();
         this.transport = new AcpStdioTransport({
             command: this.options.command,
             args: this.options.args,
-            env: this.options.env
+            env: this.options.env,
+            cwd,
+            workspaceRoot: this.options.workspaceRoot ?? cwd
         });
 
         this.transport.onNotification((method, params) => {

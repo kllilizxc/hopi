@@ -1,6 +1,7 @@
 import { spawn, type SpawnOptions, type StdioOptions } from 'node:child_process';
 import { logger } from '@/ui/logger';
 import { killProcessByChildProcess } from '@/utils/process';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 const DEFAULT_ABORT_EXIT_CODES = [130, 137, 143];
 const DEFAULT_ABORT_SIGNALS: NodeJS.Signals[] = ['SIGTERM'];
@@ -42,16 +43,25 @@ export async function spawnWithAbort(options: SpawnWithAbortOptions): Promise<vo
         logger.debug(`${logPrefix}${message}`, ...args);
     };
 
+    const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+        workspaceRoot: options.cwd,
+        command: options.command,
+        args: options.args,
+        cwd: options.cwd,
+        env: options.env,
+        shell: options.shell
+    });
+
     await new Promise<void>((resolve, reject) => {
         // Note: We intentionally do NOT pass signal to spawn() because Node.js's
         // built-in abort handling only kills the direct child, not grandchildren.
         // Instead, we handle abort ourselves using killProcessByChildProcess which
         // kills the entire process tree to prevent orphan processes.
-        const child = spawn(options.command, options.args, {
+        const child = spawn(wrapped.command, wrapped.args, {
             stdio,
-            cwd: options.cwd,
-            env: options.env,
-            shell: options.shell
+            cwd: wrapped.cwd,
+            env: wrapped.env,
+            shell: wrapped.shell ?? options.shell
         });
 
         let abortKillTimeout: NodeJS.Timeout | null = null;

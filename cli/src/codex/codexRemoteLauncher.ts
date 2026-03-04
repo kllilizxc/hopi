@@ -65,8 +65,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.session = session;
         this.useAppServer = shouldUseAppServer();
-        this.mcpClient = this.useAppServer ? null : new CodexMcpClient();
-        this.appServerClient = this.useAppServer ? new CodexAppServerClient() : null;
+        this.mcpClient = this.useAppServer ? null : new CodexMcpClient({ workspaceRoot: session.path });
+        this.appServerClient = this.useAppServer ? new CodexAppServerClient({ workspaceRoot: session.path }) : null;
     }
 
     protected createDisplay(context: RemoteLauncherDisplayContext): React.ReactElement {

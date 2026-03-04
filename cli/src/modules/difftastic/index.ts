@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { join, resolve } from 'path';
 import { platform, arch } from 'os';
 import { runtimePath } from '@/projectPath';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 export interface DifftasticResult {
     exitCode: number
@@ -34,16 +35,26 @@ function getBinaryPath(): string {
  */
 export function run(args: string[], options?: DifftasticOptions): Promise<DifftasticResult> {
     const binaryPath = getBinaryPath();
+    const cwd = options?.cwd ?? process.cwd();
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        // Force color output when needed
+        FORCE_COLOR: '1'
+    };
+    const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+        workspaceRoot: cwd,
+        command: binaryPath,
+        args,
+        cwd,
+        env
+    });
     
     return new Promise((resolve, reject) => {
-        const child = spawn(binaryPath, args, {
+        const child = spawn(wrapped.command, wrapped.args, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: options?.cwd,
-            env: {
-                ...process.env,
-                // Force color output when needed
-                FORCE_COLOR: '1'
-            }
+            cwd: wrapped.cwd,
+            env: wrapped.env,
+            shell: wrapped.shell
         });
 
         let stdout = '';

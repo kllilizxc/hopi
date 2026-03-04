@@ -7,6 +7,7 @@ import type {
     TerminalReadyPayload
 } from '@hapi/protocol'
 import type { TerminalSession } from './types'
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites'
 
 type TerminalRuntime = TerminalSession & {
     proc: Bun.Subprocess
@@ -164,9 +165,17 @@ export class TerminalManager {
         const decoder = new TextDecoder()
 
         try {
-            const proc = Bun.spawn([shell], {
+            const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+                workspaceRoot: sessionPath,
+                command: shell,
+                args: [],
                 cwd: sessionPath,
-                env: this.filteredEnv,
+                env: this.filteredEnv
+            })
+
+            const proc = Bun.spawn([wrapped.command, ...wrapped.args], {
+                cwd: wrapped.cwd,
+                env: wrapped.env,
                 terminal: {
                     cols,
                     rows,

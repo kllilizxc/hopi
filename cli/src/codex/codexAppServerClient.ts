@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { logger } from '@/ui/logger';
 import { killProcessByChildProcess } from '@/utils/process';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 import type {
     InitializeParams,
     InitializeResponse,
@@ -65,22 +66,47 @@ export class CodexAppServerClient {
     private readonly requestHandlers = new Map<string, RequestHandler>();
     private notificationHandler: ((method: string, params: unknown) => void) | null = null;
     private protocolError: Error | null = null;
+    private readonly workspaceRoot: string | null;
 
     static readonly DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
+
+    constructor(options?: { workspaceRoot?: string | null }) {
+        this.workspaceRoot = options?.workspaceRoot ?? null;
+    }
 
     async connect(): Promise<void> {
         if (this.connected) {
             return;
         }
 
-        this.process = spawn('codex', ['app-server'], {
-            env: Object.keys(process.env).reduce((acc, key) => {
-                const value = process.env[key];
+        const baseEnv: NodeJS.ProcessEnv = Object.keys(process.env).reduce((acc, key) => {
+            const value = process.env[key];
+            if (typeof value === 'string') acc[key] = value;
+            return acc;
+        }, {} as Record<string, string>);
+
+        const baseSpec = {
+            command: 'codex',
+            args: ['app-server'],
+            cwd: this.workspaceRoot ?? process.cwd(),
+            env: baseEnv,
+            shell: process.platform === 'win32'
+        };
+
+        const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+            workspaceRoot: this.workspaceRoot ?? process.cwd(),
+            ...baseSpec
+        });
+
+        this.process = spawn(wrapped.command, wrapped.args, {
+            env: Object.keys(wrapped.env).reduce((acc, key) => {
+                const value = wrapped.env[key];
                 if (typeof value === 'string') acc[key] = value;
                 return acc;
             }, {} as Record<string, string>),
             stdio: ['pipe', 'pipe', 'pipe'],
-            shell: process.platform === 'win32'
+            shell: wrapped.shell,
+            cwd: wrapped.cwd
         });
 
         this.process.stdout.setEncoding('utf8');

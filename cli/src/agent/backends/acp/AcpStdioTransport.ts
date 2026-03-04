@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { logger } from '@/ui/logger';
 import { killProcessByChildProcess } from '@/utils/process';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 interface JsonRpcRequest {
     jsonrpc: '2.0';
@@ -52,12 +53,26 @@ export class AcpStdioTransport {
     constructor(options: {
         command: string;
         args?: string[];
-        env?: Record<string, string>;
+        env?: NodeJS.ProcessEnv;
+        cwd?: string;
+        workspaceRoot?: string;
     }) {
-        this.process = spawn(options.command, options.args ?? [], {
-            env: options.env,
-            stdio: ['pipe', 'pipe', 'pipe'],
+        const baseCwd = options.cwd ?? process.cwd();
+        const baseEnv = options.env ?? process.env;
+        const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+            workspaceRoot: options.workspaceRoot ?? baseCwd,
+            command: options.command,
+            args: options.args ?? [],
+            cwd: baseCwd,
+            env: baseEnv,
             shell: process.platform === 'win32'
+        });
+
+        this.process = spawn(wrapped.command, wrapped.args, {
+            cwd: wrapped.cwd,
+            env: wrapped.env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: wrapped.shell
         });
 
         this.process.stdout.setEncoding('utf8');

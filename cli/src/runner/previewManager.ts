@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { logger } from '@/ui/logger';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 const PREVIEW_LOG_LIMIT = 400;
 const READY_MARKER = /::hapi-preview-url::(\S+)/i;
@@ -283,10 +284,31 @@ export class PreviewManager {
       env.HAPI_PREVIEW_PORT = String(port);
     }
 
-    const child = spawn(selected.command, {
-      cwd: selected.cwd,
-      shell: true,
-      env
+    const baseSpec = process.platform === 'win32'
+      ? {
+        command: selected.command,
+        args: [] as string[],
+        cwd: selected.cwd,
+        env,
+        shell: true
+      }
+      : {
+        command: '/bin/sh',
+        args: ['-c', selected.command],
+        cwd: selected.cwd,
+        env,
+        shell: false
+      };
+
+    const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+      workspaceRoot: options.rootPath,
+      ...baseSpec
+    });
+
+    const child = spawn(wrapped.command, wrapped.args, {
+      cwd: wrapped.cwd,
+      shell: wrapped.shell,
+      env: wrapped.env
     });
 
     this.process = child;

@@ -16,11 +16,13 @@ export function createOpencodeBackend(opts: {
     cwd?: string;
 }): AcpSdkBackend {
     const env = buildOpencodeEnv();
-    const args = ['acp', '--cwd', opts.cwd ?? resolveCliWorkingDirectory()];
+    const cwd = opts.cwd ?? resolveCliWorkingDirectory();
+    const args = ['acp', '--cwd', cwd];
 
     return new AcpSdkBackend({
         command: 'opencode',
         args,
-        env: filterEnv(env)
+        env: filterEnv(env),
+        cwd
     });
 }
