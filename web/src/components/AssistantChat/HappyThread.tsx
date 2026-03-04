@@ -67,6 +67,9 @@ type PreviewThreadEvent = {
     tone?: 'info' | 'success' | 'error'
 }
 
+const EMPTY_MERGE_EVENTS: MergeThreadEvent[] = []
+const EMPTY_PREVIEW_EVENTS: PreviewThreadEvent[] = []
+
 export function HappyThread(props: {
     api: ApiClient
     sessionId: string
@@ -303,8 +306,8 @@ export function HappyThread(props: {
     }, [props.isLoadingMoreMessages])
 
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
-    const mergeEvents = props.mergeEvents ?? []
-    const previewEvents = props.previewEvents ?? []
+    const mergeEvents = props.mergeEvents ?? EMPTY_MERGE_EVENTS
+    const previewEvents = props.previewEvents ?? EMPTY_PREVIEW_EVENTS
     const chatContextValue = useMemo(() => ({
         api: props.api,
         sessionId: props.sessionId,

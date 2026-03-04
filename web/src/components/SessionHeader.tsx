@@ -112,22 +112,27 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
 }
 
 function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeaderProps): boolean {
-    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs) {
+    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted) {
         return false
     }
 
     const prevSession = prev.session
     const nextSession = next.session
 
-    return prevSession.id === nextSession.id
-        && prevSession.modelMode === nextSession.modelMode
-        && prevSession.metadata?.name === nextSession.metadata?.name
-        && prevSession.metadata?.summary?.text === nextSession.metadata?.summary?.text
-        && prevSession.metadata?.path === nextSession.metadata?.path
-        && prevSession.metadata?.flavor === nextSession.metadata?.flavor
-        && prevSession.metadata?.worktree?.branch === nextSession.metadata?.worktree?.branch
-        && prevSession.metadata?.projectId === nextSession.metadata?.projectId
-        && prevSession.metadata?.taskId === nextSession.metadata?.taskId
+    if (prevSession.id !== nextSession.id || prevSession.modelMode !== nextSession.modelMode) {
+        return false
+    }
+
+    const prevMetadata = prevSession.metadata
+    const nextMetadata = nextSession.metadata
+
+    return prevMetadata?.name === nextMetadata?.name
+        && prevMetadata?.summary?.text === nextMetadata?.summary?.text
+        && prevMetadata?.path === nextMetadata?.path
+        && prevMetadata?.flavor === nextMetadata?.flavor
+        && prevMetadata?.worktree?.branch === nextMetadata?.worktree?.branch
+        && prevMetadata?.projectId === nextMetadata?.projectId
+        && prevMetadata?.taskId === nextMetadata?.taskId
 }
 
 export const SessionHeader = memo(SessionHeaderImpl, areSessionHeaderPropsEqual)

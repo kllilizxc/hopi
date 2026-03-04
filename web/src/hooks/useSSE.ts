@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { isObject } from '@hapi/protocol'
 import type {
+    DecryptedMessage,
     ModelMode,
     PermissionMode,
     SessionResponse,
@@ -277,6 +278,39 @@ export function useSSE(options: {
         }, getVisibilityState())
         const eventSource = new EventSource(url)
         eventSourceRef.current = eventSource
+        const queuedMessagesBySession = new Map<string, DecryptedMessage[]>()
+        let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+        const flushQueuedMessages = () => {
+            if (queuedMessagesBySession.size === 0) {
+                return
+            }
+
+            for (const [sessionId, messages] of queuedMessagesBySession.entries()) {
+                ingestIncomingMessages(sessionId, messages)
+            }
+            queuedMessagesBySession.clear()
+        }
+
+        const scheduleQueuedMessagesFlush = () => {
+            if (flushTimer !== null) {
+                return
+            }
+            flushTimer = setTimeout(() => {
+                flushTimer = null
+                flushQueuedMessages()
+            }, 16)
+        }
+
+        const enqueueIncomingMessage = (sessionId: string, message: DecryptedMessage) => {
+            const queued = queuedMessagesBySession.get(sessionId)
+            if (queued) {
+                queued.push(message)
+            } else {
+                queuedMessagesBySession.set(sessionId, [message])
+            }
+            scheduleQueuedMessagesFlush()
+        }
 
         const handleSyncEvent = (event: SyncEvent) => {
             if (event.type === 'connection-changed') {
@@ -295,13 +329,14 @@ export function useSSE(options: {
             }
 
             if (event.type === 'message-received') {
-                ingestIncomingMessages(event.sessionId, [event.message])
+                enqueueIncomingMessage(event.sessionId, event.message)
             }
 
             if (event.type === 'session-added' || event.type === 'session-removed') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                 if ('sessionId' in event) {
                     if (event.type === 'session-removed') {
+                        queuedMessagesBySession.delete(event.sessionId)
                         void queryClient.removeQueries({ queryKey: queryKeys.session(event.sessionId) })
                         clearMessageWindow(event.sessionId)
                     } else {
@@ -378,6 +413,11 @@ export function useSSE(options: {
         }
 
         return () => {
+            if (flushTimer !== null) {
+                clearTimeout(flushTimer)
+                flushTimer = null
+            }
+            flushQueuedMessages()
             eventSource.close()
             if (eventSourceRef.current === eventSource) {
                 eventSourceRef.current = null
