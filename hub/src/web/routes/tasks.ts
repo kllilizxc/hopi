@@ -112,15 +112,13 @@ function emitRealtimeToast(options: {
     body: string
     sessionId?: string
 }): void {
-    const handler = (options.engine as unknown as {
-        handleRealtimeEvent?: (event: unknown) => void
-    }).handleRealtimeEvent
+    const handler = options.engine.handleRealtimeEvent
 
     if (typeof handler !== 'function') {
         return
     }
 
-    handler({
+    handler.call(options.engine, {
         type: 'toast',
         namespace: options.namespace,
         data: {
@@ -139,15 +137,13 @@ function emitTaskUpdatedEvent(options: {
     projectId: string
     worktreeMergedAt: number | null
 }): void {
-    const handler = (options.engine as unknown as {
-        handleRealtimeEvent?: (event: unknown) => void
-    }).handleRealtimeEvent
+    const handler = options.engine.handleRealtimeEvent
 
     if (typeof handler !== 'function') {
         return
     }
 
-    handler({
+    handler.call(options.engine, {
         type: 'task-updated',
         taskId: options.taskId,
         projectId: options.projectId,

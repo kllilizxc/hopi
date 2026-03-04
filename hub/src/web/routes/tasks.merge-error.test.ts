@@ -401,6 +401,74 @@ describe('tasks merge route unexpected errors', () => {
         expect(mergeCalls).toBe(1)
     })
 
+    it('keeps merge success response when realtime handler depends on engine context', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-merge-handler-context'
+        const namespace = 'default'
+        seedMergeTask(store, {
+            namespace,
+            projectId: 'project-merge-handler-context',
+            taskId,
+            sessionId: 'session-merge-handler-context'
+        })
+
+        const engine = {
+            marker: true,
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId: 'session-merge-handler-context',
+                    session: {
+                        id: 'session-merge-handler-context',
+                        thinking: false,
+                        metadata: {
+                            worktree: {
+                                branch: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
+            },
+            async gitMergeWorktree() {
+                return {
+                    success: true,
+                    commitHash: 'ctx123'
+                }
+            },
+            handleRealtimeEvent(this: { marker?: boolean }, event: unknown) {
+                void event
+                if (!this.marker) {
+                    throw new Error('lost realtime handler context')
+                }
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            commitHash?: string | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.commitHash).toBe('ctx123')
+    })
+
     it('returns retry-scheduled response when post-auto-resolve retry fails transiently', async () => {
         const store = new Store(':memory:')
         const taskId = 'task-merge-auto-retry-scheduled'
