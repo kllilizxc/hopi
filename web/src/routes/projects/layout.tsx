@@ -6,7 +6,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { BackIcon, ProjectIcon, SessionIcon } from '@/components/icons'
-import { Badge } from '@/components/ui/badge'
+import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -394,14 +394,14 @@ function ProjectsListPanel(props: {
                                             ) : null}
                                         </div>
                                         <div className="flex flex-col items-end gap-1 shrink-0">
-                                            <Badge variant={machineVariant}>
+                                            <Tag variant={machineVariant}>
                                                 {machineLabel}
-                                            </Badge>
+                                            </Tag>
                                             <div className="text-[10px] text-[var(--app-hint)]">
                                                 {t('projects.workspaceCount', { n: project.workspaceCount })}
                                             </div>
                                             {project.archivedAt ? (
-                                                <Badge variant="warning">{t('projects.archived')}</Badge>
+                                                <Tag variant="warning">{t('projects.archived')}</Tag>
                                             ) : null}
                                         </div>
                                     </div>

@@ -16,7 +16,7 @@ import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
-import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
+import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
 
@@ -797,30 +797,27 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                                                         {t('projects.tasks.hasSession')}
                                                                     </div>
                                                                 ) : null}
-                                                                <span className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--app-fg)]">
+                                                                <Tag size="xs" variant="default">
                                                                     {getAgentFlavorLabel(cardAgentFlavor)}
                                                                     {usesProjectDefaultAgent ? ` · ${t('projects.task.agent.projectDefault')}` : ''}
-                                                                </span>
+                                                                </Tag>
                                                                 {task.priority ? (
-                                                                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getTaskPriorityClass(task.priority)}`}>
+                                                                    <Tag size="xs" variant={task.priority === 'high' ? 'error' : task.priority === 'medium' ? 'warning' : 'default'}>
                                                                         {t(getTaskPriorityLabelKey(task.priority))}
-                                                                    </span>
+                                                                    </Tag>
                                                                 ) : null}
                                                                 {subTaskProgress ? (
-                                                                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${subTaskProgress.completed === subTaskProgress.total
-                                                                        ? 'border-[var(--app-badge-success-border)] bg-[var(--app-badge-success-bg)] text-[var(--app-badge-success-text)]'
-                                                                        : 'border-[var(--app-border)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)]'
-                                                                        }`}>
+                                                                    <Tag size="xs" variant={subTaskProgress.completed === subTaskProgress.total ? 'success' : 'default'}>
                                                                         {t('projects.tasks.subtasksProgress', {
                                                                             completed: subTaskProgress.completed,
                                                                             total: subTaskProgress.total
                                                                         })}
-                                                                    </span>
+                                                                    </Tag>
                                                                 ) : null}
                                                                 {isGeneratedNew ? (
-                                                                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]">
+                                                                    <Tag size="xs" variant="warning">
                                                                         {t('projects.tasks.generated')}
-                                                                    </span>
+                                                                    </Tag>
                                                                 ) : null}
                                                             </div>
                                                             {isGeneratedNew ? (

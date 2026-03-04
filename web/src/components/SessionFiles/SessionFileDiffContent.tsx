@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Tag } from '@/components/ui/tag'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import type { UseSessionFileDiffViewerResult } from '@/hooks/useSessionFileDiffViewer'
 import { CheckIcon, CopyIcon } from '@/components/icons'
@@ -40,20 +41,36 @@ export function SessionFileDiffContent(props: {
             {props.viewer.hasDiffContent ? (
                 <div className="bg-[var(--app-bg)]">
                     <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center gap-2 border-b border-[var(--app-divider)]">
-                        <button
-                            type="button"
-                            onClick={() => props.viewer.setDisplayMode('diff')}
-                            className={`rounded px-3 py-1 text-xs font-semibold ${props.viewer.displayMode === 'diff' ? 'bg-[var(--app-button)] text-[var(--app-button-text)] opacity-80' : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'}`}
+                        <Tag
+                            asChild
+                            variant={props.viewer.displayMode === 'diff' ? 'primary' : 'secondary'}
+                            size="md"
+                            shape="rounded"
+                            bordered={false}
+                            className="cursor-pointer"
                         >
-                            {props.labels.diffTab}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => props.viewer.setDisplayMode('file')}
-                            className={`rounded px-3 py-1 text-xs font-semibold ${props.viewer.displayMode === 'file' ? 'bg-[var(--app-button)] text-[var(--app-button-text)] opacity-80' : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'}`}
+                            <button
+                                type="button"
+                                onClick={() => props.viewer.setDisplayMode('diff')}
+                            >
+                                {props.labels.diffTab}
+                            </button>
+                        </Tag>
+                        <Tag
+                            asChild
+                            variant={props.viewer.displayMode === 'file' ? 'primary' : 'secondary'}
+                            size="md"
+                            shape="rounded"
+                            bordered={false}
+                            className="cursor-pointer"
                         >
-                            {props.labels.fileTab}
-                        </button>
+                            <button
+                                type="button"
+                                onClick={() => props.viewer.setDisplayMode('file')}
+                            >
+                                {props.labels.fileTab}
+                            </button>
+                        </Tag>
 
                         {props.showStagedStatus ? (
                             <div className="ml-auto text-[10px] text-[var(--app-hint)]">

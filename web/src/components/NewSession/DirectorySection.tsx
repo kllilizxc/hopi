@@ -3,6 +3,7 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { useTranslation } from '@/lib/use-translation'
+import { Tag } from '@/components/ui/tag'
 
 export function DirectorySection(props: {
     directory: string
@@ -54,16 +55,22 @@ export function DirectorySection(props: {
                     <span className="text-xs text-[var(--app-hint)]">{t('newSession.recent')}:</span>
                     <div className="flex flex-wrap gap-1">
                         {props.recentPaths.map((path) => (
-                            <button
+                            <Tag
                                 key={path}
-                                type="button"
-                                onClick={() => props.onPathClick(path)}
-                                disabled={props.isDisabled}
-                                className="max-w-[200px] truncate rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-1.5 text-xs text-[var(--app-fg)] transition-colors hover:bg-[var(--app-secondary-bg)] disabled:opacity-50"
-                                title={path}
+                                asChild
+                                variant="default"
+                                size="lg"
+                                className="max-w-[200px] truncate cursor-pointer hover:bg-[var(--app-secondary-bg)] disabled:opacity-50"
                             >
-                                {path}
-                            </button>
+                                <button
+                                    type="button"
+                                    onClick={() => props.onPathClick(path)}
+                                    disabled={props.isDisabled}
+                                    title={path}
+                                >
+                                    {path}
+                                </button>
+                            </Tag>
                         ))}
                     </div>
                 </div>

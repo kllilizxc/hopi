@@ -6,7 +6,7 @@ import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
-import { Badge } from '@/components/ui/badge'
+import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -20,9 +20,9 @@ import { BackIcon } from '@/assets/icons'
 
 function WorkspacesBadge(props: { ok: boolean; label: string }) {
     return (
-        <Badge variant={props.ok ? 'success' : 'warning'}>
+        <Tag variant={props.ok ? 'success' : 'warning'}>
             {props.label}
-        </Badge>
+        </Tag>
     )
 }
 
@@ -38,9 +38,9 @@ function WorkspaceRow(props: {
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
                     <div className="flex items-center gap-2">
-                        {props.isDefault ? <Badge variant="default">{t('projects.workspaces.default')}</Badge> : null}
+                        {props.isDefault ? <Tag variant="default">{t('projects.workspaces.default')}</Tag> : null}
                         {props.exists === null ? (
-                            <Badge variant="default">{t('projects.workspaces.pathUnknown')}</Badge>
+                            <Tag variant="default">{t('projects.workspaces.pathUnknown')}</Tag>
                         ) : (
                             <WorkspacesBadge ok={props.exists} label={props.exists ? t('projects.workspaces.pathOk') : t('projects.workspaces.pathMissing')} />
                         )}

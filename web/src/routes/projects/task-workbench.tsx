@@ -8,7 +8,7 @@ import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
-import { Badge } from '@/components/ui/badge'
+import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -45,10 +45,10 @@ function getTaskPriorityLabelKey(priority: TaskPriority): string {
     return `projects.task.priority.${priority}`
 }
 
-function getTaskPriorityBadgeVariant(priority: TaskPriority): 'default' | 'warning' | 'destructive' {
+function getTaskPriorityTagVariant(priority: TaskPriority): 'default' | 'warning' | 'error' {
     switch (priority) {
         case 'high':
-            return 'destructive'
+            return 'error'
         case 'medium':
             return 'warning'
         case 'low':
@@ -345,10 +345,10 @@ function AttachSessionDialog(props: {
                                             </div>
                                         </div>
                                         <div className="shrink-0 flex items-center gap-2">
-                                            {linked ? <Badge variant="warning">{t('projects.sessions.linked')}</Badge> : null}
-                                            <Badge variant={session.active ? 'success' : 'default'}>
+                                            {linked ? <Tag variant="warning">{t('projects.sessions.linked')}</Tag> : null}
+                                            <Tag variant={session.active ? 'success' : 'default'}>
                                                 {session.active ? t('misc.online') : t('misc.offline')}
-                                            </Badge>
+                                            </Tag>
                                         </div>
                                     </div>
                                 </Pressable>
@@ -582,14 +582,14 @@ function TaskDetailsPanel(props: {
                                     disabled={isUpdatingTask}
                                 />
                                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
-                                    <Badge variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Badge>
-                                    <Badge variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Badge>
+                                    <Tag variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Tag>
+                                    <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Tag>
                                     {props.task.priority ? (
-                                        <Badge variant={getTaskPriorityBadgeVariant(props.task.priority)}>
+                                        <Tag variant={getTaskPriorityTagVariant(props.task.priority)}>
                                             {t(getTaskPriorityLabelKey(props.task.priority))}
-                                        </Badge>
+                                        </Tag>
                                     ) : null}
-                                    {sessionId ? <Badge variant="success">{t('projects.task.sessionLinked')}</Badge> : <Badge variant="warning">{t('projects.task.noSession')}</Badge>}
+                                    {sessionId ? <Tag variant="success">{t('projects.task.sessionLinked')}</Tag> : <Tag variant="warning">{t('projects.task.noSession')}</Tag>}
                                 </div>
                             </div>
 
@@ -1049,19 +1049,20 @@ function TabButton(props: {
     onClick: () => void
 }) {
     return (
-        <Pressable
-            disabled={props.disabled}
-            onClick={props.onClick}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${
-                props.active
-                    ? 'bg-[var(--app-link)] text-[var(--app-bg)] border-[var(--app-link)]'
-                    : props.disabled
-                        ? 'bg-[var(--app-bg)] text-[var(--app-hint)] border-[var(--app-border)] opacity-60'
-                        : 'bg-[var(--app-bg)] text-[var(--app-fg)] border-[var(--app-border)] hover:bg-[var(--app-subtle-bg)]'
-            }`}
+        <Tag
+            asChild
+            variant={props.active ? 'primary' : 'default'}
+            size="lg"
+            bordered={true}
+            className={props.disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--app-subtle-bg)]'}
         >
-            {props.label}
-        </Pressable>
+            <Pressable
+                disabled={props.disabled}
+                onClick={props.onClick}
+            >
+                {props.label}
+            </Pressable>
+        </Tag>
     )
 }
 
