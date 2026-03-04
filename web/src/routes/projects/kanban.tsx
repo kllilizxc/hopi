@@ -19,6 +19,7 @@ import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
+import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
@@ -180,12 +181,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
-    const selectedTaskId = useMemo(() => {
-        const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
-        return taskRouteMatch && taskRouteMatch.projectId === props.projectId
-            ? taskRouteMatch.taskId
-            : null
-    }, [matchRoute, props.projectId])
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const selectedTaskId = taskRouteMatch && taskRouteMatch.projectId === props.projectId
+        ? taskRouteMatch.taskId
+        : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
