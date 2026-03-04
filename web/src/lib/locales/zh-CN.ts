@@ -61,6 +61,8 @@ export default {
   'projects.columns.inReview': 'In Review',
   'projects.columns.blocked': '受阻',
   'projects.columns.finished': '已完成',
+  'projects.columns.collapse': '收起列',
+  'projects.columns.expand': '展开列',
 
   'projects.tasks.create': '新建任务',
   'projects.tasks.creating': '创建中…',

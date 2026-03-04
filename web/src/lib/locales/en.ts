@@ -61,6 +61,8 @@ export default {
   'projects.columns.inReview': 'In Review',
   'projects.columns.blocked': 'Blocked',
   'projects.columns.finished': 'Finished',
+  'projects.columns.collapse': 'Collapse column',
+  'projects.columns.expand': 'Expand column',
 
   'projects.tasks.create': 'New task',
   'projects.tasks.creating': 'Creating…',

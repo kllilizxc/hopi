@@ -19,9 +19,52 @@ import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
-import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
+import { ChevronDownIcon, ChevronRightIcon, PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
+const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = 'hapi.kanban.collapsed-columns.v1'
+const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
+    new: false,
+    planned: false,
+    in_progress: false,
+    in_review: false,
+    blocked: true,
+    finished: true
+}
+
+function loadCollapsedColumnsFromStorage(): Record<TaskStatus, boolean> {
+    const collapsed = { ...DEFAULT_COLLAPSED_COLUMNS }
+    if (typeof window === 'undefined') return collapsed
+
+    try {
+        const raw = window.localStorage.getItem(KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY)
+        if (!raw) return collapsed
+        const parsed: unknown = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object') return collapsed
+
+        const parsedRecord = parsed as Record<string, unknown>
+        for (const status of TASK_STATUS_VALUES) {
+            const value = parsedRecord[status]
+            if (typeof value === 'boolean') {
+                collapsed[status] = value
+            }
+        }
+    } catch {
+        return collapsed
+    }
+
+    return collapsed
+}
+
+function saveCollapsedColumnsToStorage(collapsedColumns: Record<TaskStatus, boolean>): void {
+    if (typeof window === 'undefined') return
+
+    try {
+        window.localStorage.setItem(KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY, JSON.stringify(collapsedColumns))
+    } catch {
+        // ignore storage quota/private mode errors
+    }
+}
 
 function asTaskStatus(value: string | undefined): TaskStatus | null {
     if (!value) return null
@@ -375,6 +418,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
 
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
+    const [collapsedColumns, setCollapsedColumns] = useState<Record<TaskStatus, boolean>>(() => loadCollapsedColumnsFromStorage())
     const pendingGeneratedActionTaskIdRef = useRef<string | null>(null)
 
     const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
@@ -393,6 +437,17 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const setDropTargetRef = useCallback((next: DropTarget | null) => {
         dropTargetRef.current = next
     }, [])
+
+    const toggleColumnCollapsed = useCallback((status: TaskStatus) => {
+        setCollapsedColumns((current) => ({
+            ...current,
+            [status]: !current[status]
+        }))
+    }, [])
+
+    useEffect(() => {
+        saveCollapsedColumnsToStorage(collapsedColumns)
+    }, [collapsedColumns])
 
     const tasksById = useMemo(() => {
         const map = new Map<string, Task>()
@@ -809,6 +864,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 <div className="h-full flex gap-3 p-3">
                     {KANBAN_COLUMNS.map((col) => {
                         const colTasks = columns[col.status]
+                        const isCollapsed = collapsedColumns[col.status]
                         const theme = getKanbanStatusTheme(col.status)
                         const columnStyle = {
                             '--kanban-accent-1': theme.accent1,
@@ -821,7 +877,11 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 'var(--app-secondary-bg)'
                             ].join(', ')
                         } as React.CSSProperties
-                        const columnClass = 'flex flex-col h-full w-[280px] shrink-0 rounded-2xl overflow-hidden shadow-sm ring-1 ring-inset ring-[var(--app-divider)]'
+                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm ring-1 ring-inset ring-[var(--app-divider)] transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-[280px]'}`
+                        const headerClass = isCollapsed
+                            ? 'px-2 py-2 border-b border-[var(--app-divider)] flex flex-col items-center gap-2 backdrop-blur-sm'
+                            : 'px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-2 backdrop-blur-sm'
+                        const columnToggleLabel = isCollapsed ? t('projects.columns.expand') : t('projects.columns.collapse')
 
                         return (
                             <div
@@ -850,7 +910,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 }}
                             >
                                 <div
-                                    className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-2 backdrop-blur-sm"
+                                    className={headerClass}
                                     style={{
                                         background: [
                                             'radial-gradient(120% 140% at 0% 0%, var(--kanban-wash-1) 0%, transparent 65%)',
@@ -859,58 +919,77 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                         ].join(', ')
                                     }}
                                 >
-                                    <div className="flex items-center gap-2 min-w-0">
+                                    <div className={isCollapsed ? 'flex flex-col items-center gap-1 min-w-0' : 'flex items-center gap-2 min-w-0'}>
                                         <div
                                             className="h-2 w-2 rounded-full shrink-0 opacity-90"
                                             style={{
                                                 background: 'linear-gradient(135deg, var(--kanban-accent-1), var(--kanban-accent-2))'
                                             }}
                                         />
-                                        <div className="text-xs font-semibold truncate">
+                                        <div className={isCollapsed ? 'text-[11px] font-semibold text-center leading-tight break-words' : 'text-xs font-semibold truncate'}>
                                             {t(col.titleKey)}
                                         </div>
                                     </div>
-                                    <div className="shrink-0 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--kanban-accent-1)]">
-                                        {colTasks.length}
+                                    <div className={isCollapsed ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1.5'}>
+                                        <div className="shrink-0 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--kanban-accent-1)]">
+                                            {colTasks.length}
+                                        </div>
+                                        <IconButton
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            className="shrink-0 rounded-md"
+                                            onClick={(event) => {
+                                                event.preventDefault()
+                                                event.stopPropagation()
+                                                toggleColumnCollapsed(col.status)
+                                            }}
+                                            aria-label={columnToggleLabel}
+                                            title={columnToggleLabel}
+                                        >
+                                            {isCollapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />}
+                                        </IconButton>
                                     </div>
                                 </div>
 
-                                <div
-                                    className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
-                                    onDragOver={(event) => {
-                                        event.preventDefault()
-                                        if (!dragStateRef.current) return
-                                        if (event.target !== event.currentTarget) return
-                                        setDropTargetRef({ status: col.status, index: colTasks.length })
-                                    }}
-                                >
-                                    {colTasks.map((task, index) => {
-                                        return (
-                                            <KanbanTaskCard
-                                                key={task.id}
-                                                task={task}
-                                                index={index}
-                                                columnStatus={col.status}
-                                                isSelectedTask={selectedTaskId === task.id}
-                                                isDragging={draggingTaskId === task.id}
-                                                isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
-                                                defaultTaskAgent={defaultTaskAgent}
-                                                moveOptions={moveOptionsByStatus[task.status]}
-                                                onStartDrag={handleTaskDragStart}
-                                                onEndDrag={handleTaskDragEnd}
-                                                onHoverDropTarget={handleTaskDropHover}
-                                                onActivateTask={handleTaskActivate}
-                                                onMoveTask={moveTask}
-                                                onApproveGeneratedTask={handleApproveGeneratedTask}
-                                                onRejectGeneratedTask={handleRejectGeneratedTask}
-                                                onTaskTouchStart={handleTaskTouchStart}
-                                                onTaskTouchMove={handleTaskTouchMove}
-                                                onTaskTouchEnd={handleTaskTouchEnd}
-                                                onTaskTouchCancel={handleTaskTouchCancel}
-                                            />
-                                        )
-                                    })}
-                                </div>
+                                {isCollapsed ? null : (
+                                    <div
+                                        className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
+                                        onDragOver={(event) => {
+                                            event.preventDefault()
+                                            if (!dragStateRef.current) return
+                                            if (event.target !== event.currentTarget) return
+                                            setDropTargetRef({ status: col.status, index: colTasks.length })
+                                        }}
+                                    >
+                                        {colTasks.map((task, index) => {
+                                            return (
+                                                <KanbanTaskCard
+                                                    key={task.id}
+                                                    task={task}
+                                                    index={index}
+                                                    columnStatus={col.status}
+                                                    isSelectedTask={selectedTaskId === task.id}
+                                                    isDragging={draggingTaskId === task.id}
+                                                    isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
+                                                    defaultTaskAgent={defaultTaskAgent}
+                                                    moveOptions={moveOptionsByStatus[task.status]}
+                                                    onStartDrag={handleTaskDragStart}
+                                                    onEndDrag={handleTaskDragEnd}
+                                                    onHoverDropTarget={handleTaskDropHover}
+                                                    onActivateTask={handleTaskActivate}
+                                                    onMoveTask={moveTask}
+                                                    onApproveGeneratedTask={handleApproveGeneratedTask}
+                                                    onRejectGeneratedTask={handleRejectGeneratedTask}
+                                                    onTaskTouchStart={handleTaskTouchStart}
+                                                    onTaskTouchMove={handleTaskTouchMove}
+                                                    onTaskTouchEnd={handleTaskTouchEnd}
+                                                    onTaskTouchCancel={handleTaskTouchCancel}
+                                                />
+                                            )
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         )
                     })}
