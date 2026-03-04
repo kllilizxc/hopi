@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { memo, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import { SessionChat } from '@/components/SessionChat'
@@ -12,7 +12,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { queryKeys } from '@/lib/query-keys'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
 
-export function TaskSessionChat(props: {
+export const TaskSessionChat = memo(function TaskSessionChat(props: {
     api: ApiClient | null
     projectId: string
     taskId: string
@@ -165,4 +165,4 @@ export function TaskSessionChat(props: {
             onViewTerminal={props.onViewTerminal}
         />
     )
-}
+})
