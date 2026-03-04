@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
-import type { Machine } from '@/types/api'
+import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
@@ -17,7 +17,10 @@ import { useMachines } from '@/hooks/queries/useMachines'
 import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
+import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
+import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
+import type { AgentType } from '@/components/NewSession/types'
 
 function getMachineTitle(machine: Machine): string {
     if (machine.metadata?.displayName) return machine.metadata.displayName
@@ -417,6 +420,7 @@ function ProjectBoardPanel(props: {
     onBackToProjects: () => void
     onOpenSettings: () => void
     onGoToSessions: () => void
+    onOpenNewTask: () => void
 }) {
     const { api } = useAppContext()
     const { t } = useTranslation()
@@ -454,7 +458,7 @@ function ProjectBoardPanel(props: {
             />
 
             <div className="flex-1 min-h-0">
-                <ProjectKanbanBoard projectId={props.projectId} />
+                <ProjectKanbanBoard projectId={props.projectId} onOpenNewTask={props.onOpenNewTask} />
             </div>
         </div>
     )
@@ -482,8 +486,14 @@ export default function ProjectsPage() {
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
+    const { createTask, isPending: isCreatingTask } = useCreateTask(api)
 
     const [createOpen, setCreateOpen] = useState(false)
+    const [newTaskOpen, setNewTaskOpen] = useState(false)
+
+    const { project } = useProject(api, selectedProjectId ?? '')
+    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+    const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
 
     const handleCreateProject = useCallback(async (input: {
         machineId: string
@@ -507,6 +517,40 @@ export default function ProjectsPage() {
         }
     }, [createProject, addToast, t, navigate])
 
+    const handleCreateTask = useCallback(async (data: {
+        title: string
+        description: string | undefined
+        priority: TaskPriority | ''
+        agent: AgentType
+        permissionMode: PermissionMode
+        model: string
+    }) => {
+        if (!selectedProjectId) return
+
+        try {
+            const created = await createTask({
+                projectId: selectedProjectId,
+                title: data.title,
+                description: data.description,
+                priority: data.priority || undefined,
+                status: 'new',
+                agentFlavor: data.agent,
+                permissionMode: data.permissionMode,
+                model: data.model,
+                sortKey: Date.now()
+            })
+            addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
+            setNewTaskOpen(false)
+        } catch (error) {
+            addToast({
+                title: t('projects.tasks.createFailed'),
+                body: error instanceof Error ? error.message : 'Failed to create task',
+                sessionId: '',
+                url: ''
+            })
+        }
+    }, [selectedProjectId, createTask, addToast, t])
+
     return (
         <div className="flex h-full min-h-0">
             <div
@@ -518,6 +562,7 @@ export default function ProjectsPage() {
                             onBackToProjects={() => navigate({ to: '/projects' })}
                             onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
                             onGoToSessions={() => navigate({ to: '/sessions' })}
+                            onOpenNewTask={() => setNewTaskOpen(true)}
                         />
                 ) : (
                     <ProjectsListPanel
@@ -552,6 +597,17 @@ export default function ProjectsPage() {
                 isPending={isCreating}
                 error={createError}
             />
+
+            {selectedProjectId && project ? (
+                <NewTaskDialog
+                    open={newTaskOpen}
+                    onOpenChange={setNewTaskOpen}
+                    defaultAgent={defaultTaskAgent}
+                    defaultPermissionMode={projectDefaultPermissionMode}
+                    isCreating={isCreatingTask}
+                    onCreate={handleCreateTask}
+                />
+            ) : null}
         </div>
     )
 }

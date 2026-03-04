@@ -19,7 +19,6 @@ import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
-import { NewTaskDialog } from './kanban-new-task-dialog'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
@@ -168,7 +167,7 @@ type DropTarget = {
     index: number
 }
 
-export function ProjectKanbanBoard(props: { projectId: string }) {
+export function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: () => void }) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
@@ -188,7 +187,6 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
 
-    const [createOpen, setCreateOpen] = useState(false)
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
 
     const [dragState, setDragState] = useState<DragState | null>(null)
@@ -508,27 +506,6 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
         setDragStateSynced,
         setDropTargetSynced
     ])
-
-    const handleNewTaskCreate = useCallback(async (data: {
-        title: string
-        description: string | undefined
-        priority: TaskPriority | ''
-        agent: AgentType
-        permissionMode: PermissionMode
-        model: string
-    }) => {
-        const created = await handleCreateTask(
-            data.title,
-            data.description,
-            data.priority || null,
-            data.agent,
-            data.permissionMode,
-            data.model
-        )
-        if (created) {
-            setCreateOpen(false)
-        }
-    }, [handleCreateTask])
 
     const handleBoardDragOver = useCallback((event: React.DragEvent) => {
         if (!dragState) return
@@ -934,21 +911,12 @@ export function ProjectKanbanBoard(props: { projectId: string }) {
                 type="button"
                 variant="accent"
                 size="md"
-                onClick={() => setCreateOpen(true)}
+                onClick={props.onOpenNewTask}
                 className="absolute z-40 right-4 bottom-[calc(16px+env(safe-area-inset-bottom))] h-12 w-12 bg-[var(--app-link)] text-[var(--app-bg)] shadow-lg text-2xl leading-none cursor-pointer transition-[transform,box-shadow,opacity] duration-150 hover:opacity-90 hover:shadow-xl hover:-translate-y-[1px] active:opacity-80 active:translate-y-0 active:shadow-lg"
                 aria-label={t('projects.tasks.create')}
             >
                 <PlusIcon className="h-6 w-6" />
             </IconButton>
-
-            <NewTaskDialog
-                open={createOpen}
-                onOpenChange={setCreateOpen}
-                defaultAgent={defaultTaskAgent}
-                defaultPermissionMode={projectDefaultPermissionMode}
-                isCreating={isCreatingTask}
-                onCreate={handleNewTaskCreate}
-            />
 
         </div>
     )

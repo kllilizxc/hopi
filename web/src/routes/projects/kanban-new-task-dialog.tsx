@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { PermissionMode, TaskPriority } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,7 @@ type NewTaskDialogProps = {
     }) => void
 }
 
-export function NewTaskDialog(props: NewTaskDialogProps) {
+const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     const { t } = useTranslation()
     const [newTaskDraft, setNewTaskDraft] = useState('')
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>('')
@@ -177,3 +177,5 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
         </Dialog>
     )
 }
+
+export const NewTaskDialog = memo(NewTaskDialogComponent)
