@@ -19,6 +19,7 @@ import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
+import { PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 
