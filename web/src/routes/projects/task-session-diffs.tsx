@@ -10,6 +10,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { Pressable } from '@/components/ui/pressable'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useSession } from '@/hooks/queries/useSession'
+import { useTask } from '@/hooks/queries/useTask'
 import { parseNumStat } from '@/lib/gitParsers'
 import { queryKeys } from '@/lib/query-keys'
 import { useTranslation } from '@/lib/use-translation'
@@ -153,19 +154,10 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     const worktreeBaseCommit = session?.metadata?.worktree?.baseCommit
     const hasWorktreeBaseCommit = typeof worktreeBaseCommit === 'string' && worktreeBaseCommit.length > 0
 
-    // Get task to check for merged diff snapshot
-    const taskId = session?.metadata?.taskId
-    const taskQuery = useQuery({
-        queryKey: ['task', taskId],
-        queryFn: async () => {
-            if (!props.api || !taskId) return null
-            const response = await props.api.getTask(taskId)
-            return response.task
-        },
-        enabled: Boolean(props.api && taskId)
-    })
-
-    const mergedDiffSnapshot = taskQuery.data?.mergedDiffSnapshot as { files: GitFileStatus[]; capturedAt: number; baseCommit?: string } | null | undefined
+    // Reuse canonical task query shape to avoid cache key collisions with useTask().
+    const taskId = session?.metadata?.taskId ?? null
+    const { task, isLoading: isTaskLoading } = useTask(props.api, taskId)
+    const mergedDiffSnapshot = task?.mergedDiffSnapshot as { files: GitFileStatus[]; capturedAt: number; baseCommit?: string } | null | undefined
 
     const sessionDiffQuery = useQuery({
         queryKey: queryKeys.gitCommittedDiff(props.sessionId, worktreeBaseCommit ?? 'none'),
@@ -205,7 +197,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading && !mergedDiffSnapshot) || taskQuery.isLoading) {
+    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading && !mergedDiffSnapshot) || isTaskLoading) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading.git')} className="text-sm" />
