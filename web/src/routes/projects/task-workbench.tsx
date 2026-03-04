@@ -626,7 +626,7 @@ function TaskDetailsPanel(props: {
         <div className="h-full flex flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content p-4">
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="space-y-4">
                         <div className="space-y-6">
                             <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
                                 <div className="flex items-start justify-between gap-3">
@@ -871,7 +871,7 @@ function TaskDetailsPanel(props: {
                             </section>
                         </div>
 
-                        <aside className="space-y-4 xl:sticky xl:top-4 self-start">
+                        <div className="space-y-4">
                             <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
                                 <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
 
@@ -1004,7 +1004,7 @@ function TaskDetailsPanel(props: {
                                     {t('projects.task.archive.action')}
                                 </Button>
                             </section>
-                        </aside>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1092,30 +1092,6 @@ function WorkbenchHeader(props: {
     )
 }
 
-function TabButton(props: {
-    label: string
-    active: boolean
-    disabled?: boolean
-    onClick: () => void
-}) {
-    return (
-        <Tag
-            asChild
-            variant={props.active ? 'primary' : 'default'}
-            size="lg"
-            bordered={true}
-            className={props.disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-[var(--app-subtle-bg)]'}
-        >
-            <Pressable
-                disabled={props.disabled}
-                onClick={props.onClick}
-            >
-                {props.label}
-            </Pressable>
-        </Tag>
-    )
-}
-
 export function TaskWorkbenchRoute() {
     const { projectId, taskId } = useParams({ from: '/projects/$projectId/tasks/$taskId' })
     const matchRoute = useMatchRoute()
@@ -1179,21 +1155,6 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     const handleBackToProject = useCallback(() => {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [navigate, props.projectId])
-
-    const handleOpenTask = useCallback(() => {
-        void navigate({
-            to: '/projects/$projectId/tasks/$taskId/task',
-            params: { projectId: props.projectId, taskId: props.taskId }
-        })
-    }, [navigate, props.projectId, props.taskId])
-
-    const handleOpenChat = useCallback(() => {
-        if (!hasSession) return
-        void navigate({
-            to: '/projects/$projectId/tasks/$taskId/chat',
-            params: { projectId: props.projectId, taskId: props.taskId }
-        })
-    }, [hasSession, navigate, props.projectId, props.taskId])
 
     const handleOpenFiles = useCallback(() => {
         if (!hasSession) return
@@ -1262,42 +1223,6 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
                     backLabel={t('projects.actions.back')}
                     copyLabel={t('projects.task.copyLink')}
                 />
-            ) : null}
-
-            {!props.forceTask ? (
-                <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)]">
-                    <div className="mx-auto flex w-full max-w-content flex-wrap gap-2 px-3 py-2">
-                        <TabButton
-                            label={t('projects.workbench.tab.task')}
-                            active={activeTab === 'task'}
-                            onClick={handleOpenTask}
-                        />
-                        <TabButton
-                            label={t('projects.workbench.tab.chat')}
-                            active={activeTab === 'chat'}
-                            disabled={!hasSession}
-                            onClick={handleOpenChat}
-                        />
-                        <TabButton
-                            label={t('projects.workbench.tab.terminal')}
-                            active={activeTab === 'terminal'}
-                            disabled={!hasSession}
-                            onClick={handleOpenTerminal}
-                        />
-                        <TabButton
-                            label={t('projects.workbench.tab.diffs')}
-                            active={activeTab === 'diffs'}
-                            disabled={!hasSession}
-                            onClick={handleOpenDiffs}
-                        />
-                        <TabButton
-                            label={t('projects.workbench.tab.files')}
-                            active={activeTab === 'files'}
-                            disabled={!hasSession}
-                            onClick={handleOpenFiles}
-                        />
-                    </div>
-                </div>
             ) : null}
 
             <div className="flex-1 min-h-0">
