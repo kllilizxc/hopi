@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThreadPrimitive } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
@@ -305,16 +305,24 @@ export function HappyThread(props: {
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
     const mergeEvents = props.mergeEvents ?? []
     const previewEvents = props.previewEvents ?? []
+    const chatContextValue = useMemo(() => ({
+        api: props.api,
+        sessionId: props.sessionId,
+        metadata: props.metadata,
+        disabled: props.disabled,
+        onRefresh: props.onRefresh,
+        onRetryMessage: props.onRetryMessage
+    }), [
+        props.api,
+        props.sessionId,
+        props.metadata,
+        props.disabled,
+        props.onRefresh,
+        props.onRetryMessage
+    ])
 
     return (
-        <HappyChatProvider value={{
-            api: props.api,
-            sessionId: props.sessionId,
-            metadata: props.metadata,
-            disabled: props.disabled,
-            onRefresh: props.onRefresh,
-            onRetryMessage: props.onRetryMessage
-        }}>
+        <HappyChatProvider value={chatContextValue}>
             <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 <ThreadPrimitive.Viewport asChild autoScroll={autoScrollEnabled}>
                     <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
