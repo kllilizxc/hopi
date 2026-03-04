@@ -596,6 +596,7 @@ const GenericResultView: ToolViewComponent = (props: ToolViewProps) => {
 export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     Task: MarkdownResultView,
     Bash: BashResultView,
+    CodexBash: BashResultView,
     Glob: LineListResultView,
     Grep: LineListResultView,
     LS: LineListResultView,

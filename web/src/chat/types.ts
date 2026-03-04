@@ -44,6 +44,7 @@ export type ToolResult = {
     tool_use_id: string
     content: unknown
     is_error: boolean
+    is_partial?: boolean
     uuid: string
     parentUUID: string | null
     permissions?: ToolResultPermission

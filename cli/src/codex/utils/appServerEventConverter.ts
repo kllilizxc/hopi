@@ -423,7 +423,16 @@ export class AppServerEventConverter {
                 }
                 this.lastCommandOutputDeltaByItemId.set(itemId, delta);
                 const prev = this.commandOutputBuffers.get(itemId) ?? '';
-                this.commandOutputBuffers.set(itemId, prev + delta);
+                const nextOutput = prev + delta;
+                this.commandOutputBuffers.set(itemId, nextOutput);
+                const meta = this.commandMeta.get(itemId) ?? {};
+                events.push({
+                    type: 'exec_command_output_delta',
+                    call_id: itemId,
+                    ...meta,
+                    output: nextOutput,
+                    delta
+                });
             }
             return events;
         }

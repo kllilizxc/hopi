@@ -215,6 +215,15 @@ export function reduceTimeline(
                     })
 
                     block.tool.result = c.content
+                    if (c.is_partial) {
+                        block.tool.state = 'running'
+                        block.tool.completedAt = null
+                        if (block.tool.startedAt === null) {
+                            block.tool.startedAt = msg.createdAt
+                        }
+                        continue
+                    }
+
                     block.tool.completedAt = msg.createdAt
                     block.tool.state = c.is_error ? 'error' : 'completed'
                     continue

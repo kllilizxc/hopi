@@ -489,7 +489,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     });
                 }
             }
-            if (msgType === 'exec_command_end') {
+            if (msgType === 'exec_command_output_delta') {
                 const callId = asString(msg.call_id ?? msg.callId);
                 if (callId) {
                     const output: Record<string, unknown> = { ...msg };
@@ -501,6 +501,28 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         type: 'tool-call-result',
                         callId: callId,
                         output,
+                        is_partial: true,
+                        id: randomUUID()
+                    });
+                }
+            }
+            if (msgType === 'exec_command_end') {
+                const callId = asString(msg.call_id ?? msg.callId);
+                if (callId) {
+                    const output: Record<string, unknown> = { ...msg };
+                    delete output.type;
+                    delete output.call_id;
+                    delete output.callId;
+                    const status = typeof output.status === 'string' ? output.status.toLowerCase() : null;
+                    const isError = Boolean(output.error)
+                        || status === 'failed'
+                        || status === 'error';
+
+                    session.sendCodexMessage({
+                        type: 'tool-call-result',
+                        callId: callId,
+                        output,
+                        is_error: isError,
                         id: randomUUID()
                     });
                 }
