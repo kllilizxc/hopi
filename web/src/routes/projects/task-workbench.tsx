@@ -1210,9 +1210,67 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     const headerSubtitle = project?.name
 
     const showWorkbenchHeader = activeTab === 'task'
+    const taskPanel = task && project ? (
+        <TaskDetailsPanel
+            projectId={props.projectId}
+            taskId={props.taskId}
+            task={task}
+            workspaces={workspaces}
+            projectDefaultWorkspaceId={project.defaultWorkspaceId ?? null}
+            projectMachineId={project.machineId}
+            projectDefaults={projectDefaults}
+        />
+    ) : null
+
+    const nonTaskPanel = activeTab === 'chat' ? (
+        sessionId ? (
+            <TaskSessionChat
+                api={api}
+                projectId={props.projectId}
+                taskId={props.taskId}
+                sessionId={sessionId}
+                onBack={handleBackToProject}
+                onViewFiles={handleOpenFiles}
+                onViewDiffs={handleOpenDiffs}
+                onViewTerminal={handleOpenTerminal}
+            />
+        ) : (
+            <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+                {t('projects.workbench.noSession')}
+            </div>
+        )
+    ) : activeTab === 'terminal' ? (
+        sessionId ? (
+            <SessionTerminal sessionId={sessionId} onBack={handleBack} />
+        ) : (
+            <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+                {t('projects.workbench.noSession')}
+            </div>
+        )
+    ) : activeTab === 'diffs' ? (
+        sessionId ? (
+            <TaskSessionDiffs api={api} sessionId={sessionId} onBack={handleBack} />
+        ) : (
+            <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+                {t('projects.workbench.noSession')}
+            </div>
+        )
+    ) : activeTab === 'files' ? (
+        sessionId ? (
+            <TaskSessionFiles api={api} sessionId={sessionId} onBack={handleBack} />
+        ) : (
+            <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+                {t('projects.workbench.noSession')}
+            </div>
+        )
+    ) : (
+        <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+            {t('projects.workbench.comingSoon')}
+        </div>
+    )
 
     return (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col overflow-hidden">
             {showWorkbenchHeader ? (
                 <WorkbenchHeader
                     title={headerTitle}
@@ -1225,65 +1283,29 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
                 />
             ) : null}
 
-            <div className="flex-1 min-h-0">
-                {activeTab === 'task' ? (
-                    task && project ? (
-                        <TaskDetailsPanel
-                            projectId={props.projectId}
-                            taskId={props.taskId}
-                            task={task}
-                            workspaces={workspaces}
-                            projectDefaultWorkspaceId={project.defaultWorkspaceId ?? null}
-                            projectMachineId={project.machineId}
-                            projectDefaults={projectDefaults}
-                        />
-                    ) : null
-                ) : activeTab === 'chat' ? (
-                    sessionId ? (
-                        <TaskSessionChat
-                            api={api}
-                            projectId={props.projectId}
-                            taskId={props.taskId}
-                            sessionId={sessionId}
-                            onBack={handleBackToProject}
-                            onViewFiles={handleOpenFiles}
-                            onViewDiffs={handleOpenDiffs}
-                            onViewTerminal={handleOpenTerminal}
-                        />
-                    ) : (
-                        <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
-                            {t('projects.workbench.noSession')}
-                        </div>
-                    )
-                ) : activeTab === 'terminal' ? (
-                    sessionId ? (
-                        <SessionTerminal sessionId={sessionId} onBack={handleBack} />
-                    ) : (
-                        <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
-                            {t('projects.workbench.noSession')}
-                        </div>
-                    )
-                ) : activeTab === 'diffs' ? (
-                    sessionId ? (
-                        <TaskSessionDiffs api={api} sessionId={sessionId} onBack={handleBack} />
-                    ) : (
-                        <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
-                            {t('projects.workbench.noSession')}
-                        </div>
-                    )
-                ) : activeTab === 'files' ? (
-                    sessionId ? (
-                        <TaskSessionFiles api={api} sessionId={sessionId} onBack={handleBack} />
-                    ) : (
-                        <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
-                            {t('projects.workbench.noSession')}
-                        </div>
-                    )
-                ) : (
-                    <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
-                        {t('projects.workbench.comingSoon')}
-                    </div>
-                )}
+            <div className="hidden lg:block flex-1 min-h-0">
+                {activeTab === 'task' ? taskPanel : nonTaskPanel}
+            </div>
+
+            <div className="relative flex-1 min-h-0 overflow-hidden lg:hidden">
+                <div
+                    className={`absolute inset-0 transition-transform duration-200 ease-out ${
+                        activeTab === 'task'
+                            ? 'translate-x-0 pointer-events-auto'
+                            : '-translate-x-full pointer-events-none'
+                    }`}
+                >
+                    {taskPanel}
+                </div>
+                <div
+                    className={`absolute inset-0 transition-transform duration-200 ease-out ${
+                        activeTab === 'task'
+                            ? 'translate-x-full pointer-events-none'
+                            : 'translate-x-0 pointer-events-auto'
+                    }`}
+                >
+                    {activeTab === 'task' ? null : nonTaskPanel}
+                </div>
             </div>
         </div>
     )
