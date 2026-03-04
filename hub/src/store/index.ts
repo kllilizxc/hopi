@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 7
+const SCHEMA_VERSION: number = 8
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -156,9 +156,30 @@ export class Store {
             return
         }
 
+        if (currentVersion === 7 && SCHEMA_VERSION === 8) {
+            this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 8) {
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion === 5 && SCHEMA_VERSION === 7) {
             this.migrateFromV5ToV6()
             this.migrateFromV6ToV7()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 8) {
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -361,6 +382,7 @@ export class Store {
                 sub_tasks_updated_at INTEGER,
                 worktree_merged_at INTEGER,
                 worktree_merge_commit TEXT,
+                merged_diff_snapshot TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 finished_at INTEGER,
@@ -480,6 +502,9 @@ export class Store {
         if (SCHEMA_VERSION >= 7) {
             this.migrateFromV6ToV7()
         }
+        if (SCHEMA_VERSION >= 8) {
+            this.migrateFromV7ToV8()
+        }
     }
 
     private migrateFromV4ToV5(): void {
@@ -539,6 +564,16 @@ export class Store {
         }
         if (!taskColumns.has('model_mode')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN model_mode TEXT')
+        }
+    }
+
+    private migrateFromV7ToV8(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v7 to v8 migration.')
+        }
+        if (!taskColumns.has('merged_diff_snapshot')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN merged_diff_snapshot TEXT')
         }
     }
 

@@ -27,6 +27,67 @@ function estimateDataUrlBytes(dataUrl: string): number {
     return Math.floor((len * 3) / 4) - padding
 }
 
+function parseDiffNumstat(output: string): Array<{
+    fileName: string
+    filePath: string
+    fullPath: string
+    status: 'modified' | 'added' | 'deleted'
+    isStaged: boolean
+    linesAdded: number
+    linesRemoved: number
+}> {
+    const lines = output.trim().split('\n').filter(line => line.trim())
+    const files: Array<{
+        fileName: string
+        filePath: string
+        fullPath: string
+        status: 'modified' | 'added' | 'deleted'
+        isStaged: boolean
+        linesAdded: number
+        linesRemoved: number
+    }> = []
+
+    for (const line of lines) {
+        const parts = line.split(/\t/)
+        if (parts.length < 3) continue
+
+        const added = parts[0]?.trim() === '-' ? 0 : Number.parseInt(parts[0]?.trim() ?? '0', 10)
+        const removed = parts[1]?.trim() === '-' ? 0 : Number.parseInt(parts[1]?.trim() ?? '0', 10)
+        let rawPath = parts.slice(2).join('\t').trim()
+
+        // Handle rename syntax: old => new or {old => new}
+        if (rawPath.includes('{') && rawPath.includes('=>') && rawPath.includes('}')) {
+            rawPath = rawPath.replace(/\{[^{}]+?\s*=>\s*([^{}]+?)\}/g, (_match, newPart: string) => newPart.trim())
+        } else if (rawPath.includes('=>')) {
+            const renameParts = rawPath.split(/\s*=>\s*/)
+            rawPath = renameParts[renameParts.length - 1]?.trim() ?? rawPath
+        }
+
+        if (!rawPath) continue
+
+        const pathParts = rawPath.split('/')
+        const fileName = pathParts[pathParts.length - 1] ?? rawPath
+        const filePath = pathParts.slice(0, -1).join('/')
+
+        const status: 'modified' | 'added' | 'deleted' =
+            parts[0]?.trim() === '-' ? 'deleted' :
+            parts[1]?.trim() === '-' ? 'added' :
+            'modified'
+
+        files.push({
+            fileName,
+            filePath,
+            fullPath: rawPath,
+            status,
+            isStaged: true,
+            linesAdded: added,
+            linesRemoved: removed
+        })
+    }
+
+    return files
+}
+
 const taskAttachmentSchema = z.object({
     id: z.string().min(1),
     filename: z.string().min(1).max(255),
@@ -1589,9 +1650,30 @@ export function createTasksRoutes(options: {
 
             const mergedAt = Date.now()
             const statusChangingToFinished = task.status === 'in_review'
+
+            // Capture diff snapshot before updating task
+            let diffSnapshot: unknown = null
+            try {
+                const baseCommit = session.metadata.worktree.baseCommit
+                if (baseCommit) {
+                    const diffResult = await engine.getGitDiffNumstat(session.id, { baseRef: baseCommit })
+                    if (diffResult.success && diffResult.stdout) {
+                        const files = parseDiffNumstat(diffResult.stdout)
+                        diffSnapshot = {
+                            files,
+                            capturedAt: mergedAt,
+                            baseCommit
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn('[Tasks] Failed to capture diff snapshot:', error)
+            }
+
             const updatedTask = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
                 worktreeMergedAt: mergedAt,
                 worktreeMergeCommit: result.commitHash ?? null,
+                mergedDiffSnapshot: diffSnapshot,
                 status: statusChangingToFinished ? 'finished' : undefined,
                 finishedAt: statusChangingToFinished ? mergedAt : undefined
             })

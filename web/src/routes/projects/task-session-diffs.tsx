@@ -153,6 +153,20 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     const worktreeBaseCommit = session?.metadata?.worktree?.baseCommit
     const hasWorktreeBaseCommit = typeof worktreeBaseCommit === 'string' && worktreeBaseCommit.length > 0
 
+    // Get task to check for merged diff snapshot
+    const taskId = session?.metadata?.taskId
+    const taskQuery = useQuery({
+        queryKey: ['task', taskId],
+        queryFn: async () => {
+            if (!props.api || !taskId) return null
+            const response = await props.api.getTask(taskId)
+            return response.task
+        },
+        enabled: Boolean(props.api && taskId)
+    })
+
+    const mergedDiffSnapshot = taskQuery.data?.mergedDiffSnapshot as { files: GitFileStatus[]; capturedAt: number; baseCommit?: string } | null | undefined
+
     const sessionDiffQuery = useQuery({
         queryKey: queryKeys.gitCommittedDiff(props.sessionId, worktreeBaseCommit ?? 'none'),
         queryFn: async () => {
@@ -161,7 +175,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
             }
             return await props.api.getGitDiffNumstat(props.sessionId, { baseRef: worktreeBaseCommit })
         },
-        enabled: Boolean(props.api && props.sessionId && hasWorktreeBaseCommit)
+        enabled: Boolean(props.api && props.sessionId && hasWorktreeBaseCommit && !mergedDiffSnapshot)
     })
 
     const hasWorkingTreeChanges = Boolean(gitStatus && (gitStatus.stagedFiles.length > 0 || gitStatus.unstagedFiles.length > 0))
@@ -191,7 +205,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading)) {
+    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading && !mergedDiffSnapshot) || taskQuery.isLoading) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading.git')} className="text-sm" />
@@ -199,7 +213,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    const hasChanges = hasWorkingTreeChanges || showSessionDiff
+    const hasChanges = hasWorkingTreeChanges || showSessionDiff || (mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0)
 
     const handleRefresh = async () => {
         await refetch()
@@ -293,6 +307,26 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                                         diffScope: 'committed'
                                     })}
                                     showDivider={index < sessionDiffFiles.length - 1}
+                                />
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0 ? (
+                        <div>
+                            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold text-[var(--app-git-staged-color)]">
+                                {t('projects.diffs.merged')} ({mergedDiffSnapshot.files.length})
+                            </div>
+                            {mergedDiffSnapshot.files.map((file, index) => (
+                                <GitFileRow
+                                    key={`merged-${file.fullPath}-${index}`}
+                                    file={file}
+                                    onOpen={() => setOpenFile({
+                                        path: file.fullPath,
+                                        baseRef: mergedDiffSnapshot.baseCommit,
+                                        diffScope: 'committed'
+                                    })}
+                                    showDivider={index < mergedDiffSnapshot.files.length - 1}
                                 />
                             ))}
                         </div>
