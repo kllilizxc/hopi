@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import type { PermissionMode, TaskPriority } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
@@ -77,7 +77,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         }
     }, [props.open, props.defaultAgent, props.defaultPermissionMode])
 
-    const handleSubmit = (event: React.FormEvent) => {
+    const handleSubmit = useCallback((event: React.FormEvent) => {
         event.preventDefault()
         props.onCreate({
             title: parsedNewTaskDraft.title,
@@ -87,7 +87,30 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
             permissionMode: newTaskPermissionMode,
             model: newTaskModel
         })
-    }
+    }, [props.onCreate, parsedNewTaskDraft, newTaskPriority, newTaskAgent, newTaskPermissionMode, newTaskModel])
+
+    const handlePriorityChange = useCallback((value: string) => {
+        setNewTaskPriority((value as TaskPriority) || '')
+    }, [])
+
+    const handlePermissionModeChange = useCallback((value: string) => {
+        setNewTaskPermissionMode(value as PermissionMode)
+    }, [])
+
+    const priorityOptions = useMemo(() => [
+        { value: '', label: t('projects.task.priority.none') },
+        { value: 'high', label: t('projects.task.priority.high') },
+        { value: 'medium', label: t('projects.task.priority.medium') },
+        { value: 'low', label: t('projects.task.priority.low') },
+    ], [t])
+
+    const permissionModeSelectOptions = useMemo(() =>
+        newTaskPermissionOptions.map((opt) => ({
+            value: opt.mode as PermissionMode,
+            label: opt.label,
+        })),
+        [newTaskPermissionOptions]
+    )
 
     return (
         <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -119,13 +142,8 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                             <AdaptiveSelectField
                                 title={t('projects.task.priority')}
                                 value={newTaskPriority}
-                                options={[
-                                    { value: '', label: t('projects.task.priority.none') },
-                                    { value: 'high', label: t('projects.task.priority.high') },
-                                    { value: 'medium', label: t('projects.task.priority.medium') },
-                                    { value: 'low', label: t('projects.task.priority.low') },
-                                ]}
-                                onValueChange={(value) => setNewTaskPriority((value as TaskPriority) || '')}
+                                options={priorityOptions}
+                                onValueChange={handlePriorityChange}
                                 disabled={props.isCreating}
                                 align="start"
                             />
@@ -148,11 +166,8 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                             <AdaptiveSelectField
                                 title={t('misc.permissionMode')}
                                 value={newTaskPermissionMode}
-                                options={newTaskPermissionOptions.map((opt) => ({
-                                    value: opt.mode as PermissionMode,
-                                    label: opt.label,
-                                }))}
-                                onValueChange={(value) => setNewTaskPermissionMode(value as PermissionMode)}
+                                options={permissionModeSelectOptions}
+                                onValueChange={handlePermissionModeChange}
                                 disabled={props.isCreating}
                                 align="start"
                             />

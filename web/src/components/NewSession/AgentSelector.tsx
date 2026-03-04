@@ -1,12 +1,13 @@
+import { memo } from 'react'
 import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 
-export function AgentSelector(props: {
+const AgentSelectorComponent = (props: {
     agent: AgentType
     isDisabled: boolean
     onAgentChange: (value: AgentType) => void
-}) {
+}) => {
     const { t } = useTranslation()
 
     return (
@@ -29,3 +30,5 @@ export function AgentSelector(props: {
         </div>
     )
 }
+
+export const AgentSelector = memo(AgentSelectorComponent)

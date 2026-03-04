@@ -1,22 +1,27 @@
+import { memo, useMemo } from 'react'
 import type { AgentType } from './types'
 import { MODEL_OPTIONS } from './types'
 import { useTranslation } from '@/lib/use-translation'
 import { ChevronDownIcon } from '@/assets/icons'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
 
-export function ModelSelector(props: {
+const ModelSelectorComponent = (props: {
     agent: AgentType
     model: string
     isDisabled: boolean
     onModelChange: (value: string) => void
-}) {
+}) => {
     const { t } = useTranslation()
     const options = MODEL_OPTIONS[props.agent]
+
+    const selectedLabel = useMemo(
+        () => options.find((opt) => opt.value === props.model)?.label ?? props.model,
+        [options, props.model]
+    )
+
     if (options.length === 0) {
         return null
     }
-
-    const selectedLabel = options.find((opt) => opt.value === props.model)?.label ?? props.model
 
     return (
         <div className="flex flex-col gap-1.5 px-3 py-3">
@@ -45,4 +50,6 @@ export function ModelSelector(props: {
         </div>
     )
 }
+
+export const ModelSelector = memo(ModelSelectorComponent)
 
