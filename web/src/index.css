@@ -278,9 +278,149 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: transparent;
 }
 
-.scroll-shadow-y {
-    --scroll-shadow-color: var(--app-scroll-shadow);
-    transition: box-shadow var(--app-motion-duration-micro) var(--app-motion-ease-out);
+/* Scroll Shadow - HeroUI inspired gradient-based shadows */
+.scroll-shadow {
+    position: relative;
+    overflow: auto;
+}
+
+.scroll-shadow-vertical {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.scroll-shadow-horizontal {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.scroll-shadow-hide-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.scroll-shadow-hide-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+/* Gradient shadows using pseudo-elements */
+.scroll-shadow::before,
+.scroll-shadow::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: var(--scroll-shadow-size, 40px);
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+}
+
+.scroll-shadow::before {
+    top: 0;
+    background: linear-gradient(
+        to bottom,
+        var(--app-bg) 0%,
+        rgba(0, 0, 0, 0.05) 50%,
+        transparent 100%
+    );
+}
+
+.scroll-shadow::after {
+    bottom: 0;
+    background: linear-gradient(
+        to top,
+        var(--app-bg) 0%,
+        rgba(0, 0, 0, 0.05) 50%,
+        transparent 100%
+    );
+}
+
+.scroll-shadow[data-top-shadow="visible"]::before {
+    opacity: 1;
+}
+
+.scroll-shadow[data-bottom-shadow="visible"]::after {
+    opacity: 1;
+}
+
+/* Horizontal shadows */
+.scroll-shadow-horizontal::before,
+.scroll-shadow-horizontal::after {
+    top: 0;
+    bottom: 0;
+    width: var(--scroll-shadow-size, 40px);
+    height: auto;
+}
+
+.scroll-shadow-horizontal::before {
+    left: 0;
+    right: auto;
+    background: linear-gradient(
+        to right,
+        var(--app-bg) 0%,
+        rgba(0, 0, 0, 0.05) 50%,
+        transparent 100%
+    );
+}
+
+.scroll-shadow-horizontal::after {
+    right: 0;
+    left: auto;
+    background: linear-gradient(
+        to left,
+        var(--app-bg) 0%,
+        rgba(0, 0, 0, 0.05) 50%,
+        transparent 100%
+    );
+}
+
+.scroll-shadow-horizontal[data-left-shadow="visible"]::before {
+    opacity: 1;
+}
+
+.scroll-shadow-horizontal[data-right-shadow="visible"]::after {
+    opacity: 1;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    .scroll-shadow::before {
+        background: linear-gradient(
+            to bottom,
+            var(--app-bg) 0%,
+            rgba(255, 255, 255, 0.08) 50%,
+            transparent 100%
+        );
+    }
+
+    .scroll-shadow::after {
+        background: linear-gradient(
+            to top,
+            var(--app-bg) 0%,
+            rgba(255, 255, 255, 0.08) 50%,
+            transparent 100%
+        );
+    }
+
+    .scroll-shadow-horizontal::before {
+        background: linear-gradient(
+            to right,
+            var(--app-bg) 0%,
+            rgba(255, 255, 255, 0.08) 50%,
+            transparent 100%
+        );
+    }
+
+    .scroll-shadow-horizontal::after {
+        background: linear-gradient(
+            to left,
+            var(--app-bg) 0%,
+            rgba(255, 255, 255, 0.08) 50%,
+            transparent 100%
+        );
+    }
 }
 
 @media (hover: hover) and (pointer: fine) {

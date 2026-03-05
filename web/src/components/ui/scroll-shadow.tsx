@@ -3,21 +3,24 @@ import type { CSSProperties, HTMLAttributes, MutableRefObject, Ref } from 'react
 import { cn } from '@/lib/utils'
 
 type ScrollShadowStyle = CSSProperties & {
-    '--scroll-shadow-color'?: string
+    '--scroll-shadow-size'?: string
 }
 
 export type ScrollShadowProps = HTMLAttributes<HTMLDivElement> & {
-    shadowColor?: string
+    size?: number
+    offset?: number
+    orientation?: 'vertical' | 'horizontal'
+    hideScrollBar?: boolean
 }
 
 type ScrollShadowState = {
     top: boolean
     bottom: boolean
+    left: boolean
+    right: boolean
 }
 
 const SCROLL_EPSILON_PX = 1
-const SHADOW_SIZE_PX = 14
-const SHADOW_SPREAD_PX = -12
 
 function setRefValue<T>(ref: Ref<T> | undefined, value: T): void {
     if (!ref) return
@@ -28,31 +31,58 @@ function setRefValue<T>(ref: Ref<T> | undefined, value: T): void {
     ;(ref as MutableRefObject<T>).current = value
 }
 
-function computeScrollShadowState(el: HTMLDivElement): ScrollShadowState {
+function computeScrollShadowState(el: HTMLDivElement, orientation: 'vertical' | 'horizontal'): ScrollShadowState {
+    if (orientation === 'horizontal') {
+        const maxScrollLeft = el.scrollWidth - el.clientWidth
+        if (maxScrollLeft <= SCROLL_EPSILON_PX) {
+            return { top: false, bottom: false, left: false, right: false }
+        }
+        return {
+            top: false,
+            bottom: false,
+            left: el.scrollLeft > SCROLL_EPSILON_PX,
+            right: el.scrollLeft < maxScrollLeft - SCROLL_EPSILON_PX
+        }
+    }
+
     const maxScrollTop = el.scrollHeight - el.clientHeight
     if (maxScrollTop <= SCROLL_EPSILON_PX) {
-        return { top: false, bottom: false }
+        return { top: false, bottom: false, left: false, right: false }
     }
 
     return {
         top: el.scrollTop > SCROLL_EPSILON_PX,
-        bottom: el.scrollTop < maxScrollTop - SCROLL_EPSILON_PX
+        bottom: el.scrollTop < maxScrollTop - SCROLL_EPSILON_PX,
+        left: false,
+        right: false
     }
 }
 
 export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(function ScrollShadow(
-    { className, style, shadowColor, children, ...rest },
+    { className, style, size = 40, offset = 0, orientation = 'vertical', hideScrollBar = false, children, ...rest },
     ref
 ) {
     const viewportRef = useRef<HTMLDivElement | null>(null)
-    const [shadowState, setShadowState] = useState<ScrollShadowState>({ top: false, bottom: false })
+    const [shadowState, setShadowState] = useState<ScrollShadowState>({
+        top: false,
+        bottom: false,
+        left: false,
+        right: false
+    })
 
     const refreshShadowState = useCallback(() => {
         const viewport = viewportRef.current
         if (!viewport) return
-        const next = computeScrollShadowState(viewport)
-        setShadowState((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next))
-    }, [])
+        const next = computeScrollShadowState(viewport, orientation)
+        setShadowState((prev) => (
+            prev.top === next.top &&
+            prev.bottom === next.bottom &&
+            prev.left === next.left &&
+            prev.right === next.right
+                ? prev
+                : next
+        ))
+    }, [orientation])
 
     const setViewportRef = useCallback((node: HTMLDivElement | null) => {
         viewportRef.current = node
@@ -101,27 +131,25 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
         refreshShadowState()
     }, [children, refreshShadowState])
 
-    const baseStyle = style as ScrollShadowStyle | undefined
-    const dynamicShadow = [
-        shadowState.top
-            ? `inset 0 ${SHADOW_SIZE_PX}px ${SHADOW_SIZE_PX}px ${SHADOW_SPREAD_PX}px var(--scroll-shadow-color)`
-            : '',
-        shadowState.bottom
-            ? `inset 0 -${SHADOW_SIZE_PX}px ${SHADOW_SIZE_PX}px ${SHADOW_SPREAD_PX}px var(--scroll-shadow-color)`
-            : ''
-    ].filter(Boolean).join(', ')
-    const mergedBoxShadow = [baseStyle?.boxShadow, dynamicShadow].filter(Boolean).join(', ')
     const mergedStyle: ScrollShadowStyle = {
-        '--scroll-shadow-color': shadowColor ?? 'var(--app-scroll-shadow)',
-        ...baseStyle,
-        boxShadow: mergedBoxShadow || undefined
+        '--scroll-shadow-size': `${size}px`,
+        ...style
     }
 
     return (
         <div
             ref={setViewportRef}
-            className={cn('scroll-shadow-y', className)}
+            className={cn(
+                'scroll-shadow',
+                orientation === 'vertical' ? 'scroll-shadow-vertical' : 'scroll-shadow-horizontal',
+                hideScrollBar && 'scroll-shadow-hide-scrollbar',
+                className
+            )}
             style={mergedStyle}
+            data-top-shadow={shadowState.top ? 'visible' : 'hidden'}
+            data-bottom-shadow={shadowState.bottom ? 'visible' : 'hidden'}
+            data-left-shadow={shadowState.left ? 'visible' : 'hidden'}
+            data-right-shadow={shadowState.right ? 'visible' : 'hidden'}
             {...rest}
         >
             {children}
