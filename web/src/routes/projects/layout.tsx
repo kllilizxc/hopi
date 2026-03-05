@@ -521,12 +521,6 @@ export default function ProjectsPage() {
     const isProjectsIndex = pathname === '/projects' || pathname === '/projects/'
     const shouldShowLeftOnMobile = isProjectsIndex || (!isTaskRoute && !isProjectSettingsRoute)
     const shouldShowRightPanel = isTaskRoute || isProjectSettingsRoute
-    const rightPanelTransitionStyle = useMemo(() => ({
-        transitionProperty: 'transform, opacity, max-width',
-        transitionDuration: '200ms, 200ms, 0ms',
-        transitionTimingFunction: 'cubic-bezier(0, 0, 0.2, 1), cubic-bezier(0, 0, 0.2, 1), linear',
-        transitionDelay: shouldShowRightPanel ? '0ms, 0ms, 0ms' : '0ms, 0ms, 200ms',
-    }), [shouldShowRightPanel])
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
@@ -652,14 +646,13 @@ export default function ProjectsPage() {
             </div>
 
             <div
-                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[transform,opacity] duration-200 ease-out ${
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[transform,opacity,max-width] duration-200 ease-out ${
                     shouldShowRightPanel
                         ? 'translate-x-0 opacity-100 pointer-events-auto lg:max-w-content lg:translate-x-0 lg:opacity-100'
                         : 'translate-x-full opacity-100 pointer-events-none lg:max-w-[0px] lg:translate-x-2 lg:opacity-0 lg:pointer-events-none'
                 } lg:static lg:z-auto lg:flex-none lg:w-full`}
-                style={rightPanelTransitionStyle}
             >
-                <div className="flex-1 min-h-0">
+                <div className="flex-1 min-h-0 lg:w-[480px] lg:min-w-[480px]">
                     <Outlet />
                 </div>
             </div>
