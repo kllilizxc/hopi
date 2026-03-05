@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import { stripAnsiAndControls } from '@/components/assistant-ui/markdown-utils'
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Pressable } from '@/components/ui/pressable'
 import { useTranslation } from '@/lib/use-translation'
 import { CliIcon, DetailsIcon } from '@/assets/icons'
+import { CommandLiveOutput } from '@/components/CommandLiveOutput'
 
 const CLI_TAG_PATTERN = '(?:local-command-[a-z-]+|command-(?:name|message|args))'
 const CLI_TAG_CHECK_REGEX = new RegExp(`<${CLI_TAG_PATTERN}>`, 'i')
@@ -118,16 +119,15 @@ export function CliOutputBlock(props: { text: string }) {
                         <DialogHeader>
                             <DialogTitle>{t('terminal.commandName')}</DialogTitle>
                         </DialogHeader>
-                        <div className="mt-3 max-h-[75vh] overflow-auto">
-                            <div className="min-w-0 max-w-full overflow-x-auto overflow-y-hidden">
-                                <pre className="m-0 w-max min-w-full bg-[var(--app-code-bg)] p-2 text-xs font-mono">
-                                    {content}
-                                </pre>
-                            </div>
+                        <div className="mt-3">
+                            <CommandLiveOutput text={content} maxHeightClassName="max-h-[75vh]" />
                         </div>
                     </DialogContent>
                 </Dialog>
             </CardHeader>
+            <CardContent className="px-3 pb-3 pt-0">
+                <CommandLiveOutput text={content} />
+            </CardContent>
         </Card>
     )
 }

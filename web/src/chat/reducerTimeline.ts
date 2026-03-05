@@ -4,6 +4,60 @@ import { createCliOutputBlock, isCliOutputText, mergeCliOutputBlocks } from '@/c
 import { parseMessageAsEvent } from '@/chat/reducerEvents'
 import { ensureToolBlock, extractTitleFromChangeTitleInput, isChangeTitleToolName, type PermissionEntry } from '@/chat/reducerTools'
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') return null
+    return value as Record<string, unknown>
+}
+
+function appendDelta(previous: string | null, delta: string): string {
+    if (previous === null || previous.length === 0) {
+        return delta
+    }
+    if (previous.endsWith(delta)) {
+        return previous
+    }
+    return `${previous}${delta}`
+}
+
+function mergeToolResult(previous: unknown, next: unknown, isPartial: boolean): unknown {
+    if (isPartial && typeof previous === 'string' && typeof next === 'string') {
+        return appendDelta(previous, next)
+    }
+
+    const prevRecord = asRecord(previous)
+    const nextRecord = asRecord(next)
+    if (!nextRecord) {
+        return next
+    }
+
+    const merged: Record<string, unknown> = {
+        ...(prevRecord ?? {}),
+        ...nextRecord
+    }
+
+    const prevOutput = typeof prevRecord?.output === 'string' ? prevRecord.output : null
+    const nextOutput = typeof nextRecord.output === 'string' ? nextRecord.output : null
+    const nextDelta = typeof nextRecord.delta === 'string' ? nextRecord.delta : null
+
+    if (isPartial && nextOutput === null && nextDelta !== null) {
+        merged.output = appendDelta(prevOutput, nextDelta)
+    }
+
+    if (!isPartial) {
+        if (typeof merged.output !== 'string' && typeof prevRecord?.output === 'string') {
+            merged.output = prevRecord.output
+        }
+        if (typeof merged.stdout !== 'string' && typeof prevRecord?.stdout === 'string') {
+            merged.stdout = prevRecord.stdout
+        }
+        if (typeof merged.stderr !== 'string' && typeof prevRecord?.stderr === 'string') {
+            merged.stderr = prevRecord.stderr
+        }
+    }
+
+    return merged
+}
+
 export function reduceTimeline(
     messages: TracedMessage[],
     context: {
@@ -214,7 +268,7 @@ export function reduceTimeline(
                         permission
                     })
 
-                    block.tool.result = c.content
+                    block.tool.result = mergeToolResult(block.tool.result, c.content, Boolean(c.is_partial))
                     if (c.is_partial) {
                         block.tool.state = 'running'
                         block.tool.completedAt = null

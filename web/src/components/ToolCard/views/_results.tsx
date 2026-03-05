@@ -1,6 +1,7 @@
 import type { ToolViewComponent, ToolViewProps } from '@/components/ToolCard/views/_all'
 import { isObject, safeStringify } from '@hapi/protocol'
 import { CodeBlock } from '@/components/CodeBlock'
+import { CommandLiveOutput } from '@/components/CommandLiveOutput'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { basename, resolveDisplayPath } from '@/utils/path'
 
@@ -152,25 +153,100 @@ function RawJsonDevOnly(props: { value: unknown }) {
     )
 }
 
-function extractStdoutStderr(result: unknown): { stdout: string | null; stderr: string | null } | null {
-    if (!isObject(result)) return null
-
-    const stdout = typeof result.stdout === 'string' ? result.stdout : null
-    const stderr = typeof result.stderr === 'string' ? result.stderr : null
-    if (stdout !== null || stderr !== null) {
-        return { stdout, stderr }
-    }
-
-    const nested = isObject(result.output) ? result.output : null
-    if (nested) {
-        const nestedStdout = typeof nested.stdout === 'string' ? nested.stdout : null
-        const nestedStderr = typeof nested.stderr === 'string' ? nested.stderr : null
-        if (nestedStdout !== null || nestedStderr !== null) {
-            return { stdout: nestedStdout, stderr: nestedStderr }
+function getNumberValue(obj: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+        const value = obj[key]
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value
         }
     }
-
     return null
+}
+
+function getStringValue(obj: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = obj[key]
+        if (typeof value === 'string' && value.length > 0) {
+            return value
+        }
+    }
+    return null
+}
+
+function extractCommandOutputText(result: unknown): string | null {
+    if (result === undefined || result === null) {
+        return null
+    }
+
+    if (typeof result === 'string') {
+        const toolUseError = parseToolUseError(result)
+        const display = toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : result
+        const parsed = parseCodexBashOutput(display)
+        if (!parsed) {
+            return display
+        }
+
+        const meta: string[] = []
+        if (parsed.exitCode !== null) {
+            meta.push(`Exit code: ${parsed.exitCode}`)
+        }
+        if (parsed.wallTime) {
+            meta.push(`Wall time: ${parsed.wallTime}`)
+        }
+
+        return [meta.join(' · '), parsed.output]
+            .filter((part) => part.length > 0)
+            .join('\n')
+    }
+
+    if (!isObject(result)) {
+        return extractTextFromResult(result)
+    }
+
+    const nestedOutput = isObject(result.output) ? result.output : null
+    const primary = getStringValue(result, ['output', 'stdout'])
+        ?? (nestedOutput ? getStringValue(nestedOutput, ['output', 'stdout', 'text', 'content']) : null)
+        ?? getStringValue(result, ['delta'])
+        ?? extractTextFromResult(result)
+
+    const stderr = getStringValue(result, ['stderr'])
+        ?? (nestedOutput ? getStringValue(nestedOutput, ['stderr']) : null)
+    const error = getStringValue(result, ['error'])
+
+    const status = getStringValue(result, ['status'])
+    const exitCode = getNumberValue(result, ['exit_code', 'exitCode'])
+    const wallTime = getStringValue(result, ['wall_time', 'wallTime', 'duration'])
+
+    const meta: string[] = []
+    if (status) {
+        meta.push(`Status: ${status}`)
+    }
+    if (exitCode !== null) {
+        meta.push(`Exit code: ${exitCode}`)
+    }
+    if (wallTime) {
+        meta.push(`Wall time: ${wallTime}`)
+    }
+
+    const sections: string[] = []
+    if (primary) {
+        sections.push(primary)
+    }
+    if (stderr && stderr !== primary) {
+        sections.push(`[stderr]\n${stderr}`)
+    }
+    if (error && error !== primary && error !== stderr) {
+        sections.push(`[error]\n${error}`)
+    }
+    if (meta.length > 0) {
+        sections.push(meta.join(' · '))
+    }
+
+    if (sections.length === 0) {
+        return null
+    }
+
+    return sections.join('\n\n')
 }
 
 function extractReadFileContent(result: unknown): { filePath: string | null; content: string } | null {
@@ -222,35 +298,11 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
     }
 
-    if (typeof result === 'string') {
-        const toolUseError = parseToolUseError(result)
-        const display = toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : result
-        return (
-            <>
-                <CodeBlock code={display} language="text" />
-                <RawJsonDevOnly value={result} />
-            </>
-        )
-    }
-
-    const stdio = extractStdoutStderr(result)
-    if (stdio) {
-        return (
-            <>
-                <div className="flex flex-col gap-2">
-                    {stdio.stdout ? <CodeBlock code={stdio.stdout} language="text" /> : null}
-                    {stdio.stderr ? <CodeBlock code={stdio.stderr} language="text" /> : null}
-                </div>
-                <RawJsonDevOnly value={result} />
-            </>
-        )
-    }
-
-    const text = extractTextFromResult(result)
+    const text = extractCommandOutputText(result)
     if (text) {
         return (
             <>
-                {renderText(text, { mode: 'code', language: 'text' })}
+                <CommandLiveOutput text={text} />
                 <RawJsonDevOnly value={result} />
             </>
         )

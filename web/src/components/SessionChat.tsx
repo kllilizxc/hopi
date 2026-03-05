@@ -337,15 +337,15 @@ export function SessionChat(props: {
     }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, navigate, props.api, replaceMergeEvent, taskId, taskProjectId])
 
     const previewActive = isPreviewActive(previewStatus)
-    const shouldShowPreviewAction = Boolean(
+    const shouldTrackPreviewStatus = Boolean(
         taskId
         && task
         && task.activeSessionId === props.session.id
         && !task.archivedAt
         && !task.finishedAt
-        && !hasPendingRequests
         && !sessionInactive
     )
+    const shouldShowPreviewAction = shouldTrackPreviewStatus && !hasPendingRequests
     const previewActionLabel = previewBusy
         ? (previewActive ? 'Stopping Preview...' : 'Starting Preview...')
         : (previewActive ? 'Stop Preview' : 'Preview')
@@ -387,16 +387,16 @@ export function SessionChat(props: {
     }, [props.api, taskId])
 
     useEffect(() => {
-        if (!shouldShowPreviewAction) {
+        if (!shouldTrackPreviewStatus) {
             setPreviewStatus(null)
             previewStatusRef.current = null
             return
         }
         void loadPreviewStatus()
-    }, [loadPreviewStatus, shouldShowPreviewAction])
+    }, [loadPreviewStatus, shouldTrackPreviewStatus])
 
     useEffect(() => {
-        if (!shouldShowPreviewAction || previewStatus?.status !== 'starting') {
+        if (!shouldTrackPreviewStatus || !previewStatus?.active) {
             return
         }
 
@@ -404,7 +404,7 @@ export function SessionChat(props: {
             void loadPreviewStatus()
         }, 2_000)
         return () => clearInterval(timer)
-    }, [loadPreviewStatus, previewStatus?.status, shouldShowPreviewAction])
+    }, [loadPreviewStatus, previewStatus?.active, shouldTrackPreviewStatus])
 
     useEffect(() => {
         const prev = previewStatusRef.current
@@ -860,6 +860,9 @@ export function SessionChat(props: {
                         previewActionLabel={previewActionLabel}
                         onPreviewAction={handlePreviewActionClick}
                         previewEvents={previewEvents}
+                        showPreviewLogs={shouldTrackPreviewStatus}
+                        previewLogTail={previewStatus?.logTail ?? []}
+                        previewCommand={previewStatus?.command ?? null}
                     />
 
                     <HappyComposer
