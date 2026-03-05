@@ -23,6 +23,7 @@ import { InstallPrompt } from '@/components/InstallPrompt'
 import { OfflineBanner } from '@/components/OfflineBanner'
 import { SyncingBanner } from '@/components/SyncingBanner'
 import { ReconnectingBanner } from '@/components/ReconnectingBanner'
+import { ReconnectingOverlay } from '@/components/ReconnectingOverlay'
 import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
@@ -119,6 +120,7 @@ function AppInner() {
     const [sseDisconnected, setSseDisconnected] = useState(false)
     const syncTokenRef = useRef(0)
     const isFirstConnectRef = useRef(true)
+    const hasLoadedOnceRef = useRef(false)
     const baseUrlRef = useRef(baseUrl)
     const pushPromptedRef = useRef(false)
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
@@ -129,6 +131,7 @@ function AppInner() {
         }
         baseUrlRef.current = baseUrl
         isFirstConnectRef.current = true
+        hasLoadedOnceRef.current = false
         syncTokenRef.current = 0
         queryClient.clear()
     }, [baseUrl, queryClient])
@@ -291,57 +294,20 @@ function AppInner() {
         enabled: Boolean(api && token)
     })
 
-    // Loading auth source
+    // Loading auth source - only show full screen loading on first load
     if (isAuthSourceLoading) {
-        return (
-            <div className="h-full flex items-center justify-center p-4">
-                <LoadingState label={t('loading')} className="text-sm" />
-            </div>
-        )
+        if (!hasLoadedOnceRef.current) {
+            return (
+                <div className="h-full flex items-center justify-center p-4">
+                    <LoadingState label={t('loading')} className="text-sm" />
+                </div>
+            )
+        }
     }
 
     // No auth source (browser environment, not logged in)
     if (!authSource) {
-        return (
-            <LoginPrompt
-                onLogin={setAccessToken}
-                baseUrl={baseUrl}
-                serverUrl={serverUrl}
-                setServerUrl={setServerUrl}
-                clearServerUrl={clearServerUrl}
-                requireServerUrl={REQUIRE_SERVER_URL}
-            />
-        )
-    }
-
-    if (needsBinding) {
-        return (
-            <LoginPrompt
-                mode="bind"
-                onBind={bind}
-                baseUrl={baseUrl}
-                serverUrl={serverUrl}
-                setServerUrl={setServerUrl}
-                clearServerUrl={clearServerUrl}
-                requireServerUrl={REQUIRE_SERVER_URL}
-                error={authError ?? undefined}
-            />
-        )
-    }
-
-    // Authenticating (also covers the gap before useAuth effect starts)
-    if (isAuthLoading || (authSource && !token && !authError)) {
-        return (
-            <div className="h-full flex items-center justify-center p-4">
-                <LoadingState label={t('authorizing')} className="text-sm" />
-            </div>
-        )
-    }
-
-    // Auth error
-    if (authError || !token || !api) {
-        // If using access token and auth failed, show login again
-        if (authSource.type === 'accessToken') {
+        if (!hasLoadedOnceRef.current) {
             return (
                 <LoginPrompt
                     onLogin={setAccessToken}
@@ -350,30 +316,94 @@ function AppInner() {
                     setServerUrl={setServerUrl}
                     clearServerUrl={clearServerUrl}
                     requireServerUrl={REQUIRE_SERVER_URL}
-                    error={authError ?? t('login.error.authFailed')}
                 />
             )
         }
+    }
+
+    if (needsBinding) {
+        if (!hasLoadedOnceRef.current) {
+            return (
+                <LoginPrompt
+                    mode="bind"
+                    onBind={bind}
+                    baseUrl={baseUrl}
+                    serverUrl={serverUrl}
+                    setServerUrl={setServerUrl}
+                    clearServerUrl={clearServerUrl}
+                    requireServerUrl={REQUIRE_SERVER_URL}
+                    error={authError ?? undefined}
+                />
+            )
+        }
+    }
+
+    // Authenticating (also covers the gap before useAuth effect starts)
+    // Only show full screen loading on first load, otherwise show overlay
+    if (isAuthLoading || (authSource && !token && !authError)) {
+        if (!hasLoadedOnceRef.current) {
+            return (
+                <div className="h-full flex items-center justify-center p-4">
+                    <LoadingState label={t('authorizing')} className="text-sm" />
+                </div>
+            )
+        }
+    }
+
+    // Auth error
+    if (authError || !token || !api) {
+        // If using access token and auth failed, show login again
+        if (authSource.type === 'accessToken') {
+            if (!hasLoadedOnceRef.current) {
+                return (
+                    <LoginPrompt
+                        onLogin={setAccessToken}
+                        baseUrl={baseUrl}
+                        serverUrl={serverUrl}
+                        setServerUrl={setServerUrl}
+                        clearServerUrl={clearServerUrl}
+                        requireServerUrl={REQUIRE_SERVER_URL}
+                        error={authError ?? t('login.error.authFailed')}
+                    />
+                )
+            }
+        }
 
         // Telegram auth failed
-        return (
-            <div className="p-4 space-y-3">
-                <div className="text-base font-semibold">{t('login.title')}</div>
-                <div className="text-sm text-red-600">
-                    {authError ?? t('login.error.authFailed')}
+        if (!hasLoadedOnceRef.current) {
+            return (
+                <div className="p-4 space-y-3">
+                    <div className="text-base font-semibold">{t('login.title')}</div>
+                    <div className="text-sm text-red-600">
+                        {authError ?? t('login.error.authFailed')}
+                    </div>
+                    <div className="text-xs text-[var(--app-hint)]">
+                        Open this page from Telegram using the bot's "Open App" button (not "Open in browser").
+                    </div>
                 </div>
-                <div className="text-xs text-[var(--app-hint)]">
-                    Open this page from Telegram using the bot's "Open App" button (not "Open in browser").
-                </div>
-            </div>
-        )
+            )
+        }
     }
+
+    // Mark that we've successfully loaded once
+    if (token && api) {
+        hasLoadedOnceRef.current = true
+    }
+
+    // Show reconnecting overlay if we're reconnecting after initial load
+    const isReconnecting = hasLoadedOnceRef.current && (
+        isAuthSourceLoading ||
+        isAuthLoading ||
+        (authSource && !token && !authError) ||
+        sseDisconnected
+    )
 
     return (
         <AppContextProvider value={{ api, token, baseUrl }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
-                <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing} />
+                <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing && !isReconnecting} />
+                <ReconnectingOverlay isReconnecting={isReconnecting} />
                 <VoiceErrorBanner />
                 <OfflineBanner />
                 <div className="h-full flex flex-col">
