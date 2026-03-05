@@ -546,6 +546,35 @@ export default function ProjectsPage() {
         }
     }, [selectedProjectId, createTask, addToast, t])
 
+    const handleBackToProjects = useCallback(() => {
+        void navigate({ to: '/projects' })
+    }, [navigate])
+
+    const handleOpenProjectSettings = useCallback(() => {
+        if (!selectedProjectId) return
+        void navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })
+    }, [navigate, selectedProjectId])
+
+    const handleGoToSessions = useCallback(() => {
+        void navigate({ to: '/sessions' })
+    }, [navigate])
+
+    const handleOpenNewTaskDialog = useCallback(() => {
+        setNewTaskOpen(true)
+    }, [])
+
+    const handleSelectProject = useCallback((projectId: string) => {
+        void navigate({ to: '/projects/$projectId', params: { projectId } })
+    }, [navigate])
+
+    const handleOpenCreateDialog = useCallback(() => {
+        setCreateOpen(true)
+    }, [])
+
+    const handleGoToSettings = useCallback(() => {
+        void navigate({ to: '/settings' })
+    }, [navigate])
+
     return (
         <div className="relative flex h-full min-h-0 overflow-hidden">
             <div
@@ -558,17 +587,17 @@ export default function ProjectsPage() {
                 {selectedProjectId ? (
                     <ProjectBoardPanel
                         projectId={selectedProjectId}
-                        onBackToProjects={() => navigate({ to: '/projects' })}
-                        onOpenSettings={() => navigate({ to: '/projects/$projectId/settings', params: { projectId: selectedProjectId } })}
-                        onGoToSessions={() => navigate({ to: '/sessions' })}
-                        onOpenNewTask={() => setNewTaskOpen(true)}
+                        onBackToProjects={handleBackToProjects}
+                        onOpenSettings={handleOpenProjectSettings}
+                        onGoToSessions={handleGoToSessions}
+                        onOpenNewTask={handleOpenNewTaskDialog}
                     />
                 ) : (
                     <ProjectsListPanel
-                        onSelectProject={(projectId) => navigate({ to: '/projects/$projectId', params: { projectId } })}
-                        onOpenCreate={() => setCreateOpen(true)}
-                        onGoToSessions={() => navigate({ to: '/sessions' })}
-                        onGoToSettings={() => navigate({ to: '/settings' })}
+                        onSelectProject={handleSelectProject}
+                        onOpenCreate={handleOpenCreateDialog}
+                        onGoToSessions={handleGoToSessions}
+                        onGoToSettings={handleGoToSettings}
                     />
                 )}
             </div>
