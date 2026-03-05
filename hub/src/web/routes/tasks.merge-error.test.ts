@@ -43,6 +43,26 @@ function createTestApp(store: Store, engine: SyncEngine): Hono {
     return app
 }
 
+async function waitForTaskMergeResult(options: {
+    store: Store
+    taskId: string
+    namespace: string
+    timeoutMs?: number
+}): Promise<void> {
+    const timeoutMs = options.timeoutMs ?? 2_000
+    const startedAt = Date.now()
+
+    while (Date.now() - startedAt < timeoutMs) {
+        const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+        if (task?.worktreeMergedAt) {
+            return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    throw new Error('Timed out waiting for background merge result')
+}
+
 describe('tasks merge route unexpected errors', () => {
     it('returns thrown error message for unexpected merge failures', async () => {
         const store = new Store(':memory:')
@@ -517,6 +537,9 @@ describe('tasks merge route unexpected errors', () => {
                     }
                 }
                 if (mergeCalls === 2) {
+                    store.tasks.updateTaskByNamespace(taskId, namespace, {
+                        status: 'in_progress'
+                    })
                     return {
                         success: false,
                         error: 'merge timed out'
@@ -573,5 +596,15 @@ describe('tasks merge route unexpected errors', () => {
         expect(body.skippedReason).toBe('auto_retry_scheduled')
         expect(body.autoResolved).toBe(true)
         expect(body.autoRetryScheduled).toBe(true)
+
+        await waitForTaskMergeResult({
+            store,
+            taskId,
+            namespace
+        })
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.status).toBe('finished')
+        expect(updatedTask?.worktreeMergeCommit).toBe('merged789')
+        expect(updatedTask?.finishedAt).toBeTypeOf('number')
     })
 })

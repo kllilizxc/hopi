@@ -161,10 +161,12 @@ async function persistSuccessfulTaskMerge(options: {
     sessionId: string
     sessionMetadataWorktreeBaseCommit: string | undefined
     mergeResult: RpcGitMergeWorktreeResponse
+    markFinishedOnMerge?: boolean
     preferredLocale?: string
 }): Promise<StoredTask | null> {
     const mergedAt = Date.now()
-    const statusChangingToFinished = options.task.status === 'in_review'
+    const shouldMarkFinished = options.markFinishedOnMerge ?? options.task.status === 'in_review'
+    const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'finished'
 
     let diffSnapshot: unknown = null
     try {
@@ -650,6 +652,7 @@ function scheduleBackgroundAutoMergeRetry(options: {
     namespace: string
     taskId: string
     targetBranch: string
+    markFinishedOnMerge?: boolean
     preferredLocale?: string
 }): boolean {
     const key = buildAutoMergeRetryKey(options.namespace, options.taskId)
@@ -767,6 +770,7 @@ function scheduleBackgroundAutoMergeRetry(options: {
                     sessionId: session.id,
                     sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
                     mergeResult: result,
+                    markFinishedOnMerge: options.markFinishedOnMerge,
                     preferredLocale: options.preferredLocale
                 })
                 if (updatedTask) {
@@ -1803,6 +1807,7 @@ export function createTasksRoutes(options: {
             }
 
             const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
+            const markFinishedOnMerge = task.status === 'in_review'
             const mergeState = await computeMergeGitState({
                 engine,
                 sessionId: session.id,
@@ -1869,6 +1874,7 @@ export function createTasksRoutes(options: {
                             namespace,
                             taskId: task.id,
                             targetBranch,
+                            markFinishedOnMerge,
                             preferredLocale
                         })
 
@@ -1956,6 +1962,7 @@ export function createTasksRoutes(options: {
                 sessionId: session.id,
                 sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
                 mergeResult: result,
+                markFinishedOnMerge,
                 preferredLocale
             })
             if (!updatedTask) {
