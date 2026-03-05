@@ -360,6 +360,436 @@ function AttachSessionDialog(props: {
     )
 }
 
+const TaskOverviewSection = memo(function TaskOverviewSection(props: {
+    title: string
+    description: string
+    effectiveWorkspaceLabel: string
+    effectiveAgentFlavor: AgentType
+    canEditModelMode: boolean
+    modelMode: ModelMode
+    taskPriority: TaskPriority | null
+    hasSession: boolean
+    isUpdatingTask: boolean
+    copied: boolean
+    onTitleChange: (value: string) => void
+    onDescriptionChange: (value: string) => void
+    onTitleBlur: () => void
+    onDescriptionBlur: () => void
+    onCopyLink: () => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+            <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                    <input
+                        type="text"
+                        value={props.title}
+                        onChange={(e) => props.onTitleChange(e.target.value)}
+                        onBlur={props.onTitleBlur}
+                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                        disabled={props.isUpdatingTask}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
+                        <Tag variant="default">{t('projects.task.workspace.label')}: {props.effectiveWorkspaceLabel}</Tag>
+                        <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(props.effectiveAgentFlavor)}</Tag>
+                        {props.canEditModelMode && props.modelMode !== 'default' ? (
+                            <Tag variant="default">{t('newSession.model')}: {MODEL_MODE_LABELS[props.modelMode]}</Tag>
+                        ) : null}
+                        {props.taskPriority ? (
+                            <Tag variant={getTaskPriorityTagVariant(props.taskPriority)}>
+                                {t(getTaskPriorityLabelKey(props.taskPriority))}
+                            </Tag>
+                        ) : null}
+                        {props.hasSession ? <Tag variant="success">{t('projects.task.sessionLinked')}</Tag> : <Tag variant="warning">{t('projects.task.noSession')}</Tag>}
+                    </div>
+                </div>
+
+                <IconButton
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={props.onCopyLink}
+                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
+                    title={t('projects.task.copyLink')}
+                    aria-label={t('projects.task.copyLink')}
+                >
+                    <CopyIcon className={props.copied ? 'text-[var(--app-link)]' : undefined} />
+                </IconButton>
+            </div>
+
+            <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--app-hint)]">
+                    {t('projects.task.description')}
+                </label>
+                <textarea
+                    value={props.description}
+                    onChange={(e) => props.onDescriptionChange(e.target.value)}
+                    onBlur={props.onDescriptionBlur}
+                    rows={8}
+                    disabled={props.isUpdatingTask}
+                    className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                />
+            </div>
+        </section>
+    )
+})
+
+const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
+    subTasks: TodoItem[]
+    newSubTaskContent: string
+    newSubTaskPriority: TaskPriority
+    isUpdatingTask: boolean
+    onToggleSubTask: (id: string, checked: boolean) => void
+    onSubTaskContentChange: (id: string, value: string) => void
+    onSubTaskContentBlur: (id: string) => void
+    onSubTaskPriorityChange: (id: string, value: TaskPriority) => void
+    onRemoveSubTask: (id: string) => void
+    onNewSubTaskContentChange: (value: string) => void
+    onNewSubTaskPriorityChange: (value: TaskPriority) => void
+    onAddSubTask: () => void
+}) {
+    const { t } = useTranslation()
+    const priorityOptions = useMemo(() => ([
+        { value: 'high', label: t('projects.task.priority.high') },
+        { value: 'medium', label: t('projects.task.priority.medium') },
+        { value: 'low', label: t('projects.task.priority.low') },
+    ]), [t])
+
+    return (
+        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+            <div>
+                <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
+                <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
+            </div>
+
+            {props.subTasks.length === 0 ? (
+                <div className="text-sm text-[var(--app-hint)]">
+                    {t('projects.task.subtasks.empty')}
+                </div>
+            ) : (
+                <div className="flex flex-col gap-2">
+                    {props.subTasks.map((subTask) => (
+                        <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
+                            <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
+                                <Checkbox
+                                    checked={subTask.status === 'completed'}
+                                    onCheckedChange={(checked) => {
+                                        props.onToggleSubTask(subTask.id, checked)
+                                    }}
+                                    disabled={props.isUpdatingTask}
+                                />
+                                <span className="text-xs text-[var(--app-hint)]">
+                                    {subTask.status === 'completed'
+                                        ? t('projects.task.subtasks.status.completed')
+                                        : subTask.status === 'in_progress'
+                                            ? t('projects.task.subtasks.status.inProgress')
+                                            : t('projects.task.subtasks.status.pending')}
+                                </span>
+                            </label>
+
+                            <input
+                                type="text"
+                                value={subTask.content}
+                                onChange={(e) => props.onSubTaskContentChange(subTask.id, e.target.value)}
+                                onBlur={() => {
+                                    props.onSubTaskContentBlur(subTask.id)
+                                }}
+                                disabled={props.isUpdatingTask}
+                                className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
+                            />
+
+                            <div className="flex items-center gap-2 md:w-auto">
+                                <AdaptiveSelectField
+                                    title={t('projects.task.priority')}
+                                    value={subTask.priority}
+                                    options={priorityOptions}
+                                    onValueChange={(value) => {
+                                        props.onSubTaskPriorityChange(subTask.id, value as TaskPriority)
+                                    }}
+                                    disabled={props.isUpdatingTask}
+                                    align="end"
+                                    size="sm"
+                                    triggerClassName="min-w-[120px]"
+                                />
+
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => {
+                                        props.onRemoveSubTask(subTask.id)
+                                    }}
+                                    disabled={props.isUpdatingTask}
+                                >
+                                    {t('projects.task.subtasks.remove')}
+                                </Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+                <input
+                    type="text"
+                    value={props.newSubTaskContent}
+                    onChange={(e) => props.onNewSubTaskContentChange(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault()
+                            props.onAddSubTask()
+                        }
+                    }}
+                    disabled={props.isUpdatingTask}
+                    placeholder={t('projects.task.subtasks.placeholder')}
+                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                />
+                <AdaptiveSelectField
+                    title={t('projects.task.priority')}
+                    value={props.newSubTaskPriority}
+                    options={priorityOptions}
+                    onValueChange={(value) => props.onNewSubTaskPriorityChange(value as TaskPriority)}
+                    disabled={props.isUpdatingTask}
+                    align="end"
+                    size="sm"
+                    triggerClassName="min-w-[120px]"
+                />
+                <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={props.onAddSubTask}
+                    disabled={props.isUpdatingTask || !props.newSubTaskContent.trim()}
+                >
+                    {t('projects.task.subtasks.add')}
+                </Button>
+            </div>
+        </section>
+    )
+})
+
+const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
+    attachments: TaskAttachment[]
+    totalBytes: number
+    overLimit: boolean
+    attachmentsBusy: boolean
+    isUpdatingTask: boolean
+    onAddFiles: (files: FileList | null) => void
+    onRemoveAttachment: (id: string) => void
+}) {
+    const { t } = useTranslation()
+    const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+    return (
+        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+            <div className="flex items-center justify-between gap-3">
+                <div>
+                    <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
+                    <div className="text-xs text-[var(--app-hint)]">
+                        {t('projects.task.attachments.budget', { used: formatBytes(props.totalBytes), max: formatBytes(MAX_TASK_ATTACHMENTS_BYTES) })}
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        disabled={props.isUpdatingTask || props.attachmentsBusy}
+                        onChange={(e) => {
+                            props.onAddFiles(e.target.files)
+                            e.currentTarget.value = ''
+                        }}
+                        className="hidden"
+                    />
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={props.isUpdatingTask || props.attachmentsBusy}
+                        onClick={() => fileInputRef.current?.click()}
+                    >
+                        {t('projects.task.attachments.add')}
+                    </Button>
+                </div>
+            </div>
+
+            {props.overLimit ? (
+                <div className="rounded-md bg-amber-500/10 p-2 text-xs text-[var(--app-hint)]">
+                    {t('projects.task.attachments.overLimit')}
+                </div>
+            ) : null}
+
+            {props.attachments.length === 0 ? (
+                <div className="text-sm text-[var(--app-hint)]">
+                    {t('projects.task.attachments.empty')}
+                </div>
+            ) : (
+                <div className="flex flex-col gap-2">
+                    {props.attachments.map((att) => (
+                        <div key={att.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{att.filename}</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    {formatBytes(att.size)} · {att.mimeType}
+                                </div>
+                            </div>
+                            <Button type="button" variant="secondary" onClick={() => props.onRemoveAttachment(att.id)} disabled={props.isUpdatingTask || props.attachmentsBusy}>
+                                {t('projects.task.attachments.remove')}
+                            </Button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    )
+})
+
+const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
+    status: TaskStatus
+    statusOptions: Array<{ value: TaskStatus; label: string }>
+    priority: TaskPriority | ''
+    priorityOptions: Array<{ value: '' | TaskPriority; label: string }>
+    workspaceId: string
+    workspaceOptions: Array<{ value: string; label: string }>
+    agentFlavor: AgentType | ''
+    agentOptions: Array<{ value: '' | AgentType; label: string }>
+    canEditModelMode: boolean
+    modelMode: ModelMode
+    modelModeOptions: Array<{ value: ModelMode; label: string }>
+    sessionId: string | null
+    overLimit: boolean
+    isUpdatingTask: boolean
+    isArchiving: boolean
+    onStatusChange: (value: string) => void
+    onPriorityChange: (value: string) => void
+    onWorkspaceChange: (value: string) => void
+    onAgentFlavorChange: (value: string) => void
+    onModelModeChange: (value: string) => void
+    onOpenChat: () => void
+    onOpenStart: () => void
+    onOpenAttach: () => void
+    onOpenArchive: () => void
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <div className="space-y-4">
+            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        {t('projects.task.status')}
+                    </label>
+                    <AdaptiveSelectField
+                        title={t('projects.task.status')}
+                        value={props.status}
+                        options={props.statusOptions}
+                        onValueChange={props.onStatusChange}
+                        disabled={props.isUpdatingTask}
+                        align="start"
+                    />
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        {t('projects.task.priority')}
+                    </label>
+                    <AdaptiveSelectField
+                        title={t('projects.task.priority')}
+                        value={props.priority}
+                        options={props.priorityOptions}
+                        onValueChange={props.onPriorityChange}
+                        disabled={props.isUpdatingTask}
+                        align="start"
+                    />
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        {t('projects.task.workspace')}
+                    </label>
+                    <AdaptiveSelectField
+                        title={t('projects.task.workspace')}
+                        value={props.workspaceId}
+                        options={props.workspaceOptions}
+                        onValueChange={props.onWorkspaceChange}
+                        disabled={props.isUpdatingTask}
+                        align="start"
+                    />
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        {t('newSession.agent')}
+                    </label>
+                    <AdaptiveSelectField
+                        title={t('newSession.agent')}
+                        value={props.agentFlavor}
+                        options={props.agentOptions}
+                        onValueChange={props.onAgentFlavorChange}
+                        disabled={props.isUpdatingTask}
+                        align="start"
+                    />
+                </div>
+
+                {props.canEditModelMode ? (
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('newSession.model')}
+                        </label>
+                        <AdaptiveSelectField
+                            title={t('newSession.model')}
+                            value={props.modelMode}
+                            options={props.modelModeOptions}
+                            onValueChange={props.onModelModeChange}
+                            disabled={props.isUpdatingTask}
+                            align="start"
+                        />
+                    </div>
+                ) : null}
+            </section>
+
+            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
+
+                {props.sessionId ? (
+                    <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="secondary" onClick={props.onOpenChat}>
+                            {t('projects.sessions.openChat')}
+                        </Button>
+                        <Button type="button" variant="secondary" onClick={props.onOpenStart}>
+                            {t('projects.sessions.startNew')}
+                        </Button>
+                    </div>
+                ) : (
+                    <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="secondary" onClick={props.onOpenStart} disabled={props.isUpdatingTask || props.overLimit}>
+                            {t('projects.sessions.start')}
+                        </Button>
+                        <Button type="button" variant="secondary" onClick={props.onOpenAttach} disabled={props.isUpdatingTask}>
+                            {t('projects.sessions.attach')}
+                        </Button>
+                    </div>
+                )}
+
+                {props.overLimit ? (
+                    <div className="text-xs text-[var(--app-hint)]">
+                        {t('projects.task.attachments.mustFix')}
+                    </div>
+                ) : null}
+            </section>
+
+            <section className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/20 p-3">
+                <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
+                <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
+                <Button type="button" variant="destructive" onClick={props.onOpenArchive} disabled={props.isUpdatingTask || props.isArchiving}>
+                    {t('projects.task.archive.action')}
+                </Button>
+            </section>
+        </div>
+    )
+})
+
 function TaskDetailsPanel(props: {
     projectId: string
     taskId: string
@@ -393,7 +823,6 @@ function TaskDetailsPanel(props: {
     const [newSubTaskPriority, setNewSubTaskPriority] = useState<TaskPriority>('medium')
     const [attachments, setAttachments] = useState<TaskAttachment[]>(Array.isArray(props.task.attachments) ? props.task.attachments : [])
     const [attachmentsBusy, setAttachmentsBusy] = useState(false)
-    const fileInputRef = useRef<HTMLInputElement | null>(null)
     const [startOpen, setStartOpen] = useState(false)
     const [attachOpen, setAttachOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
@@ -414,7 +843,7 @@ function TaskDetailsPanel(props: {
     }, [props.task.id, props.task.updatedAt])
 
     const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
-    const modelModeOptions = useMemo(() => {
+    const modelModeOptions = useMemo<Array<{ value: ModelMode; label: string }>>(() => {
         const modes = getModelModesForFlavor(effectiveAgentFlavor)
         return modes.map((mode) => ({
             value: mode as ModelMode,
@@ -423,19 +852,19 @@ function TaskDetailsPanel(props: {
     }, [effectiveAgentFlavor])
     const canEditModelMode = modelModeOptions.length > 0
 
-    const statusOptions = useMemo(() => TASK_STATUS_ORDER.map((taskStatus) => ({
+    const statusOptions = useMemo<Array<{ value: TaskStatus; label: string }>>(() => TASK_STATUS_ORDER.map((taskStatus) => ({
         value: taskStatus,
         label: t(TASK_STATUS_TITLE_KEY_BY_STATUS[taskStatus]),
     })), [t])
 
-    const priorityOptions = useMemo(() => ([
+    const priorityOptions = useMemo<Array<{ value: '' | TaskPriority; label: string }>>(() => ([
         { value: '', label: t('projects.task.priority.none') },
         { value: 'high', label: t('projects.task.priority.high') },
         { value: 'medium', label: t('projects.task.priority.medium') },
         { value: 'low', label: t('projects.task.priority.low') },
     ]), [t])
 
-    const workspaceOptions = useMemo(() => ([
+    const workspaceOptions = useMemo<Array<{ value: string; label: string }>>(() => ([
         { value: '', label: t('projects.task.workspace.projectDefault') },
         ...props.workspaces.map((ws) => ({
             value: ws.id,
@@ -443,7 +872,7 @@ function TaskDetailsPanel(props: {
         })),
     ]), [props.workspaces, t])
 
-    const agentOptions = useMemo(() => ([
+    const agentOptions = useMemo<Array<{ value: '' | AgentType; label: string }>>(() => ([
         { value: '', label: t('projects.task.agent.projectDefault') },
         ...TASK_AGENT_OPTIONS.map((agent) => ({
             value: agent,
@@ -483,6 +912,42 @@ function TaskDetailsPanel(props: {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [archiveTask, props.taskId, props.projectId, addToast, t, title, navigate])
 
+    const handleTitleBlur = useCallback(() => {
+        if (title.trim() && title.trim() !== props.task.title) {
+            void savePatch({ title: title.trim() })
+        }
+    }, [props.task.title, savePatch, title])
+
+    const handleDescriptionBlur = useCallback(() => {
+        const next = description.trim() ? description.trim() : ''
+        const prev = (props.task.description ?? '').trim()
+        if (next !== prev) {
+            void savePatch({ description: next ? next : null })
+        }
+    }, [description, props.task.description, savePatch])
+
+    const handleCopyLink = useCallback(() => {
+        void copy(window.location.href)
+    }, [copy])
+
+    const handleStatusChange = useCallback((value: string) => {
+        const next = value as TaskStatus
+        setStatus(next)
+        void savePatch({ status: next, sortKey: Date.now() })
+    }, [savePatch])
+
+    const handlePriorityChange = useCallback((value: string) => {
+        const next = (value as TaskPriority) || ''
+        setPriority(next)
+        void savePatch({ priority: next || null })
+    }, [savePatch])
+
+    const handleWorkspaceChange = useCallback((value: string) => {
+        const next = value as string
+        setWorkspaceId(next)
+        void savePatch({ workspaceId: next || null })
+    }, [savePatch])
+
     const handleAgentFlavorChange = useCallback((value: string) => {
         const next = value as AgentType | ''
         const resolvedNextAgent = (next || props.projectDefaults.agent) as AgentType
@@ -510,7 +975,7 @@ function TaskDetailsPanel(props: {
         })
     }, [effectiveAgentFlavor, savePatch])
 
-    const handleAddFiles = async (files: FileList | null) => {
+    const handleAddFiles = useCallback(async (files: FileList | null) => {
         if (!files || files.length === 0) return
         setAttachmentsBusy(true)
         try {
@@ -545,13 +1010,13 @@ function TaskDetailsPanel(props: {
         } finally {
             setAttachmentsBusy(false)
         }
-    }
+    }, [attachments, addToast, savePatch, t])
 
-    const handleRemoveAttachment = async (id: string) => {
+    const handleRemoveAttachment = useCallback(async (id: string) => {
         const next = attachments.filter((a) => a.id !== id)
         setAttachments(next)
         await savePatch({ attachments: next })
-    }
+    }, [attachments, savePatch])
 
     const persistSubTasks = useCallback(async (next: TodoItem[]) => {
         setSubTasks(next)
@@ -622,389 +1087,129 @@ function TaskDetailsPanel(props: {
         await persistSubTasks(next)
     }, [newSubTaskContent, newSubTaskPriority, subTasks, persistSubTasks])
 
+    const handleOpenChat = useCallback(() => {
+        void navigate({
+            to: '/projects/$projectId/tasks/$taskId/chat',
+            params: { projectId: props.projectId, taskId: props.taskId }
+        })
+    }, [navigate, props.projectId, props.taskId])
+
+    const handleOpenStart = useCallback(() => {
+        setStartOpen(true)
+    }, [])
+
+    const handleOpenAttach = useCallback(() => {
+        setAttachOpen(true)
+    }, [])
+
+    const handleOpenArchive = useCallback(() => {
+        setArchiveOpen(true)
+    }, [])
+
+    const handleToggleSubTaskChange = useCallback((id: string, checked: boolean) => {
+        void handleToggleSubTask(id, checked)
+    }, [handleToggleSubTask])
+
+    const handleSubTaskPrioritySelect = useCallback((id: string, value: TaskPriority) => {
+        void handleSubTaskPriorityChange(id, value)
+    }, [handleSubTaskPriorityChange])
+
+    const handleSubTaskContentBlurPersist = useCallback((id: string) => {
+        void handleSubTaskContentBlur(id)
+    }, [handleSubTaskContentBlur])
+
+    const handleSubTaskRemove = useCallback((id: string) => {
+        void handleRemoveSubTask(id)
+    }, [handleRemoveSubTask])
+
+    const handleAddSubTaskAction = useCallback(() => {
+        void handleAddSubTask()
+    }, [handleAddSubTask])
+
+    const handleAddAttachmentFiles = useCallback((files: FileList | null) => {
+        void handleAddFiles(files)
+    }, [handleAddFiles])
+
+    const handleAttachmentRemove = useCallback((id: string) => {
+        void handleRemoveAttachment(id)
+    }, [handleRemoveAttachment])
+
     return (
         <div className="h-full flex flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content p-4">
                     <div className="space-y-4">
                         <div className="space-y-6">
-                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="flex-1 min-w-0">
-                                        <input
-                                            type="text"
-                                            value={title}
-                                            onChange={(e) => setTitle(e.target.value)}
-                                            onBlur={() => {
-                                                if (title.trim() && title.trim() !== props.task.title) {
-                                                    void savePatch({ title: title.trim() })
-                                                }
-                                            }}
-                                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
-                                            disabled={isUpdatingTask}
-                                        />
-                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
-                                            <Tag variant="default">{t('projects.task.workspace.label')}: {effectiveWorkspaceLabel}</Tag>
-                                            <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(effectiveAgentFlavor)}</Tag>
-                                            {canEditModelMode && modelMode !== 'default' ? (
-                                                <Tag variant="default">{t('newSession.model')}: {MODEL_MODE_LABELS[modelMode]}</Tag>
-                                            ) : null}
-                                            {props.task.priority ? (
-                                                <Tag variant={getTaskPriorityTagVariant(props.task.priority)}>
-                                                    {t(getTaskPriorityLabelKey(props.task.priority))}
-                                                </Tag>
-                                            ) : null}
-                                            {sessionId ? <Tag variant="success">{t('projects.task.sessionLinked')}</Tag> : <Tag variant="warning">{t('projects.task.noSession')}</Tag>}
-                                        </div>
-                                    </div>
+                            <TaskOverviewSection
+                                title={title}
+                                description={description}
+                                effectiveWorkspaceLabel={effectiveWorkspaceLabel}
+                                effectiveAgentFlavor={effectiveAgentFlavor}
+                                canEditModelMode={canEditModelMode}
+                                modelMode={modelMode}
+                                taskPriority={props.task.priority ?? null}
+                                hasSession={Boolean(sessionId)}
+                                isUpdatingTask={isUpdatingTask}
+                                copied={copied}
+                                onTitleChange={setTitle}
+                                onDescriptionChange={setDescription}
+                                onTitleBlur={handleTitleBlur}
+                                onDescriptionBlur={handleDescriptionBlur}
+                                onCopyLink={handleCopyLink}
+                            />
 
-                                    <IconButton
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => void copy(window.location.href)}
-                                        className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
-                                        title={t('projects.task.copyLink')}
-                                        aria-label={t('projects.task.copyLink')}
-                                    >
-                                        <CopyIcon className={copied ? 'text-[var(--app-link)]' : undefined} />
-                                    </IconButton>
-                                </div>
+                            <TaskSubTasksSection
+                                subTasks={subTasks}
+                                newSubTaskContent={newSubTaskContent}
+                                newSubTaskPriority={newSubTaskPriority}
+                                isUpdatingTask={isUpdatingTask}
+                                onToggleSubTask={handleToggleSubTaskChange}
+                                onSubTaskContentChange={handleSubTaskContentChange}
+                                onSubTaskContentBlur={handleSubTaskContentBlurPersist}
+                                onSubTaskPriorityChange={handleSubTaskPrioritySelect}
+                                onRemoveSubTask={handleSubTaskRemove}
+                                onNewSubTaskContentChange={setNewSubTaskContent}
+                                onNewSubTaskPriorityChange={setNewSubTaskPriority}
+                                onAddSubTask={handleAddSubTaskAction}
+                            />
 
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                                        {t('projects.task.description')}
-                                    </label>
-                                    <textarea
-                                        value={description}
-                                        onChange={(e) => setDescription(e.target.value)}
-                                        onBlur={() => {
-                                            const next = description.trim() ? description.trim() : ''
-                                            const prev = (props.task.description ?? '').trim()
-                                            if (next !== prev) {
-                                                void savePatch({ description: next ? next : null })
-                                            }
-                                        }}
-                                        rows={8}
-                                        disabled={isUpdatingTask}
-                                        className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                    />
-                                </div>
-                            </section>
-
-                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-                                <div>
-                                    <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
-                                    <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
-                                </div>
-
-                                {subTasks.length === 0 ? (
-                                    <div className="text-sm text-[var(--app-hint)]">
-                                        {t('projects.task.subtasks.empty')}
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col gap-2">
-                                        {subTasks.map((subTask) => (
-                                            <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
-                                                <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
-                                                    <Checkbox
-                                                        checked={subTask.status === 'completed'}
-                                                        onCheckedChange={(checked) => {
-                                                            void handleToggleSubTask(subTask.id, checked)
-                                                        }}
-                                                        disabled={isUpdatingTask}
-                                                    />
-                                                    <span className="text-xs text-[var(--app-hint)]">
-                                                        {subTask.status === 'completed'
-                                                            ? t('projects.task.subtasks.status.completed')
-                                                            : subTask.status === 'in_progress'
-                                                                ? t('projects.task.subtasks.status.inProgress')
-                                                                : t('projects.task.subtasks.status.pending')}
-                                                    </span>
-                                                </label>
-
-                                                <input
-                                                    type="text"
-                                                    value={subTask.content}
-                                                    onChange={(e) => handleSubTaskContentChange(subTask.id, e.target.value)}
-                                                    onBlur={() => {
-                                                        void handleSubTaskContentBlur(subTask.id)
-                                                    }}
-                                                    disabled={isUpdatingTask}
-                                                    className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
-                                                />
-
-                                                <div className="flex items-center gap-2 md:w-auto">
-                                                    <AdaptiveSelectField
-                                                        title={t('projects.task.priority')}
-                                                        value={subTask.priority}
-                                                        options={[
-                                                            { value: 'high', label: t('projects.task.priority.high') },
-                                                            { value: 'medium', label: t('projects.task.priority.medium') },
-                                                            { value: 'low', label: t('projects.task.priority.low') },
-                                                        ]}
-                                                        onValueChange={(value) => {
-                                                            void handleSubTaskPriorityChange(subTask.id, value as TaskPriority)
-                                                        }}
-                                                        disabled={isUpdatingTask}
-                                                        align="end"
-                                                        size="sm"
-                                                        triggerClassName="min-w-[120px]"
-                                                    />
-
-                                                    <Button
-                                                        type="button"
-                                                        variant="secondary"
-                                                        onClick={() => {
-                                                            void handleRemoveSubTask(subTask.id)
-                                                        }}
-                                                        disabled={isUpdatingTask}
-                                                    >
-                                                        {t('projects.task.subtasks.remove')}
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-
-                                <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
-                                    <input
-                                        type="text"
-                                        value={newSubTaskContent}
-                                        onChange={(e) => setNewSubTaskContent(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault()
-                                                void handleAddSubTask()
-                                            }
-                                        }}
-                                        disabled={isUpdatingTask}
-                                        placeholder={t('projects.task.subtasks.placeholder')}
-                                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                    />
-                                    <AdaptiveSelectField
-                                        title={t('projects.task.priority')}
-                                        value={newSubTaskPriority}
-                                        options={[
-                                            { value: 'high', label: t('projects.task.priority.high') },
-                                            { value: 'medium', label: t('projects.task.priority.medium') },
-                                            { value: 'low', label: t('projects.task.priority.low') },
-                                        ]}
-                                        onValueChange={(value) => setNewSubTaskPriority(value as TaskPriority)}
-                                        disabled={isUpdatingTask}
-                                        align="end"
-                                        size="sm"
-                                        triggerClassName="min-w-[120px]"
-                                    />
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        onClick={() => {
-                                            void handleAddSubTask()
-                                        }}
-                                        disabled={isUpdatingTask || !newSubTaskContent.trim()}
-                                    >
-                                        {t('projects.task.subtasks.add')}
-                                    </Button>
-                                </div>
-                            </section>
-
-                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
-                                        <div className="text-xs text-[var(--app-hint)]">
-                                            {t('projects.task.attachments.budget', { used: formatBytes(totalBytes), max: formatBytes(MAX_TASK_ATTACHMENTS_BYTES) })}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            ref={fileInputRef}
-                                            type="file"
-                                            multiple
-                                            disabled={isUpdatingTask || attachmentsBusy}
-                                            onChange={(e) => {
-                                                void handleAddFiles(e.target.files)
-                                                e.currentTarget.value = ''
-                                            }}
-                                            className="hidden"
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="secondary"
-                                            disabled={isUpdatingTask || attachmentsBusy}
-                                            onClick={() => fileInputRef.current?.click()}
-                                        >
-                                            {t('projects.task.attachments.add')}
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                {overLimit ? (
-                                    <div className="rounded-md bg-amber-500/10 p-2 text-xs text-[var(--app-hint)]">
-                                        {t('projects.task.attachments.overLimit')}
-                                    </div>
-                                ) : null}
-
-                                {attachments.length === 0 ? (
-                                    <div className="text-sm text-[var(--app-hint)]">
-                                        {t('projects.task.attachments.empty')}
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col gap-2">
-                                        {attachments.map((att) => (
-                                            <div key={att.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
-                                                <div className="min-w-0">
-                                                    <div className="text-sm font-medium truncate">{att.filename}</div>
-                                                    <div className="text-xs text-[var(--app-hint)]">
-                                                        {formatBytes(att.size)} · {att.mimeType}
-                                                    </div>
-                                                </div>
-                                                <Button type="button" variant="secondary" onClick={() => void handleRemoveAttachment(att.id)} disabled={isUpdatingTask || attachmentsBusy}>
-                                                    {t('projects.task.attachments.remove')}
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </section>
+                            <TaskAttachmentsSection
+                                attachments={attachments}
+                                totalBytes={totalBytes}
+                                overLimit={overLimit}
+                                attachmentsBusy={attachmentsBusy}
+                                isUpdatingTask={isUpdatingTask}
+                                onAddFiles={handleAddAttachmentFiles}
+                                onRemoveAttachment={handleAttachmentRemove}
+                            />
                         </div>
 
-                        <div className="space-y-4">
-                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-                                <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                                        {t('projects.task.status')}
-                                    </label>
-                                    <AdaptiveSelectField
-                                        title={t('projects.task.status')}
-                                        value={status}
-                                        options={statusOptions}
-                                        onValueChange={(value) => {
-                                            const next = value as TaskStatus
-                                            setStatus(next)
-                                            void savePatch({ status: next, sortKey: Date.now() })
-                                        }}
-                                        disabled={isUpdatingTask}
-                                        align="start"
-                                    />
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                                        {t('projects.task.priority')}
-                                    </label>
-                                    <AdaptiveSelectField
-                                        title={t('projects.task.priority')}
-                                        value={priority}
-                                        options={priorityOptions}
-                                        onValueChange={(value) => {
-                                            const next = (value as TaskPriority) || ''
-                                            setPriority(next)
-                                            void savePatch({ priority: next || null })
-                                        }}
-                                        disabled={isUpdatingTask}
-                                        align="start"
-                                    />
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                                        {t('projects.task.workspace')}
-                                    </label>
-                                    <AdaptiveSelectField
-                                        title={t('projects.task.workspace')}
-                                        value={workspaceId}
-                                        options={workspaceOptions}
-                                        onValueChange={(value) => {
-                                            const next = value as string
-                                            setWorkspaceId(next)
-                                            void savePatch({ workspaceId: next || null })
-                                        }}
-                                        disabled={isUpdatingTask}
-                                        align="start"
-                                    />
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                                        {t('newSession.agent')}
-                                    </label>
-                                    <AdaptiveSelectField
-                                        title={t('newSession.agent')}
-                                        value={agentFlavor}
-                                        options={agentOptions}
-                                        onValueChange={handleAgentFlavorChange}
-                                        disabled={isUpdatingTask}
-                                        align="start"
-                                    />
-                                </div>
-
-                                {canEditModelMode ? (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                                            {t('newSession.model')}
-                                        </label>
-                                        <AdaptiveSelectField
-                                            title={t('newSession.model')}
-                                            value={modelMode}
-                                            options={modelModeOptions}
-                                            onValueChange={handleModelModeChange}
-                                            disabled={isUpdatingTask}
-                                            align="start"
-                                        />
-                                    </div>
-                                ) : null}
-                            </section>
-
-                            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
-                                <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
-
-                                {sessionId ? (
-                                    <div className="flex flex-wrap gap-2">
-                                        <Button
-                                            type="button"
-                                            variant="secondary"
-                                            onClick={() => void navigate({
-                                                to: '/projects/$projectId/tasks/$taskId/chat',
-                                                params: { projectId: props.projectId, taskId: props.taskId }
-                                            })}
-                                        >
-                                            {t('projects.sessions.openChat')}
-                                        </Button>
-                                        <Button type="button" variant="secondary" onClick={() => setStartOpen(true)}>
-                                            {t('projects.sessions.startNew')}
-                                        </Button>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-wrap gap-2">
-                                        <Button type="button" variant="secondary" onClick={() => setStartOpen(true)} disabled={isUpdatingTask || overLimit}>
-                                            {t('projects.sessions.start')}
-                                        </Button>
-                                        <Button type="button" variant="secondary" onClick={() => setAttachOpen(true)} disabled={isUpdatingTask}>
-                                            {t('projects.sessions.attach')}
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {overLimit ? (
-                                    <div className="text-xs text-[var(--app-hint)]">
-                                        {t('projects.task.attachments.mustFix')}
-                                    </div>
-                                ) : null}
-                            </section>
-
-                            <section className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/20 p-3">
-                                <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
-                                <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
-                                <Button type="button" variant="destructive" onClick={() => setArchiveOpen(true)} disabled={isUpdatingTask || isArchiving}>
-                                    {t('projects.task.archive.action')}
-                                </Button>
-                            </section>
-                        </div>
+                        <TaskDetailsSidebar
+                            status={status}
+                            statusOptions={statusOptions}
+                            priority={priority}
+                            priorityOptions={priorityOptions}
+                            workspaceId={workspaceId}
+                            workspaceOptions={workspaceOptions}
+                            agentFlavor={agentFlavor}
+                            agentOptions={agentOptions}
+                            canEditModelMode={canEditModelMode}
+                            modelMode={modelMode}
+                            modelModeOptions={modelModeOptions}
+                            sessionId={sessionId}
+                            overLimit={overLimit}
+                            isUpdatingTask={isUpdatingTask}
+                            isArchiving={isArchiving}
+                            onStatusChange={handleStatusChange}
+                            onPriorityChange={handlePriorityChange}
+                            onWorkspaceChange={handleWorkspaceChange}
+                            onAgentFlavorChange={handleAgentFlavorChange}
+                            onModelModeChange={handleModelModeChange}
+                            onOpenChat={handleOpenChat}
+                            onOpenStart={handleOpenStart}
+                            onOpenAttach={handleOpenAttach}
+                            onOpenArchive={handleOpenArchive}
+                        />
                     </div>
                 </div>
             </div>
@@ -1022,12 +1227,7 @@ function TaskDetailsPanel(props: {
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}
                 taskWorkspaceId={workspaceId || null}
-                onStarted={() => {
-                    void navigate({
-                        to: '/projects/$projectId/tasks/$taskId/chat',
-                        params: { projectId: props.projectId, taskId: props.taskId }
-                    })
-                }}
+                onStarted={handleOpenChat}
             />
 
             <AttachSessionDialog
@@ -1036,12 +1236,7 @@ function TaskDetailsPanel(props: {
                 projectId={props.projectId}
                 taskId={props.taskId}
                 machineId={props.projectMachineId}
-                onAttached={() => {
-                    void navigate({
-                        to: '/projects/$projectId/tasks/$taskId/chat',
-                        params: { projectId: props.projectId, taskId: props.taskId }
-                    })
-                }}
+                onAttached={handleOpenChat}
             />
 
             <ConfirmDialog
