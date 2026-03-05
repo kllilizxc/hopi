@@ -160,8 +160,8 @@ function StartSessionDialog(props: {
     const handleStart = async () => {
         if (!canStart) return
         const resolvedModel = model !== 'auto' ? model : undefined
-        const modelMode = agent === 'claude' && (model === 'sonnet' || model === 'opus')
-            ? (model as 'sonnet' | 'opus')
+        const modelMode = agent === 'claude' && (model === 'sonnet' || model === 'opus' || model === 'opus-1m')
+            ? (model as 'sonnet' | 'opus' | 'opus-1m')
             : undefined
 
         const result = await startTaskSession({
