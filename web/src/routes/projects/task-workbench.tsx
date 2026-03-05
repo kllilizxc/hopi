@@ -160,8 +160,8 @@ function StartSessionDialog(props: {
     const handleStart = async () => {
         if (!canStart) return
         const resolvedModel = model !== 'auto' ? model : undefined
-        const modelMode = agent === 'claude' && (model === 'sonnet' || model === 'opus' || model === 'opus-1m')
-            ? (model as 'sonnet' | 'opus' | 'opus-1m')
+        const modelMode = agent === 'claude' && (model === 'sonnet' || model === 'opus' || model === 'opus[1m]')
+            ? (model as 'sonnet' | 'opus' | 'opus[1m]')
             : undefined
 
         const result = await startTaskSession({
@@ -1484,20 +1484,18 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
 
             <div className="relative flex-1 min-h-0 overflow-hidden lg:hidden">
                 <div
-                    className={`absolute inset-0 transition-transform duration-200 ease-out ${
-                        activeTab === 'task'
+                    className={`absolute inset-0 transition-transform duration-200 ease-out ${activeTab === 'task'
                             ? 'translate-x-0 pointer-events-auto'
                             : '-translate-x-full pointer-events-none'
-                    }`}
+                        }`}
                 >
                     {taskPanel}
                 </div>
                 <div
-                    className={`absolute inset-0 transition-transform duration-200 ease-out ${
-                        activeTab === 'task'
+                    className={`absolute inset-0 transition-transform duration-200 ease-out ${activeTab === 'task'
                             ? 'translate-x-full pointer-events-none'
                             : 'translate-x-0 pointer-events-auto'
-                    }`}
+                        }`}
                 >
                     {activeTab === 'task' ? null : nonTaskPanel}
                 </div>
