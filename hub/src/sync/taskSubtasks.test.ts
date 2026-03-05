@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { TodoItem } from '@hapi/protocol/types'
+import type { TodoItem } from '@hopi/protocol/types'
 import { Store } from '../store'
 import { syncTaskSubTasksFromSessionTodos } from './taskSubtasks'
 

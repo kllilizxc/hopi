@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { randomBytes } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import type { OpencodeHookEvent } from '../types';
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand';
 
 export interface OpencodeHookServerOptions {
     onEvent: (event: OpencodeHookEvent) => void;
@@ -15,7 +16,7 @@ export interface OpencodeHookServer {
 }
 
 function readHookToken(req: IncomingMessage): string | null {
-    const header = req.headers['x-hapi-hook-token'];
+    const header = req.headers[PRODUCT_HEADERS.HOOK_TOKEN];
     if (Array.isArray(header)) {
         return header[0] ?? null;
     }

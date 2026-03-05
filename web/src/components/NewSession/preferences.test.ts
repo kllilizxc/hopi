@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+    AGENT_STORAGE_KEY,
+    YOLO_STORAGE_KEY,
     loadPreferredAgent,
     loadPreferredYoloMode,
     savePreferredAgent,
@@ -17,15 +19,15 @@ describe('NewSession preferences', () => {
     })
 
     it('loads saved values from storage', () => {
-        localStorage.setItem('hapi:newSession:agent', 'codex')
-        localStorage.setItem('hapi:newSession:yolo', 'true')
+        localStorage.setItem(AGENT_STORAGE_KEY, 'codex')
+        localStorage.setItem(YOLO_STORAGE_KEY, 'true')
 
         expect(loadPreferredAgent()).toBe('codex')
         expect(loadPreferredYoloMode()).toBe(true)
     })
 
     it('falls back to default agent on invalid stored value', () => {
-        localStorage.setItem('hapi:newSession:agent', 'unknown-agent')
+        localStorage.setItem(AGENT_STORAGE_KEY, 'unknown-agent')
 
         expect(loadPreferredAgent()).toBe('claude')
     })
@@ -34,7 +36,7 @@ describe('NewSession preferences', () => {
         savePreferredAgent('gemini')
         savePreferredYoloMode(true)
 
-        expect(localStorage.getItem('hapi:newSession:agent')).toBe('gemini')
-        expect(localStorage.getItem('hapi:newSession:yolo')).toBe('true')
+        expect(localStorage.getItem(AGENT_STORAGE_KEY)).toBe('gemini')
+        expect(localStorage.getItem(YOLO_STORAGE_KEY)).toBe('true')
     })
 })

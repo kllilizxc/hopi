@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { buildMcpServerConfigArgs, buildDeveloperInstructionsArg } from './codexMcpConfig';
+import { PRODUCT_CHANGE_TITLE_TOOL, PRODUCT_CLI_COMMAND, PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('codexMcpConfig', () => {
     describe('buildMcpServerConfigArgs', () => {
         it('builds config args for a single MCP server', () => {
             const mcpServers = {
-                hapi: {
-                    command: 'hapi',
+                [PRODUCT_SLUG]: {
+                    command: PRODUCT_CLI_COMMAND,
                     args: ['mcp', '--url', 'http://localhost:3000']
                 }
             };
@@ -14,21 +15,21 @@ describe('codexMcpConfig', () => {
             const args = buildMcpServerConfigArgs(mcpServers);
 
             expect(args).toEqual([
-                '-c', 'mcp_servers.hapi.command="hapi"',
-                '-c', "mcp_servers.hapi.args=['mcp','--url','http://localhost:3000']"
+                '-c', `mcp_servers.${PRODUCT_SLUG}.command="${PRODUCT_CLI_COMMAND}"`,
+                '-c', `mcp_servers.${PRODUCT_SLUG}.args=['mcp','--url','http://localhost:3000']`
             ]);
         });
 
         it('builds config args for multiple MCP servers', () => {
             const mcpServers = {
-                hapi: { command: 'hapi', args: ['mcp'] },
+                [PRODUCT_SLUG]: { command: PRODUCT_CLI_COMMAND, args: ['mcp'] },
                 other: { command: 'node', args: ['server.js'] }
             };
 
             const args = buildMcpServerConfigArgs(mcpServers);
 
             expect(args).toContain('-c');
-            expect(args).toContain('mcp_servers.hapi.command="hapi"');
+            expect(args).toContain(`mcp_servers.${PRODUCT_SLUG}.command="${PRODUCT_CLI_COMMAND}"`);
             expect(args).toContain('mcp_servers.other.command="node"');
         });
 
@@ -55,13 +56,13 @@ describe('codexMcpConfig', () => {
 
     describe('buildDeveloperInstructionsArg', () => {
         it('builds developer instructions arg', () => {
-            const instructions = 'Call functions.hapi__change_title to set title.';
+            const instructions = `Call functions.${PRODUCT_CHANGE_TITLE_TOOL} to set title.`;
 
             const args = buildDeveloperInstructionsArg(instructions);
 
             expect(args).toEqual([
                 '-c',
-                'developer_instructions="Call functions.hapi__change_title to set title."'
+                `developer_instructions="Call functions.${PRODUCT_CHANGE_TITLE_TOOL} to set title."`
             ]);
         });
 

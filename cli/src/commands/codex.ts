@@ -4,7 +4,7 @@ import { initializeToken } from '@/ui/tokenInit'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
 import { extractErrorInfo } from '@/utils/errorUtils'
 import type { CommandDefinition } from './types'
-import type { CodexPermissionMode } from '@hapi/protocol/types'
+import type { CodexPermissionMode } from '@hopi/protocol/types'
 
 export const codexCommand: CommandDefinition = {
     name: 'codex',

@@ -1,5 +1,5 @@
-import { getPermissionModeLabel, getPermissionModeTone, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
-import type { PermissionModeTone } from '@hapi/protocol'
+import { getPermissionModeLabel, getPermissionModeTone, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import type { PermissionModeTone } from '@hopi/protocol'
 import { memo, useMemo } from 'react'
 import type { AgentState, ModelMode, PermissionMode } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'

@@ -27,7 +27,7 @@ Status: planning draft
 
 - **basePath**: git repo root (original workspace; `git rev-parse --show-toplevel`)
 - **worktreePath**: new checkout path created by `git worktree add`
-- **worktree branch**: branch created for worktree (current: `hapi-<name>`)
+- **worktree branch**: branch created for worktree (current: `hopi-<name>`)
 - **target branch**: branch user wants to merge into (project default; overrideable)
 
 ## Existing building blocks (reuse)
@@ -176,7 +176,7 @@ CLI semantics:
 
 Commit message template (proposal):
 
-- `HAPI: task <taskId8> — <task title>`
+- `HOPI: task <taskId8> — <task title>`
 - optional: include timestamp or prompt id
 
 ## Merge feature architecture
@@ -245,7 +245,7 @@ Preflight:
         - if `autoCommit=false` → error (“commit first or enable auto-commit”)
         - if `autoCommit=true`:
             - `git add -A`
-            - `git commit -m "HAPI: <task title>"`
+            - `git commit -m "HOPI: <task title>"`
             - pass `--no-gpg-sign` to reduce surprises
 
 Merge execution:

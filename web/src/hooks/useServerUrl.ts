@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
+import { productStorageKey } from '@hopi/protocol/brand'
 
-const HUB_URL_KEY = 'hapi_hub_url'
+const HUB_URL_KEY = productStorageKey('hub-url')
 
 export type ServerUrlResult =
     | { ok: true; value: string }

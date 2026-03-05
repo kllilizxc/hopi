@@ -1,9 +1,9 @@
 /**
  * Auto-start hub module
  *
- * Automatically starts the HAPI hub when CLI is launched
+ * Automatically starts the HOPI hub when CLI is launched
  * if specific conditions are met:
- * 1. HAPI_API_URL is not set (using default localhost:3006)
+ * 1. HOPI_API_URL is not set (using default localhost:3006)
  * 2. cliApiToken exists in settings.json (hub was previously started)
  * 3. Port 3006 is not currently listening
  */
@@ -14,6 +14,7 @@ import { configuration } from '@/configuration'
 import { readSettings } from '@/persistence'
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI'
 import { logger } from '@/ui/logger'
+import { PRODUCT_CLI_COMMAND, PRODUCT_ENV, PRODUCT_NAME } from '@hopi/protocol/brand'
 
 const DEFAULT_SERVER_PORT = 3006
 const SERVER_STARTUP_TIMEOUT_MS = 10000
@@ -90,9 +91,9 @@ async function waitForServerReady(
  * Determine if hub should be auto-started
  */
 async function shouldAutoStartServer(): Promise<boolean> {
-    // Condition 1: HAPI_API_URL not set (using default localhost:3006)
-    if (process.env.HAPI_API_URL) {
-        logger.debug('[AUTO-START] HAPI_API_URL is set, skipping auto-start')
+    // Condition 1: HOPI_API_URL not set (using default localhost:3006)
+    if (process.env[PRODUCT_ENV.API_URL]) {
+        logger.debug(`[AUTO-START] ${PRODUCT_ENV.API_URL} is set, skipping auto-start`)
         return false
     }
 
@@ -150,7 +151,7 @@ export async function maybeAutoStartServer(): Promise<void> {
         }
 
         logger.debug('[AUTO-START] Starting hub automatically...')
-        console.log(chalk.gray('Starting HAPI hub in background...'))
+        console.log(chalk.gray(`Starting ${PRODUCT_NAME} hub in background...`))
 
         startServerAsChild()
 
@@ -158,11 +159,11 @@ export async function maybeAutoStartServer(): Promise<void> {
 
         if (!isReady) {
             console.log(chalk.yellow('Warning: Hub did not start within expected time'))
-            console.log(chalk.gray('  Try running `hapi hub` manually to see errors'))
+            console.log(chalk.gray(`  Try running \`${PRODUCT_CLI_COMMAND} hub\` manually to see errors`))
             return
         }
 
-        console.log(chalk.green('HAPI hub started'))
+        console.log(chalk.green(`${PRODUCT_NAME} hub started`))
     } catch (error) {
         logger.debug('[AUTO-START] Error during hub auto-start', error)
         console.log(chalk.yellow('Warning: Failed to auto-start hub'))

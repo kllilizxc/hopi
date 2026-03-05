@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand'
 import { extractErrorInfo, apiValidationError } from './errorUtils'
 
 describe('extractErrorInfo', () => {
@@ -7,7 +8,7 @@ describe('extractErrorInfo', () => {
             message: 'Request failed with status code 400',
             response: {
                 status: 400,
-                headers: { 'x-hapi-protocol-version': '2' },
+                headers: { [PRODUCT_HEADERS.PROTOCOL_VERSION]: '2' },
                 data: { error: 'Invalid body' }
             }
         }
@@ -30,7 +31,7 @@ describe('extractErrorInfo', () => {
             serverProtocolVersion: 3,
             response: {
                 status: 200,
-                headers: { 'x-hapi-protocol-version': '5' },
+                headers: { [PRODUCT_HEADERS.PROTOCOL_VERSION]: '5' },
                 data: {}
             }
         })
@@ -49,7 +50,7 @@ describe('extractErrorInfo', () => {
             message: 'fail',
             response: {
                 status: 200,
-                headers: { 'x-hapi-protocol-version': 'abc' },
+                headers: { [PRODUCT_HEADERS.PROTOCOL_VERSION]: 'abc' },
                 data: {}
             }
         }
@@ -61,7 +62,7 @@ describe('extractErrorInfo', () => {
 describe('apiValidationError', () => {
     it('creates error with serverProtocolVersion from response header', () => {
         const fakeResponse = {
-            headers: { 'x-hapi-protocol-version': '1' }
+            headers: { [PRODUCT_HEADERS.PROTOCOL_VERSION]: '1' }
         }
         const err = apiValidationError('Invalid /cli/machines response', fakeResponse as any)
         expect(err.message).toBe('Invalid /cli/machines response')
@@ -77,7 +78,7 @@ describe('apiValidationError', () => {
 
     it('round-trips through extractErrorInfo', () => {
         const fakeResponse = {
-            headers: { 'x-hapi-protocol-version': '2' }
+            headers: { [PRODUCT_HEADERS.PROTOCOL_VERSION]: '2' }
         }
         const err = apiValidationError('Invalid /cli/machines response', fakeResponse as any)
         const info = extractErrorInfo(err)

@@ -1,6 +1,6 @@
-import { isObject } from '@hapi/protocol'
-import { TodosSchema } from '@hapi/protocol/schemas'
-import type { TodoItem } from '@hapi/protocol/types'
+import { isObject } from '@hopi/protocol'
+import { TodosSchema } from '@hopi/protocol/schemas'
+import type { TodoItem } from '@hopi/protocol/types'
 import type { AgentToolExtractor, TaskToolResult } from '../types'
 
 /**

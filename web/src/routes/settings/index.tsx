@@ -5,7 +5,8 @@ import { getElevenLabsSupportedLanguages, getLanguageDisplayName } from '@/lib/l
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
 import { useTheme, type Appearance, type ThemePreset } from '@/hooks/useTheme'
 import { useMotionPreference, type MotionPreference } from '@/hooks/useMotionPreference'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_DEFAULT_SITE_URL, productStorageKey } from '@hopi/protocol/brand'
 import { CheckIcon } from '@/assets/icons'
 import { PageHeader } from '@/components/PageHeader'
 import { SettingsSelectRow } from '@/components/SettingsSelectRow'
@@ -14,6 +15,8 @@ const locales: { value: Locale; nativeLabel: string }[] = [
     { value: 'en', nativeLabel: 'English' },
     { value: 'zh-CN', nativeLabel: '简体中文' },
 ]
+const VOICE_LANG_STORAGE_KEY = productStorageKey('voice-lang')
+const OFFICIAL_SITE_HOST = new URL(PRODUCT_DEFAULT_SITE_URL).host
 
 const voiceLanguages = getElevenLabsSupportedLanguages()
 
@@ -26,7 +29,7 @@ export default function SettingsPage() {
 
     // Voice language state - read from localStorage
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
-        return localStorage.getItem('hapi-voice-lang')
+        return localStorage.getItem(VOICE_LANG_STORAGE_KEY)
     })
 
     const fontScaleOptions = getFontScaleOptions()
@@ -158,9 +161,9 @@ export default function SettingsPage() {
                             onValueChange={(nextCode: string | null) => {
                                 setVoiceLanguage(nextCode)
                                 if (nextCode === null) {
-                                    localStorage.removeItem('hapi-voice-lang')
+                                    localStorage.removeItem(VOICE_LANG_STORAGE_KEY)
                                 } else {
-                                    localStorage.setItem('hapi-voice-lang', nextCode)
+                                    localStorage.setItem(VOICE_LANG_STORAGE_KEY, nextCode)
                                 }
                             }}
                         />
@@ -174,12 +177,12 @@ export default function SettingsPage() {
                         <div className="flex w-full items-center justify-between px-3 py-3">
                             <span className="text-[var(--app-fg)]">{t('settings.about.website')}</span>
                             <a
-                                href="https://hapi.run"
+                                href={PRODUCT_DEFAULT_SITE_URL}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[var(--app-link)] hover:underline"
                             >
-                                hapi.run
+                                {OFFICIAL_SITE_HOST}
                             </a>
                         </div>
                         <div className="flex w-full items-center justify-between px-3 py-3">

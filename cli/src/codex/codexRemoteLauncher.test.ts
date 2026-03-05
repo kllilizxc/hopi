@@ -75,8 +75,8 @@ vi.mock('./codexAppServerClient', () => {
     return { CodexAppServerClient: MockCodexAppServerClient };
 });
 
-vi.mock('./utils/buildHapiMcpBridge', () => ({
-    buildHapiMcpBridge: async () => ({
+vi.mock('./utils/buildHopiMcpBridge', () => ({
+    buildHopiMcpBridge: async () => ({
         server: {
             stop: () => {}
         },
@@ -132,8 +132,8 @@ function createSessionStub(mode: EnhancedMode = createMode()) {
     };
 
     const session = {
-        path: '/tmp/hapi-update',
-        logPath: '/tmp/hapi-update/test.log',
+        path: '/tmp/hopi-update',
+        logPath: '/tmp/hopi-update/test.log',
         client,
         queue,
         codexArgs: undefined,

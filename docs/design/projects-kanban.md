@@ -19,7 +19,7 @@ Keep sessions feature set (chat/files/terminal/approvals) but make it task-drive
 - **Project**: user container; owns task board; binds to 1+ workspaces (directories).
 - **Workspace**: directory path on a machine; allowed work roots for task sessions.
 - **Task**: kanban card; optional link to one “active” working session.
-- **Working session**: existing HAPI `Session`; agent chat/files/terminal.
+- **Working session**: existing HOPI `Session`; agent chat/files/terminal.
 
 ## User stories
 

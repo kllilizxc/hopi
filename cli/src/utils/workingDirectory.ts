@@ -1,9 +1,10 @@
 import { isAbsolute, resolve } from 'node:path'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 
-export const HAPI_CLI_WORKING_DIRECTORY_ENV = 'HAPI_CLI_WORKING_DIRECTORY'
+export const PRODUCT_CLI_WORKING_DIRECTORY_ENV = PRODUCT_ENV.CLI_WORKING_DIRECTORY
 
 export function resolveCliWorkingDirectory(): string {
-    const envDirectory = process.env[HAPI_CLI_WORKING_DIRECTORY_ENV]
+    const envDirectory = process.env[PRODUCT_CLI_WORKING_DIRECTORY_ENV]
     if (!envDirectory) {
         return process.cwd()
     }

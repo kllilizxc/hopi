@@ -1,4 +1,4 @@
-import type { TodoItem } from '@hapi/protocol/types'
+import type { TodoItem } from '@hopi/protocol/types'
 import type { Store, StoredSession, StoredTask } from '../store'
 
 function extractTaskLinkFromMetadata(metadata: unknown): { taskId?: string; projectId?: string } {

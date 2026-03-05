@@ -32,6 +32,9 @@ import type {
     SessionResponse,
     SessionsResponse
 } from '@/types/api'
+import { PRODUCT_HEADERS, productStorageKey } from '@hopi/protocol/brand'
+
+const LOCALE_STORAGE_KEY = productStorageKey('lang')
 
 type ApiClientOptions = {
     baseUrl?: string
@@ -50,7 +53,7 @@ function getStoredLocale(): string | null {
     }
 
     try {
-        const raw = storage.getItem('hapi-lang')
+        const raw = storage.getItem(LOCALE_STORAGE_KEY)
         const value = raw?.trim()
         return value && value.length > 0 ? value : null
     } catch {
@@ -119,10 +122,10 @@ export class ApiClient {
         if (authToken) {
             headers.set('authorization', `Bearer ${authToken}`)
         }
-        if (!headers.has('x-hapi-locale')) {
+        if (!headers.has(PRODUCT_HEADERS.LOCALE)) {
             const locale = getStoredLocale()
             if (locale) {
-                headers.set('x-hapi-locale', locale)
+                headers.set(PRODUCT_HEADERS.LOCALE, locale)
             }
         }
         if (init?.body !== undefined && !headers.has('content-type')) {

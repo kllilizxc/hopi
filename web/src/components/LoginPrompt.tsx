@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useTranslation } from '@/lib/use-translation'
 import type { ServerUrlResult } from '@/hooks/useServerUrl'
+import { PRODUCT_DEFAULT_DOCS_URL } from '@hopi/protocol/brand'
 
 type LoginPromptProps = {
     mode?: 'login' | 'bind'
@@ -168,7 +169,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                 {/* Help links */}
                 {!isBindMode && (
                     <div className="flex items-center justify-between text-xs text-[var(--app-hint)]">
-                        <a href="https://hapi.run/docs" target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--app-fg)]">
+                        <a href={PRODUCT_DEFAULT_DOCS_URL} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--app-fg)]">
                             {t('login.help')}
                         </a>
                         <Dialog open={isServerDialogOpen} onOpenChange={handleServerDialogOpenChange}>
@@ -231,7 +232,7 @@ export function LoginPrompt(props: LoginPromptProps) {
             {/* Footer */}
             <div className="absolute bottom-4 left-0 right-0 text-center text-xs text-[var(--app-hint)] space-y-1">
                 <div>{t('login.footer')} <span className="text-red-500">♥</span> {t('login.footer.for')}</div>
-                <div>{t('login.footer.copyright')} {new Date().getFullYear()} HAPI</div>
+                <div>{t('login.footer.copyright')} {new Date().getFullYear()} HOPI</div>
             </div>
         </div>
     )

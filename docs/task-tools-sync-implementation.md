@@ -2,11 +2,11 @@
 
 ## 问题描述
 
-Claude Code 调用 `TaskCreate`、`TaskUpdate`、`TaskList` 等工具时，这些工具调用没有同步到 HAPI task 的 subtasks 字段。
+Claude Code 调用 `TaskCreate`、`TaskUpdate`、`TaskList` 等工具时，这些工具调用没有同步到 HOPI task 的 subtasks 字段。
 
 ## 根本原因
 
-1. HAPI 原有实现只捕获 `TodoWrite` 工具
+1. HOPI 原有实现只捕获 `TodoWrite` 工具
 2. Claude Code 的 `TaskCreate`/`TaskUpdate` 工具是内置工具，通过不同的消息格式传递
 3. 缺乏统一的提取层来处理不同 agent 的工具调用
 

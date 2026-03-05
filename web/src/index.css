@@ -19,7 +19,7 @@
     --app-code-bg: #f6f8fa;
     --app-inline-code-bg: rgba(0, 0, 0, 0.08);
 
-    /* Diff colors (light) - from hapi-app */
+    /* Diff colors (light) - from hopi-app */
     --app-diff-added-bg: #e6ffed;
     --app-diff-added-text: #24292e;
     --app-diff-removed-bg: #ffeef0;
@@ -117,7 +117,7 @@
     --app-code-bg: #282c34;
     --app-inline-code-bg: rgba(255, 255, 255, 0.1);
 
-    /* Diff colors (dark) - from hapi-app */
+    /* Diff colors (dark) - from hopi-app */
     --app-diff-added-bg: #0d2e1f;
     --app-diff-added-text: #c9d1d9;
     --app-diff-removed-bg: #3f1b23;
@@ -511,7 +511,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 /* Chat assistant typing indicator - breathing dots */
-@keyframes hapi-typing-breathe {
+@keyframes hopi-typing-breathe {
   0%, 100% {
     opacity: 0.35;
     transform: translateY(0) scale(0.85);
@@ -522,8 +522,8 @@ html[data-theme="dark"] .shiki span {
   }
 }
 
-.hapi-typing-dot {
-  animation: hapi-typing-breathe 1.2s ease-in-out infinite;
+.hopi-typing-dot {
+  animation: hopi-typing-breathe 1.2s ease-in-out infinite;
   will-change: transform, opacity;
 }
 
@@ -537,7 +537,7 @@ html[data-theme="dark"] .shiki span {
     animation-iteration-count: 1 !important;
   }
 
-  .hapi-typing-dot {
+  .hopi-typing-dot {
     animation: none;
     opacity: 0.6;
   }
@@ -559,7 +559,7 @@ html[data-motion="reduce"] *::after {
   animation-iteration-count: 1 !important;
 }
 
-html[data-motion="reduce"] .hapi-typing-dot {
+html[data-motion="reduce"] .hopi-typing-dot {
   animation: none;
   opacity: 0.6;
 }

@@ -1,12 +1,12 @@
 /**
- * WebSocket client for machine/runner communication with hapi-hub
+ * WebSocket client for machine/runner communication with hopi-hub
  */
 
 import { io, type Socket } from 'socket.io-client'
 import { stat } from 'node:fs/promises'
 import { logger } from '@/ui/logger'
 import { configuration } from '@/configuration'
-import type { Update, UpdateMachineBody } from '@hapi/protocol'
+import type { Update, UpdateMachineBody } from '@hopi/protocol'
 import type { RunnerState, Machine, MachineMetadata } from './types'
 import { RunnerStateSchema, MachineMetadataSchema } from './types'
 import { backoff } from '@/utils/time'

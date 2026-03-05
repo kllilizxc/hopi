@@ -145,7 +145,7 @@ afterEach(() => {
 
 describe('Store schema migration safety', () => {
     it('adds missing worktree columns even when user_version is already 5', () => {
-        const path = join(tmpdir(), `hapi-schema-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        const path = join(tmpdir(), `hopi-schema-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
         createdPaths.push(path)
         createLegacyV5DbMissingWorktreeColumns(path)
 

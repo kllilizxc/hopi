@@ -9,7 +9,7 @@ import { DiffProcessor } from './utils/diffProcessor';
 import { logger } from '@/ui/logger';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import type { CodexSessionConfig } from './types';
-import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
+import { buildHopiMcpBridge } from './utils/buildHopiMcpBridge';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
@@ -19,14 +19,15 @@ import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
-import type { PermissionMode } from '@hapi/protocol/types';
+import type { PermissionMode } from '@hopi/protocol/types';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
     type RemoteLauncherExitReason
 } from '@/modules/common/remote/RemoteLauncherBase';
 
-type HappyServer = Awaited<ReturnType<typeof buildHapiMcpBridge>>['server'];
+type HappyServer = Awaited<ReturnType<typeof buildHopiMcpBridge>>['server'];
 
 function shouldUseAppServer(): boolean {
     const useMcpServer = process.env.CODEX_USE_MCP_SERVER === '1';
@@ -732,7 +733,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             });
         }
 
-        const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
+        const { server: happyServer, mcpServers } = await buildHopiMcpBridge(session.client);
         this.happyServer = happyServer;
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
@@ -772,7 +773,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             await appServerClient.connect();
             await appServerClient.initialize({
                 clientInfo: {
-                    name: 'hapi-codex-client',
+                    name: `${PRODUCT_SLUG}-codex-client`,
                     version: '1.0.0'
                 }
             });

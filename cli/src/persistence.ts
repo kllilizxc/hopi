@@ -1,7 +1,7 @@
 /**
- * Minimal persistence functions for HAPI CLI
+ * Minimal persistence functions for HOPI CLI
  * 
- * Handles settings, encryption key, and runner state storage in ~/.hapi/ (or HAPI_HOME override)
+ * Handles settings, encryption key, and runner state storage in ~/.hopi/ (or HOPI_HOME override)
  */
 
 import { FileHandle } from 'node:fs/promises'
@@ -17,7 +17,7 @@ interface Settings {
   machineIdConfirmedByServer?: boolean
   runnerAutoStartWhenRunningHappy?: boolean
   cliApiToken?: string
-  // API URL for server connections (priority: env HAPI_API_URL > this > default)
+  // API URL for server connections (priority: env HOPI_API_URL > this > default)
   apiUrl?: string
   // Legacy field name (for migration, read-only)
   serverUrl?: string

@@ -1,4 +1,4 @@
-import { isObject, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol'
+import { isObject, unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol'
 import type { AgentToolExtractor, ExtractorRegistry, TaskToolResult } from './types'
 import { ClaudeToolExtractor } from './extractors/claude'
 import { CodexToolExtractor } from './extractors/codex'

@@ -9,7 +9,7 @@ export default {
   'loading.machines': '加载机器…',
 
   // Login / Auth
-  'login.title': 'HAPI',
+  'login.title': 'HOPI',
   'login.subtitle': '随时随地，Vibe Coding',
   'login.bind.title': '绑定 Telegram',
   'login.submit': '登录',
@@ -26,10 +26,10 @@ export default {
   'login.server.default': '(默认)',
   'login.server.custom': '(自定义)',
   'login.server.title': '服务器地址',
-  'login.server.description': '设置 HAPI 服务器地址以使用 API 和实时更新。',
+  'login.server.description': '设置 HOPI 服务器地址以使用 API 和实时更新。',
   'login.server.current': '当前：',
   'login.server.origin': '服务器地址',
-  'login.server.placeholder': 'https://hapi.example.com',
+  'login.server.placeholder': 'https://hopi.example.com',
   'login.server.hint': '仅使用 http(s) 协议。任何路径将被忽略。',
   'login.server.required': '必须先填写服务器地址才能登录。',
   'login.server.useSameOrigin': '使用同源',
@@ -522,8 +522,8 @@ export default {
   'send.blocked.noConnection': '未连接到服务器',
 
   // Install prompt
-  'install.title': '安装 HAPI',
-  'install.description': '将 HAPI 添加到主屏幕以便快速访问。',
+  'install.title': '安装 HOPI',
+  'install.description': '将 HOPI 添加到主屏幕以便快速访问。',
   'install.button': '安装',
 
   // Language switcher

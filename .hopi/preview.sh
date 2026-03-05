@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${HAPI_PREVIEW_ROOT:-$(pwd)}"
-MODE="${HAPI_PREVIEW_MODE:-local}"
-TIMEOUT_SEC="${HAPI_PREVIEW_TIMEOUT_SEC:-180}"
+ROOT="${HOPI_PREVIEW_ROOT:-$(pwd)}"
+MODE="${HOPI_PREVIEW_MODE:-local}"
+TIMEOUT_SEC="${HOPI_PREVIEW_TIMEOUT_SEC:-180}"
 
-HUB_PORT_BASE="${HAPI_PREVIEW_HUB_PORT_BASE:-${HAPI_LISTEN_PORT:-3006}}"
-WEB_PORT_BASE="${HAPI_PREVIEW_WEB_PORT_BASE:-${HAPI_WEB_PORT:-5173}}"
+HUB_PORT_BASE="${HOPI_PREVIEW_HUB_PORT_BASE:-${HOPI_LISTEN_PORT:-3006}}"
+WEB_PORT_BASE="${HOPI_PREVIEW_WEB_PORT_BASE:-${HOPI_WEB_PORT:-5173}}"
 
 cd "$ROOT"
 
@@ -44,7 +44,7 @@ find_free_port() {
     fi
   done
 
-  echo "[hapi-preview] no free port found near base: $port" >&2
+  echo "[hopi-preview] no free port found near base: $port" >&2
   return 1
 }
 
@@ -69,7 +69,7 @@ http_ok() {
 
 install_deps() {
   if ! command_exists bun; then
-    echo "[hapi-preview] bun not found" >&2
+    echo "[hopi-preview] bun not found" >&2
     return 1
   fi
 
@@ -85,12 +85,12 @@ install_deps() {
     next_hash="$(shasum -a 256 "$lockfile" | awk '{print $1}')"
   fi
 
-  local hash_file=".hapi/.preview-install.hash"
+  local hash_file=".hopi/.preview-install.hash"
   local prev_hash=""
   [[ -f "$hash_file" ]] && prev_hash="$(cat "$hash_file" || true)"
 
   if [[ ! -d "node_modules" || "$prev_hash" != "$next_hash" ]]; then
-    echo "[hapi-preview] installing deps (mode=$MODE)" >&2
+    echo "[hopi-preview] installing deps (mode=$MODE)" >&2
     bun install
     printf "%s" "$next_hash" > "$hash_file"
   fi
@@ -101,11 +101,11 @@ install_deps
 HUB_PORT="$(find_free_port "$HUB_PORT_BASE")"
 WEB_PORT="$(find_free_port "$WEB_PORT_BASE")"
 
-export HAPI_LISTEN_PORT="$HUB_PORT"
-export HAPI_WEB_PORT="$WEB_PORT"
+export HOPI_LISTEN_PORT="$HUB_PORT"
+export HOPI_WEB_PORT="$WEB_PORT"
 
-echo "[hapi-preview] hub: http://127.0.0.1:$HUB_PORT" >&2
-echo "[hapi-preview] web: http://127.0.0.1:$WEB_PORT" >&2
+echo "[hopi-preview] hub: http://127.0.0.1:$HUB_PORT" >&2
+echo "[hopi-preview] web: http://127.0.0.1:$WEB_PORT" >&2
 
 bun run dev &
 APP_PID=$!
@@ -126,7 +126,7 @@ web_ready=0
 deadline=$((SECONDS + TIMEOUT_SEC))
 while (( SECONDS < deadline )); do
   if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
-    echo "[hapi-preview] dev process exited before ready" >&2
+    echo "[hopi-preview] dev process exited before ready" >&2
     exit 1
   fi
 
@@ -145,14 +145,14 @@ while (( SECONDS < deadline )); do
 done
 
 if [[ "$hub_ready" -ne 1 ]]; then
-  echo "[hapi-preview] hub not ready: $hub_url" >&2
+  echo "[hopi-preview] hub not ready: $hub_url" >&2
   exit 1
 fi
 
 if [[ "$web_ready" -ne 1 ]]; then
-  echo "[hapi-preview] web not ready: $web_url" >&2
+  echo "[hopi-preview] web not ready: $web_url" >&2
   exit 1
 fi
 
-echo "::hapi-preview-url::$web_url"
+echo "::hopi-preview-url::$web_url"
 wait "$APP_PID"

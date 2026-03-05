@@ -1,4 +1,4 @@
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 
@@ -199,7 +199,7 @@ export class RpcGateway {
             if (message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')) {
                 return {
                     type: 'error',
-                    message: 'Runner offline or not connected. Start it on the machine and try again: hapi runner start'
+                    message: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
                 }
             }
             return { type: 'error', message }

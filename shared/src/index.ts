@@ -1,3 +1,4 @@
+export * from './brand'
 export * from './messages'
 export * from './modes'
 export * from './socket'

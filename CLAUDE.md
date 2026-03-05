@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-HAPI — local-first platform for running AI coding agents (Claude Code, Codex, Gemini, OpenCode) with remote control via web/PWA/Telegram Mini App. CLI wraps agents and connects to hub; hub serves web app and handles real-time sync.
+HOPI — local-first platform for running AI coding agents (Claude Code, Codex, Gemini, OpenCode) with remote control via web/PWA/Telegram Mini App. CLI wraps agents and connects to hub; hub serves web app and handles real-time sync.
 
 ## Repo Layout
 
 ```
-cli/     - CLI binary, agent wrappers, runner daemon (@twsxtd/hapi, Bun + Ink)
+cli/     - CLI binary, agent wrappers, runner daemon (@twsxtd/hopi, Bun + Ink)
 hub/     - HTTP API + Socket.IO + SSE + Telegram bot (Hono + better-sqlite3)
 web/     - React 19 PWA for remote control (TanStack Router/Query, Tailwind 4, assistant-ui)
-shared/  - Common types, Zod schemas, Socket.IO event types (@hapi/protocol)
+shared/  - Common types, Zod schemas, Socket.IO event types (@hopi/protocol)
 docs/    - VitePress documentation
 website/ - Marketing site
 ```

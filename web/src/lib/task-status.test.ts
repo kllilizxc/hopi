@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
+import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
 
 describe('task status ordering', () => {

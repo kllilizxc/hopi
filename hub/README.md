@@ -1,6 +1,6 @@
-# hapi-hub
+# hopi-hub
 
-Telegram bot + HTTP API + realtime updates for hapi hub.
+Telegram bot + HTTP API + realtime updates for hopi hub.
 
 ## What it does
 
@@ -22,7 +22,7 @@ See `src/configuration.ts` for all options.
 ### Optional (Telegram)
 
 - `TELEGRAM_BOT_TOKEN` - Token from @BotFather.
-- `HAPI_PUBLIC_URL` - Public HTTPS URL for Telegram Mini App access. Also used to derive default CORS origins for the web app.
+- `HOPI_PUBLIC_URL` - Public HTTPS URL for Telegram Mini App access. Also used to derive default CORS origins for the web app.
 
 ### Optional (Voice)
 
@@ -31,15 +31,15 @@ See `src/configuration.ts` for all options.
 
 ### Optional
 
-- `HAPI_LISTEN_HOST` - HTTP bind address (default: 127.0.0.1).
-- `HAPI_LISTEN_PORT` - HTTP port (default: 3006).
+- `HOPI_LISTEN_HOST` - HTTP bind address (default: 127.0.0.1).
+- `HOPI_LISTEN_PORT` - HTTP port (default: 3006).
 - `CORS_ORIGINS` - Comma-separated origins, or `*`.
-- `HAPI_HOME` - Data directory (default: ~/.hapi).
-- `DB_PATH` - SQLite database path (default: HAPI_HOME/hapi.db).
+- `HOPI_HOME` - Data directory (default: ~/.hopi).
+- `DB_PATH` - SQLite database path (default: HOPI_HOME/hopi.db).
 - `TELEGRAM_NOTIFICATION` - Enable/disable Telegram notifications (default: true).
-- `HAPI_RELAY_API` - Relay API domain (default: relay.hapi.run).
-- `HAPI_RELAY_AUTH` - Relay auth key (default: hapi).
-- `HAPI_RELAY_FORCE_TCP` - Force TCP relay mode (true/1).
+- `HOPI_RELAY_API` - Relay API domain (default: relay.hopi.run).
+- `HOPI_RELAY_AUTH` - Relay auth key (default: hopi).
+- `HOPI_RELAY_FORCE_TCP` - Force TCP relay mode (true/1).
 - `VAPID_SUBJECT` - Contact email/URL for Web Push.
 
 ## Running
@@ -49,15 +49,15 @@ Binary (single executable):
 ```bash
 export TELEGRAM_BOT_TOKEN="..."
 export CLI_API_TOKEN="shared-secret"
-export HAPI_PUBLIC_URL="https://your-domain.example"
+export HOPI_PUBLIC_URL="https://your-domain.example"
 
-hapi hub
+hopi hub
 ```
 
-`hapi server` remains supported as an alias.
+`hopi server` remains supported as an alias.
 
 If you only need web + CLI, you can omit TELEGRAM_BOT_TOKEN.
-To enable Telegram, set TELEGRAM_BOT_TOKEN and HAPI_PUBLIC_URL, start the hub, open `/app`
+To enable Telegram, set TELEGRAM_BOT_TOKEN and HOPI_PUBLIC_URL, start the hub, open `/app`
 in the bot chat, and bind the Mini App with `CLI_API_TOKEN:<namespace>` when prompted.
 
 From source:
@@ -243,15 +243,15 @@ The hub build output is `hub/dist/index.js`, and the web assets are in `web/dist
 
 ## Networking notes
 
-- Telegram Mini Apps require HTTPS and a public URL. If the hub has no public IP, use Cloudflare Tunnel or Tailscale and set `HAPI_PUBLIC_URL` to the HTTPS endpoint.
-- If the web app is hosted on a different origin, set `CORS_ORIGINS` (or `HAPI_PUBLIC_URL`) to include that static host origin.
+- Telegram Mini Apps require HTTPS and a public URL. If the hub has no public IP, use Cloudflare Tunnel or Tailscale and set `HOPI_PUBLIC_URL` to the HTTPS endpoint.
+- If the web app is hosted on a different origin, set `CORS_ORIGINS` (or `HOPI_PUBLIC_URL`) to include that static host origin.
 
 ## Standalone web hosting
 
 The web UI can be hosted separately from the hub (for example on GitHub Pages or Cloudflare Pages):
 
 1. Build and deploy `web/dist` from the repo root.
-2. Set `CORS_ORIGINS` (or `HAPI_PUBLIC_URL`) to the static host origin.
-3. Open the static site, click the Hub button on the login screen, and enter the hapi hub origin.
+2. Set `CORS_ORIGINS` (or `HOPI_PUBLIC_URL`) to the static host origin.
+3. Open the static site, click the Hub button on the login screen, and enter the hopi hub origin.
 
 Leaving the hub override empty preserves the default same-origin behavior when the hub serves the web assets directly.

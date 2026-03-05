@@ -31,9 +31,9 @@ function AssistantTypingIndicator() {
         >
             <span className="sr-only">{label}</span>
             <div className="flex items-center gap-1" aria-hidden="true">
-                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '0ms' }} />
-                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '150ms' }} />
-                <span className="hapi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '300ms' }} />
+                <span className="hopi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '0ms' }} />
+                <span className="hopi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '150ms' }} />
+                <span className="hopi-typing-dot h-2 w-2 rounded-full bg-current" style={{ animationDelay: '300ms' }} />
             </div>
         </div>
     )

@@ -12,12 +12,13 @@ import { spawn, type Subprocess } from 'bun'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform, arch, homedir } from 'node:os'
+import { PRODUCT_ENV, PRODUCT_HOME_DIRNAME, PRODUCT_SLUG } from '@hopi/protocol/brand'
 import { isBunCompiled } from '../utils/bunCompiled'
 
-function getHapiHome(): string {
-    return process.env.HAPI_HOME
-        ? process.env.HAPI_HOME.replace(/^~/, homedir())
-        : join(homedir(), '.hapi')
+function getProductHome(): string {
+    return process.env[PRODUCT_ENV.HOME]
+        ? process.env[PRODUCT_ENV.HOME]!.replace(/^~/, homedir())
+        : join(homedir(), PRODUCT_HOME_DIRNAME)
 }
 
 function getPlatformDir(): string {
@@ -42,9 +43,9 @@ function getTunwgPath(): string {
     const tunwgBinary = isWin ? 'tunwg.exe' : 'tunwg'
 
     if (isBunCompiled()) {
-        const hapiHome = getHapiHome()
+        const productHome = getProductHome()
         const packageJson = require('../../../cli/package.json')
-        const runtimePath = join(hapiHome, 'runtime', packageJson.version)
+        const runtimePath = join(productHome, 'runtime', packageJson.version)
         return join(runtimePath, 'tools', 'tunwg', tunwgBinary)
     }
 
@@ -57,8 +58,8 @@ function getTunwgPath(): string {
 export interface TunnelConfig {
     localPort: number
     enabled: boolean
-    apiDomain?: string | null  // TUNWG_API - default: relay.hapi.run (official relay)
-    authKey?: string | null    // TUNWG_AUTH - default: hapi
+    apiDomain?: string | null  // TUNWG_API - default: relay.hopi.run (official relay)
+    authKey?: string | null    // TUNWG_AUTH - default: hopi
     useRelay?: boolean         // TUNWG_RELAY
 }
 
@@ -110,13 +111,13 @@ export class TunnelManager {
         const env: Record<string, string> = { ...process.env as Record<string, string> }
 
         if (!env.TUNWG_PATH) {
-            env.TUNWG_PATH = join(getHapiHome(), 'tunwg')
+            env.TUNWG_PATH = join(getProductHome(), 'tunwg')
         }
 
         if (this.config.apiDomain) {
             env.TUNWG_API = this.config.apiDomain
         }
-        env.TUNWG_AUTH = this.config.authKey ?? 'hapi'
+        env.TUNWG_AUTH = this.config.authKey ?? PRODUCT_SLUG
         if (this.config.useRelay) {
             env.TUNWG_RELAY = 'true'
         }

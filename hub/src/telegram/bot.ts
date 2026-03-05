@@ -1,5 +1,5 @@
 /**
- * Telegram Bot for HAPI
+ * Telegram Bot for HOPI
  *
  * Simplified bot that only handles notifications (permission requests and ready events).
  * All interactive features are handled by the Telegram Mini App.
@@ -25,7 +25,7 @@ export interface HappyBotConfig {
 }
 
 /**
- * HAPI Telegram Bot - Notification-only mode
+ * HOPI Telegram Bot - Notification-only mode
  */
 export class HappyBot implements NotificationChannel {
     private bot: Bot<BotContext>
@@ -69,13 +69,13 @@ export class HappyBot implements NotificationChannel {
     async start(): Promise<void> {
         if (this.isRunning) return
 
-        console.log('[HAPIBot] Starting Telegram bot...')
+        console.log('[HOPIBot] Starting Telegram bot...')
         this.isRunning = true
 
         // Start polling
         this.bot.start({
             onStart: (botInfo) => {
-                console.log(`[HAPIBot] Bot @${botInfo.username} started`)
+                console.log(`[HOPIBot] Bot @${botInfo.username} started`)
             }
         })
     }
@@ -86,7 +86,7 @@ export class HappyBot implements NotificationChannel {
     async stop(): Promise<void> {
         if (!this.isRunning) return
 
-        console.log('[HAPIBot] Stopping Telegram bot...')
+        console.log('[HOPIBot] Stopping Telegram bot...')
 
         await this.bot.stop()
         this.isRunning = false
@@ -98,7 +98,7 @@ export class HappyBot implements NotificationChannel {
     private setupMiddleware(): void {
         // Error handling middleware
         this.bot.catch((err) => {
-            console.error('[HAPIBot] Error:', err.message)
+            console.error('[HOPIBot] Error:', err.message)
         })
     }
 
@@ -109,14 +109,14 @@ export class HappyBot implements NotificationChannel {
         // /app - Open Telegram Mini App (primary entry point)
         this.bot.command('app', async (ctx) => {
             const keyboard = new InlineKeyboard().webApp('Open App', this.publicUrl)
-            await ctx.reply('Open HAPI Mini App:', { reply_markup: keyboard })
+            await ctx.reply('Open HOPI Mini App:', { reply_markup: keyboard })
         })
 
         // /start - Simple welcome with Mini App link
         this.bot.command('start', async (ctx) => {
             const keyboard = new InlineKeyboard().webApp('Open App', this.publicUrl)
             await ctx.reply(
-                'Welcome to HAPI Bot!\n\n' +
+                'Welcome to HOPI Bot!\n\n' +
                 'Use the Mini App for full session management.',
                 { reply_markup: keyboard }
             )
@@ -207,7 +207,7 @@ export class HappyBot implements NotificationChannel {
                     { reply_markup: keyboard }
                 )
             } catch (error) {
-                console.error(`[HAPIBot] Failed to send ready notification to chat ${chatId}:`, error)
+                console.error(`[HOPIBot] Failed to send ready notification to chat ${chatId}:`, error)
             }
         }
     }
@@ -234,7 +234,7 @@ export class HappyBot implements NotificationChannel {
                     reply_markup: keyboard
                 })
             } catch (error) {
-                console.error(`[HAPIBot] Failed to send notification to chat ${chatId}:`, error)
+                console.error(`[HOPIBot] Failed to send notification to chat ${chatId}:`, error)
             }
         }
     }

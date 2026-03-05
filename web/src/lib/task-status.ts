@@ -1,4 +1,4 @@
-import { TASK_STATUS_ORDER } from '@hapi/protocol/tasks'
+import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
 import type { TaskStatus } from '@/types/api'
 
 export const TASK_STATUS_TITLE_KEY_BY_STATUS = {

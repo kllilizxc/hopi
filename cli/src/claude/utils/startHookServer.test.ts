@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { request } from 'node:http'
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand'
 import { startHookServer, type SessionHookData } from './startHookServer'
 
 const sendHookRequest = async (port: number, body: string, token?: string): Promise<{ statusCode?: number; body: string }> => {
@@ -9,7 +10,7 @@ const sendHookRequest = async (port: number, body: string, token?: string): Prom
             'Content-Length': Buffer.byteLength(body)
         }
         if (token) {
-            headers['x-hapi-hook-token'] = token
+            headers[PRODUCT_HEADERS.HOOK_TOKEN] = token
         }
 
         const req = request({

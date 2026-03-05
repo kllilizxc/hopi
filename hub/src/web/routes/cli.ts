@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand'
 import { configuration } from '../../configuration'
 import { constantTimeEquals } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
@@ -66,7 +67,7 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
     const app = new Hono<CliEnv>()
 
     app.use('*', async (c, next) => {
-        c.header('X-Hapi-Protocol-Version', String(PROTOCOL_VERSION))
+        c.header(PRODUCT_HEADERS.PROTOCOL_VERSION, String(PROTOCOL_VERSION))
 
         const raw = c.req.header('authorization')
         if (!raw) {

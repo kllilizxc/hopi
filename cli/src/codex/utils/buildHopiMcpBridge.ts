@@ -1,13 +1,14 @@
 /**
  * Unified MCP bridge setup for Codex local and remote modes.
  *
- * This module provides a single source of truth for starting the hapi MCP
+ * This module provides a single source of truth for starting the hopi MCP
  * bridge server and generating the MCP server configuration that Codex needs.
  */
 
 import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import type { ApiSessionClient } from '@/api/apiSession';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 /**
  * MCP server entry configuration.
@@ -23,9 +24,9 @@ export interface McpServerEntry {
 export type McpServersConfig = Record<string, McpServerEntry>;
 
 /**
- * Result of starting the hapi MCP bridge.
+ * Result of starting the hopi MCP bridge.
  */
-export interface HapiMcpBridge {
+export interface HopiMcpBridge {
     /** The running server instance */
     server: {
         url: string;
@@ -36,13 +37,13 @@ export interface HapiMcpBridge {
 }
 
 /**
- * Start the hapi MCP bridge server and return the configuration
+ * Start the hopi MCP bridge server and return the configuration
  * needed to connect Codex to it.
  *
  * This is the single source of truth for MCP bridge setup,
  * used by both local and remote launchers.
  */
-export async function buildHapiMcpBridge(client: ApiSessionClient): Promise<HapiMcpBridge> {
+export async function buildHopiMcpBridge(client: ApiSessionClient): Promise<HopiMcpBridge> {
     const happyServer = await startHappyServer(client);
     const bridgeCommand = getHappyCliCommand(['mcp', '--url', happyServer.url]);
 
@@ -52,7 +53,7 @@ export async function buildHapiMcpBridge(client: ApiSessionClient): Promise<Hapi
             stop: happyServer.stop
         },
         mcpServers: {
-            hapi: {
+            [PRODUCT_SLUG]: {
                 command: bridgeCommand.command,
                 args: bridgeCommand.args
             }

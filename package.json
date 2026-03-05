@@ -1,5 +1,5 @@
 {
-    "name": "hapi",
+    "name": "hopi",
     "private": true,
     "workspaces": ["cli", "shared", "hub", "web", "website", "docs"],
     "scripts": {
@@ -24,7 +24,9 @@
         "test:hub": "cd hub && bun run test",
         "test:web": "cd web && bun run test",
         "clean-session": "bun run hub/scripts/cleanup-sessions.ts",
-        "release-all": "cd cli && bun run release-all"
+        "release-all": "cd cli && bun run release-all",
+        "brand:sync": "bun run scripts/brand-sync.ts",
+        "brand:check": "bun run scripts/brand-check.ts"
     },
     "devDependencies": {
         "concurrently": "^9.2.1",

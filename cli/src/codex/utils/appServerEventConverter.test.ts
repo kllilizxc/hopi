@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppServerEventConverter } from './appServerEventConverter';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('AppServerEventConverter', () => {
     it('maps thread/started', () => {
@@ -174,7 +175,7 @@ describe('AppServerEventConverter', () => {
             item: {
                 id: 'call-1',
                 type: 'mcpToolCall',
-                server: 'hapi',
+                server: PRODUCT_SLUG,
                 tool: 'change_title',
                 arguments: { title: 'hello' }
             }
@@ -183,7 +184,7 @@ describe('AppServerEventConverter', () => {
             type: 'mcp_tool_call_begin',
             call_id: 'call-1',
             invocation: {
-                server: 'hapi',
+                server: PRODUCT_SLUG,
                 tool: 'change_title',
                 arguments: { title: 'hello' }
             }
@@ -193,7 +194,7 @@ describe('AppServerEventConverter', () => {
             item: {
                 id: 'call-1',
                 type: 'mcpToolCall',
-                server: 'hapi',
+                server: PRODUCT_SLUG,
                 tool: 'change_title',
                 arguments: { title: 'hello' },
                 result: { ok: true }
@@ -203,7 +204,7 @@ describe('AppServerEventConverter', () => {
             type: 'mcp_tool_call_end',
             call_id: 'call-1',
             invocation: {
-                server: 'hapi',
+                server: PRODUCT_SLUG,
                 tool: 'change_title',
                 arguments: { title: 'hello' }
             },

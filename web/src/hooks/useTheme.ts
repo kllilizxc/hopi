@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react'
 import { getTelegramWebApp } from './useTelegram'
+import { productStorageKey } from '@hopi/protocol/brand'
 
 export type Appearance = 'auto' | 'light' | 'dark'
 export type ThemePreset = 'graphite' | 'soft' | 'contrast'
@@ -11,8 +12,8 @@ type ThemeSnapshot = {
     preset: ThemePreset
 }
 
-const APPEARANCE_STORAGE_KEY = 'hapi-appearance'
-const PRESET_STORAGE_KEY = 'hapi-theme-preset'
+const APPEARANCE_STORAGE_KEY = productStorageKey('appearance')
+const PRESET_STORAGE_KEY = productStorageKey('theme-preset')
 
 function isBrowser(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined'

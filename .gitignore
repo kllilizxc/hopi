@@ -39,8 +39,8 @@ localdocs/
 execplan/
 
 # Preview runtime cache (repo-local)
-.hapi/*.hash
-.hapi/sandbox/
+.hopi/*.hash
+.hopi/sandbox/
 
 # Generated npm bundle output (local)
 cli/npm/main/

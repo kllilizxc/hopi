@@ -1,4 +1,5 @@
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TodoItemSchema } from '@hapi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TodoItemSchema } from '@hopi/protocol/schemas'
+import { PRODUCT_ENV, PRODUCT_HEADERS, PRODUCT_NAME, PRODUCT_PREVIEW_READY_MARKER, PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -102,7 +103,7 @@ function waitWithUnrefTimer(ms: number): Promise<void> {
 }
 
 function buildWorktreeMergeCommitMessage(task: Pick<StoredTask, 'id' | 'title'>): string {
-    return `HAPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
+    return `HOPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
 }
 
 function emitRealtimeToast(options: {
@@ -907,7 +908,7 @@ function resolvePreviewAutomationErrorStatus(message: string): 500 | 503 | 504 {
 
 function isMissingPreviewCommandError(message: string): boolean {
     const lowered = message.toLowerCase()
-    return lowered.includes('no preview command found') || lowered.includes('create .hapi/preview.sh')
+    return lowered.includes('no preview command found') || lowered.includes(`create ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}`)
 }
 
 function createPreviewSetupPrompt(options: {
@@ -933,15 +934,15 @@ function createPreviewSetupPrompt(options: {
         `Preferred web port base: ${preferredPortLine}`,
         `Last error: ${options.failureMessage}`,
         '',
-        'Please create or update `.hapi/preview.sh` in this project so future preview starts are one-click.',
+        `Please create or update \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\` in this project so future preview starts are one-click.`,
         '',
         'Requirements:',
-        '1) Script path: `.hapi/preview.sh` under the project root.',
+        `1) Script path: \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\` under the project root.`,
         '2) Shebang: `#!/usr/bin/env bash`, safe options: `set -euo pipefail`.',
-        '3) Make it executable (`chmod +x .hapi/preview.sh`).',
-        '4) Respect HAPI vars when present (`HAPI_PREVIEW_ROOT`, `HAPI_PREVIEW_WEB_PORT_BASE`, `HAPI_PREVIEW_HUB_PORT_BASE`, `HAPI_PREVIEW_MODE`).',
+        `3) Make it executable (\`chmod +x ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\`).`,
+        `4) Respect ${PRODUCT_NAME} vars when present (\`${PRODUCT_ENV.PREVIEW_ROOT}\`, \`${PRODUCT_ENV.PREVIEW_WEB_PORT_BASE}\`, \`${PRODUCT_ENV.PREVIEW_HUB_PORT_BASE}\`, \`${PRODUCT_ENV.PREVIEW_MODE}\`).`,
         '5) Start the project preview/dev server(s) and keep process running.',
-        '6) Emit readiness marker exactly as: `::hapi-preview-url::http://127.0.0.1:<port>` once ready.',
+        `6) Emit readiness marker exactly as: \`${PRODUCT_PREVIEW_READY_MARKER}http://127.0.0.1:<port>\` once ready.`,
         '7) Keep changes minimal; avoid unrelated refactors.',
         '',
         'After editing the script, run a quick sanity check and reply with a short summary.'
@@ -1237,7 +1238,7 @@ export function createTasksRoutes(options: {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
         const preferredLocale = resolveRequestLocale(
-            c.req.header('x-hapi-locale')
+            c.req.header(PRODUCT_HEADERS.LOCALE)
             ?? c.req.header('accept-language')
             ?? undefined
         )
@@ -1746,7 +1747,7 @@ export function createTasksRoutes(options: {
             const namespace = c.get('namespace')
             const taskId = c.req.param('taskId')
             const preferredLocale = resolveRequestLocale(
-                c.req.header('x-hapi-locale')
+                c.req.header(PRODUCT_HEADERS.LOCALE)
                 ?? c.req.header('accept-language')
                 ?? undefined
             )

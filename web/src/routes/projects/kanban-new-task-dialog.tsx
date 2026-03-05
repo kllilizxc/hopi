@@ -8,6 +8,7 @@ import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import { ModelSelector } from '@/components/NewSession/ModelSelector'
 import { MODEL_OPTIONS, type AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
+import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
 function getTaskDraftTitle(draft: string): string {
     const trimmed = draft.trim()
@@ -49,7 +50,7 @@ type NewTaskDialogProps = {
     }) => void
 }
 
-const STORAGE_KEY = 'hapi:newTaskDialog:lastOptions'
+const STORAGE_KEY = productStorageNamespaceKey('newTaskDialog:lastOptions')
 const DEFAULT_AGENT: AgentType = 'claude'
 const VALID_AGENTS: ReadonlySet<AgentType> = new Set(['claude', 'codex', 'gemini', 'opencode'])
 const VALID_PRIORITIES: ReadonlySet<TaskPriority | ''> = new Set(['', 'high', 'medium', 'low'])

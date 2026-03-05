@@ -3,7 +3,7 @@
  *
  * Handles CLI_API_TOKEN initialization with priority:
  * 1. Environment variable (highest - allows temporary override)
- * 2. Settings file (~/.hapi/settings.json)
+ * 2. Settings file (~/.hopi/settings.json)
  * 3. Interactive prompt (only when both above are missing)
  */
 
@@ -13,6 +13,9 @@ import chalk from 'chalk'
 import { configuration } from '@/configuration'
 import { readSettings, updateSettings } from '@/persistence'
 import { initializeApiUrl } from '@/ui/apiUrlInit'
+import { PRODUCT_CLI_COMMAND, PRODUCT_HOME_DIRNAME } from '@hopi/protocol/brand'
+
+const SETTINGS_PATH_HINT = `~/${PRODUCT_HOME_DIRNAME}/settings.json`
 
 /**
  * Initialize CLI API token
@@ -36,7 +39,7 @@ export async function initializeToken(): Promise<void> {
 
     // 3. Non-TTY environment cannot prompt, fail with clear error
     if (!process.stdin.isTTY) {
-        throw new Error('CLI_API_TOKEN is required. Set it via environment variable or run `hapi auth login`.')
+        throw new Error(`CLI_API_TOKEN is required. Set it via environment variable or run \`${PRODUCT_CLI_COMMAND} auth login\`.`)
     }
 
     // 4. Interactive prompt
@@ -56,7 +59,7 @@ async function promptForToken(): Promise<string> {
     console.log(chalk.yellow('\nNo CLI_API_TOKEN found.'))
     console.log(chalk.gray('Where to find the token:'))
     console.log(chalk.gray('  1. Check the server startup logs (first run shows generated token)'))
-    console.log(chalk.gray('  2. Read ~/.hapi/settings.json on the server'))
+    console.log(chalk.gray(`  2. Read ${SETTINGS_PATH_HINT} on the server`))
     console.log(chalk.gray('  3. Ask your server administrator (if token is set via env var)\n'))
 
     try {

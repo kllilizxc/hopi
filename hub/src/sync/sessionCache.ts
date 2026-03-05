@@ -1,5 +1,5 @@
-import { AgentStateSchema, MetadataSchema } from '@hapi/protocol/schemas'
-import type { ModelMode, PermissionMode, Session } from '@hapi/protocol/types'
+import { AgentStateSchema, MetadataSchema } from '@hopi/protocol/schemas'
+import type { ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'

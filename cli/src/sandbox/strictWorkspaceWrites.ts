@@ -1,9 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
+import { PRODUCT_ENV, PRODUCT_HOME_DIRNAME, PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
-const APPLIED_ENV_KEY = 'HAPI_STRICT_WORKSPACE_WRITES_APPLIED';
+const APPLIED_ENV_KEY = PRODUCT_ENV.STRICT_WORKSPACE_WRITES_APPLIED;
 
 export type StrictWorkspaceWritesSpawnSpec = {
     command: string;
@@ -14,7 +15,7 @@ export type StrictWorkspaceWritesSpawnSpec = {
 };
 
 export function isStrictWorkspaceWritesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-    const raw = env.HAPI_STRICT_WORKSPACE_WRITES;
+    const raw = env[PRODUCT_ENV.STRICT_WORKSPACE_WRITES];
     if (!raw) {
         return false;
     }
@@ -88,17 +89,17 @@ function buildSandboxPaths(workspaceRoot: string): {
     cacheDir: string;
     configDir: string;
     stateDir: string;
-    hapiHomeDir: string;
+    hopiHomeDir: string;
     codexHomeDir: string;
     seatbeltProfilePath: string;
 } {
-    const sandboxRoot = join(workspaceRoot, '.hapi', 'sandbox');
+    const sandboxRoot = join(workspaceRoot, PRODUCT_HOME_DIRNAME, 'sandbox');
     const homeDir = join(sandboxRoot, 'home');
     const tmpDir = join(sandboxRoot, 'tmp');
     const cacheDir = join(sandboxRoot, 'cache');
     const configDir = join(sandboxRoot, 'config');
     const stateDir = join(sandboxRoot, 'state');
-    const hapiHomeDir = join(sandboxRoot, 'hapi-home');
+    const hopiHomeDir = join(sandboxRoot, `${PRODUCT_SLUG}-home`);
     const codexHomeDir = join(sandboxRoot, 'codex-home');
     const seatbeltProfilePath = join(sandboxRoot, 'deny-write-outside.sb');
     return {
@@ -108,7 +109,7 @@ function buildSandboxPaths(workspaceRoot: string): {
         cacheDir,
         configDir,
         stateDir,
-        hapiHomeDir,
+        hopiHomeDir,
         codexHomeDir,
         seatbeltProfilePath
     };
@@ -134,7 +135,7 @@ function prepareSandboxEnv(options: {
     sandboxCache: string;
     sandboxConfig: string;
     sandboxState: string;
-    sandboxHapiHome: string;
+    sandboxHopiHome: string;
     sandboxCodexHome: string;
 }): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...options.baseEnv };
@@ -149,9 +150,9 @@ function prepareSandboxEnv(options: {
     env.XDG_CONFIG_HOME = options.sandboxConfig;
     env.XDG_STATE_HOME = options.sandboxState;
 
-    // Ensure HAPI-based processes (hub/web dev, etc.) have a writable home dir
-    // that doesn't touch the user's real ~/.hapi.
-    env.HAPI_HOME = options.sandboxHapiHome;
+    // Ensure HOPI-based processes (hub/web dev, etc.) have a writable home dir
+    // that doesn't touch the user's real ~/.hopi.
+    env[PRODUCT_ENV.HOME] = options.sandboxHopiHome;
 
     // Ensure Codex has a writable CODEX_HOME inside the workspace, but preserve
     // any existing auth.json (runner token injection or prior login).
@@ -218,7 +219,7 @@ export function maybeWrapSpawnSpecForStrictWorkspaceWrites(spec: StrictWorkspace
     ensureDir(paths.cacheDir);
     ensureDir(paths.configDir);
     ensureDir(paths.stateDir);
-    ensureDir(paths.hapiHomeDir);
+    ensureDir(paths.hopiHomeDir);
     ensureDir(paths.codexHomeDir);
 
     const env = prepareSandboxEnv({
@@ -229,14 +230,14 @@ export function maybeWrapSpawnSpecForStrictWorkspaceWrites(spec: StrictWorkspace
         sandboxCache: paths.cacheDir,
         sandboxConfig: paths.configDir,
         sandboxState: paths.stateDir,
-        sandboxHapiHome: paths.hapiHomeDir,
+        sandboxHopiHome: paths.hopiHomeDir,
         sandboxCodexHome: paths.codexHomeDir
     });
 
     if (process.platform === 'darwin') {
         const sandboxExecPath = findExecutableOnPath('sandbox-exec', env) ?? '/usr/bin/sandbox-exec';
         if (!existsSync(sandboxExecPath)) {
-            throw new Error('HAPI_STRICT_WORKSPACE_WRITES is enabled, but sandbox-exec was not found on PATH.');
+            throw new Error(`${PRODUCT_ENV.STRICT_WORKSPACE_WRITES} is enabled, but sandbox-exec was not found on PATH.`);
         }
 
         ensureSeatbeltProfile({ workspaceRoot, profilePath: paths.seatbeltProfilePath });
@@ -255,7 +256,7 @@ export function maybeWrapSpawnSpecForStrictWorkspaceWrites(spec: StrictWorkspace
         const bwrapPath = resolvedBwrapPath ?? 'bwrap';
         if (!resolvedBwrapPath && bwrapPath === 'bwrap') {
             // Keep error message stable even if PATH probing can't resolve the full path.
-            throw new Error('HAPI_STRICT_WORKSPACE_WRITES is enabled, but bubblewrap (bwrap) was not found on PATH.');
+            throw new Error(`${PRODUCT_ENV.STRICT_WORKSPACE_WRITES} is enabled, but bubblewrap (bwrap) was not found on PATH.`);
         }
 
         const args: string[] = [
@@ -271,7 +272,7 @@ export function maybeWrapSpawnSpecForStrictWorkspaceWrites(spec: StrictWorkspace
             '--setenv', 'XDG_CACHE_HOME', paths.cacheDir,
             '--setenv', 'XDG_CONFIG_HOME', paths.configDir,
             '--setenv', 'XDG_STATE_HOME', paths.stateDir,
-            '--setenv', 'HAPI_HOME', paths.hapiHomeDir,
+            '--setenv', PRODUCT_ENV.HOME, paths.hopiHomeDir,
             '--setenv', 'CODEX_HOME', paths.codexHomeDir,
             '--', spec.command, ...spec.args
         ];
@@ -285,5 +286,5 @@ export function maybeWrapSpawnSpecForStrictWorkspaceWrites(spec: StrictWorkspace
         };
     }
 
-    throw new Error(`HAPI_STRICT_WORKSPACE_WRITES is enabled, but platform ${process.platform} is not supported.`);
+    throw new Error(`${PRODUCT_ENV.STRICT_WORKSPACE_WRITES} is enabled, but platform ${process.platform} is not supported.`);
 }

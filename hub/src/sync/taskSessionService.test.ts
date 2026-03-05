@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { SyncEvent } from '@hapi/protocol/types'
+import type { SyncEvent } from '@hopi/protocol/types'
 import { Store } from '../store'
 import { startSessionFromTask } from './taskSessionService'
 import type { SyncEngine } from './syncEngine'

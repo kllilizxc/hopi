@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildCodexStartConfig } from './codexStartConfig';
 import { codexSystemPrompt } from './systemPrompt';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('buildCodexStartConfig', () => {
-    const mcpServers = { hapi: { command: 'node', args: ['mcp'] } };
+    const mcpServers = { [PRODUCT_SLUG]: { command: 'node', args: ['mcp'] } };
 
     it('applies CLI overrides when permission mode is default', () => {
         const config = buildCodexStartConfig({

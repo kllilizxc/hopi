@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { PRODUCT_PREVIEW_READY_MARKER, PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -74,7 +75,7 @@ describe('tasks preview start route', () => {
             async previewStartForSession() {
                 startCalls += 1
                 if (startCalls === 1) {
-                    throw new Error('No preview command found. Create .hapi/preview.sh or add package.json script preview/dev/start')
+                    throw new Error(`No preview command found. Create ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH} or add package.json script preview/dev/start`)
                 }
                 return {
                     active: true,
@@ -83,7 +84,7 @@ describe('tasks preview start route', () => {
                     sessionId,
                     mode: 'local',
                     rootPath: '/tmp/preview-root',
-                    command: 'bash .hapi/preview.sh',
+                    command: `bash ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}`,
                     url: 'http://127.0.0.1:5173',
                     updatedAt: Date.now(),
                     logTail: []
@@ -121,8 +122,8 @@ describe('tasks preview start route', () => {
         expect(body.autoSetupAttempted).toBe(true)
         expect(startCalls).toBe(2)
         expect(sentPrompt?.localId?.startsWith('auto:preview_setup:')).toBe(true)
-        expect(sentPrompt?.text?.includes('.hapi/preview.sh')).toBe(true)
-        expect(sentPrompt?.text?.includes('::hapi-preview-url::')).toBe(true)
+        expect(sentPrompt?.text?.includes(PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH)).toBe(true)
+        expect(sentPrompt?.text?.includes(PRODUCT_PREVIEW_READY_MARKER)).toBe(true)
     })
 
     it('returns normal preview error without auto-prompt for non-command failures', async () => {

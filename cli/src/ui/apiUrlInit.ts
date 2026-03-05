@@ -1,14 +1,15 @@
 /**
  * API URL initialization module
  *
- * Handles HAPI_API_URL initialization with priority:
+ * Handles HOPI_API_URL initialization with priority:
  * 1. Environment variable (highest - allows temporary override)
- * 2. Settings file (~/.hapi/settings.json)
+ * 2. Settings file (~/.hopi/settings.json)
  * 3. Default value (http://localhost:3006)
  */
 
 import { configuration } from '@/configuration'
 import { readSettings } from '@/persistence'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 
 /**
  * Initialize API URL
@@ -16,7 +17,7 @@ import { readSettings } from '@/persistence'
  */
 export async function initializeApiUrl(): Promise<void> {
     // 1. Environment variable has highest priority (allows temporary override)
-    if (process.env.HAPI_API_URL) {
+    if (process.env[PRODUCT_ENV.API_URL]) {
         return
     }
 

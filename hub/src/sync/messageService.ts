@@ -1,4 +1,4 @@
-import type { AttachmentMetadata, DecryptedMessage } from '@hapi/protocol/types'
+import type { AttachmentMetadata, DecryptedMessage } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import { EventPublisher } from './eventPublisher'

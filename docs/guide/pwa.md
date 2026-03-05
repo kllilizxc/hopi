@@ -1,24 +1,24 @@
 # Progressive Web App (PWA)
 
-HAPI's web interface is a fully-featured PWA that can be installed on your phone for a native app-like experience.
+HOPI's web interface is a fully-featured PWA that can be installed on your phone for a native app-like experience.
 
 ## What is PWA?
 
 A Progressive Web App (PWA) is a web application that can be installed on your device and works like a native app:
 
-- **Home screen icon** - Launch HAPI like any other app
+- **Home screen icon** - Launch HOPI like any other app
 - **Full screen mode** - No browser chrome, immersive experience
 - **Offline support** - Basic functionality works without internet
 - **Auto-updates** - Always get the latest version
 
-## Installing HAPI PWA
+## Installing HOPI PWA
 
 ### Android (Chrome/Edge)
 
-1. Open HAPI in Chrome or Edge browser
-2. Look for the **"Install HAPI"** banner at the bottom
+1. Open HOPI in Chrome or Edge browser
+2. Look for the **"Install HOPI"** banner at the bottom
 3. Tap **"Install"**
-4. HAPI appears on your home screen
+4. HOPI appears on your home screen
 
 ::: tip
 If you don't see the install banner, tap the three-dot menu and select **"Add to Home screen"** or **"Install app"**.
@@ -26,7 +26,7 @@ If you don't see the install banner, tap the three-dot menu and select **"Add to
 
 ### iOS (Safari)
 
-1. Open HAPI in Safari browser
+1. Open HOPI in Safari browser
 2. Tap the **Share** button (square with arrow)
 3. Scroll down and tap **"Add to Home Screen"**
 4. Tap **"Add"** in the top right corner
@@ -37,16 +37,16 @@ iOS requires Safari for PWA installation. Chrome/Firefox on iOS don't support th
 
 ### Desktop (Chrome/Edge)
 
-1. Open HAPI in your browser
+1. Open HOPI in your browser
 2. Click the install icon in the address bar (⊕)
-3. Or use the menu: **"Install HAPI..."**
-4. HAPI opens as a standalone window
+3. Or use the menu: **"Install HOPI..."**
+4. HOPI opens as a standalone window
 
 ## PWA Features
 
 ### Offline Mode
 
-When offline, HAPI can:
+When offline, HOPI can:
 
 - Display cached session lists
 - Show previously loaded messages
@@ -56,7 +56,7 @@ An offline indicator appears when you lose connection.
 
 ### Auto-Update
 
-HAPI automatically checks for updates:
+HOPI automatically checks for updates:
 
 - Updates are checked hourly in the background
 - When a new version is available, you'll see a prompt
@@ -72,7 +72,7 @@ Actions taken offline are synced when reconnected:
 
 ## Caching Strategy
 
-HAPI uses intelligent caching:
+HOPI uses intelligent caching:
 
 | Content | Strategy | Duration |
 |---------|----------|----------|
@@ -83,11 +83,11 @@ HAPI uses intelligent caching:
 
 ## Notifications
 
-HAPI supports push notifications to alert you when agents need attention.
+HOPI supports push notifications to alert you when agents need attention.
 
 ### Enable Notifications
 
-1. Open HAPI - a permission popup appears automatically
+1. Open HOPI - a permission popup appears automatically
 2. Tap **Allow** to enable notifications
 3. If you missed the popup, go to system settings to grant permission
 
@@ -106,7 +106,7 @@ If push notifications don't work in your region (e.g., FCM unavailable), use [Te
 
 ### Check Install Status
 
-HAPI shows different UI based on install status:
+HOPI shows different UI based on install status:
 
 - **Not installed** - Shows install prompt
 - **Installing** - Shows progress indicator
@@ -115,23 +115,23 @@ HAPI shows different UI based on install status:
 ### Uninstalling
 
 **Android:**
-1. Long-press the HAPI icon
+1. Long-press the HOPI icon
 2. Drag to "Uninstall" or tap the X
 
 **iOS:**
-1. Long-press the HAPI icon
+1. Long-press the HOPI icon
 2. Tap "Remove App" → "Delete App"
 
 **Desktop:**
-1. Open HAPI
+1. Open HOPI
 2. Click the three-dot menu
-3. Select "Uninstall HAPI"
+3. Select "Uninstall HOPI"
 
 ### Clearing Cache
 
 If you experience issues:
 
-1. Open HAPI in browser (not installed version)
+1. Open HOPI in browser (not installed version)
 2. Open Developer Tools (F12)
 3. Go to Application → Storage
 4. Click "Clear site data"
@@ -140,15 +140,15 @@ If you experience issues:
 
 ### Battery Optimization
 
-On Android, disable battery optimization for HAPI to ensure:
+On Android, disable battery optimization for HOPI to ensure:
 - Background sync works reliably
 - Notifications arrive promptly
 
-Settings → Apps → HAPI → Battery → Unrestricted
+Settings → Apps → HOPI → Battery → Unrestricted
 
 ### Data Usage
 
-HAPI uses minimal data:
+HOPI uses minimal data:
 
 - Initial load: ~500KB
 - Cached after first load
@@ -156,7 +156,7 @@ HAPI uses minimal data:
 
 ### Multiple Devices
 
-You can install HAPI on multiple devices:
+You can install HOPI on multiple devices:
 
 - All devices use the same server
 - Sessions sync across devices

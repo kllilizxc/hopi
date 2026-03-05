@@ -1,5 +1,5 @@
-import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
-import type { DecryptedMessage, SyncEvent } from '@hapi/protocol/types'
+import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
+import type { DecryptedMessage, SyncEvent } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
 
@@ -286,7 +286,7 @@ export class TaskAutomation {
 
         const taskIdPrefix = task.id.slice(0, 8)
         const title = task.title.trim() || 'Task'
-        const commitMessage = `HAPI: task ${taskIdPrefix} — ${title}`.slice(0, 180)
+        const commitMessage = `HOPI: task ${taskIdPrefix} — ${title}`.slice(0, 180)
 
         this.autoCommitInFlightBySessionId.add(sessionId)
         void this.engine.gitAutocommitWorktree(sessionId, { message: commitMessage })

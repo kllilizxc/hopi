@@ -1,7 +1,8 @@
 import type { AgentType } from './types'
+import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
-const AGENT_STORAGE_KEY = 'hapi:newSession:agent'
-const YOLO_STORAGE_KEY = 'hapi:newSession:yolo'
+export const AGENT_STORAGE_KEY = productStorageNamespaceKey('newSession:agent')
+export const YOLO_STORAGE_KEY = productStorageNamespaceKey('newSession:yolo')
 
 const VALID_AGENTS: AgentType[] = ['claude', 'codex', 'gemini', 'opencode']
 

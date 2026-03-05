@@ -7,7 +7,7 @@
 
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
-import type { PermissionMode } from "@hapi/protocol/types";
+import type { PermissionMode } from "@hopi/protocol/types";
 import {
     BasePermissionHandler,
     type PendingPermissionRequest,

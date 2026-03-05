@@ -1,14 +1,14 @@
 /**
- * Sync Engine for HAPI Telegram Bot (Direct Connect)
+ * Sync Engine for HOPI Telegram Bot (Direct Connect)
  *
  * In the direct-connect architecture:
- * - hapi-hub is the hub (Socket.IO + REST)
- * - hapi CLI connects directly to the hub (no relay)
+ * - hopi-hub is the hub (Socket.IO + REST)
+ * - hopi CLI connects directly to the hub (no relay)
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
-import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -33,7 +33,7 @@ import {
 import { SessionCache } from './sessionCache'
 import { TaskAutomation } from './taskAutomation'
 
-export type { Session, SyncEvent } from '@hapi/protocol/types'
+export type { Session, SyncEvent } from '@hopi/protocol/types'
 export type { Machine } from './machineCache'
 export type { SyncEventListener } from './eventPublisher'
 export type {

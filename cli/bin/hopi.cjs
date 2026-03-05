@@ -5,13 +5,13 @@ const path = require('path');
 
 const platform = process.platform;
 const arch = process.arch;
-const pkgName = `@twsxtd/hapi-${platform}-${arch}`;
+const pkgName = `@twsxtd/hopi-${platform}-${arch}`;
 
 function getBinaryPath() {
     try {
         // Try to find the platform-specific package
         const pkgPath = require.resolve(`${pkgName}/package.json`);
-        const binName = platform === 'win32' ? 'hapi.exe' : 'hapi';
+        const binName = platform === 'win32' ? 'hopi.exe' : 'hopi';
         return path.join(path.dirname(pkgPath), 'bin', binName);
     } catch (e) {
         return null;
@@ -31,7 +31,7 @@ if (!binPath) {
     console.error('  - win32-x64');
     console.error('');
     console.error('You can download the binary manually from:');
-    console.error('  https://github.com/tiann/hapi/releases');
+    console.error('  https://github.com/tiann/hopi/releases');
     process.exit(1);
 }
 

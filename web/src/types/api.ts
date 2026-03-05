@@ -7,7 +7,7 @@ import type {
     SyncEvent as ProtocolSyncEvent,
     Workspace,
     WorktreeMetadata
-} from '@hapi/protocol/types'
+} from '@hopi/protocol/types'
 
 export type {
     AgentState,
@@ -26,7 +26,7 @@ export type {
     TodoItem,
     Workspace,
     WorktreeMetadata
-} from '@hapi/protocol/types'
+} from '@hopi/protocol/types'
 
 export type SessionMetadataSummary = {
     path: string

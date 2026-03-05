@@ -1,5 +1,5 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
-import { asNumber, asString, isObject } from '@hapi/protocol'
+import { asNumber, asString, isObject } from '@hopi/protocol'
 
 function asBoolean(value: unknown): boolean | null {
     return typeof value === 'boolean' ? value : null
@@ -252,7 +252,7 @@ export function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
-        // Skip meta/compact-summary messages (parity with hapi-app)
+        // Skip meta/compact-summary messages (parity with hopi-app)
         if (data.isMeta) return null
         if (data.isCompactSummary) return null
 

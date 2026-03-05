@@ -1,4 +1,6 @@
-const RECENT_SKILLS_KEY = 'hapi-recent-skills'
+import { productStorageKey } from '@hopi/protocol/brand'
+
+const RECENT_SKILLS_KEY = productStorageKey('recent-skills')
 const MAX_RECENT_SKILLS = 200
 
 type RecentSkillsMap = Record<string, number>
@@ -51,4 +53,3 @@ export function markSkillUsed(skillName: string): void {
         // Ignore storage errors
     }
 }
-

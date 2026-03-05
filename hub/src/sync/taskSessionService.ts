@@ -1,6 +1,6 @@
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
-import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
+import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
@@ -330,7 +330,7 @@ export async function startSessionFromTask(options: {
     if (!runnerSeemsOnline) {
         return {
             ok: false,
-            error: 'Runner offline or not connected. Start it on the machine and try again: hapi runner start'
+            error: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
         }
     }
 

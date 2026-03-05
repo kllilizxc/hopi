@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { serveStatic } from 'hono/bun'
 import { configuration } from '../configuration'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_DEFAULT_OFFICIAL_WEB_URL, PRODUCT_NAME } from '@hopi/protocol/brand'
 import type { SyncEngine } from '../sync/syncEngine'
 import { createAuthMiddleware, type WebAppEnv } from './middleware/auth'
 import { createAuthRoutes } from './routes/auth'
@@ -105,13 +106,13 @@ function createWebApp(options: {
 
     // Skip static serving in relay mode, show helpful message on root
     if (options.relayMode) {
-        const officialUrl = options.officialWebUrl || 'https://app.hapi.run'
+        const officialUrl = options.officialWebUrl || PRODUCT_DEFAULT_OFFICIAL_WEB_URL
         app.get('/', (c) => {
             return c.html(`<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>HAPI Hub</title></head>
+<head><meta charset="utf-8"><title>${PRODUCT_NAME} Hub</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px;">
-<h1>HAPI Hub</h1>
+<h1>${PRODUCT_NAME} Hub</h1>
 <p>This hub is running in relay mode. Please use the official web app:</p>
 <p><a href="${officialUrl}">${officialUrl}</a></p>
 <details>

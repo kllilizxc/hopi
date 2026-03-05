@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { AttachmentMetadataSchema } from '@hapi/protocol/schemas'
+import { AttachmentMetadataSchema } from '@hopi/protocol/schemas'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'

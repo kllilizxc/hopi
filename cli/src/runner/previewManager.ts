@@ -3,11 +3,12 @@ import { access, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
+import { PRODUCT_ENV, PRODUCT_PREVIEW_READY_MARKER, PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand';
 import { logger } from '@/ui/logger';
 import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 const PREVIEW_LOG_LIMIT = 400;
-const READY_MARKER = /::hapi-preview-url::(\S+)/i;
+const READY_MARKER = new RegExp(`${PRODUCT_PREVIEW_READY_MARKER}(\\S+)`, 'i');
 const URL_PATTERN = /(https?:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}[^\s]*)/i;
 
 type PreviewStatus = 'idle' | 'starting' | 'ready' | 'error' | 'stopped';
@@ -119,10 +120,10 @@ function commandForPackageScript(pm: 'bun' | 'pnpm' | 'yarn' | 'npm', script: st
 }
 
 async function pickPreviewCommand(rootPath: string): Promise<ResolvedCommand> {
-  const scriptPath = join(rootPath, '.hapi', 'preview.sh');
+  const scriptPath = join(rootPath, PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH);
   if (await fileExists(scriptPath)) {
     return {
-      command: 'bash .hapi/preview.sh',
+      command: `bash ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}`,
       cwd: rootPath
     };
   }
@@ -160,7 +161,7 @@ async function pickPreviewCommand(rootPath: string): Promise<ResolvedCommand> {
     };
   }
 
-  throw new Error('No preview command found. Create .hapi/preview.sh or add package.json script preview/dev/start');
+  throw new Error(`No preview command found. Create ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH} or add package.json script preview/dev/start`);
 }
 
 async function findFreePort(basePort: number): Promise<number> {
@@ -246,7 +247,7 @@ export class PreviewManager {
     await ensureDirectory(options.rootPath);
 
     const selected = await pickPreviewCommand(options.rootPath);
-    const isPreviewScript = selected.command === 'bash .hapi/preview.sh';
+    const isPreviewScript = selected.command === `bash ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}`;
     const port = isPreviewScript ? undefined : await findFreePort(options.basePort ?? 5173);
     const runId = this.runId + 1;
     this.runId = runId;
@@ -270,18 +271,18 @@ export class PreviewManager {
 
     const env: Record<string, string | undefined> = {
       ...process.env,
-      HAPI_PREVIEW_ROOT: options.rootPath,
-      HAPI_PREVIEW_MODE: options.mode
+      [PRODUCT_ENV.PREVIEW_ROOT]: options.rootPath,
+      [PRODUCT_ENV.PREVIEW_MODE]: options.mode
     };
 
     if (isPreviewScript) {
-      env.HAPI_PREVIEW_TIMEOUT_SEC = String(180);
-      env.HAPI_PREVIEW_HUB_PORT_BASE = String(3006);
-      env.HAPI_PREVIEW_WEB_PORT_BASE = String(options.basePort ?? 5173);
+      env[PRODUCT_ENV.PREVIEW_TIMEOUT_SEC] = String(180);
+      env[PRODUCT_ENV.PREVIEW_HUB_PORT_BASE] = String(3006);
+      env[PRODUCT_ENV.PREVIEW_WEB_PORT_BASE] = String(options.basePort ?? 5173);
     } else if (port) {
       env.PORT = String(port);
       env.HOST = '127.0.0.1';
-      env.HAPI_PREVIEW_PORT = String(port);
+      env[PRODUCT_ENV.PREVIEW_PORT] = String(port);
     }
 
     const baseSpec = process.platform === 'win32'
@@ -474,7 +475,7 @@ export class PreviewManager {
       return;
     }
 
-    const isPreviewScript = Boolean(this.state.command?.includes('.hapi/preview.sh'));
+    const isPreviewScript = Boolean(this.state.command?.includes(PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH));
     if (!isPreviewScript) {
       const urlMatch = line.match(URL_PATTERN);
       if (urlMatch && urlMatch[1] && this.state.status === 'starting') {

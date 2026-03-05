@@ -4,7 +4,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { isObject } from '@hapi/protocol';
+import { isObject } from '@hopi/protocol';
 import { logger } from '@/ui/logger';
 import { isProcessAlive, killProcess } from '@/utils/process';
 import type { CodexSessionConfig, CodexToolResponse } from './types';
@@ -14,6 +14,7 @@ import { CodexPermissionHandler } from './utils/permissionHandler';
 import { execSync } from 'child_process';
 import { randomUUID } from 'node:crypto';
 import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 type ElicitResponseValue = string | number | boolean | string[];
 type ElicitRequestedSchema = {
@@ -175,7 +176,7 @@ export class CodexMcpClient {
     constructor(options?: { workspaceRoot?: string | null }) {
         this.workspaceRoot = options?.workspaceRoot ?? null;
         this.client = new Client(
-            { name: 'hapi-codex-client', version: '1.0.0' },
+            { name: `${PRODUCT_SLUG}-codex-client`, version: '1.0.0' },
             { capabilities: { elicitation: {} } }
         );
 

@@ -8,8 +8,9 @@ import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
-import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
-import { PermissionModeSchema } from '@hapi/protocol/schemas';
+import { isPermissionModeAllowedForFlavor } from '@hopi/protocol';
+import { PermissionModeSchema } from '@hopi/protocol/schemas';
+import { PRODUCT_ENV } from '@hopi/protocol/brand';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 import { normalizeCodexSlashCommand } from './utils/normalizeSlashCommand';
@@ -24,7 +25,7 @@ export async function runCodex(opts: {
     model?: string;
 }): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
-    const worktreeBaseCommit = process.env.HAPI_WORKTREE_BASE_COMMIT?.trim();
+    const worktreeBaseCommit = process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]?.trim();
     const diffBaseRef = worktreeBaseCommit && /^[0-9a-f]{7,64}$/i.test(worktreeBaseCommit)
         ? worktreeBaseCommit
         : undefined;

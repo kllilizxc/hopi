@@ -13,6 +13,7 @@ import { runtimePath } from '@/projectPath'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
 import packageJson from '../../package.json'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 
 export type SessionStartedBy = 'runner' | 'terminal'
 
@@ -77,7 +78,7 @@ function resolveSystemLocale(): string | undefined {
 
 export function buildMachineMetadata(): MachineMetadata {
     return {
-        host: process.env.HAPI_HOSTNAME || os.hostname(),
+        host: process.env[PRODUCT_ENV.HOSTNAME] || os.hostname(),
         platform: os.platform(),
         happyCliVersion: packageJson.version,
         homeDir: os.homedir(),

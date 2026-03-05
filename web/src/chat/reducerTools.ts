@@ -1,5 +1,6 @@
 import type { AgentState } from '@/types/api'
 import type { ChatBlock, ChatToolCall, NormalizedMessage, ToolCallBlock, ToolPermission } from '@/chat/types'
+import { PRODUCT_CHANGE_TITLE_TOOL, PRODUCT_MCP_CHANGE_TITLE_TOOL } from '@hopi/protocol/brand'
 
 export type PermissionEntry = {
     toolName: string
@@ -143,7 +144,7 @@ export function collectToolIdsFromMessages(messages: NormalizedMessage[]): Set<s
 }
 
 export function isChangeTitleToolName(name: string): boolean {
-    return name === 'mcp__hapi__change_title' || name === 'hapi__change_title'
+    return name === PRODUCT_MCP_CHANGE_TITLE_TOOL || name === PRODUCT_CHANGE_TITLE_TOOL
 }
 
 export function extractTitleFromChangeTitleInput(input: unknown): string | null {

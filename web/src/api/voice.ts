@@ -14,7 +14,7 @@ import {
     ELEVENLABS_API_BASE,
     VOICE_AGENT_NAME,
     buildVoiceAgentConfig
-} from '@hapi/protocol/voice'
+} from '@hopi/protocol/voice'
 
 export interface VoiceTokenResponse {
     allowed: boolean
@@ -69,9 +69,9 @@ export interface CreateAgentResult {
 }
 
 /**
- * Find an existing "Hapi Voice Assistant" agent using the provided API key.
+ * Find an existing "Hopi Voice Assistant" agent using the provided API key.
  */
-export async function findHapiAgent(apiKey: string): Promise<FindAgentResult> {
+export async function findHopiAgent(apiKey: string): Promise<FindAgentResult> {
     try {
         const response = await fetch(`${ELEVENLABS_API_BASE}/convai/agents`, {
             method: 'GET',
@@ -92,10 +92,10 @@ export async function findHapiAgent(apiKey: string): Promise<FindAgentResult> {
         const data = await response.json() as { agents?: ElevenLabsAgent[] }
         const agents: ElevenLabsAgent[] = data.agents || []
 
-        const hapiAgent = agents.find(agent => agent.name === VOICE_AGENT_NAME)
+        const hopiAgent = agents.find(agent => agent.name === VOICE_AGENT_NAME)
 
-        if (hapiAgent) {
-            return { success: true, agentId: hapiAgent.agent_id }
+        if (hopiAgent) {
+            return { success: true, agentId: hopiAgent.agent_id }
         } else {
             return { success: false, error: `No agent named "${VOICE_AGENT_NAME}" found` }
         }
@@ -105,11 +105,11 @@ export async function findHapiAgent(apiKey: string): Promise<FindAgentResult> {
 }
 
 /**
- * Create or update the "Hapi Voice Assistant" agent with our default configuration.
+ * Create or update the "Hopi Voice Assistant" agent with our default configuration.
  */
-export async function createOrUpdateHapiAgent(apiKey: string): Promise<CreateAgentResult> {
+export async function createOrUpdateHopiAgent(apiKey: string): Promise<CreateAgentResult> {
     try {
-        const findResult = await findHapiAgent(apiKey)
+        const findResult = await findHopiAgent(apiKey)
         const existingAgentId = findResult.success ? findResult.agentId : null
 
         const agentConfig = buildVoiceAgentConfig()

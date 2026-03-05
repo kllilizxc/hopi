@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { productStorageKey } from '@hopi/protocol/brand'
 
 export type FontScale = 0.8 | 0.9 | 1 | 1.1 | 1.2
 
@@ -13,7 +14,7 @@ export function getFontScaleOptions(): ReadonlyArray<{ value: FontScale; label: 
 }
 
 function getFontScaleStorageKey(): string {
-    return 'hapi-font-scale'
+    return productStorageKey('font-scale')
 }
 
 function isBrowser(): boolean {

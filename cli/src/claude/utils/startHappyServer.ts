@@ -1,6 +1,6 @@
 /**
- * HAPI MCP server
- * Provides HAPI CLI specific tools including chat session title management
+ * HOPI MCP server
+ * Provides HOPI CLI specific tools including chat session title management
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 export async function startHappyServer(client: ApiSessionClient) {
     // Handler that sends title updates via the client
     const handler = async (title: string) => {
-        logger.debug('[hapiMCP] Changing title to:', title);
+        logger.debug('[hopiMCP] Changing title to:', title);
         try {
             // Send title as a summary message, similar to title generator
             client.sendClaudeSessionMessage({
@@ -35,7 +35,7 @@ export async function startHappyServer(client: ApiSessionClient) {
     //
 
     const mcp = new McpServer({
-        name: "HAPI MCP",
+        name: "HOPI MCP",
         version: "1.0.0",
     });
 
@@ -50,7 +50,7 @@ export async function startHappyServer(client: ApiSessionClient) {
         inputSchema: changeTitleInputSchema,
     }, async (args: { title: string }) => {
         const response = await handler(args.title);
-        logger.debug('[hapiMCP] Response:', response);
+        logger.debug('[hopiMCP] Response:', response);
         
         if (response.success) {
             return {
@@ -108,7 +108,7 @@ export async function startHappyServer(client: ApiSessionClient) {
         url: baseUrl.toString(),
         toolNames: ['change_title'],
         stop: () => {
-            logger.debug('[hapiMCP] Stopping server');
+            logger.debug('[hopiMCP] Stopping server');
             mcp.close();
             server.close();
         }

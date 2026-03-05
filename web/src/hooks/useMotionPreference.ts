@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react'
+import { productStorageKey } from '@hopi/protocol/brand'
 
 export type MotionPreference = 'auto' | 'reduce'
 
@@ -6,7 +7,7 @@ type MotionSnapshot = {
     preference: MotionPreference
 }
 
-const MOTION_STORAGE_KEY = 'hapi-motion'
+const MOTION_STORAGE_KEY = productStorageKey('motion')
 
 function isBrowser(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined'
@@ -138,4 +139,3 @@ export function initializeMotionPreference(): void {
     }
     window.addEventListener('storage', onStorage)
 }
-

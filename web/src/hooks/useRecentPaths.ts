@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react'
+import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
-const STORAGE_KEY = 'hapi:recentPaths'
+const STORAGE_KEY = productStorageNamespaceKey('recentPaths')
+const LAST_MACHINE_ID_STORAGE_KEY = productStorageNamespaceKey('lastMachineId')
 const MAX_PATHS_PER_MACHINE = 5
 
 type RecentPathsData = Record<string, string[]>
@@ -48,7 +50,7 @@ export function useRecentPaths() {
 
     const getLastUsedMachineId = useCallback((): string | null => {
         try {
-            return localStorage.getItem('hapi:lastMachineId')
+            return localStorage.getItem(LAST_MACHINE_ID_STORAGE_KEY)
         } catch {
             return null
         }
@@ -56,7 +58,7 @@ export function useRecentPaths() {
 
     const setLastUsedMachineId = useCallback((machineId: string): void => {
         try {
-            localStorage.setItem('hapi:lastMachineId', machineId)
+            localStorage.setItem(LAST_MACHINE_ID_STORAGE_KEY, machineId)
         } catch {
             // Ignore storage errors
         }

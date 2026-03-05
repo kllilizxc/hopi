@@ -21,6 +21,7 @@ import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { PreviewManager } from './previewManager';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
+import { PRODUCT_ENV, PRODUCT_SLUG, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -32,8 +33,8 @@ export async function startRunner(): Promise<void> {
   //
   // In case the setup malfunctions - our signal handlers will not properly
   // shut down. We will force exit the process with code 1.
-  let requestShutdown: (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
-  let resolvesWhenShutdownRequested = new Promise<({ source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
+  let requestShutdown: (source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
+  let resolvesWhenShutdownRequested = new Promise<({ source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
     requestShutdown = (source, errorMessage) => {
       logger.debug(`[RUNNER RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
 
@@ -134,7 +135,7 @@ export async function startRunner(): Promise<void> {
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
     const previewManager = new PreviewManager();
 
-    // Handle webhook from HAPI session reporting itself
+    // Handle webhook from HOPI session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata) => {
       logger.debugLargeJson(`[RUNNER RUN] Session reported`, sessionMetadata);
 
@@ -169,7 +170,7 @@ export async function startRunner(): Promise<void> {
       } else if (!existingSession) {
         // New session started externally
         const trackedSession: TrackedSession = {
-          startedBy: 'hapi directly - likely by user from terminal',
+          startedBy: 'hopi directly - likely by user from terminal',
           happySessionId: sessionId,
           happySessionMetadataFromLocalWebhook: sessionMetadata,
           pid
@@ -301,7 +302,7 @@ export async function startRunner(): Promise<void> {
           if (options.agent === 'codex') {
 
             // Create a temporary directory for Codex
-            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'hapi-codex-'));
+            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), `${PRODUCT_SLUG}-codex-`));
 
             // Write the token to the temporary directory
             await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token);
@@ -320,12 +321,12 @@ export async function startRunner(): Promise<void> {
         if (worktreeInfo) {
           extraEnv = {
             ...extraEnv,
-            HAPI_WORKTREE_BASE_PATH: worktreeInfo.basePath,
-            HAPI_WORKTREE_BRANCH: worktreeInfo.branch,
-            HAPI_WORKTREE_NAME: worktreeInfo.name,
-            HAPI_WORKTREE_PATH: worktreeInfo.worktreePath,
-            HAPI_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt),
-            ...(worktreeInfo.baseCommit ? { HAPI_WORKTREE_BASE_COMMIT: worktreeInfo.baseCommit } : {})
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: worktreeInfo.basePath,
+            [PRODUCT_ENV.WORKTREE_BRANCH]: worktreeInfo.branch,
+            [PRODUCT_ENV.WORKTREE_NAME]: worktreeInfo.name,
+            [PRODUCT_ENV.WORKTREE_PATH]: worktreeInfo.worktreePath,
+            [PRODUCT_ENV.WORKTREE_CREATED_AT]: String(worktreeInfo.createdAt),
+            ...(worktreeInfo.baseCommit ? { [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: worktreeInfo.baseCommit } : {})
           };
         }
 
@@ -345,7 +346,7 @@ export async function startRunner(): Promise<void> {
                 args.push('--resume', options.resumeSessionId);
             }
         }
-        args.push('--hapi-starting-mode', 'remote', '--started-by', 'runner');
+        args.push(PRODUCT_STARTING_MODE_FLAG, 'remote', '--started-by', 'runner');
         if (options.model && agent !== 'opencode') {
           args.push('--model', options.model);
         }
@@ -414,7 +415,7 @@ export async function startRunner(): Promise<void> {
           await maybeCleanupWorktree('no-pid');
           return {
             type: 'error',
-            errorMessage: 'Failed to spawn HAPI process - no PID returned'
+            errorMessage: 'Failed to spawn HOPI process - no PID returned'
           };
         }
 
@@ -559,7 +560,7 @@ export async function startRunner(): Promise<void> {
       getChildren: getCurrentChildren,
       stopSession,
       spawnSession,
-      requestShutdown: () => requestShutdown('hapi-cli'),
+      requestShutdown: () => requestShutdown('hopi-cli'),
       onHappySessionWebhook
     });
 
@@ -618,7 +619,7 @@ export async function startRunner(): Promise<void> {
       startPreview: (options) => previewManager.start(options),
       getPreviewStatus: () => previewManager.getState(),
       stopPreview: (options) => previewManager.stop(options),
-      requestShutdown: () => requestShutdown('hapi-app')
+      requestShutdown: () => requestShutdown('hopi-app')
     });
 
     // Connect to server
@@ -629,7 +630,7 @@ export async function startRunner(): Promise<void> {
     // 2. Check if runner needs update
     // 3. If outdated, restart with latest version
     // 4. Write heartbeat
-    const heartbeatIntervalMs = parseInt(process.env.HAPI_RUNNER_HEARTBEAT_INTERVAL || '60000');
+    const heartbeatIntervalMs = parseInt(process.env[PRODUCT_ENV.RUNNER_HEARTBEAT_INTERVAL] || '60000');
     let heartbeatRunning = false
     const restartOnStaleVersionAndHeartbeat = setInterval(async () => {
       if (heartbeatRunning) {
@@ -711,7 +712,7 @@ export async function startRunner(): Promise<void> {
     }, heartbeatIntervalMs); // Every 60 seconds in production
 
     // Setup signal handlers
-    const cleanupAndShutdown = async (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
+    const cleanupAndShutdown = async (source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
       logger.debug(`[RUNNER RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
 
       // Clear health check interval

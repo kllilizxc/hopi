@@ -22,9 +22,10 @@ import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
 import { ChevronDownIcon, ChevronRightIcon, PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
+import { productStorageKey } from '@hopi/protocol/brand'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
-const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = 'hapi.kanban.collapsed-columns.v1'
+const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = productStorageKey('kanban-collapsed-columns-v1')
 const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
     planned: false,
     in_progress: false,

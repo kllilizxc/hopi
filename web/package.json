@@ -1,5 +1,5 @@
 {
-    "name": "hapi-web",
+    "name": "hopi-web",
     "private": true,
     "version": "0.1.0",
     "license": "AGPL-3.0-only",
@@ -16,7 +16,7 @@
         "@assistant-ui/react": "^0.11.53",
         "@assistant-ui/react-markdown": "^0.11.9",
         "@elevenlabs/react": "^0.13.0",
-        "@hapi/protocol": "workspace:*",
+        "@hopi/protocol": "workspace:*",
         "@radix-ui/react-dialog": "^1.1.15",
         "@radix-ui/react-slot": "^1.2.4",
         "@radix-ui/themes": "^3.0.0",

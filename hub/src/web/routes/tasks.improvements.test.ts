@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { Session } from '@hapi/protocol/types'
+import type { Session } from '@hopi/protocol/types'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'

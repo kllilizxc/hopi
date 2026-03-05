@@ -2,6 +2,7 @@ import { execFile, type ExecFileOptions } from 'child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'util'
+import { PRODUCT_SLUG } from '@hopi/protocol/brand'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
 import { formatMergeFailureMessage } from '../gitMergeConflictDetection'
@@ -220,7 +221,7 @@ async function autoCommitWorktreeIfNeeded(
     let commitResult = await runGitCommand(commitArgs, worktreePath, timeout)
     if (!commitResult.success && needsGitIdentity(`${commitResult.stderr ?? ''}\n${commitResult.stdout ?? ''}\n${commitResult.error ?? ''}`)) {
         commitResult = await runGitCommand(
-            ['-c', 'user.name=HAPI', '-c', 'user.email=hapi@local', ...commitArgs],
+            ['-c', 'user.name=HOPI', '-c', 'user.email=hopi@local', ...commitArgs],
             worktreePath,
             timeout
         )
@@ -312,7 +313,7 @@ async function resolveMergeTargetContext(
     }
 
     const safeBranch = targetBranch.replace(/[^a-zA-Z0-9._-]/g, '-')
-    const tempPath = join(tmpdir(), `hapi-merge-target-${safeBranch}-${Date.now()}`)
+    const tempPath = join(tmpdir(), `${PRODUCT_SLUG}-merge-target-${safeBranch}-${Date.now()}`)
     const addWorktree = await runGitCommand(['worktree', 'add', tempPath, targetBranch], basePath, timeout)
     if (!addWorktree.success) {
         return { ok: false, error: addWorktree }
@@ -576,7 +577,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             let commitResult = await runGitCommand(commitArgs, mergeTargetPath, timeout)
             if (!commitResult.success && needsGitIdentity(`${commitResult.stderr ?? ''}\n${commitResult.stdout ?? ''}\n${commitResult.error ?? ''}`)) {
                 commitResult = await runGitCommand(
-                    ['-c', 'user.name=HAPI', '-c', 'user.email=hapi@local', ...commitArgs],
+                    ['-c', 'user.name=HOPI', '-c', 'user.email=hopi@local', ...commitArgs],
                     mergeTargetPath,
                     timeout
                 )

@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ReactElement } from 'react'
 import { screen } from '@testing-library/react'
 import { en } from '@/lib/locales'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_DEFAULT_SITE_URL } from '@hopi/protocol/brand'
 import { renderWithProviders } from '@/test/renderWithProviders'
 import SettingsPage from './index'
 
@@ -73,10 +74,11 @@ describe('SettingsPage', () => {
     it('displays the website link with correct URL and security attributes', () => {
         renderWithProviders(<SettingsPage />)
         expect(screen.getAllByText('Website').length).toBeGreaterThanOrEqual(1)
-        const links = screen.getAllByRole('link', { name: 'hapi.run' })
+        const siteHost = new URL(PRODUCT_DEFAULT_SITE_URL).host
+        const links = screen.getAllByRole('link', { name: siteHost })
         expect(links.length).toBeGreaterThanOrEqual(1)
         const link = links[0]
-        expect(link).toHaveAttribute('href', 'https://hapi.run')
+        expect(link).toHaveAttribute('href', PRODUCT_DEFAULT_SITE_URL)
         expect(link).toHaveAttribute('target', '_blank')
         expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     })

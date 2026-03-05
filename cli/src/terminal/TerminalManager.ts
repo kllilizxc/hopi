@@ -5,7 +5,8 @@ import type {
     TerminalExitPayload,
     TerminalOutputPayload,
     TerminalReadyPayload
-} from '@hapi/protocol'
+} from '@hopi/protocol'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import type { TerminalSession } from './types'
 import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites'
 
@@ -31,8 +32,8 @@ const DEFAULT_MAX_TERMINALS = 4
 const MIN_BUN_VERSION_FOR_PTY = [1, 3, 5] as const
 const SENSITIVE_ENV_KEYS = new Set([
     'CLI_API_TOKEN',
-    'HAPI_API_URL',
-    'HAPI_HTTP_MCP_URL',
+    PRODUCT_ENV.API_URL,
+    PRODUCT_ENV.HTTP_MCP_URL,
     'TELEGRAM_BOT_TOKEN',
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
@@ -124,8 +125,8 @@ export class TerminalManager {
         this.onOutput = options.onOutput
         this.onExit = options.onExit
         this.onError = options.onError
-        this.idleTimeoutMs = options.idleTimeoutMs ?? resolveEnvNumber('HAPI_TERMINAL_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS)
-        this.maxTerminals = options.maxTerminals ?? resolveEnvNumber('HAPI_TERMINAL_MAX_TERMINALS', DEFAULT_MAX_TERMINALS)
+        this.idleTimeoutMs = options.idleTimeoutMs ?? resolveEnvNumber(PRODUCT_ENV.TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
+        this.maxTerminals = options.maxTerminals ?? resolveEnvNumber(PRODUCT_ENV.TERMINAL_MAX_TERMINALS, DEFAULT_MAX_TERMINALS)
         this.filteredEnv = buildFilteredEnv()
     }
 

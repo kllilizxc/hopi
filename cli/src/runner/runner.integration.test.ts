@@ -10,8 +10,8 @@
  * and the runner will not work properly!
  * 
  * The integration test environment uses .env.integration-test which sets:
- * - HAPI_HOME=~/.hapi-dev-test (DIFFERENT from dev's ~/.hapi-dev!)
- * - HAPI_API_URL=http://localhost:3006 (local hapi-hub)
+ * - HOPI_HOME=~/.hopi-dev-test (DIFFERENT from dev's ~/.hopi-dev!)
+ * - HOPI_API_URL=http://localhost:3006 (local hopi-hub)
  * - CLI_API_TOKEN=... (must match the hub)
  */
 
@@ -33,6 +33,7 @@ import { Metadata } from '@/api/types';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getLatestRunnerLog } from '@/ui/logger';
 import { isProcessAlive, isWindows, killProcess, killProcessByChildProcess } from '@/utils/process';
+import { PRODUCT_ENV, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
 
 // Utility to wait for condition
 async function waitFor(
@@ -137,7 +138,7 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
     expect(sessions).toHaveLength(1);
     
     const tracked = sessions[0];
-    expect(tracked.startedBy).toBe('hapi directly - likely by user from terminal');
+    expect(tracked.startedBy).toBe('hopi directly - likely by user from terminal');
     expect(tracked.happySessionId).toBe('test-session-123');
     expect(tracked.pid).toBe(99999);
   });
@@ -193,9 +194,9 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
   });
 
   it('should track both runner-spawned and terminal sessions', async () => {
-    // Spawn a real hapi process that looks like it was started from terminal
+    // Spawn a real hopi process that looks like it was started from terminal
     const terminalHappyProcess = spawnHappyCLI([
-      '--hapi-starting-mode', 'remote',
+      PRODUCT_STARTING_MODE_FLAG, 'remote',
       '--started-by', 'terminal'
     ], {
       cwd: '/tmp',
@@ -203,7 +204,7 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
       stdio: 'ignore'
     });
     if (!terminalHappyProcess || !terminalHappyProcess.pid) {
-      throw new Error('Failed to spawn terminal hapi process');
+      throw new Error('Failed to spawn terminal hopi process');
     }
     // Give time to start & report itself
     await new Promise(resolve => setTimeout(resolve, 5_000));
@@ -224,7 +225,7 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
     );
 
     expect(terminalSession).toBeDefined();
-    expect(terminalSession.startedBy).toBe('hapi directly - likely by user from terminal');
+    expect(terminalSession.startedBy).toBe('hopi directly - likely by user from terminal');
     
     expect(runnerSession).toBeDefined();
     expect(runnerSession.startedBy).toBe('runner');
@@ -395,9 +396,9 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
    * 7. New runner starts, reads runner.state.json, sees old version != its compiled version
    * 8. New runner calls stopRunner() to kill old runner, then takes over
    * 
-   * This simulates what happens during `npm upgrade hapi`:
+   * This simulates what happens during `npm upgrade hopi`:
    * - Running runner has OLD version loaded in memory (configuration.currentCliVersion)
-   * - npm replaces node_modules/hapi/ with NEW version files
+   * - npm replaces node_modules/hopi/ with NEW version files
    * - package.json on disk now has NEW version
    * - Runner reads package.json, detects mismatch, triggers self-update
    * - Key difference: npm atomically replaces the entire module directory, while
@@ -449,7 +450,7 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
 
       // The runner should automatically detect the version mismatch and restart itself
       // We check once per minute, wait for a little longer than that
-      await new Promise(resolve => setTimeout(resolve, parseInt(process.env.HAPI_RUNNER_HEARTBEAT_INTERVAL || '30000') + 10_000));
+      await new Promise(resolve => setTimeout(resolve, parseInt(process.env[PRODUCT_ENV.RUNNER_HEARTBEAT_INTERVAL] || '30000') + 10_000));
 
       // Check that the runner is running with the new version
       const finalState = await readRunnerState();
@@ -469,7 +470,7 @@ describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout:
 
   // TODO: Add a test to see if a corrupted file will work
   
-  // TODO: Test npm uninstall scenario - runner should gracefully handle when hapi is uninstalled
+  // TODO: Test npm uninstall scenario - runner should gracefully handle when hopi is uninstalled
   // Current behavior: runner tries to spawn new runner on version mismatch but entrypoint is gone
   // Expected: runner should detect missing entrypoint and either exit cleanly or at minimum not respawn infinitely
 });

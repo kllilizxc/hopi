@@ -1,29 +1,30 @@
 /**
- * Configuration for hapi-hub (Direct Connect)
+ * Configuration for hopi-hub (Direct Connect)
  *
  * Configuration is loaded with priority: environment variable > settings.json > default
  * When values are read from environment variables and not present in settings.json,
  * they are automatically saved for future use
  *
  * Optional environment variables:
- * - CLI_API_TOKEN: Shared secret for hapi CLI authentication (auto-generated if not set)
+ * - CLI_API_TOKEN: Shared secret for hopi CLI authentication (auto-generated if not set)
  * - TELEGRAM_BOT_TOKEN: Telegram Bot API token from @BotFather
  * - TELEGRAM_NOTIFICATION: Enable/disable Telegram notifications (default: true)
- * - HAPI_LISTEN_HOST: Host/IP to bind the HTTP service (default: 127.0.0.1)
- * - HAPI_LISTEN_PORT: Port for HTTP service (default: 3006)
- * - HAPI_PUBLIC_URL: Public URL for external access (e.g., Telegram Mini App)
+ * - HOPI_LISTEN_HOST: Host/IP to bind the HTTP service (default: 127.0.0.1)
+ * - HOPI_LISTEN_PORT: Port for HTTP service (default: 3006)
+ * - HOPI_PUBLIC_URL: Public URL for external access (e.g., Telegram Mini App)
  * - CORS_ORIGINS: Comma-separated CORS origins
- * - HAPI_RELAY_API: Relay API domain for tunwg (default: relay.hapi.run)
- * - HAPI_RELAY_AUTH: Relay auth key for tunwg (default: hapi)
- * - HAPI_RELAY_FORCE_TCP: Force TCP relay mode when UDP is unavailable (true/1)
- * - VAPID_SUBJECT: Contact email or URL for Web Push (defaults to mailto:admin@hapi.run)
- * - HAPI_HOME: Data directory (default: ~/.hapi)
- * - DB_PATH: SQLite database path (default: {HAPI_HOME}/hapi.db)
+ * - HOPI_RELAY_API: Relay API domain for tunwg (default: relay.hopi.run)
+ * - HOPI_RELAY_AUTH: Relay auth key for tunwg (default: hopi)
+ * - HOPI_RELAY_FORCE_TCP: Force TCP relay mode when UDP is unavailable (true/1)
+ * - VAPID_SUBJECT: Contact email or URL for Web Push (defaults to mailto:admin@hopi.run)
+ * - HOPI_HOME: Data directory (default: ~/.hopi)
+ * - DB_PATH: SQLite database path (default: {HOPI_HOME}/hopi.db)
  */
 
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { PRODUCT_DB_FILENAME, PRODUCT_ENV, PRODUCT_HOME_DIRNAME } from '@hopi/protocol/brand'
 import { getOrCreateCliApiToken } from './config/cliApiToken'
 import { getSettingsFile } from './config/settings'
 import { loadServerSettings, type ServerSettings, type ServerSettingsResult } from './config/serverSettings'
@@ -122,9 +123,9 @@ class Configuration {
     /** Create configuration asynchronously */
     static async create(): Promise<Configuration> {
         // 1. Determine data directory (env only - not persisted)
-        const dataDir = process.env.HAPI_HOME
-            ? process.env.HAPI_HOME.replace(/^~/, homedir())
-            : join(homedir(), '.hapi')
+        const dataDir = process.env[PRODUCT_ENV.HOME]
+            ? process.env[PRODUCT_ENV.HOME]!.replace(/^~/, homedir())
+            : join(homedir(), PRODUCT_HOME_DIRNAME)
 
         // Ensure data directory exists before loading settings
         if (!existsSync(dataDir)) {
@@ -134,7 +135,7 @@ class Configuration {
         // 2. Determine DB path (env only - not persisted)
         const dbPath = process.env.DB_PATH
             ? process.env.DB_PATH.replace(/^~/, homedir())
-            : join(dataDir, 'hapi.db')
+            : join(dataDir, PRODUCT_DB_FILENAME)
 
         // 3. Load hub settings (with persistence)
         const settingsResult = await loadServerSettings(dataDir)

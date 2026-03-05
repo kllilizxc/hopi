@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PRODUCT_ENV, PRODUCT_HOME_DIRNAME, PRODUCT_SLUG } from '@hopi/protocol/brand';
 import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from './strictWorkspaceWrites';
 
 describe('strictWorkspaceWrites', () => {
@@ -19,8 +20,8 @@ describe('strictWorkspaceWrites', () => {
     });
 
     it('wraps child process when enabled', () => {
-        const workspace = mkdtempSync(join(tmpdir(), 'hapi-workspace-'));
-        const binDir = mkdtempSync(join(tmpdir(), 'hapi-bin-'));
+        const workspace = mkdtempSync(join(tmpdir(), 'hopi-workspace-'));
+        const binDir = mkdtempSync(join(tmpdir(), 'hopi-bin-'));
 
         if (process.platform !== 'linux' && process.platform !== 'darwin') {
             expect(() => maybeWrapSpawnSpecForStrictWorkspaceWrites({
@@ -30,7 +31,7 @@ describe('strictWorkspaceWrites', () => {
                 cwd: workspace,
                 env: {
                     ...process.env,
-                    HAPI_STRICT_WORKSPACE_WRITES: '1',
+                    [PRODUCT_ENV.STRICT_WORKSPACE_WRITES]: '1',
                     PATH: `${binDir}:${process.env.PATH ?? ''}`
                 }
             })).toThrow(/not supported/i);
@@ -47,7 +48,7 @@ describe('strictWorkspaceWrites', () => {
 
         const env: NodeJS.ProcessEnv = {
             ...process.env,
-            HAPI_STRICT_WORKSPACE_WRITES: '1',
+            [PRODUCT_ENV.STRICT_WORKSPACE_WRITES]: '1',
             PATH: `${binDir}:${process.env.PATH ?? ''}`
         };
 
@@ -59,9 +60,9 @@ describe('strictWorkspaceWrites', () => {
             env
         });
 
-        const sandboxRoot = join(workspace, '.hapi', 'sandbox');
+        const sandboxRoot = join(workspace, PRODUCT_HOME_DIRNAME, 'sandbox');
         expect(wrapped.env.HOME).toBe(join(sandboxRoot, 'home'));
-        expect(wrapped.env.HAPI_HOME).toBe(join(sandboxRoot, 'hapi-home'));
+        expect(wrapped.env[PRODUCT_ENV.HOME]).toBe(join(sandboxRoot, `${PRODUCT_SLUG}-home`));
         expect(wrapped.env.CODEX_HOME).toBe(join(sandboxRoot, 'codex-home'));
 
         if (process.platform === 'darwin') {

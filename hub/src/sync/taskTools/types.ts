@@ -1,4 +1,4 @@
-import type { TodoItem } from '@hapi/protocol/types'
+import type { TodoItem } from '@hopi/protocol/types'
 
 /**
  * Unified task tool extraction result

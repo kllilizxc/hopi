@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { isObject } from '@hapi/protocol'
+import { isObject } from '@hopi/protocol'
 import type {
     DecryptedMessage,
     ModelMode,

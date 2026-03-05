@@ -4,7 +4,7 @@ Work style: telegraph; noun-phrases ok; drop grammar;
 
 Short guide for AI agents in this repo. Prefer progressive loading: start with the root README, then package READMEs as needed.
 
-## What is HAPI?
+## What is HOPI?
 
 Local-first platform for running AI coding agents (Claude Code, Codex, Gemini) with remote control via web/phone. CLI wraps agents and connects to hub; hub serves web app and handles real-time sync.
 

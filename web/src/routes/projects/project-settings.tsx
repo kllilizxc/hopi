@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { getModelModesForFlavor, getPermissionModeOptionsForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
+import { getModelModesForFlavor, getPermissionModeOptionsForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
 import type { AgentFlavor, ModelMode, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'

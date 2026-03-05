@@ -1,11 +1,11 @@
 /**
- * HAPI MCP STDIO Bridge
+ * HOPI MCP STDIO Bridge
  *
  * Minimal STDIO MCP server exposing a single tool `change_title`.
- * On invocation it forwards the tool call to an existing HAPI HTTP MCP server
+ * On invocation it forwards the tool call to an existing HOPI HTTP MCP server
  * using the StreamableHTTPClientTransport.
  *
- * Configure the target HTTP MCP URL via env var `HAPI_HTTP_MCP_URL` or
+ * Configure the target HTTP MCP URL via env var `HOPI_HTTP_MCP_URL` or
  * via CLI flag `--url <http://127.0.0.1:PORT>`.
  *
  * Note: This process must not print to stdout as it would break MCP STDIO.
@@ -16,6 +16,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
+import { PRODUCT_ENV, PRODUCT_NAME, PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 function parseArgs(argv: string[]): { url: string | null } {
   let url: string | null = null;
@@ -33,12 +34,12 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
   try {
     // Resolve target HTTP MCP URL
     const { url: urlFromArgs } = parseArgs(argv);
-    const baseUrl = urlFromArgs || process.env.HAPI_HTTP_MCP_URL || '';
+    const baseUrl = urlFromArgs || process.env[PRODUCT_ENV.HTTP_MCP_URL] || '';
 
     if (!baseUrl) {
       // Write to stderr; never stdout.
       process.stderr.write(
-        '[hapi-mcp] Missing target URL. Set HAPI_HTTP_MCP_URL or pass --url <http://127.0.0.1:PORT>\n'
+        `[${PRODUCT_SLUG}-mcp] Missing target URL. Set ${PRODUCT_ENV.HTTP_MCP_URL} or pass --url <http://127.0.0.1:PORT>\n`
       );
       process.exit(2);
     }
@@ -48,7 +49,7 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
     async function ensureHttpClient(): Promise<Client> {
       if (httpClient) return httpClient;
       const client = new Client(
-        { name: 'hapi-stdio-bridge', version: '1.0.0' },
+        { name: `${PRODUCT_SLUG}-stdio-bridge`, version: '1.0.0' },
         { capabilities: {} }
       );
 
@@ -60,7 +61,7 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
 
     // Create STDIO MCP server
     const server = new McpServer({
-      name: 'HAPI MCP Bridge',
+      name: `${PRODUCT_NAME} MCP Bridge`,
       version: '1.0.0',
     });
 
@@ -98,7 +99,7 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
     await server.connect(stdio);
   } catch (err) {
     try {
-      process.stderr.write(`[hapi-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`[${PRODUCT_SLUG}-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
     } finally {
       process.exit(1);
     }

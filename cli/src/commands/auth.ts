@@ -5,6 +5,9 @@ import { stdin as input, stdout as output } from 'node:process'
 import { configuration } from '@/configuration'
 import { readSettings, clearMachineId, updateSettings } from '@/persistence'
 import type { CommandDefinition } from './types'
+import { PRODUCT_CLI_COMMAND, PRODUCT_ENV, PRODUCT_HOME_DIRNAME } from '@hopi/protocol/brand'
+
+const SETTINGS_PATH_HINT = `~/${PRODUCT_HOME_DIRNAME}/settings.json`
 
 export async function handleAuthCommand(args: string[]): Promise<void> {
     const subcommand = args[0]
@@ -21,7 +24,7 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
         const hasToken = Boolean(envToken || settingsToken)
         const tokenSource = envToken ? 'environment' : (settingsToken ? 'settings file' : 'none')
         console.log(chalk.bold('\nDirect Connect Status\n'))
-        console.log(chalk.gray(`  HAPI_API_URL: ${configuration.apiUrl}`))
+        console.log(chalk.gray(`  ${PRODUCT_ENV.API_URL}: ${configuration.apiUrl}`))
         console.log(chalk.gray(`  CLI_API_TOKEN: ${hasToken ? 'set' : 'missing'}`))
         console.log(chalk.gray(`  Token Source: ${tokenSource}`))
         console.log(chalk.gray(`  Machine ID: ${settings.machineId ?? 'not set'}`))
@@ -31,10 +34,10 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
             console.log('')
             console.log(chalk.yellow('  Token not configured. To get your token:'))
             console.log(chalk.gray('    1. Check the server startup logs (first run shows generated token)'))
-            console.log(chalk.gray('    2. Read ~/.hapi/settings.json on the server'))
+            console.log(chalk.gray(`    2. Read ${SETTINGS_PATH_HINT} on the server`))
             console.log(chalk.gray('    3. Ask your server administrator (if token is set via env var)'))
             console.log('')
-            console.log(chalk.gray('  Then run: hapi auth login'))
+            console.log(chalk.gray(`  Then run: ${PRODUCT_CLI_COMMAND} auth login`))
         }
         return
     }
@@ -86,16 +89,16 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
 
 function showHelp(): void {
     console.log(`
-${chalk.bold('hapi auth')} - Authentication management
+${chalk.bold(`${PRODUCT_CLI_COMMAND} auth`)} - Authentication management
 
 ${chalk.bold('Usage:')}
-  hapi auth status            Show current configuration
-  hapi auth login             Enter and save CLI_API_TOKEN
-  hapi auth logout            Clear saved credentials
+  ${PRODUCT_CLI_COMMAND} auth status            Show current configuration
+  ${PRODUCT_CLI_COMMAND} auth login             Enter and save CLI_API_TOKEN
+  ${PRODUCT_CLI_COMMAND} auth logout            Clear saved credentials
 
 ${chalk.bold('Token priority (highest to lowest):')}
   1. CLI_API_TOKEN environment variable
-  2. ~/.hapi/settings.json
+  2. ${SETTINGS_PATH_HINT}
   3. Interactive prompt (on first run)
 `)
 }

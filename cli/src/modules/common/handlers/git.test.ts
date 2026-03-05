@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import { RpcHandlerManager } from '../../../api/rpc/RpcHandlerManager'
 import { registerGitHandlers } from './git'
 
@@ -26,7 +27,7 @@ describe('git merge worktree RPC handler', () => {
     let previousEnv: Record<string, string | undefined> = {}
 
     beforeEach(async () => {
-        baseDir = await createTempDir('hapi-git-merge-base')
+        baseDir = await createTempDir('hopi-git-merge-base')
         worktreeDir = join(baseDir, '.task-worktree')
 
         await runGit(baseDir, ['init', '-b', 'main'])
@@ -38,20 +39,20 @@ describe('git merge worktree RPC handler', () => {
         await writeFile(join(worktreeDir, 'feature.txt'), 'feature\n')
 
         previousEnv = {
-            HAPI_WORKTREE_BASE_PATH: process.env.HAPI_WORKTREE_BASE_PATH,
-            HAPI_WORKTREE_BRANCH: process.env.HAPI_WORKTREE_BRANCH,
-            HAPI_WORKTREE_NAME: process.env.HAPI_WORKTREE_NAME,
-            HAPI_WORKTREE_PATH: process.env.HAPI_WORKTREE_PATH,
-            HAPI_WORKTREE_CREATED_AT: process.env.HAPI_WORKTREE_CREATED_AT,
-            HAPI_WORKTREE_BASE_COMMIT: process.env.HAPI_WORKTREE_BASE_COMMIT
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: process.env[PRODUCT_ENV.WORKTREE_BASE_PATH],
+            [PRODUCT_ENV.WORKTREE_BRANCH]: process.env[PRODUCT_ENV.WORKTREE_BRANCH],
+            [PRODUCT_ENV.WORKTREE_NAME]: process.env[PRODUCT_ENV.WORKTREE_NAME],
+            [PRODUCT_ENV.WORKTREE_PATH]: process.env[PRODUCT_ENV.WORKTREE_PATH],
+            [PRODUCT_ENV.WORKTREE_CREATED_AT]: process.env[PRODUCT_ENV.WORKTREE_CREATED_AT],
+            [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]
         }
 
-        process.env.HAPI_WORKTREE_BASE_PATH = baseDir
-        process.env.HAPI_WORKTREE_BRANCH = 'task-branch'
-        process.env.HAPI_WORKTREE_NAME = 'task-branch'
-        process.env.HAPI_WORKTREE_PATH = worktreeDir
-        process.env.HAPI_WORKTREE_CREATED_AT = String(Date.now())
-        delete process.env.HAPI_WORKTREE_BASE_COMMIT
+        process.env[PRODUCT_ENV.WORKTREE_BASE_PATH] = baseDir
+        process.env[PRODUCT_ENV.WORKTREE_BRANCH] = 'task-branch'
+        process.env[PRODUCT_ENV.WORKTREE_NAME] = 'task-branch'
+        process.env[PRODUCT_ENV.WORKTREE_PATH] = worktreeDir
+        process.env[PRODUCT_ENV.WORKTREE_CREATED_AT] = String(Date.now())
+        delete process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]
     })
 
     afterEach(async () => {
@@ -78,7 +79,7 @@ describe('git merge worktree RPC handler', () => {
             method: 'session-test:git-merge-worktree',
             params: JSON.stringify({
                 targetBranch: 'main',
-                commitMessage: 'HAPI: merge test'
+                commitMessage: 'HOPI: merge test'
             })
         })
 
@@ -88,7 +89,7 @@ describe('git merge worktree RPC handler', () => {
         expect(parsed.commitHash).toBeTruthy()
 
         const baseHeadMessage = await runGit(baseDir, ['log', '-1', '--pretty=%s', 'main'])
-        expect(baseHeadMessage).toBe('HAPI: merge test')
+        expect(baseHeadMessage).toBe('HOPI: merge test')
 
         const worktreeStatus = await runGit(worktreeDir, ['status', '--porcelain'])
         expect(worktreeStatus).toBe('')
@@ -108,7 +109,7 @@ describe('git merge worktree RPC handler', () => {
             method: 'session-test:git-merge-worktree',
             params: JSON.stringify({
                 targetBranch: 'dev',
-                commitMessage: 'HAPI: merge into dev'
+                commitMessage: 'HOPI: merge into dev'
             })
         })
 
@@ -118,7 +119,7 @@ describe('git merge worktree RPC handler', () => {
         expect(parsed.commitHash).toBeTruthy()
 
         const targetHeadMessage = await runGit(targetDir, ['log', '-1', '--pretty=%s'])
-        expect(targetHeadMessage).toBe('HAPI: merge into dev')
+        expect(targetHeadMessage).toBe('HOPI: merge into dev')
     })
 
     it('uses isolated target worktree when target branch is not checked out', async () => {
@@ -132,7 +133,7 @@ describe('git merge worktree RPC handler', () => {
             method: 'session-test:git-merge-worktree',
             params: JSON.stringify({
                 targetBranch: 'dev',
-                commitMessage: 'HAPI: merge into isolated dev'
+                commitMessage: 'HOPI: merge into isolated dev'
             })
         })
 
@@ -142,7 +143,7 @@ describe('git merge worktree RPC handler', () => {
         expect(parsed.commitHash).toBeTruthy()
 
         const targetHeadMessage = await runGit(baseDir, ['log', '-1', '--pretty=%s', 'dev'])
-        expect(targetHeadMessage).toBe('HAPI: merge into isolated dev')
+        expect(targetHeadMessage).toBe('HOPI: merge into isolated dev')
 
         const baseCurrentBranch = await runGit(baseDir, ['branch', '--show-current'])
         expect(baseCurrentBranch).toBe('main')
@@ -162,7 +163,7 @@ describe('git merge worktree RPC handler', () => {
             method: 'session-test:git-merge-worktree',
             params: JSON.stringify({
                 targetBranch: 'dev',
-                commitMessage: 'HAPI: merge into dev'
+                commitMessage: 'HOPI: merge into dev'
             })
         })
 
@@ -172,7 +173,7 @@ describe('git merge worktree RPC handler', () => {
         expect(parsed.commitHash).toBeTruthy()
 
         const targetHeadMessage = await runGit(targetDir, ['log', '-1', '--pretty=%s'])
-        expect(targetHeadMessage).toBe('HAPI: merge into dev')
+        expect(targetHeadMessage).toBe('HOPI: merge into dev')
     })
 
     it('returns normalized conflict message when merge fails with conflicts', async () => {
@@ -188,7 +189,7 @@ describe('git merge worktree RPC handler', () => {
             method: 'session-test:git-merge-worktree',
             params: JSON.stringify({
                 targetBranch: 'main',
-                commitMessage: 'HAPI: merge conflict test'
+                commitMessage: 'HOPI: merge conflict test'
             })
         })
 
@@ -209,7 +210,7 @@ describe('git diff RPC handlers', () => {
     let rpc: RpcHandlerManager
 
     beforeEach(async () => {
-        repoDir = await createTempDir('hapi-git-diff')
+        repoDir = await createTempDir('hopi-git-diff')
 
         await runGit(repoDir, ['init', '-b', 'main'])
         await writeFile(join(repoDir, 'staged.txt'), 'base staged\n')
@@ -315,7 +316,7 @@ describe('git diff RPC handlers', () => {
     })
 
     it('handles default diff mode before the first commit', async () => {
-        const noHeadRepo = await createTempDir('hapi-git-diff-no-head')
+        const noHeadRepo = await createTempDir('hopi-git-diff-no-head')
         try {
             await runGit(noHeadRepo, ['init', '-b', 'main'])
             await writeFile(join(noHeadRepo, 'new-file.txt'), 'hello\nworld\n')

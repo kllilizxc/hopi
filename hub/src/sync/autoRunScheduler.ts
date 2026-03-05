@@ -1,4 +1,4 @@
-import type { SyncEvent } from '@hapi/protocol/types'
+import type { SyncEvent } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { startSessionFromTask } from './taskSessionService'

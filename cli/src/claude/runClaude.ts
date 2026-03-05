@@ -14,8 +14,8 @@ import { registerKillSessionHandler } from './registerKillSessionHandler';
 import type { Session } from './session';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol';
-import { ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas';
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol';
+import { ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
@@ -34,7 +34,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const startedBy = options.startedBy ?? 'terminal';
 
     // Log environment info at startup
-    logger.debugLargeJson('[START] HAPI process started', getEnvironmentInfo());
+    logger.debugLargeJson('[START] HOPI process started', getEnvironmentInfo());
     logger.debug(`[START] Options: startedBy=${startedBy}, startingMode=${options.startingMode}`);
 
     // Validate runner spawn requirements
@@ -70,9 +70,9 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         }
     });
 
-    // Start HAPI MCP server
+    // Start HOPI MCP server
     const happyServer = await startHappyServer(session);
-    logger.debug(`[START] HAPI MCP server started at ${happyServer.url}`);
+    logger.debug(`[START] HOPI MCP server started at ${happyServer.url}`);
 
     // Variable to track current session instance (updated via onSessionReady callback)
     const currentSessionRef: { current: Session | null } = { current: null };
@@ -320,14 +320,14 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             startingMode,
             messageQueue,
             api,
-            allowedTools: happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
+            allowedTools: happyServer.toolNames.map(toolName => `mcp__hopi__${toolName}`),
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (sessionInstance) => {
                 currentSessionRef.current = sessionInstance;
                 syncSessionModes();
             },
             mcpServers: {
-                'hapi': {
+                'hopi': {
                     type: 'http' as const,
                     url: happyServer.url,
                 }

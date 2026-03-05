@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { access, mkdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 const execFileAsync = promisify(execFile);
 
@@ -140,7 +141,7 @@ export async function createWorktree(options: {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const name = attempt === 0 ? baseName : `${baseName}-${randomBytes(2).toString('hex')}`;
-    const branch = `hapi-${name}`;
+    const branch = `${PRODUCT_SLUG}-${name}`;
     const worktreePath = join(repoWorktreesRoot, name);
 
     if (await pathExists(worktreePath)) {

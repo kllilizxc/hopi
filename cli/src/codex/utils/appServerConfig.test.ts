@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildThreadStartParams, buildTurnStartParams } from './appServerConfig';
 import { codexSystemPrompt } from './systemPrompt';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('appServerConfig', () => {
-    const mcpServers = { hapi: { command: 'node', args: ['mcp'] } };
+    const mcpServers = { [PRODUCT_SLUG]: { command: 'node', args: ['mcp'] } };
 
     it('applies CLI overrides when permission mode is default', () => {
         const params = buildThreadStartParams({
@@ -19,7 +20,7 @@ describe('appServerConfig', () => {
         expect(params.baseInstructions).toBe(codexSystemPrompt);
         expect(params.developerInstructions).toBe(codexSystemPrompt);
         expect(params.config).toEqual({
-            'mcp_servers.hapi': {
+            [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },
@@ -48,7 +49,7 @@ describe('appServerConfig', () => {
         expect(params.baseInstructions).toBe(codexSystemPrompt);
         expect(params.developerInstructions).toBe(`${codexSystemPrompt}\n\nOnly respond in Chinese.`);
         expect(params.config).toEqual({
-            'mcp_servers.hapi': {
+            [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },

@@ -11,6 +11,7 @@ import { configuration } from '@/configuration'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { readRunnerState } from '@/persistence'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 
 /**
  * Consistent date/time formatting functions
@@ -52,8 +53,8 @@ class Logger {
   ) {
     // Remote logging enabled only when explicitly set with API URL
     if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING
-      && process.env.HAPI_API_URL) {
-      this.dangerouslyUnencryptedServerLoggingUrl = process.env.HAPI_API_URL
+      && process.env[PRODUCT_ENV.API_URL]) {
+      this.dangerouslyUnencryptedServerLoggingUrl = process.env[PRODUCT_ENV.API_URL]
       console.log(chalk.yellow('[REMOTE LOGGING] Sending logs to server for AI debugging'))
     }
   }

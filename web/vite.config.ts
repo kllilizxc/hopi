@@ -6,10 +6,10 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const base = process.env.VITE_BASE_URL || '/'
-const webPortEnv = process.env.HAPI_WEB_PORT?.trim()
+const webPortEnv = process.env.HOPI_WEB_PORT?.trim()
 const webPort = webPortEnv ? Number.parseInt(webPortEnv, 10) : null
-const hubUrl = process.env.HAPI_HUB_URL?.trim() || (() => {
-    const hubPortEnv = process.env.HAPI_LISTEN_PORT?.trim()
+const hubUrl = process.env.HOPI_HUB_URL?.trim() || (() => {
+    const hubPortEnv = process.env.HOPI_LISTEN_PORT?.trim()
     const hubPort = hubPortEnv ? Number.parseInt(hubPortEnv, 10) : NaN
     return Number.isFinite(hubPort) ? `http://127.0.0.1:${hubPort}` : 'http://127.0.0.1:3006'
 })()
@@ -20,7 +20,7 @@ export default defineConfig({
     },
     server: {
         host: true,
-        allowedHosts: ['hapidev.weishu.me', 'ruilimacbook-pro.tailfbf761.ts.net'],
+        allowedHosts: ['hopidev.weishu.me', 'ruilimacbook-pro.tailfbf761.ts.net'],
         // Only enforce strict port when caller explicitly pinned the port (preview mode).
         strictPort: Boolean(webPortEnv),
         proxy: {
@@ -43,8 +43,8 @@ export default defineConfig({
             srcDir: 'src',
             filename: 'sw.ts',
             manifest: {
-                name: 'HAPI',
-                short_name: 'HAPI',
+                name: 'HOPI',
+                short_name: 'HOPI',
                 description: 'AI-powered development assistant',
                 theme_color: '#ffffff',
                 background_color: '#ffffff',

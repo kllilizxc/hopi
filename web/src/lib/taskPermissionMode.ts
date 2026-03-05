@@ -1,4 +1,4 @@
-import { getPermissionModeLabel, getPermissionModeOptionsForFlavor, getPermissionModeTone } from '@hapi/protocol'
+import { getPermissionModeLabel, getPermissionModeOptionsForFlavor, getPermissionModeTone } from '@hopi/protocol'
 import type { AgentFlavor, PermissionMode } from '@/types/api'
 
 const TASK_PLAN_MODE_FLAVORS: ReadonlySet<AgentFlavor> = new Set(['codex'])
