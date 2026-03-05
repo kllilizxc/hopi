@@ -17,6 +17,7 @@ import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
+import { isMobileViewport } from '@/lib/device'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
@@ -32,8 +33,18 @@ const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
     finished: true
 }
 
-function loadCollapsedColumnsFromStorage(): Record<TaskStatus, boolean> {
+function getDefaultCollapsedColumns(): Record<TaskStatus, boolean> {
     const collapsed = { ...DEFAULT_COLLAPSED_COLUMNS }
+    if (!isMobileViewport()) {
+        collapsed.blocked = false
+        collapsed.finished = false
+    }
+
+    return collapsed
+}
+
+function loadCollapsedColumnsFromStorage(): Record<TaskStatus, boolean> {
+    const collapsed = getDefaultCollapsedColumns()
     if (typeof window === 'undefined') return collapsed
 
     try {
