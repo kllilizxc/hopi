@@ -875,7 +875,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
                 onDragOver={handleBoardDragOver}
             >
-                <div className="h-full flex gap-3 p-3">
+                <div className="h-full w-max mx-auto flex gap-3 p-3">
                     {KANBAN_COLUMNS.map((col) => {
                         const colTasks = columns[col.status]
                         const isCollapsed = collapsedColumns[col.status]
