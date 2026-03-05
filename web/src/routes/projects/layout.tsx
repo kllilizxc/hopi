@@ -19,6 +19,8 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useRecentProjects } from '@/hooks/useRecentProjects'
+import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import type { AgentType } from '@/components/NewSession/types'
@@ -422,12 +424,19 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     const navigate = useNavigate()
     const { project } = useProject(api, props.projectId)
     const { projects } = useProjects(api, { includeArchived: false })
+    const { recentProjectIds, markProjectUsed } = useRecentProjects()
 
-    const recentProjects = useMemo(() => {
-        return [...projects]
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .slice(0, 5)
-    }, [projects])
+    const recentProjects = useRecentProjectTabs({
+        projects,
+        currentProjectId: props.projectId,
+        currentProject: project,
+        recentProjectIds,
+        maxTabs: 5,
+    })
+
+    useEffect(() => {
+        markProjectUsed(props.projectId)
+    }, [props.projectId, markProjectUsed])
 
     const handleProjectClick = useCallback((projectId: string) => {
         if (projectId !== props.projectId) {
@@ -453,12 +462,15 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                             <BackIcon className="h-5 w-5" />
                         </IconButton>
                         {recentProjects.length > 1 ? (
-                            <div className="flex items-center gap-1 overflow-x-auto max-w-md">
+                            <div className="flex items-center gap-1 overflow-x-auto max-w-md" role="tablist" aria-label={t('projects.title')}>
                                 {recentProjects.map((p) => (
                                     <button
                                         key={p.id}
                                         type="button"
                                         onClick={() => handleProjectClick(p.id)}
+                                        role="tab"
+                                        aria-selected={p.id === props.projectId}
+                                        title={p.name}
                                         className={`px-3 py-1.5 text-sm whitespace-nowrap rounded transition-colors ${
                                             p.id === props.projectId
                                                 ? 'bg-accent-wash-1 text-accent-1'
