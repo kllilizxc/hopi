@@ -11,6 +11,7 @@ import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
+import { CompactTabs } from '@/components/ui/CompactTabs'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Pressable } from '@/components/ui/pressable'
@@ -26,7 +27,7 @@ import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import type { AgentType } from '@/components/NewSession/types'
 
 function TopBar(props: {
-    title: string
+    title?: string
     left?: React.ReactNode
     right?: React.ReactNode
     fullWidth?: boolean
@@ -40,7 +41,9 @@ function TopBar(props: {
             >
                 <div className="flex items-center gap-2 min-w-0">
                     {props.left}
-                    <div className="text-sm font-semibold truncate">{props.title}</div>
+                    {props.title ? (
+                        <div className="text-sm font-semibold truncate">{props.title}</div>
+                    ) : null}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                     {props.right}
@@ -433,6 +436,13 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
         recentProjectIds,
         maxTabs: 5,
     })
+    const recentProjectTabs = useMemo(() => (
+        recentProjects.map((p) => ({
+            id: p.id,
+            label: p.name,
+            title: p.name
+        }))
+    ), [recentProjects])
 
     useEffect(() => {
         markProjectUsed(props.projectId)
@@ -447,7 +457,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <TopBar
-                title={project?.name ?? t('projects.board.title')}
                 fullWidth
                 left={
                     <>
@@ -461,26 +470,14 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                         >
                             <BackIcon className="h-5 w-5" />
                         </IconButton>
-                        {recentProjects.length > 1 ? (
-                            <div className="flex items-center gap-1 overflow-x-auto max-w-md" role="tablist" aria-label={t('projects.title')}>
-                                {recentProjects.map((p) => (
-                                    <button
-                                        key={p.id}
-                                        type="button"
-                                        onClick={() => handleProjectClick(p.id)}
-                                        role="tab"
-                                        aria-selected={p.id === props.projectId}
-                                        title={p.name}
-                                        className={`px-3 py-1.5 text-sm whitespace-nowrap rounded transition-colors ${
-                                            p.id === props.projectId
-                                                ? 'bg-accent-wash-1 text-accent-1'
-                                                : 'text-fg-3 hover:text-fg-1 hover:bg-bg-2'
-                                        }`}
-                                    >
-                                        {p.name}
-                                    </button>
-                                ))}
-                            </div>
+                        {recentProjects.length > 0 ? (
+                            <CompactTabs
+                                items={recentProjectTabs}
+                                selectedId={props.projectId}
+                                onSelect={handleProjectClick}
+                                ariaLabel={t('projects.title')}
+                                className="max-w-md"
+                            />
                         ) : null}
                     </>
                 }
