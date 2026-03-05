@@ -467,6 +467,34 @@ const MutationResultView: ToolViewComponent = (props: ToolViewProps) => {
 
 const CodexPatchResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
+
+    // Extract stdout/stderr for better display
+    if (isObject(result)) {
+        const stdout = typeof result.stdout === 'string' ? result.stdout.trim() : null
+        const stderr = typeof result.stderr === 'string' ? result.stderr.trim() : null
+        const success = result.success === true
+
+        if (stdout || stderr) {
+            return (
+                <>
+                    <div className="flex flex-col gap-2">
+                        {stdout ? (
+                            <div className={`text-sm ${success ? 'text-emerald-600' : 'text-[var(--app-fg)]'}`}>
+                                <MarkdownRenderer content={stdout} />
+                            </div>
+                        ) : null}
+                        {stderr ? (
+                            <div className="text-sm text-red-600">
+                                <MarkdownRenderer content={stderr} />
+                            </div>
+                        ) : null}
+                    </div>
+                    <RawJsonDevOnly value={result} />
+                </>
+            )
+        }
+    }
+
     const text = extractTextFromResult(result)
     if (text) {
         return (
