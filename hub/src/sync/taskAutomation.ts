@@ -215,12 +215,14 @@ export class TaskAutomation {
             const shouldResetMergeState = current.worktreeMergedAt !== null
                 || current.worktreeMergeCommit !== null
                 || current.finishedAt !== null
+                || current.mergedDiffSnapshot !== null
 
             if (shouldMoveToInProgress || shouldResetMergeState) {
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
                     status: 'in_progress',
                     worktreeMergedAt: null,
                     worktreeMergeCommit: null,
+                    mergedDiffSnapshot: null,
                     finishedAt: null
                 })
                 if (updated) {

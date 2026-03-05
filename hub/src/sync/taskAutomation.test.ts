@@ -517,7 +517,14 @@ describe('TaskAutomation', () => {
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
         })
-        store.tasks.updateTaskByNamespace(taskId, namespace, { finishedAt: mergedAt })
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            finishedAt: mergedAt,
+            mergedDiffSnapshot: {
+                files: [{ fullPath: 'src/app.ts', linesAdded: 5, linesRemoved: 1 }],
+                capturedAt: mergedAt,
+                baseCommit: 'deadbeef'
+            }
+        })
 
         const engine = {
             getSession(id: string) {
@@ -679,6 +686,7 @@ describe('TaskAutomation', () => {
         expect(afterPrompt?.status).toBe('in_progress')
         expect(afterPrompt?.worktreeMergedAt).toBeNull()
         expect(afterPrompt?.worktreeMergeCommit).toBeNull()
+        expect(afterPrompt?.mergedDiffSnapshot).toBeNull()
         expect(afterPrompt?.finishedAt).toBeNull()
 
         const readyMsg = store.messages.addMessage(sessionId, {
@@ -688,6 +696,67 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
+    })
+
+    it('clears stale merged diff snapshot on follow-up prompt while already in_progress', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            mergedDiffSnapshot: {
+                files: [{ fullPath: 'src/app.ts', linesAdded: 2, linesRemoved: 0 }],
+                capturedAt: Date.now(),
+                baseCommit: 'abc1234'
+            }
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'continue this task' },
+            meta: { sentFrom: 'cli' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('in_progress')
+        expect(updated?.mergedDiffSnapshot).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 })
