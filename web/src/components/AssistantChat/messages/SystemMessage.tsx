@@ -1,8 +1,9 @@
 import { useAssistantState } from '@assistant-ui/react'
+import { memo } from 'react'
 import { getEventPresentation } from '@/chat/presentation'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 
-export function HappySystemMessage() {
+export const HappySystemMessage = memo(function HappySystemMessage() {
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'system') return ''
@@ -27,4 +28,4 @@ export function HappySystemMessage() {
             </div>
         </div>
     )
-}
+})

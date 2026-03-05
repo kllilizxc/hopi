@@ -120,6 +120,8 @@ export function HappyThread(props: {
     const onAtBottomChangeRef = useRef(props.onAtBottomChange)
     const onFlushPendingRef = useRef(props.onFlushPending)
     const forceScrollTokenRef = useRef(props.forceScrollToken)
+    const onRefreshRef = useRef(props.onRefresh)
+    const onRetryMessageRef = useRef(props.onRetryMessage)
 
     // Smart scroll state: autoScroll enabled when user is near bottom
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
@@ -132,6 +134,12 @@ export function HappyThread(props: {
     useEffect(() => {
         onAtBottomChangeRef.current = props.onAtBottomChange
     }, [props.onAtBottomChange])
+    useEffect(() => {
+        onRefreshRef.current = props.onRefresh
+    }, [props.onRefresh])
+    useEffect(() => {
+        onRetryMessageRef.current = props.onRetryMessage
+    }, [props.onRetryMessage])
     useEffect(() => {
         onFlushPendingRef.current = props.onFlushPending
     }, [props.onFlushPending])
@@ -309,20 +317,28 @@ export function HappyThread(props: {
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
     const mergeEvents = props.mergeEvents ?? EMPTY_MERGE_EVENTS
     const previewEvents = props.previewEvents ?? EMPTY_PREVIEW_EVENTS
+    const hasRetryMessage = Boolean(props.onRetryMessage)
+    const handleRefresh = useCallback(() => {
+        onRefreshRef.current()
+    }, [])
+    const handleRetryMessage = useCallback((localId: string) => {
+        onRetryMessageRef.current?.(localId)
+    }, [])
     const chatContextValue = useMemo(() => ({
         api: props.api,
         sessionId: props.sessionId,
         metadata: props.metadata,
         disabled: props.disabled,
-        onRefresh: props.onRefresh,
-        onRetryMessage: props.onRetryMessage
+        onRefresh: handleRefresh,
+        onRetryMessage: hasRetryMessage ? handleRetryMessage : undefined
     }), [
         props.api,
         props.sessionId,
         props.metadata,
         props.disabled,
-        props.onRefresh,
-        props.onRetryMessage
+        handleRefresh,
+        hasRetryMessage,
+        handleRetryMessage
     ])
 
     return (

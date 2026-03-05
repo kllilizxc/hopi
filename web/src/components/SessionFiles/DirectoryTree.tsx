@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import { FileIcon } from '@/components/FileIcon'
 import { useSessionDirectory } from '@/hooks/queries/useSessionDirectory'
@@ -36,17 +36,19 @@ function DirectoryErrorRow(props: { depth: number; message: string }) {
     )
 }
 
-function DirectoryNode(props: {
+function DirectoryNodeComponent(props: {
     api: ApiClient | null
     sessionId: string
     path: string
     label: string
     depth: number
     onOpenFile: (path: string) => void
-    expanded: Set<string>
-    onToggle: (path: string) => void
+    expandedState: Map<string, boolean>
+    defaultExpanded?: boolean
 }) {
-    const isExpanded = props.expanded.has(props.path)
+    const [isExpanded, setIsExpanded] = useState(() => (
+        props.expandedState.get(props.path) ?? props.defaultExpanded ?? false
+    ))
     const { entries, error, isLoading } = useSessionDirectory(props.api, props.sessionId, props.path, {
         enabled: isExpanded
     })
@@ -58,11 +60,19 @@ function DirectoryNode(props: {
     const indent = 12 + props.depth * 14
     const childIndent = 12 + childDepth * 14
 
+    const handleToggle = useCallback(() => {
+        setIsExpanded((previous) => {
+            const next = !previous
+            props.expandedState.set(props.path, next)
+            return next
+        })
+    }, [props.expandedState, props.path])
+
     return (
         <div>
             <button
                 type="button"
-                onClick={() => props.onToggle(props.path)}
+                onClick={handleToggle}
                 className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
                 style={{ paddingLeft: indent }}
             >
@@ -91,8 +101,7 @@ function DirectoryNode(props: {
                                     label={entry.name}
                                     depth={childDepth}
                                     onOpenFile={props.onOpenFile}
-                                    expanded={props.expanded}
-                                    onToggle={props.onToggle}
+                                    expandedState={props.expandedState}
                                 />
                             )
                         })}
@@ -131,25 +140,15 @@ function DirectoryNode(props: {
     )
 }
 
-export function DirectoryTree(props: {
+const DirectoryNode = memo(DirectoryNodeComponent)
+
+export const DirectoryTree = memo(function DirectoryTree(props: {
     api: ApiClient | null
     sessionId: string
     rootLabel: string
     onOpenFile: (path: string) => void
 }) {
-    const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
-
-    const handleToggle = useCallback((path: string) => {
-        setExpanded((prev) => {
-            const next = new Set(prev)
-            if (next.has(path)) {
-                next.delete(path)
-            } else {
-                next.add(path)
-            }
-            return next
-        })
-    }, [])
+    const expandedStateRef = useRef<Map<string, boolean>>(new Map([['', true]]))
 
     return (
         <div className="border-t border-[var(--app-divider)]">
@@ -160,9 +159,12 @@ export function DirectoryTree(props: {
                 label={props.rootLabel}
                 depth={0}
                 onOpenFile={props.onOpenFile}
-                expanded={expanded}
-                onToggle={handleToggle}
+                expandedState={expandedStateRef.current}
+                defaultExpanded
             />
         </div>
     )
-}
+})
+
+DirectoryNode.displayName = 'DirectoryNode'
+DirectoryTree.displayName = 'DirectoryTree'

@@ -1,4 +1,5 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
+import { memo } from 'react'
 import { MarkdownText } from '@/components/assistant-ui/markdown-text'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
@@ -38,7 +39,7 @@ function AssistantTypingIndicator() {
     )
 }
 
-export const HappyAssistantMessage = () => {
+export const HappyAssistantMessage = memo(function HappyAssistantMessage() {
     const showTypingIndicator = useAssistantState(({ message }) => message.isLast && message.status?.type === 'running')
     const isCliOutput = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
@@ -81,4 +82,4 @@ export const HappyAssistantMessage = () => {
             ) : null}
         </MessagePrimitive.Root>
     )
-}
+})

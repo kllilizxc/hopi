@@ -174,6 +174,47 @@ function sortTasksInColumn(tasks: Task[]): Task[] {
     })
 }
 
+type KanbanColumnsByStatus = Record<TaskStatus, Task[]>
+
+type KanbanDerivedState = {
+    tasks: Task[]
+    tasksById: Map<string, Task>
+    columns: KanbanColumnsByStatus
+}
+
+function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
+    const grouped: KanbanColumnsByStatus = {
+        planned: [],
+        in_progress: [],
+        in_review: [],
+        blocked: [],
+        finished: []
+    }
+    for (const task of tasks) {
+        grouped[task.status].push(task)
+    }
+    return {
+        planned: sortTasksInColumn(grouped.planned),
+        in_progress: sortTasksInColumn(grouped.in_progress),
+        in_review: sortTasksInColumn(grouped.in_review),
+        blocked: sortTasksInColumn(grouped.blocked),
+        finished: sortTasksInColumn(grouped.finished),
+    }
+}
+
+function buildKanbanDerivedState(tasks: Task[]): KanbanDerivedState {
+    const tasksById = new Map<string, Task>()
+    for (const task of tasks) {
+        tasksById.set(task.id, task)
+    }
+
+    return {
+        tasks,
+        tasksById,
+        columns: buildKanbanColumns(tasks)
+    }
+}
+
 function computeInsertedSortKey(above: Task | null, below: Task | null): number {
     const aboveValue = above ? getTaskOrderValue(above) : null
     const belowValue = below ? getTaskOrderValue(below) : null
@@ -453,33 +494,13 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         saveCollapsedColumnsToStorage(collapsedColumns)
     }, [collapsedColumns])
 
-    const tasksById = useMemo(() => {
-        const map = new Map<string, Task>()
-        for (const task of tasks) {
-            map.set(task.id, task)
-        }
-        return map
-    }, [tasks])
+    const kanbanState = useMemo(() => buildKanbanDerivedState(tasks), [tasks])
+    const columns = kanbanState.columns
+    const kanbanStateRef = useRef(kanbanState)
 
-    const columns = useMemo(() => {
-        const grouped: Record<TaskStatus, Task[]> = {
-            planned: [],
-            in_progress: [],
-            in_review: [],
-            blocked: [],
-            finished: []
-        }
-        for (const task of tasks) {
-            grouped[task.status].push(task)
-        }
-        return {
-            planned: sortTasksInColumn(grouped.planned),
-            in_progress: sortTasksInColumn(grouped.in_progress),
-            in_review: sortTasksInColumn(grouped.in_review),
-            blocked: sortTasksInColumn(grouped.blocked),
-            finished: sortTasksInColumn(grouped.finished),
-        }
-    }, [tasks])
+    useEffect(() => {
+        kanbanStateRef.current = kanbanState
+    }, [kanbanState])
 
     const moveOptionsByStatus = useMemo<Record<TaskStatus, ActionSheetSelectOption<TaskStatus>[]>>(() => {
         const baseOptions: Array<ActionSheetSelectOption<TaskStatus> & { value: TaskStatus }> = KANBAN_COLUMNS.map((col) => {
@@ -506,12 +527,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         return grouped
     }, [t])
 
-    const columnsRef = useRef(columns)
-    useEffect(() => {
-        columnsRef.current = columns
-    }, [columns])
-
     const applyOptimisticTasks = useCallback((nextTasks: Task[]) => {
+        kanbanStateRef.current = buildKanbanDerivedState(nextTasks)
         queryClient.setQueryData<TasksResponse>(queryKeys.tasks(props.projectId), (prev) => {
             if (!prev) {
                 return { tasks: nextTasks }
@@ -521,12 +538,13 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     }, [props.projectId, queryClient])
 
     const moveTask = useCallback(async (taskId: string, toStatus: TaskStatus, toIndex: number) => {
-        const task = tasksById.get(taskId)
+        const currentState = kanbanStateRef.current
+        const task = currentState.tasksById.get(taskId)
         if (!task) return
 
         const fromStatus = task.status
-        const fromList = columns[fromStatus]
-        const toList = columns[toStatus]
+        const fromList = currentState.columns[fromStatus]
+        const toList = currentState.columns[toStatus]
         const fromIndex = fromList.findIndex((t) => t.id === taskId)
 
         let insertIndex = toIndex
@@ -543,7 +561,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         const nextSortKey = computeInsertedSortKey(above, below)
 
         const previous = queryClient.getQueryData<TasksResponse>(queryKeys.tasks(props.projectId))
-        const nextAll = tasks.map((t) => {
+        const nextAll = currentState.tasks.map((t) => {
             if (t.id !== taskId) return t
             return {
                 ...t,
@@ -566,6 +584,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             if (previous) {
                 queryClient.setQueryData(queryKeys.tasks(props.projectId), previous)
             }
+            kanbanStateRef.current = currentState
             addToast({
                 title: t('projects.tasks.moveFailed'),
                 body: error instanceof Error ? error.message : 'Failed to move task',
@@ -573,7 +592,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 url: ''
             })
         }
-    }, [tasksById, columns, updateTask, addToast, t, queryClient, applyOptimisticTasks, tasks, props.projectId])
+    }, [updateTask, addToast, t, queryClient, applyOptimisticTasks, props.projectId])
 
     const moveTaskRef = useRef(moveTask)
     useEffect(() => {
@@ -636,14 +655,14 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             const indexValue = cardEl.dataset.kanbanTaskIndex
             const index = indexValue ? Number.parseInt(indexValue, 10) : Number.NaN
             if (!Number.isFinite(index)) {
-                return { status, index: columnsRef.current[status].length }
+                return { status, index: kanbanStateRef.current.columns[status].length }
             }
             const rect = cardEl.getBoundingClientRect()
             const before = clientY < rect.top + rect.height / 2
             return { status, index: before ? index : index + 1 }
         }
 
-        return { status, index: columnsRef.current[status].length }
+        return { status, index: kanbanStateRef.current.columns[status].length }
     }, [])
 
     const handleBoardAutoScroll = useCallback((clientX: number) => {
@@ -875,7 +894,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
                 onDragOver={handleBoardDragOver}
             >
-                <div className="h-full flex gap-3 p-3">
+                <div className="h-full w-max mx-auto flex gap-3 p-3">
                     {KANBAN_COLUMNS.map((col) => {
                         const colTasks = columns[col.status]
                         const isCollapsed = collapsedColumns[col.status]

@@ -1,4 +1,5 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
+import { memo } from 'react'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
@@ -6,7 +7,7 @@ import { MessageAttachments } from '@/components/AssistantChat/messages/MessageA
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 
-export function HappyUserMessage() {
+export const HappyUserMessage = memo(function HappyUserMessage() {
     const ctx = useHappyChatContext()
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
@@ -72,4 +73,4 @@ export function HappyUserMessage() {
             </div>
         </MessagePrimitive.Root>
     )
-}
+})

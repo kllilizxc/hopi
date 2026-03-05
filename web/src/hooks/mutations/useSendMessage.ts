@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { AttachmentMetadata, DecryptedMessage } from '@/types/api'
 import { makeClientSideId } from '@/lib/messages'
@@ -52,6 +52,15 @@ export function useSendMessage(
     const { haptic } = usePlatform()
     const [isResolving, setIsResolving] = useState(false)
     const resolveGuardRef = useRef(false)
+    const resolveSessionIdRef = useRef(options?.resolveSessionId)
+    const onSessionResolvedRef = useRef(options?.onSessionResolved)
+    const onBlockedRef = useRef(options?.onBlocked)
+
+    useEffect(() => {
+        resolveSessionIdRef.current = options?.resolveSessionId
+        onSessionResolvedRef.current = options?.onSessionResolved
+        onBlockedRef.current = options?.onBlocked
+    }, [options])
 
     const mutation = useMutation({
         mutationFn: async (input: SendMessageInput) => {
@@ -90,32 +99,33 @@ export function useSendMessage(
         },
     })
 
-    const sendMessage = (text: string, attachments?: AttachmentMetadata[]) => {
+    const sendMessage = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
         if (!api) {
-            options?.onBlocked?.('no-api')
+            onBlockedRef.current?.('no-api')
             haptic.notification('error')
             return
         }
         if (!sessionId) {
-            options?.onBlocked?.('no-session')
+            onBlockedRef.current?.('no-session')
             haptic.notification('error')
             return
         }
         if (mutation.isPending || resolveGuardRef.current) {
-            options?.onBlocked?.('pending')
+            onBlockedRef.current?.('pending')
             return
         }
         const localId = makeClientSideId('local')
         const createdAt = Date.now()
         void (async () => {
             let targetSessionId = sessionId
-            if (options?.resolveSessionId) {
+            const resolveSessionId = resolveSessionIdRef.current
+            if (resolveSessionId) {
                 resolveGuardRef.current = true
                 setIsResolving(true)
                 try {
-                    const resolved = await options.resolveSessionId(sessionId)
+                    const resolved = await resolveSessionId(sessionId)
                     if (resolved && resolved !== sessionId) {
-                        options.onSessionResolved?.(resolved)
+                        onSessionResolvedRef.current?.(resolved)
                         targetSessionId = resolved
                     }
                 } catch (error) {
@@ -135,21 +145,21 @@ export function useSendMessage(
                 attachments,
             })
         })()
-    }
+    }, [api, haptic, mutation.isPending, mutation.mutate, sessionId])
 
-    const retryMessage = (localId: string) => {
+    const retryMessage = useCallback((localId: string) => {
         if (!api) {
-            options?.onBlocked?.('no-api')
+            onBlockedRef.current?.('no-api')
             haptic.notification('error')
             return
         }
         if (!sessionId) {
-            options?.onBlocked?.('no-session')
+            onBlockedRef.current?.('no-session')
             haptic.notification('error')
             return
         }
         if (mutation.isPending || resolveGuardRef.current) {
-            options?.onBlocked?.('pending')
+            onBlockedRef.current?.('pending')
             return
         }
 
@@ -164,7 +174,7 @@ export function useSendMessage(
             localId,
             createdAt: message.createdAt,
         })
-    }
+    }, [api, haptic, mutation.isPending, mutation.mutate, sessionId])
 
     return {
         sendMessage,
