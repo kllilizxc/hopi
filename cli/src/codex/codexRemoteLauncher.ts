@@ -38,12 +38,70 @@ function isAssistantTextCodexMessage(message: unknown): boolean {
         return false;
     }
 
-    const record = message as { type?: unknown; message?: unknown };
-    if (record.type !== 'message') {
-        return false;
+    const record = message as { type?: unknown; message?: unknown; entries?: unknown[]; explanation?: unknown };
+    if (record.type === 'message') {
+        return typeof record.message === 'string' && record.message.trim().length > 0;
+    }
+    if (record.type === 'plan') {
+        if (typeof record.explanation === 'string' && record.explanation.trim().length > 0) {
+            return true;
+        }
+        return Array.isArray(record.entries) && record.entries.length > 0;
+    }
+    return false;
+}
+
+type PlanEntryStatus = 'pending' | 'in_progress' | 'completed';
+
+type PlanEntry = {
+    id: string;
+    content: string;
+    priority: 'high' | 'medium' | 'low';
+    status: PlanEntryStatus;
+};
+
+function normalizePlanStatus(value: unknown): PlanEntryStatus | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const normalized = value.toLowerCase().replace(/[\s_-]/g, '');
+    if (normalized === 'pending') return 'pending';
+    if (normalized === 'inprogress') return 'in_progress';
+    if (normalized === 'completed') return 'completed';
+    return null;
+}
+
+function normalizePlanEntries(value: unknown): PlanEntry[] {
+    if (!Array.isArray(value)) {
+        return [];
     }
 
-    return typeof record.message === 'string' && record.message.trim().length > 0;
+    const entries: PlanEntry[] = [];
+    value.forEach((item, index) => {
+        if (!item || typeof item !== 'object') {
+            return;
+        }
+        const record = item as Record<string, unknown>;
+        const contentRaw = record.content ?? record.step ?? record.text;
+        const content = typeof contentRaw === 'string' ? contentRaw.trim() : '';
+        const status = normalizePlanStatus(record.status);
+        if (!content || !status) {
+            return;
+        }
+
+        const id = typeof record.id === 'string' && record.id.trim().length > 0
+            ? record.id
+            : `plan-${index + 1}`;
+
+        entries.push({
+            id,
+            content,
+            priority: 'medium',
+            status
+        });
+    });
+
+    return entries;
 }
 
 class CodexRemoteLauncher extends RemoteLauncherBase {
@@ -367,6 +425,29 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 const message = asString(msg.message);
                 if (message) {
                     messageBuffer.addMessage(message, 'assistant');
+                }
+            } else if (msgType === 'plan_update') {
+                const entries = normalizePlanEntries(msg.plan);
+                const explanation = asString(msg.explanation);
+
+                if (entries.length > 0) {
+                    const summary = explanation
+                        ? `Plan updated: ${explanation}`
+                        : `Plan updated (${entries.length} steps)`;
+                    messageBuffer.addMessage(summary, 'assistant');
+                    session.sendCodexMessage({
+                        type: 'plan',
+                        entries,
+                        ...(explanation ? { explanation } : {}),
+                        id: randomUUID()
+                    });
+                } else if (explanation) {
+                    messageBuffer.addMessage(explanation, 'assistant');
+                    session.sendCodexMessage({
+                        type: 'message',
+                        message: explanation,
+                        id: randomUUID()
+                    });
                 }
             } else if (msgType === 'agent_reasoning') {
                 const text = asString(msg.text);
