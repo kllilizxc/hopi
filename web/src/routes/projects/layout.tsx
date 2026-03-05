@@ -646,11 +646,11 @@ export default function ProjectsPage() {
             </div>
 
             <div
-                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[transform,opacity,max-width] duration-200 ease-out ${
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] overflow-hidden transition-[transform,opacity] duration-200 ease-out ${
                     shouldShowRightPanel
                         ? 'translate-x-0 opacity-100 pointer-events-auto lg:max-w-content lg:translate-x-0 lg:opacity-100'
                         : 'translate-x-full opacity-100 pointer-events-none lg:max-w-[0px] lg:translate-x-2 lg:opacity-0 lg:pointer-events-none'
-                } lg:static lg:z-auto lg:flex-none lg:w-full`}
+                } lg:static lg:z-auto lg:flex-none lg:w-full lg:duration-0`}
             >
                 <div className="flex-1 min-h-0">
                     <Outlet />
