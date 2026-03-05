@@ -84,7 +84,8 @@
     --app-scrollbar-track: transparent;
     --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
     --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
-    --app-scroll-shadow: rgba(15, 23, 42, 0.2);
+    /* Scroll shadow tint used by `.scroll-shadow` gradients */
+    --app-scroll-shadow: rgba(0, 0, 0, 0.05);
 
     /* Viewport + motion tokens (mobile + Telegram-friendly) */
     --app-viewport-h: var(--tg-viewport-height, 100dvh);
@@ -177,7 +178,8 @@
     --app-kanban-archive-border: rgba(156, 163, 175, 0.36);
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
-    --app-scroll-shadow: rgba(0, 0, 0, 0.5);
+    /* Scroll shadow tint used by `.scroll-shadow` gradients */
+    --app-scroll-shadow: rgba(255, 255, 255, 0.08);
 
     color-scheme: dark;
 }
@@ -321,8 +323,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     top: 0;
     background: linear-gradient(
         to bottom,
-        var(--app-bg) 0%,
-        rgba(0, 0, 0, 0.05) 50%,
+        var(--scroll-shadow-bg, var(--app-bg)) 0%,
+        var(--app-scroll-shadow) 50%,
         transparent 100%
     );
 }
@@ -331,8 +333,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     bottom: 0;
     background: linear-gradient(
         to top,
-        var(--app-bg) 0%,
-        rgba(0, 0, 0, 0.05) 50%,
+        var(--scroll-shadow-bg, var(--app-bg)) 0%,
+        var(--app-scroll-shadow) 50%,
         transparent 100%
     );
 }
@@ -359,8 +361,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     right: auto;
     background: linear-gradient(
         to right,
-        var(--app-bg) 0%,
-        rgba(0, 0, 0, 0.05) 50%,
+        var(--scroll-shadow-bg, var(--app-bg)) 0%,
+        var(--app-scroll-shadow) 50%,
         transparent 100%
     );
 }
@@ -370,8 +372,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     left: auto;
     background: linear-gradient(
         to left,
-        var(--app-bg) 0%,
-        rgba(0, 0, 0, 0.05) 50%,
+        var(--scroll-shadow-bg, var(--app-bg)) 0%,
+        var(--app-scroll-shadow) 50%,
         transparent 100%
     );
 }
@@ -382,45 +384,6 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
 
 .scroll-shadow-horizontal[data-right-shadow="visible"]::after {
     opacity: 1;
-}
-
-/* Dark mode adjustments */
-@media (prefers-color-scheme: dark) {
-    .scroll-shadow::before {
-        background: linear-gradient(
-            to bottom,
-            var(--app-bg) 0%,
-            rgba(255, 255, 255, 0.08) 50%,
-            transparent 100%
-        );
-    }
-
-    .scroll-shadow::after {
-        background: linear-gradient(
-            to top,
-            var(--app-bg) 0%,
-            rgba(255, 255, 255, 0.08) 50%,
-            transparent 100%
-        );
-    }
-
-    .scroll-shadow-horizontal::before {
-        background: linear-gradient(
-            to right,
-            var(--app-bg) 0%,
-            rgba(255, 255, 255, 0.08) 50%,
-            transparent 100%
-        );
-    }
-
-    .scroll-shadow-horizontal::after {
-        background: linear-gradient(
-            to left,
-            var(--app-bg) 0%,
-            rgba(255, 255, 255, 0.08) 50%,
-            transparent 100%
-        );
-    }
 }
 
 @media (hover: hover) and (pointer: fine) {
