@@ -323,6 +323,10 @@ export function HappyThread(props: {
     const previewEvents = props.previewEvents ?? EMPTY_PREVIEW_EVENTS
     const previewLogTail = props.previewLogTail ?? []
     const previewLogsText = useMemo(() => previewLogTail.join('\n'), [previewLogTail])
+    const showContinueAction = Boolean(props.showContinueAction && props.onContinueAction)
+    const showMergeAction = Boolean(props.showMergeAction && props.onMergeAction)
+    const showPreviewAction = Boolean(props.showPreviewAction && props.onPreviewAction)
+    const showActionRow = showContinueAction || showMergeAction || showPreviewAction
     const hasRetryMessage = Boolean(props.onRetryMessage)
     const handleRefresh = useCallback(() => {
         onRefreshRef.current()
@@ -405,17 +409,39 @@ export function HappyThread(props: {
                             <div className="flex flex-col gap-3">
                                 <ThreadPrimitive.Messages components={THREAD_MESSAGE_COMPONENTS} />
                             </div>
-                            {props.showContinueAction && props.onContinueAction ? (
+                            {showActionRow ? (
                                 <div className="py-2">
-                                    <div className="mx-auto w-fit max-w-[92%]">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={props.onContinueAction}
-                                            disabled={props.continueActionDisabled}
-                                        >
-                                            {t('misc.continue')}
-                                        </Button>
+                                    <div className="mx-auto flex w-fit max-w-[92%] items-center gap-2">
+                                        {showContinueAction ? (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={props.onContinueAction}
+                                                disabled={props.continueActionDisabled}
+                                            >
+                                                {t('misc.continue')}
+                                            </Button>
+                                        ) : null}
+                                        {showMergeAction ? (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={props.onMergeAction}
+                                                disabled={props.mergeActionDisabled}
+                                            >
+                                                {props.mergeActionLabel ?? 'Merge'}
+                                            </Button>
+                                        ) : null}
+                                        {showPreviewAction ? (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={props.onPreviewAction}
+                                                disabled={props.previewActionDisabled}
+                                            >
+                                                {props.previewActionLabel ?? 'Preview'}
+                                            </Button>
+                                        ) : null}
                                     </div>
                                 </div>
                             ) : null}
@@ -434,20 +460,6 @@ export function HappyThread(props: {
                                     </div>
                                 </div>
                             ))}
-                            {props.showMergeAction && props.onMergeAction ? (
-                                <div className="py-2">
-                                    <div className="mx-auto w-fit max-w-[92%]">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={props.onMergeAction}
-                                            disabled={props.mergeActionDisabled}
-                                        >
-                                            {props.mergeActionLabel ?? 'Merge'}
-                                        </Button>
-                                    </div>
-                                </div>
-                            ) : null}
                             {previewEvents.map((event) => (
                                 <div key={event.id} className="py-1">
                                     <div
@@ -479,20 +491,6 @@ export function HappyThread(props: {
                                             emptyText={t('misc.loading')}
                                             maxHeightClassName="max-h-52"
                                         />
-                                    </div>
-                                </div>
-                            ) : null}
-                            {props.showPreviewAction && props.onPreviewAction ? (
-                                <div className="py-2">
-                                    <div className="mx-auto w-fit max-w-[92%]">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={props.onPreviewAction}
-                                            disabled={props.previewActionDisabled}
-                                        >
-                                            {props.previewActionLabel ?? 'Preview'}
-                                        </Button>
                                     </div>
                                 </div>
                             ) : null}

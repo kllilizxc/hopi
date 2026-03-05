@@ -53,7 +53,23 @@ export class ClaudeToolExtractor implements AgentToolExtractor {
 
     private extractFromTodoWrite(input: Record<string, unknown>): TaskToolResult | null {
         const todosCandidate = input.todos
-        const parsed = TodosSchema.safeParse(todosCandidate)
+        if (!Array.isArray(todosCandidate)) return null
+
+        // Claude Code's TodoWrite may not include id and priority fields
+        // We need to add them before validation
+        const todosWithDefaults = todosCandidate.map((todo, index) => {
+            if (!todo || typeof todo !== 'object') return null
+
+            const todoObj = todo as Record<string, unknown>
+            return {
+                id: typeof todoObj.id === 'string' ? todoObj.id : `todo-${Date.now()}-${index}`,
+                content: typeof todoObj.content === 'string' ? todoObj.content : '',
+                status: todoObj.status,
+                priority: typeof todoObj.priority === 'string' ? todoObj.priority : 'medium'
+            }
+        }).filter(Boolean)
+
+        const parsed = TodosSchema.safeParse(todosWithDefaults)
         if (!parsed.success) return null
 
         return {

@@ -429,14 +429,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
             .slice(0, 5)
     }, [projects])
 
-    const projectOptions = useMemo(() => {
-        return recentProjects.map((p) => ({
-            value: p.id,
-            label: p.name,
-        }))
-    }, [recentProjects])
-
-    const handleProjectChange = useCallback((projectId: string) => {
+    const handleProjectClick = useCallback((projectId: string) => {
         if (projectId !== props.projectId) {
             void navigate({ to: '/projects/$projectId', params: { projectId } })
         }
@@ -459,14 +452,23 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                         >
                             <BackIcon className="h-5 w-5" />
                         </IconButton>
-                        {projectOptions.length > 1 ? (
-                            <AdaptiveSelectField
-                                title={t('projects.board.switchProject')}
-                                value={props.projectId}
-                                options={projectOptions}
-                                onValueChange={handleProjectChange}
-                                align="start"
-                            />
+                        {recentProjects.length > 1 ? (
+                            <div className="flex items-center gap-1 overflow-x-auto max-w-md">
+                                {recentProjects.map((p) => (
+                                    <button
+                                        key={p.id}
+                                        type="button"
+                                        onClick={() => handleProjectClick(p.id)}
+                                        className={`px-3 py-1.5 text-sm whitespace-nowrap rounded transition-colors ${
+                                            p.id === props.projectId
+                                                ? 'bg-accent-wash-1 text-accent-1'
+                                                : 'text-fg-3 hover:text-fg-1 hover:bg-bg-2'
+                                        }`}
+                                    >
+                                        {p.name}
+                                    </button>
+                                ))}
+                            </div>
                         ) : null}
                     </>
                 }
