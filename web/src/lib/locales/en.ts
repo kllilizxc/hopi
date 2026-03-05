@@ -103,6 +103,7 @@ export default {
   'projects.task.archived': 'Task archived',
   'projects.task.copyLink': 'Copy link',
   'projects.task.status': 'Status',
+  'projects.task.workflowPhase': 'Workflow phase',
   'projects.task.priority': 'Priority',
   'projects.task.priority.none': 'No priority',
   'projects.task.priority.high': 'High',
@@ -230,6 +231,10 @@ export default {
   'projects.automation.maxRunning': 'Max running sessions',
   'projects.automation.improvements': 'Improvements scan on finish',
   'projects.automation.maxPendingTasks': 'Max pending auto-generated tasks',
+  'projects.automation.workflowStrategy': 'Workflow strategy',
+  'projects.automation.workflowDefault': 'Default',
+  'projects.automation.workflowGsd': 'GSD',
+  'projects.automation.workflowHint': 'Strategy controls task transitions and auto-run eligibility.',
 
   'projects.worktree.title': 'Worktree',
   'projects.worktree.enable': 'Use worktree sessions by default',

@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TodoItemSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ENV,
     PRODUCT_HEADERS,
@@ -17,6 +17,7 @@ import { waitForAssistantCompletion } from '../../sync/improvementsScan'
 import { runMergeScriptIfPresent } from '../../sync/projectScripts'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
+import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'
 
@@ -175,6 +176,11 @@ async function persistSuccessfulTaskMerge(options: {
     const mergedAt = Date.now()
     const shouldMarkFinished = options.markFinishedOnMerge ?? options.task.status === 'in_review'
     const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'finished'
+    const project = options.store.projects.getProjectByNamespace(options.task.projectId, options.namespace)
+    const strategy = project ? getWorkflowStrategy(project) : null
+    const finishedTransitionPatch = statusChangingToFinished
+        ? strategy?.getTaskPatchForTransition('task_finished', options.task)
+        : null
 
     let diffSnapshot: unknown = null
     try {
@@ -199,6 +205,7 @@ async function persistSuccessfulTaskMerge(options: {
         worktreeMergeCommit: options.mergeResult.commitHash ?? null,
         mergedDiffSnapshot: diffSnapshot,
         status: statusChangingToFinished ? 'finished' : undefined,
+        workflowPhase: finishedTransitionPatch?.workflowPhase,
         finishedAt: statusChangingToFinished ? mergedAt : undefined
     })
     if (!updatedTask) {
@@ -244,6 +251,7 @@ const createTaskSchema = z.object({
     agentFlavor: AgentFlavorSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
     modelMode: ModelModeSchema.optional(),
+    workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     sortKey: z.number().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
     subTasks: z.array(TodoItemSchema).optional()
@@ -259,6 +267,7 @@ const updateTaskSchema = z.object({
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     permissionMode: PermissionModeSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
+    workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
@@ -533,7 +542,7 @@ type AutoResolveMergeConflictResult =
     | { ok: true; mergeResult: RpcGitMergeWorktreeResponse }
     | {
         ok: false
-        status: 409 | 500 | 503 | 504
+        status: 400 | 409 | 500 | 503 | 504
         error: string
         conflictFiles: string[]
         stdout?: string
@@ -1165,7 +1174,7 @@ function resolveTaskPreviewAccess(options: {
     machineId: string | null
 } | {
     ok: false
-    status: number
+    status: 400 | 403 | 404
     error: string
 } {
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
@@ -1236,6 +1245,8 @@ export function createTasksRoutes(options: {
         if (!attachmentsCheck.ok) {
             return c.json({ error: attachmentsCheck.error }, 413)
         }
+        const defaultWorkflowPhase = parsed.data.workflowPhase
+            ?? getDefaultWorkflowPhase(project)
 
         const taskId = randomUUID()
         const created = options.store.tasks.createTask({
@@ -1250,6 +1261,7 @@ export function createTasksRoutes(options: {
             agentFlavor: parsed.data.agentFlavor ?? null,
             permissionMode: parsed.data.permissionMode ?? null,
             modelMode: parsed.data.modelMode ?? null,
+            workflowPhase: defaultWorkflowPhase,
             attachments: attachments.length > 0 ? attachments : undefined,
             subTasks: parsed.data.subTasks,
             subTasksUpdatedAt: parsed.data.subTasks ? Date.now() : null,
@@ -1301,6 +1313,11 @@ export function createTasksRoutes(options: {
 
         const statusChangingToFinished = parsed.data.status === 'finished' && existing.status !== 'finished'
         const finishedAt = statusChangingToFinished ? Date.now() : undefined
+        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+        const strategy = project ? getWorkflowStrategy(project) : null
+        const finishedTransitionPatch = statusChangingToFinished
+            ? strategy?.getTaskPatchForTransition('task_finished', existing)
+            : null
 
         const updated = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
             title: parsed.data.title,
@@ -1311,6 +1328,9 @@ export function createTasksRoutes(options: {
             workspaceId: parsed.data.workspaceId,
             agentFlavor: parsed.data.agentFlavor,
             permissionMode: parsed.data.permissionMode,
+            workflowPhase: parsed.data.workflowPhase !== undefined
+                ? parsed.data.workflowPhase
+                : finishedTransitionPatch?.workflowPhase,
             sortKey: parsed.data.sortKey,
             activeSessionId: parsed.data.activeSessionId,
             attachments: attachments,

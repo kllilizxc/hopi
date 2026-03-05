@@ -31,6 +31,7 @@ type UpdateTaskInput = {
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
         modelMode?: ModelMode | null
+        workflowPhase?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: TaskAttachmentInput[]

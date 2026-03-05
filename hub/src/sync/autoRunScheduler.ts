@@ -2,6 +2,7 @@ import type { SyncEvent } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { startSessionFromTask } from './taskSessionService'
+import { getWorkflowStrategy } from './workflowStrategy'
 
 type ProjectKey = `${string}:${string}`
 
@@ -14,12 +15,16 @@ function isTaskAutoRunnable(task: {
     archivedAt: number | null
     activeSessionId: string | null
     source: string | null
+    workflowPhase: string | null
+}, project: {
+    workflowProfile: string | null
 }): boolean {
     if (task.status !== 'planned') return false
     if (task.archivedAt) return false
     if (task.activeSessionId) return false
     if (task.source === 'improvements_scan') return false
-    return true
+    const strategy = getWorkflowStrategy(project)
+    return strategy.canAutoRunTask(task)
 }
 
 export class AutoRunScheduler {
@@ -89,7 +94,8 @@ export class AutoRunScheduler {
 
         if ((event.type === 'task-added' || event.type === 'task-updated') && event.projectId && event.taskId && event.namespace) {
             const task = this.store.tasks.getTaskByNamespace(event.taskId, event.namespace)
-            if (task && isTaskAutoRunnable(task)) {
+            const project = this.store.projects.getProjectByNamespace(event.projectId, event.namespace)
+            if (task && project && isTaskAutoRunnable(task, project)) {
                 this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
             }
         }
@@ -132,7 +138,7 @@ export class AutoRunScheduler {
                 if (started >= capacity) {
                     break
                 }
-                if (!isTaskAutoRunnable(task)) continue
+                if (!isTaskAutoRunnable(task, project)) continue
 
                 const result = await startSessionFromTask({
                     store: this.store,

@@ -342,6 +342,7 @@ export class Store {
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
                 improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
+                workflow_profile TEXT,
                 last_improvements_at INTEGER,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
@@ -380,6 +381,7 @@ export class Store {
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
+                workflow_phase TEXT,
                 sub_tasks TEXT,
                 sub_tasks_updated_at INTEGER,
                 worktree_merged_at INTEGER,
@@ -582,6 +584,9 @@ export class Store {
         if (hasLegacyGeneratedColumn) {
             this.db.exec('UPDATE projects SET improvements_max_pending_tasks = COALESCE(improvements_max_generated_new, improvements_max_pending_tasks)')
         }
+        if (!projectColumns.has('workflow_profile')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN workflow_profile TEXT')
+        }
 
         const taskColumns = this.getColumnNames('tasks')
         if (taskColumns.size === 0) {
@@ -589,6 +594,9 @@ export class Store {
         }
         if (!taskColumns.has('merged_diff_snapshot')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN merged_diff_snapshot TEXT')
+        }
+        if (!taskColumns.has('workflow_phase')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_phase TEXT')
         }
         this.db.exec("UPDATE tasks SET status = 'planned' WHERE status = 'new'")
     }

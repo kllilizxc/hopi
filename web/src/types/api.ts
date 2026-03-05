@@ -1,6 +1,7 @@
 import type {
     Project,
     Task,
+    TaskWorkflowPhase,
     DecryptedMessage as ProtocolDecryptedMessage,
     Session,
     SessionSummary,
@@ -22,6 +23,7 @@ export type {
     Task,
     TaskAttachment,
     TaskPriority,
+    TaskWorkflowPhase,
     TaskStatus,
     TodoItem,
     Workspace,
@@ -77,6 +79,13 @@ export type WorkspacesResponse = { workspaces: Workspace[] }
 export type WorkspaceResponse = { workspace: Workspace }
 export type TasksResponse = { tasks: Task[] }
 export type TaskResponse = { task: Task }
+export type WorkflowStrategyDescriptor = {
+    id: string
+    label: string
+    defaultTaskPhase: TaskWorkflowPhase | null
+    phaseOptions: TaskWorkflowPhase[]
+}
+export type WorkflowStrategiesResponse = { strategies: WorkflowStrategyDescriptor[] }
 export type TaskStartSessionResponse = { task: Task; sessionId: string }
 export type TaskWorktreeMergeResponse = {
     ok: true
