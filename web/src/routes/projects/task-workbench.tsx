@@ -471,23 +471,51 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
             ) : (
                 <div className="flex flex-col gap-2">
                     {props.subTasks.map((subTask) => (
-                        <div key={subTask.id} className="flex flex-col gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 md:flex-row md:items-center">
-                            <label className="flex items-center gap-2 md:w-auto cursor-pointer select-none">
-                                <Checkbox
-                                    checked={subTask.status === 'completed'}
-                                    onCheckedChange={(checked) => {
-                                        props.onToggleSubTask(subTask.id, checked)
-                                    }}
-                                    disabled={props.isUpdatingTask}
-                                />
-                                <span className="text-xs text-[var(--app-hint)]">
-                                    {subTask.status === 'completed'
-                                        ? t('projects.task.subtasks.status.completed')
-                                        : subTask.status === 'in_progress'
-                                            ? t('projects.task.subtasks.status.inProgress')
-                                            : t('projects.task.subtasks.status.pending')}
-                                </span>
-                            </label>
+                        <div key={subTask.id} className="space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                    <Checkbox
+                                        checked={subTask.status === 'completed'}
+                                        onCheckedChange={(checked) => {
+                                            props.onToggleSubTask(subTask.id, checked)
+                                        }}
+                                        disabled={props.isUpdatingTask}
+                                    />
+                                    <span className="text-xs text-[var(--app-hint)]">
+                                        {subTask.status === 'completed'
+                                            ? t('projects.task.subtasks.status.completed')
+                                            : subTask.status === 'in_progress'
+                                                ? t('projects.task.subtasks.status.inProgress')
+                                                : t('projects.task.subtasks.status.pending')}
+                                    </span>
+                                </label>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <AdaptiveSelectField
+                                        title={t('projects.task.priority')}
+                                        value={subTask.priority}
+                                        options={priorityOptions}
+                                        onValueChange={(value) => {
+                                            props.onSubTaskPriorityChange(subTask.id, value as TaskPriority)
+                                        }}
+                                        disabled={props.isUpdatingTask}
+                                        align="end"
+                                        size="sm"
+                                        triggerClassName="min-w-[120px]"
+                                    />
+
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            props.onRemoveSubTask(subTask.id)
+                                        }}
+                                        disabled={props.isUpdatingTask}
+                                    >
+                                        {t('projects.task.subtasks.remove')}
+                                    </Button>
+                                </div>
+                            </div>
 
                             <input
                                 type="text"
@@ -499,38 +527,12 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                                 disabled={props.isUpdatingTask}
                                 className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
                             />
-
-                            <div className="flex items-center gap-2 md:w-auto">
-                                <AdaptiveSelectField
-                                    title={t('projects.task.priority')}
-                                    value={subTask.priority}
-                                    options={priorityOptions}
-                                    onValueChange={(value) => {
-                                        props.onSubTaskPriorityChange(subTask.id, value as TaskPriority)
-                                    }}
-                                    disabled={props.isUpdatingTask}
-                                    align="end"
-                                    size="sm"
-                                    triggerClassName="min-w-[120px]"
-                                />
-
-                                <Button
-                                    type="button"
-                                    variant="secondary"
-                                    onClick={() => {
-                                        props.onRemoveSubTask(subTask.id)
-                                    }}
-                                    disabled={props.isUpdatingTask}
-                                >
-                                    {t('projects.task.subtasks.remove')}
-                                </Button>
-                            </div>
                         </div>
                     ))}
                 </div>
             )}
 
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+            <div className="space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2">
                 <input
                     type="text"
                     value={props.newSubTaskContent}
@@ -545,24 +547,27 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                     placeholder={t('projects.task.subtasks.placeholder')}
                     className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 />
-                <AdaptiveSelectField
-                    title={t('projects.task.priority')}
-                    value={props.newSubTaskPriority}
-                    options={priorityOptions}
-                    onValueChange={(value) => props.onNewSubTaskPriorityChange(value as TaskPriority)}
-                    disabled={props.isUpdatingTask}
-                    align="end"
-                    size="sm"
-                    triggerClassName="min-w-[120px]"
-                />
-                <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={props.onAddSubTask}
-                    disabled={props.isUpdatingTask || !props.newSubTaskContent.trim()}
-                >
-                    {t('projects.task.subtasks.add')}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <AdaptiveSelectField
+                        title={t('projects.task.priority')}
+                        value={props.newSubTaskPriority}
+                        options={priorityOptions}
+                        onValueChange={(value) => props.onNewSubTaskPriorityChange(value as TaskPriority)}
+                        disabled={props.isUpdatingTask}
+                        align="end"
+                        size="sm"
+                        triggerClassName="min-w-[120px]"
+                    />
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={props.onAddSubTask}
+                        disabled={props.isUpdatingTask || !props.newSubTaskContent.trim()}
+                        className="w-full sm:w-auto"
+                    >
+                        {t('projects.task.subtasks.add')}
+                    </Button>
+                </div>
             </div>
         </section>
     )
