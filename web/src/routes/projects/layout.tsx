@@ -419,7 +419,28 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
 }) {
     const { api } = useAppContext()
     const { t } = useTranslation()
+    const navigate = useNavigate()
     const { project } = useProject(api, props.projectId)
+    const { projects } = useProjects(api, { includeArchived: false })
+
+    const recentProjects = useMemo(() => {
+        return [...projects]
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .slice(0, 5)
+    }, [projects])
+
+    const projectOptions = useMemo(() => {
+        return recentProjects.map((p) => ({
+            value: p.id,
+            label: p.name,
+        }))
+    }, [recentProjects])
+
+    const handleProjectChange = useCallback((projectId: string) => {
+        if (projectId !== props.projectId) {
+            void navigate({ to: '/projects/$projectId', params: { projectId } })
+        }
+    }, [props.projectId, navigate])
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -427,16 +448,27 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 title={project?.name ?? t('projects.board.title')}
                 fullWidth
                 left={
-                    <IconButton
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={props.onBackToProjects}
-                        aria-label={t('projects.actions.back')}
-                        title={t('projects.actions.back')}
-                    >
-                        <BackIcon className="h-5 w-5" />
-                    </IconButton>
+                    <>
+                        <IconButton
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={props.onBackToProjects}
+                            aria-label={t('projects.actions.back')}
+                            title={t('projects.actions.back')}
+                        >
+                            <BackIcon className="h-5 w-5" />
+                        </IconButton>
+                        {projectOptions.length > 1 ? (
+                            <AdaptiveSelectField
+                                title={t('projects.board.switchProject')}
+                                value={props.projectId}
+                                options={projectOptions}
+                                onValueChange={handleProjectChange}
+                                align="start"
+                            />
+                        ) : null}
+                    </>
                 }
                 right={
                     <>

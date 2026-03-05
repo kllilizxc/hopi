@@ -54,6 +54,7 @@ export default {
   'projects.workspaceCount': '{n} workspaces',
   'projects.board.title': 'Board',
   'projects.board.placeholder': 'Kanban board (coming soon).',
+  'projects.board.switchProject': 'Switch project',
 
   'projects.columns.new': 'New',
   'projects.columns.planned': 'Planned',

@@ -54,6 +54,7 @@ export default {
   'projects.workspaceCount': '{n} 个工作区',
   'projects.board.title': '看板',
   'projects.board.placeholder': '看板（开发中）',
+  'projects.board.switchProject': '切换项目',
 
   'projects.columns.new': 'New',
   'projects.columns.planned': 'Planned',
