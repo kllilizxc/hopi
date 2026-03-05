@@ -134,6 +134,7 @@ export const HappyComposer = memo(function HappyComposer(props: {
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
     const prevDraftScopeRef = useRef<string | null>(null)
+    const composerTextRef = useRef(composerText)
 
     useEffect(() => {
         setInputState((prev) => {
@@ -143,6 +144,10 @@ export const HappyComposer = memo(function HappyComposer(props: {
             const newPos = composerText.length
             return { text: composerText, selection: { start: newPos, end: newPos } }
         })
+    }, [composerText])
+
+    useEffect(() => {
+        composerTextRef.current = composerText
     }, [composerText])
 
     // Track one-time "continue" hint after switching from local to remote.
@@ -163,13 +168,13 @@ export const HappyComposer = memo(function HappyComposer(props: {
         }
 
         if (previousScope) {
-            setDraftForScope(previousScope, composerText)
+            setDraftForScope(previousScope, composerTextRef.current)
         }
 
         prevDraftScopeRef.current = draftScope
 
         const nextText = composerDraftByScope.get(draftScope) ?? ''
-        if (nextText !== composerText) {
+        if (nextText !== composerTextRef.current) {
             api.composer().setText(nextText)
             const cursor = nextText.length
             setInputState({
@@ -177,13 +182,13 @@ export const HappyComposer = memo(function HappyComposer(props: {
                 selection: { start: cursor, end: cursor }
             })
         }
-    }, [api, composerText, draftScope])
+    }, [api, draftScope])
 
     useEffect(() => {
         return () => {
-            setDraftForScope(draftScope, composerText)
+            setDraftForScope(draftScope, composerTextRef.current)
         }
-    }, [draftScope, composerText])
+    }, [draftScope])
 
     const { haptic: platformHaptic, isTouch } = usePlatform()
     const { isStandalone, isIOS } = usePWAInstall()
