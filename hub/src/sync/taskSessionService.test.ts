@@ -9,6 +9,182 @@ function tick(): Promise<void> {
 }
 
 describe('startSessionFromTask', () => {
+    it('runs init script before kickoff prompt when script exists', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-1'
+        const taskId = 'task-init-1'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const sequence: string[] = []
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                sequence.push('init')
+                return { success: true, stdout: 'init ok', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sequence.push('kickoff')
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(sequence).toEqual(['init', 'kickoff'])
+    })
+
+    it('fails start when init script execution fails', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-fail'
+        const taskId = 'task-init-fail'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-fail',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let archiveCalled = false
+        let sendMessageCalled = false
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                return { success: false, error: 'init failed', stdout: '', stderr: 'init failed' }
+            },
+            async archiveSession() {
+                archiveCalled = true
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+            expect(result.error).toContain('.hopi/init.sh')
+            expect(result.error).toContain('init failed')
+        }
+        expect(archiveCalled).toBe(true)
+        expect(sendMessageCalled).toBe(false)
+    })
+
     it('emits task-updated before waiting for kickoff message delivery', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

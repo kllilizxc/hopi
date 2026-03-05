@@ -242,7 +242,7 @@ export const TaskSchema = z.object({
     permissionMode: PermissionModeSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
-    source: z.enum(['manual', 'improvements_scan']).nullable().optional(),
+    source: z.enum(['manual', 'improvements_scan', 'project_init']).nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),
     subTasks: TodosSchema.nullable().optional(),
     subTasksUpdatedAt: z.number().nullable().optional(),

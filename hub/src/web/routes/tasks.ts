@@ -1,5 +1,12 @@
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TodoItemSchema } from '@hopi/protocol/schemas'
-import { PRODUCT_ENV, PRODUCT_HEADERS, PRODUCT_NAME, PRODUCT_PREVIEW_READY_MARKER, PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
+import {
+    PRODUCT_ENV,
+    PRODUCT_HEADERS,
+    PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
+    PRODUCT_NAME,
+    PRODUCT_PREVIEW_READY_MARKER,
+    PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
+} from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -7,6 +14,7 @@ import type { Store, StoredTask } from '../../store'
 import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
+import { runMergeScriptIfPresent } from '../../sync/projectScripts'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import type { WebAppEnv } from '../middleware/auth'
@@ -1827,6 +1835,70 @@ export function createTasksRoutes(options: {
                     skippedReason: mergeState.reason === 'already_merged' ? 'already_merged' : 'no_changes',
                     mergedAt: task.worktreeMergedAt ?? null
                 })
+            }
+
+            const mergeScriptCwd = typeof session.metadata.path === 'string'
+                ? session.metadata.path.trim()
+                : ''
+
+            if (mergeScriptCwd) {
+                const mergeScript = await runMergeScriptIfPresent({
+                    engine,
+                    sessionId: session.id,
+                    cwd: mergeScriptCwd,
+                    taskId: task.id,
+                    projectId: task.projectId,
+                    targetBranch,
+                    sourceBranch
+                })
+
+                if (!mergeScript.ok) {
+                    const message = `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}: ${mergeScript.error}`
+                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+                }
+
+                if (mergeScript.executed) {
+                    const afterScriptMergeState = await computeMergeGitState({
+                        engine,
+                        sessionId: session.id,
+                        targetBranch,
+                        sourceBranch,
+                        taskMergedAt: null
+                    })
+
+                    if (afterScriptMergeState.reason === 'merge_check_failed') {
+                        const message = afterScriptMergeState.error ?? 'Merge state check failed after custom merge script'
+                        return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+                    }
+
+                    if (afterScriptMergeState.canMerge) {
+                        return c.json({
+                            error: `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} completed but branch is still mergeable. Ensure script merges into target branch.`
+                        }, 500)
+                    }
+
+                    const updatedTask = await persistSuccessfulTaskMerge({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        task,
+                        sessionId: session.id,
+                        sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
+                        mergeResult: { success: true },
+                        preferredLocale
+                    })
+                    if (!updatedTask) {
+                        return c.json({ error: 'Task not found' }, 404)
+                    }
+
+                    return c.json({
+                        ok: true,
+                        commitHash: null,
+                        skippedReason: null,
+                        mergedAt: updatedTask.worktreeMergedAt,
+                        autoResolved: null
+                    })
+                }
             }
 
             const commitMessage = buildWorktreeMergeCommitMessage(task)

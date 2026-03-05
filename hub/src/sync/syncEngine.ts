@@ -512,6 +512,14 @@ export class SyncEngine {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
     }
 
+    async runBash(sessionId: string, params: {
+        command: string
+        cwd?: string
+        timeout?: number
+    }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.runBash(sessionId, params)
+    }
+
     async previewStart(machineId: string, params: {
         taskId: string
         sessionId: string

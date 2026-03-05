@@ -17,6 +17,37 @@ function createTestApp(store: Store): Hono {
 }
 
 describe('project workspace policy', () => {
+    it('auto-creates project init task and keeps worktree settings unlocked before task runs', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Init',
+                workspaces: [{ path: '/tmp/workspace-init' }]
+            })
+        })
+        expect(createResponse.status).toBe(200)
+
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+                defaultWorkspaceId: string | null
+                worktreeLocked?: boolean
+            }
+        }
+
+        const tasks = store.tasks.listTasksByProjectAndNamespace(createBody.project.id, 'default')
+        expect(tasks.length).toBe(1)
+        expect(tasks[0]?.source).toBe('project_init')
+        expect(tasks[0]?.title).toBe('Initialize project scripts')
+        expect(tasks[0]?.workspaceId).toBe(createBody.project.defaultWorkspaceId)
+        expect(createBody.project.worktreeLocked).toBe(false)
+    })
+
     it('creates project workspaces during project creation and sets default workspace', async () => {
         const store = new Store(':memory:')
         const app = createTestApp(store)

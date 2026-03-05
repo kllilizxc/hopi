@@ -1,4 +1,10 @@
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import {
+    PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
+    PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
+    PRODUCT_PREVIEW_READY_MARKER,
+    PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
+} from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -50,7 +56,16 @@ const listQuerySchema = z.object({
 
 function hasProjectHistory(store: Store, options: { projectId: string; namespace: string }): boolean {
     const tasks = store.tasks.listTasksByProjectAndNamespace(options.projectId, options.namespace, { includeArchived: true })
-    if (tasks.length > 0) {
+    const hasMeaningfulTaskHistory = tasks.some((task) => {
+        if (task.source !== 'project_init') {
+            return true
+        }
+        if (task.status !== 'planned') {
+            return true
+        }
+        return Boolean(task.activeSessionId)
+    })
+    if (hasMeaningfulTaskHistory) {
         return true
     }
 
@@ -62,6 +77,49 @@ function hasProjectHistory(store: Store, options: { projectId: string; namespace
         }
         return (metadata as { projectId?: unknown }).projectId === options.projectId
     })
+}
+
+function buildProjectInitTaskDescription(options: {
+    projectName: string
+    sessionType: 'simple' | 'worktree'
+    targetBranch: string | null
+}): string {
+    const mergeRequirement = options.sessionType === 'worktree'
+        ? options.targetBranch
+            ? `- This project uses worktree mode. Merge script must merge task branches into target branch \`${options.targetBranch}\`.`
+            : '- This project uses worktree mode. Merge script must detect/require configured target branch before running merge.'
+        : '- This project currently uses simple mode. Merge script should still exist and fail with a clear message when no worktree context is available.'
+
+    return [
+        `Bootstrap task for project "${options.projectName}".`,
+        '',
+        'Goal:',
+        'Create project-level automation scripts under `.hopi/` by analyzing the current repository structure.',
+        '',
+        'Required files:',
+        `1) \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\``,
+        '   - Runs all setup needed before a task prompt starts (dependency install/check, generated files, env prep, etc.).',
+        `2) \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\``,
+        '   - Runs merge-to-target workflow command(s) used by the Merge action.',
+        `3) \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\``,
+        '   - Runs preview/dev server workflow for the Preview action.',
+        `   - Must emit readiness marker: \`${PRODUCT_PREVIEW_READY_MARKER}http://127.0.0.1:<port>\`.`,
+        '',
+        'Requirements:',
+        '- Use shebang: `#!/usr/bin/env bash` and `set -euo pipefail`.',
+        '- Keep scripts minimal and project-specific; no unrelated refactors.',
+        '- Ensure all three scripts are executable (`chmod +x`).',
+        mergeRequirement,
+        '',
+        'Validation (must be completed before marking this task finished):',
+        '- Execute and verify init script end-to-end.',
+        '- Execute and verify merge script behavior for this project mode.',
+        '- Execute and verify preview script reaches ready marker and stable preview URL.',
+        '- Summarize validation commands + results in your final response.',
+        '',
+        'Completion rule:',
+        'Do not finish this task until scripts are fully tested and confirmed working.'
+    ].join('\n')
 }
 
 export function createProjectsRoutes(options: {
@@ -153,6 +211,23 @@ export function createProjectsRoutes(options: {
             ? options.store.projects.updateProject(projectId, namespace, { defaultWorkspaceId }) ?? created
             : created
 
+        const initTaskId = randomUUID()
+        const initTaskDescription = buildProjectInitTaskDescription({
+            projectName: project.name,
+            sessionType: project.defaultSessionType === 'worktree' ? 'worktree' : 'simple',
+            targetBranch: project.worktreeTargetBranch ?? null
+        })
+        options.store.tasks.createTask({
+            id: initTaskId,
+            projectId,
+            title: 'Initialize project scripts',
+            description: initTaskDescription,
+            status: 'planned',
+            sortKey: Date.now(),
+            workspaceId: defaultWorkspaceId,
+            source: 'project_init'
+        })
+
         const engine = options.getSyncEngine()
         engine?.handleRealtimeEvent({ type: 'project-added', projectId, namespace, data: { projectId } })
         for (const workspace of createdWorkspaces) {
@@ -164,6 +239,7 @@ export function createProjectsRoutes(options: {
                 data: { workspaceId: workspace.id }
             })
         }
+        engine?.handleRealtimeEvent({ type: 'task-added', taskId: initTaskId, projectId, namespace, data: { taskId: initTaskId } })
 
         const workspaceCount = options.store.workspaces.listWorkspacesByProject(projectId).length
         return c.json({

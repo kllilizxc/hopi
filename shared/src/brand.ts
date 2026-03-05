@@ -5,6 +5,8 @@ export const PRODUCT_STARTING_MODE_FLAG = `--${PRODUCT_SLUG}-starting-mode`
 
 export const PRODUCT_HOME_DIRNAME = `.${PRODUCT_SLUG}`
 export const PRODUCT_DB_FILENAME = `${PRODUCT_SLUG}.db`
+export const PRODUCT_INIT_SCRIPT_RELATIVE_PATH = `${PRODUCT_HOME_DIRNAME}/init.sh`
+export const PRODUCT_MERGE_SCRIPT_RELATIVE_PATH = `${PRODUCT_HOME_DIRNAME}/merge.sh`
 export const PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH = `${PRODUCT_HOME_DIRNAME}/preview.sh`
 export const PRODUCT_PREVIEW_READY_MARKER = `::${PRODUCT_SLUG}-preview-url::`
 
@@ -73,6 +75,10 @@ export const PRODUCT_ENV = {
     PREVIEW_WEB_PORT_BASE: productEnvKey('PREVIEW_WEB_PORT_BASE'),
     PREVIEW_HUB_PORT_BASE: productEnvKey('PREVIEW_HUB_PORT_BASE'),
     PREVIEW_MODE: productEnvKey('PREVIEW_MODE'),
+    TASK_ID: productEnvKey('TASK_ID'),
+    TASK_PROJECT_ID: productEnvKey('TASK_PROJECT_ID'),
+    MERGE_TARGET_BRANCH: productEnvKey('MERGE_TARGET_BRANCH'),
+    MERGE_SOURCE_BRANCH: productEnvKey('MERGE_SOURCE_BRANCH'),
 } as const
 
 export const PRODUCT_HEADERS = {

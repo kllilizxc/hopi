@@ -224,6 +224,14 @@ export class RpcGateway {
         return exists
     }
 
+    async runBash(sessionId: string, params: {
+        command: string
+        cwd?: string
+        timeout?: number
+    }): Promise<RpcCommandResponse> {
+        return await this.sessionRpc(sessionId, 'bash', params) as RpcCommandResponse
+    }
+
     async previewStart(machineId: string, params: {
         taskId: string
         sessionId: string

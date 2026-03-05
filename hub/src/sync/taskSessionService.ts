@@ -1,10 +1,12 @@
 import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { setSessionTaskLink } from './sessionTaskLink'
+import { runInitScriptIfPresent } from './projectScripts'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
@@ -374,6 +376,35 @@ export async function startSessionFromTask(options: {
         })
     }
 
+    const getSessionByNamespace = (options.engine as unknown as {
+        getSessionByNamespace?: (sessionId: string, namespace: string) => { metadata?: { path?: unknown } } | undefined
+    }).getSessionByNamespace
+    const runtimeSession = typeof getSessionByNamespace === 'function'
+        ? getSessionByNamespace(spawn.sessionId, options.namespace)
+        : undefined
+    const runtimePath = typeof runtimeSession?.metadata?.path === 'string'
+        ? runtimeSession.metadata.path.trim()
+        : ''
+    const scriptCwd = runtimePath || workspace.path
+
+    const initScript = await runInitScriptIfPresent({
+        engine: options.engine,
+        sessionId: spawn.sessionId,
+        cwd: scriptCwd,
+        taskId: task.id,
+        projectId: project.id
+    })
+    if (!initScript.ok) {
+        try {
+            await options.engine.archiveSession(spawn.sessionId)
+        } catch {
+        }
+        return {
+            ok: false,
+            error: `${PRODUCT_INIT_SCRIPT_RELATIVE_PATH} failed: ${initScript.error}`
+        }
+    }
+
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
         activeSessionId: spawn.sessionId,
         status: 'in_progress',
@@ -468,9 +499,13 @@ export async function startSessionFromTask(options: {
         return `${baseKickoff}${historySection}`
     })()
 
+    const kickoffWithInitNotice = initScript.executed
+        ? `${kickoffText}\n\nSystem note: Ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` successfully before this prompt.`
+        : kickoffText
+
     try {
         await options.engine.sendMessage(spawn.sessionId, {
-            text: kickoffText,
+            text: kickoffWithInitNotice,
             localId: `auto:kickoff:${updatedTask.id}:${Date.now()}`,
             attachments: uploadedAttachments,
             sentFrom: 'webapp'
