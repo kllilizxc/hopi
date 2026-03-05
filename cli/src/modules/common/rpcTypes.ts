@@ -1,6 +1,7 @@
 export interface SpawnSessionOptions {
     machineId?: string
     directory: string
+    worktreeWorkspacePaths?: string[]
     sessionId?: string
     resumeSessionId?: string
     approvedNewDirectoryCreation?: boolean

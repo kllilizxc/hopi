@@ -108,6 +108,7 @@ export function startRunnerControlServer({
       schema: {
         body: z.object({
           directory: z.string(),
+          worktreeWorkspacePaths: z.array(z.string()).max(50).optional(),
           sessionId: z.string().optional(),
           sessionType: z.enum(['simple', 'worktree']).optional(),
           worktreeName: z.string().optional()
@@ -131,10 +132,10 @@ export function startRunnerControlServer({
         }
       }
     }, async (request, reply) => {
-      const { directory, sessionId, sessionType, worktreeName } = request.body;
+      const { directory, worktreeWorkspacePaths, sessionId, sessionType, worktreeName } = request.body;
 
       logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
-      const result = await spawnSession({ directory, sessionId, sessionType, worktreeName });
+      const result = await spawnSession({ directory, worktreeWorkspacePaths, sessionId, sessionType, worktreeName });
 
       switch (result.type) {
         case 'success':

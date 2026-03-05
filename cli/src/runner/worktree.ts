@@ -51,6 +51,10 @@ async function resolveRepoRoot(basePath: string): Promise<string> {
   return root;
 }
 
+export async function resolveGitRepoRoot(basePath: string): Promise<string> {
+  return await resolveRepoRoot(basePath);
+}
+
 async function resolveHeadCommit(repoRoot: string): Promise<string | undefined> {
   try {
     const result = await runGit(['rev-parse', '--verify', 'HEAD'], repoRoot);
@@ -115,8 +119,9 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
 export async function createWorktree(options: {
   basePath: string;
   nameHint?: string;
+  worktreeRootDir?: string;
 }): Promise<WorktreeResult> {
-  const { basePath, nameHint } = options;
+  const { basePath, nameHint, worktreeRootDir } = options;
   let repoRoot: string;
   let baseCommit: string | undefined;
 
@@ -134,7 +139,9 @@ export async function createWorktree(options: {
 
   const repoParent = dirname(repoRoot);
   const repoName = basename(repoRoot);
-  const repoWorktreesRoot = join(repoParent, `${repoName}-worktrees`);
+  const repoWorktreesRoot = worktreeRootDir?.trim()
+    ? worktreeRootDir.trim()
+    : join(repoParent, `${repoName}-worktrees`);
   await mkdir(repoWorktreesRoot, { recursive: true });
 
   const baseName = normalizeNameHint(nameHint) ?? makeDefaultBaseName();

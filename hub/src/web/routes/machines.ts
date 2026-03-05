@@ -6,6 +6,7 @@ import { requireMachine } from './guards'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
+    worktreeWorkspacePaths: z.array(z.string().min(1)).max(50).optional(),
     agent: z.enum(['claude', 'codex', 'gemini', 'opencode']).optional(),
     model: z.string().optional(),
     yolo: z.boolean().optional(),
@@ -56,7 +57,9 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             parsed.data.model,
             parsed.data.yolo,
             parsed.data.sessionType,
-            parsed.data.worktreeName
+            parsed.data.worktreeName,
+            undefined,
+            parsed.data.worktreeWorkspacePaths
         )
         return c.json(result)
     })
