@@ -252,6 +252,7 @@ export const knownTools: Record<string, {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Apply changes',
         subtitle: (opts) => {
+            // Try to extract file info from input.changes
             if (isObject(opts.input) && isObject(opts.input.changes)) {
                 const files = Object.keys(opts.input.changes)
                 if (files.length === 0) return null
@@ -260,6 +261,25 @@ export const knownTools: Record<string, {
                 const name = basename(display)
                 return files.length > 1 ? `${name} (+${files.length - 1})` : name
             }
+
+            // Fallback: try to extract file info from result.stdout
+            if (isObject(opts.result)) {
+                const stdout = typeof opts.result.stdout === 'string' ? opts.result.stdout : null
+                if (stdout) {
+                    // Parse "M /path/to/file.ts" format
+                    const fileMatches = stdout.match(/^[MAD]\s+(.+)$/m)
+                    if (fileMatches && fileMatches[1]) {
+                        const filePath = fileMatches[1].trim()
+                        const display = resolveDisplayPath(filePath, opts.metadata)
+                        const name = basename(display)
+                        // Count total files
+                        const allMatches = stdout.match(/^[MAD]\s+/gm)
+                        const count = allMatches ? allMatches.length : 1
+                        return count > 1 ? `${name} (+${count - 1})` : name
+                    }
+                }
+            }
+
             return null
         },
         minimal: true

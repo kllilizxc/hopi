@@ -123,6 +123,8 @@ function AppInner() {
     const hasLoadedOnceRef = useRef(false)
     const baseUrlRef = useRef(baseUrl)
     const pushPromptedRef = useRef(false)
+    const cachedTokenRef = useRef<string | null>(null)
+    const cachedApiRef = useRef<ApiClient | null>(null)
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
 
     useEffect(() => {
@@ -385,10 +387,17 @@ function AppInner() {
         }
     }
 
-    // Mark that we've successfully loaded once
+    // Mark that we've successfully loaded once and cache token/api
     if (token && api) {
         hasLoadedOnceRef.current = true
+        cachedTokenRef.current = token
+        cachedApiRef.current = api
     }
+
+    // Use cached values during reconnection
+    const effectiveToken = token ?? cachedTokenRef.current
+    const effectiveApi = api ?? cachedApiRef.current
+
 
     // Show reconnecting overlay if we're reconnecting after initial load
     const isReconnecting = hasLoadedOnceRef.current && (
@@ -399,7 +408,7 @@ function AppInner() {
     )
 
     return (
-        <AppContextProvider value={{ api, token, baseUrl }}>
+        <AppContextProvider value={{ api: effectiveApi!, token: effectiveToken!, baseUrl }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
                 <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing && !isReconnecting} />
