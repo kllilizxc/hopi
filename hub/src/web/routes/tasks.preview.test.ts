@@ -45,7 +45,12 @@ describe('tasks preview start route', () => {
     it('auto-prompts agent to create preview.sh and retries start when command is missing', async () => {
         const store = new Store(':memory:')
         const taskId = 'task-preview-auto-setup'
-        const sessionId = 'session-preview-auto-setup'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-preview-auto-setup',
+            { path: '/tmp/preview-root' },
+            null,
+            'default'
+        ).id
         seedPreviewTask(store, {
             namespace: 'default',
             projectId: 'project-preview-auto-setup',
@@ -171,6 +176,85 @@ describe('tasks preview start route', () => {
         expect(response.status).toBe(500)
         const body = await response.json() as { error?: string }
         expect(body.error).toBe('Preview process exited with code 1')
+        expect(sendMessageCalls).toBe(0)
+    })
+
+    it('falls back from worktree path to local path when preview command is missing', async () => {
+        const store = new Store(':memory:')
+        const taskId = 'task-preview-local-fallback'
+        const sessionId = 'session-preview-local-fallback'
+        seedPreviewTask(store, {
+            namespace: 'default',
+            projectId: 'project-preview-local-fallback',
+            taskId,
+            sessionId
+        })
+
+        const attemptedRoots: string[] = []
+        let sendMessageCalls = 0
+        const engine = {
+            resolveSessionAccess() {
+                return {
+                    ok: true,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        active: true,
+                        thinking: false,
+                        metadata: {
+                            path: '/tmp/worktree-root',
+                            worktree: {
+                                basePath: '/tmp/base-root',
+                                worktreePath: '/tmp/worktree-root',
+                                branch: 'task-branch',
+                                name: 'task-branch'
+                            }
+                        }
+                    }
+                }
+            },
+            async previewStartForSession(_sessionId: string, params: { rootPath: string; mode: 'local' | 'worktree' }) {
+                attemptedRoots.push(`${params.mode}:${params.rootPath}`)
+                if (params.rootPath === '/tmp/worktree-root') {
+                    throw new Error(`No preview command found. Create ${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH} or add package.json script preview/dev/start`)
+                }
+                return {
+                    active: true,
+                    status: 'ready',
+                    taskId,
+                    sessionId,
+                    mode: 'local',
+                    rootPath: '/tmp/base-root',
+                    command: 'bun run dev',
+                    url: 'http://127.0.0.1:5173',
+                    updatedAt: Date.now(),
+                    logTail: []
+                }
+            },
+            async sendMessage() {
+                sendMessageCalls += 1
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/preview/start`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            preview: { status: string; url?: string; mode?: string; rootPath?: string }
+            autoSetupAttempted?: boolean
+        }
+        expect(body.preview.status).toBe('ready')
+        expect(body.preview.url).toBe('http://127.0.0.1:5173')
+        expect(body.autoSetupAttempted).toBeUndefined()
+        expect(attemptedRoots).toEqual([
+            'worktree:/tmp/worktree-root',
+            'local:/tmp/base-root'
+        ])
         expect(sendMessageCalls).toBe(0)
     })
 })

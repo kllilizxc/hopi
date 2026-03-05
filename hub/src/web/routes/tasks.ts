@@ -370,6 +370,32 @@ function resolveTaskPreviewPath(
     return { ok: false, status: 400, error: 'Session metadata is missing preview root path' }
 }
 
+function resolveTaskPreviewFallbackPath(options: {
+    session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
+    primary: Extract<TaskPreviewPathResult, { ok: true }>
+}): Extract<TaskPreviewPathResult, { ok: true }> | null {
+    if (options.primary.mode !== 'worktree') {
+        return null
+    }
+
+    const metadata = options.session.metadata
+    const metadataPath = typeof metadata?.path === 'string' ? metadata.path.trim() : ''
+    const basePath = typeof metadata?.worktree?.basePath === 'string'
+        ? metadata.worktree.basePath.trim()
+        : ''
+    const localPath = basePath || metadataPath
+
+    if (!localPath || localPath === options.primary.rootPath) {
+        return null
+    }
+
+    return {
+        ok: true,
+        mode: 'local',
+        rootPath: localPath
+    }
+}
+
 function normalizeBranchName(value: string | undefined | null): string | null {
     if (typeof value !== 'string') {
         return null
@@ -1478,14 +1504,36 @@ export function createTasksRoutes(options: {
             return c.json({ error: previewPath.error }, previewPath.status)
         }
 
-        const startAttempt = await startPreviewWithFallback({
+        let attemptedPreviewPath: Extract<TaskPreviewPathResult, { ok: true }> = previewPath
+        let startAttempt = await startPreviewWithFallback({
             engine,
             resolved,
-            previewPath,
+            previewPath: attemptedPreviewPath,
             basePort: parsed.data.basePort
         })
         if (startAttempt.ok) {
             return c.json({ preview: startAttempt.preview })
+        }
+
+        if (isMissingPreviewCommandError(startAttempt.rawMessage)) {
+            const fallbackPath = resolveTaskPreviewFallbackPath({
+                session: resolved.session,
+                primary: previewPath
+            })
+            if (fallbackPath) {
+                const fallbackAttempt = await startPreviewWithFallback({
+                    engine,
+                    resolved,
+                    previewPath: fallbackPath,
+                    basePort: parsed.data.basePort
+                })
+                if (fallbackAttempt.ok) {
+                    return c.json({ preview: fallbackAttempt.preview })
+                }
+
+                startAttempt = fallbackAttempt
+                attemptedPreviewPath = fallbackPath
+            }
         }
 
         if (!isMissingPreviewCommandError(startAttempt.rawMessage)) {
@@ -1501,8 +1549,8 @@ export function createTasksRoutes(options: {
                 id: resolved.task.id,
                 title: resolved.task.title
             },
-            mode: previewPath.mode,
-            rootPath: previewPath.rootPath,
+            mode: attemptedPreviewPath.mode,
+            rootPath: attemptedPreviewPath.rootPath,
             basePort: parsed.data.basePort,
             failureMessage: startAttempt.rawMessage
         })
@@ -1516,7 +1564,7 @@ export function createTasksRoutes(options: {
         const retryAttempt = await startPreviewWithFallback({
             engine,
             resolved,
-            previewPath,
+            previewPath: attemptedPreviewPath,
             basePort: parsed.data.basePort
         })
         if (retryAttempt.ok) {
@@ -1837,11 +1885,12 @@ export function createTasksRoutes(options: {
                 })
             }
 
-            const mergeScriptCwd = typeof session.metadata.path === 'string'
-                ? session.metadata.path.trim()
-                : ''
+            const mergeScriptCwdCandidates = Array.from(new Set([
+                typeof session.metadata.path === 'string' ? session.metadata.path.trim() : '',
+                typeof session.metadata.worktree.basePath === 'string' ? session.metadata.worktree.basePath.trim() : ''
+            ].filter((value) => value.length > 0)))
 
-            if (mergeScriptCwd) {
+            for (const mergeScriptCwd of mergeScriptCwdCandidates) {
                 const mergeScript = await runMergeScriptIfPresent({
                     engine,
                     sessionId: session.id,
@@ -1857,48 +1906,50 @@ export function createTasksRoutes(options: {
                     return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
                 }
 
-                if (mergeScript.executed) {
-                    const afterScriptMergeState = await computeMergeGitState({
-                        engine,
-                        sessionId: session.id,
-                        targetBranch,
-                        sourceBranch,
-                        taskMergedAt: null
-                    })
-
-                    if (afterScriptMergeState.reason === 'merge_check_failed') {
-                        const message = afterScriptMergeState.error ?? 'Merge state check failed after custom merge script'
-                        return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
-                    }
-
-                    if (afterScriptMergeState.canMerge) {
-                        return c.json({
-                            error: `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} completed but branch is still mergeable. Ensure script merges into target branch.`
-                        }, 500)
-                    }
-
-                    const updatedTask = await persistSuccessfulTaskMerge({
-                        store: options.store,
-                        engine,
-                        namespace,
-                        task,
-                        sessionId: session.id,
-                        sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
-                        mergeResult: { success: true },
-                        preferredLocale
-                    })
-                    if (!updatedTask) {
-                        return c.json({ error: 'Task not found' }, 404)
-                    }
-
-                    return c.json({
-                        ok: true,
-                        commitHash: null,
-                        skippedReason: null,
-                        mergedAt: updatedTask.worktreeMergedAt,
-                        autoResolved: null
-                    })
+                if (!mergeScript.executed) {
+                    continue
                 }
+
+                const afterScriptMergeState = await computeMergeGitState({
+                    engine,
+                    sessionId: session.id,
+                    targetBranch,
+                    sourceBranch,
+                    taskMergedAt: null
+                })
+
+                if (afterScriptMergeState.reason === 'merge_check_failed') {
+                    const message = afterScriptMergeState.error ?? 'Merge state check failed after custom merge script'
+                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+                }
+
+                if (afterScriptMergeState.canMerge) {
+                    return c.json({
+                        error: `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} completed but branch is still mergeable. Ensure script merges into target branch.`
+                    }, 500)
+                }
+
+                const updatedTask = await persistSuccessfulTaskMerge({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task,
+                    sessionId: session.id,
+                    sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
+                    mergeResult: { success: true },
+                    preferredLocale
+                })
+                if (!updatedTask) {
+                    return c.json({ error: 'Task not found' }, 404)
+                }
+
+                return c.json({
+                    ok: true,
+                    commitHash: null,
+                    skippedReason: null,
+                    mergedAt: updatedTask.worktreeMergedAt,
+                    autoResolved: null
+                })
             }
 
             const commitMessage = buildWorktreeMergeCommitMessage(task)

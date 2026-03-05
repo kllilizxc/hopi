@@ -6,7 +6,7 @@ import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { setSessionTaskLink } from './sessionTaskLink'
-import { runInitScriptIfPresent } from './projectScripts'
+import { runInitScriptIfPresent, type ScriptExecutionResult } from './projectScripts'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
@@ -34,6 +34,17 @@ function stringifyUnknown(value: unknown): string {
 
 function normalizeText(value: string): string {
     return value.replace(/\r\n/g, '\n').trim()
+}
+
+function isLikelyMissingInitScriptFailure(result: ScriptExecutionResult): boolean {
+    if (result.ok) {
+        return false
+    }
+
+    const combined = `${result.error}\n${result.stderr}\n${result.stdout}`.toLowerCase()
+    const mentionsInitScript = combined.includes(PRODUCT_INIT_SCRIPT_RELATIVE_PATH.toLowerCase()) || combined.includes('init.sh')
+    const isMissingFile = combined.includes('no such file or directory') || combined.includes('cannot open')
+    return mentionsInitScript && isMissingFile
 }
 
 function collectCodexPlanText(data: Record<string, unknown>): string | null {
@@ -417,15 +428,42 @@ export async function startSessionFromTask(options: {
     const runtimePath = typeof runtimeSession?.metadata?.path === 'string'
         ? runtimeSession.metadata.path.trim()
         : ''
-    const scriptCwd = runtimePath || workspace.path
+    const initScriptCwdCandidates = Array.from(new Set([
+        runtimePath.trim(),
+        workspace.path.trim()
+    ].filter((value) => value.length > 0)))
 
-    const initScript = await runInitScriptIfPresent({
-        engine: options.engine,
-        sessionId: spawn.sessionId,
-        cwd: scriptCwd,
-        taskId: task.id,
-        projectId: project.id
-    })
+    let initScript: ScriptExecutionResult = {
+        ok: true as const,
+        executed: false,
+        stdout: '',
+        stderr: ''
+    }
+
+    for (const scriptCwd of initScriptCwdCandidates) {
+        const result = await runInitScriptIfPresent({
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            cwd: scriptCwd,
+            taskId: task.id,
+            projectId: project.id
+        })
+        if (!result.ok && isLikelyMissingInitScriptFailure(result)) {
+            initScript = {
+                ok: true,
+                executed: false,
+                stdout: result.stdout,
+                stderr: result.stderr
+            }
+            continue
+        }
+
+        initScript = result
+        if (!result.ok || result.executed) {
+            break
+        }
+    }
+
     if (!initScript.ok) {
         try {
             await options.engine.archiveSession(spawn.sessionId)
