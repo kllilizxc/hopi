@@ -2,10 +2,12 @@ import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { DecryptedMessage, SyncEvent } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
+import { getWorkflowStrategy } from './workflowStrategy'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
 const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
+const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -36,6 +38,11 @@ function isMergeConflictAutoResolveLocalId(localId: unknown): boolean {
 function isPreviewSetupLocalId(localId: unknown): boolean {
     if (typeof localId !== 'string') return false
     return localId.startsWith(AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX)
+}
+
+function isWorkflowAutomationLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(AUTO_WORKFLOW_LOCAL_ID_PREFIX)
 }
 
 function isReadyEventMessage(message: DecryptedMessage): boolean {
@@ -89,6 +96,7 @@ function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
     if (isInternalAutomationLocalId(message.localId)) return false
     if (isMergeConflictAutoResolveLocalId(message.localId)) return false
     if (isPreviewSetupLocalId(message.localId)) return false
+    if (isWorkflowAutomationLocalId(message.localId)) return false
     return true
 }
 
@@ -211,15 +219,22 @@ export class TaskAutomation {
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
-            const shouldMoveToInProgress = current.status !== 'in_progress'
+            const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
+            if (!project) return
+
+            const strategy = getWorkflowStrategy(project)
+            const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'in_progress' }
+            const shouldApplyTransition = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
+                || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
             const shouldResetMergeState = current.worktreeMergedAt !== null
                 || current.worktreeMergeCommit !== null
                 || current.finishedAt !== null
                 || current.mergedDiffSnapshot !== null
 
-            if (shouldMoveToInProgress || shouldResetMergeState) {
+            if (shouldApplyTransition || shouldResetMergeState) {
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                    status: 'in_progress',
+                    status: transitionPatch.status ?? 'in_progress',
+                    workflowPhase: transitionPatch.workflowPhase,
                     worktreeMergedAt: null,
                     worktreeMergeCommit: null,
                     mergedDiffSnapshot: null,
@@ -349,8 +364,18 @@ export class TaskAutomation {
             }
         }
 
+        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
+        if (!project) return
+
+        const strategy = getWorkflowStrategy(project)
+        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
+        const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
+            || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
+        if (!shouldApply) return
+
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'in_review'
+            status: transitionPatch.status ?? 'in_review',
+            workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
             this.engine.handleRealtimeEvent({
@@ -372,8 +397,18 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_progress') return
 
+        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
+        if (!project) return
+
+        const strategy = getWorkflowStrategy(project)
+        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
+        const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
+            || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
+        if (!shouldApply) return
+
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'in_review'
+            status: transitionPatch.status ?? 'in_review',
+            workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
             this.engine.handleRealtimeEvent({
@@ -395,8 +430,18 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_review') return
 
+        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
+        if (!project) return
+
+        const strategy = getWorkflowStrategy(project)
+        const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'in_progress' }
+        const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
+            || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
+        if (!shouldApply) return
+
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'in_progress'
+            status: transitionPatch.status ?? 'in_progress',
+            workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
             this.engine.handleRealtimeEvent({

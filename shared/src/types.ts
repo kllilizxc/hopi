@@ -11,6 +11,7 @@ export type {
     Task,
     TaskAttachment,
     TaskPriority,
+    TaskWorkflowPhase,
     TaskStatus,
     TodoItem,
     Workspace,

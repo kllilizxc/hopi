@@ -170,6 +170,7 @@ export const ProjectSchema = z.object({
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
+    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).nullable().optional(),
     worktreeLocked: z.boolean().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
@@ -207,6 +208,8 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>
+export const TaskWorkflowPhaseSchema = z.string().min(1).max(64).regex(/^[a-z0-9_.-]+$/i)
+export type TaskWorkflowPhase = z.infer<typeof TaskWorkflowPhaseSchema>
 
 export const GitFileStatusSchema = z.object({
     fileName: z.string(),
@@ -244,6 +247,7 @@ export const TaskSchema = z.object({
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
     source: z.enum(['manual', 'improvements_scan']).nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),
+    workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     subTasks: TodosSchema.nullable().optional(),
     subTasksUpdatedAt: z.number().nullable().optional(),
     worktreeMergedAt: z.number().nullable().optional(),

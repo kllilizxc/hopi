@@ -21,6 +21,7 @@ type DbProjectRow = {
     improvements_enabled: number
     improvements_max_pending_tasks?: number
     improvements_max_generated_new?: number
+    workflow_profile?: string | null
     last_improvements_at: number | null
     created_at: number
     updated_at: number
@@ -54,6 +55,7 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         maxRunningSessions: row.max_running_sessions,
         improvementsEnabled: Boolean(row.improvements_enabled),
         improvementsMaxPendingTasks: row.improvements_max_pending_tasks ?? row.improvements_max_generated_new ?? 5,
+        workflowProfile: row.workflow_profile ?? null,
         lastImprovementsAt: row.last_improvements_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -81,6 +83,7 @@ export function createProject(
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        workflowProfile?: string | null
     }
 ): StoredProject {
     const now = Date.now()
@@ -91,7 +94,7 @@ export function createProject(
             default_agent_flavor, default_permission_mode, default_model_mode,
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
             auto_run_enabled, max_running_sessions,
-            improvements_enabled, improvements_max_pending_tasks,
+            improvements_enabled, improvements_max_pending_tasks, workflow_profile,
             created_at, updated_at, archived_at
         ) VALUES (
             @id, @namespace, @machine_id,
@@ -99,7 +102,7 @@ export function createProject(
             @default_agent_flavor, @default_permission_mode, @default_model_mode,
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
             @auto_run_enabled, @max_running_sessions,
-            @improvements_enabled, @improvements_max_pending_tasks,
+            @improvements_enabled, @improvements_max_pending_tasks, @workflow_profile,
             @created_at, @updated_at, NULL
         )
     `).run({
@@ -120,6 +123,7 @@ export function createProject(
         max_running_sessions: project.maxRunningSessions ?? 5,
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: project.improvementsMaxPendingTasks ?? 5,
+        workflow_profile: project.workflowProfile ?? null,
         created_at: now,
         updated_at: now
     })
@@ -178,6 +182,7 @@ export function updateProject(
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        workflowProfile?: string | null
         lastImprovementsAt?: number | null
         archivedAt?: number | null
     }
@@ -203,6 +208,7 @@ export function updateProject(
         maxRunningSessions: patch.maxRunningSessions ?? current.maxRunningSessions,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
         improvementsMaxPendingTasks: patch.improvementsMaxPendingTasks ?? current.improvementsMaxPendingTasks,
+        workflowProfile: patch.workflowProfile !== undefined ? patch.workflowProfile : current.workflowProfile,
         lastImprovementsAt: patch.lastImprovementsAt !== undefined ? patch.lastImprovementsAt : current.lastImprovementsAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
@@ -224,6 +230,7 @@ export function updateProject(
             max_running_sessions = @max_running_sessions,
             improvements_enabled = @improvements_enabled,
             improvements_max_pending_tasks = @improvements_max_pending_tasks,
+            workflow_profile = @workflow_profile,
             last_improvements_at = @last_improvements_at,
             updated_at = @updated_at,
             archived_at = @archived_at
@@ -245,6 +252,7 @@ export function updateProject(
         max_running_sessions: next.maxRunningSessions,
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: next.improvementsMaxPendingTasks,
+        workflow_profile: next.workflowProfile,
         last_improvements_at: next.lastImprovementsAt,
         updated_at: now,
         archived_at: next.archivedAt

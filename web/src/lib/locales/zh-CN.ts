@@ -103,6 +103,7 @@ export default {
   'projects.task.archived': '任务已归档',
   'projects.task.copyLink': '复制链接',
   'projects.task.status': '状态',
+  'projects.task.workflowPhase': '流程阶段',
   'projects.task.priority': '优先级',
   'projects.task.priority.none': '无优先级',
   'projects.task.priority.high': '高',
@@ -230,6 +231,10 @@ export default {
   'projects.automation.maxRunning': '最大运行会话数',
   'projects.automation.improvements': '完成后生成改进任务',
   'projects.automation.maxPendingTasks': '待审批自动生成任务上限',
+  'projects.automation.workflowStrategy': '工作流策略',
+  'projects.automation.workflowDefault': '默认',
+  'projects.automation.workflowGsd': 'GSD',
+  'projects.automation.workflowHint': '策略决定任务状态迁移与自动运行可执行条件。',
 
   'projects.worktree.title': '工作树',
   'projects.worktree.enable': '默认使用工作树会话',

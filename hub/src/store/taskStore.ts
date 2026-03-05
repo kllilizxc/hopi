@@ -62,6 +62,7 @@ export class TaskStore {
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        workflowPhase?: string | null
         subTasks?: unknown
         subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
@@ -85,6 +86,7 @@ export class TaskStore {
             permissionMode?: string | null
             modelMode?: string | null
             source?: string | null
+            workflowPhase?: string | null
             attachments?: unknown
             subTasks?: unknown
             subTasksUpdatedAt?: number | null

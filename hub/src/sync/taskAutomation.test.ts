@@ -759,4 +759,123 @@ describe('TaskAutomation', () => {
         expect(updated?.mergedDiffSnapshot).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
+
+    it('applies gsd workflow phase transitions on prompt and ready', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-gsd'
+        const taskId = 'task-gsd'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'GSD project',
+            workflowProfile: 'gsd'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'GSD task',
+            status: 'planned',
+            workflowPhase: 'execute_ready',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'run implementation now' },
+            meta: { sentFrom: 'webapp' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('in_progress')
+        expect(afterPrompt?.workflowPhase).toBe('execute')
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterReady?.status).toBe('in_review')
+        expect(afterReady?.workflowPhase).toBe('verify')
+    })
+
+    it('ignores workflow automation prompts for task progress state', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        const mergedAt = Date.now() - 1_000
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'finished',
+            activeSessionId: sessionId,
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'abc123'
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, { finishedAt: mergedAt })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = `auto:workflow:${taskId}:1`
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'workflow-driven helper prompt' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
+    })
 })

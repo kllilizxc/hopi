@@ -19,6 +19,7 @@ type CreateProjectInput = {
     maxRunningSessions?: number
     improvementsEnabled?: boolean
     improvementsMaxPendingTasks?: number
+    workflowProfile?: string | null
 }
 
 export function useCreateProject(api: ApiClient | null): {

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { setSessionTaskLink } from './sessionTaskLink'
+import { getWorkflowStrategy } from './workflowStrategy'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
@@ -374,9 +375,13 @@ export async function startSessionFromTask(options: {
         })
     }
 
+    const workflowStrategy = getWorkflowStrategy(project)
+    const workflowPatch = workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
+
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
         activeSessionId: spawn.sessionId,
-        status: 'in_progress',
+        status: workflowPatch.status ?? 'in_progress',
+        workflowPhase: workflowPatch.workflowPhase,
         source: task.source === 'improvements_scan' ? 'manual' : undefined
     })
     if (!updatedTask) {
