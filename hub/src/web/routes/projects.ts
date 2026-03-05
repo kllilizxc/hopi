@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
+import { listWorkflowStrategyDescriptors } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
 
 const createProjectSchema = z.object({
@@ -30,7 +31,8 @@ const createProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
-    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional()
+    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
+    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).nullable().optional()
 })
 
 const updateProjectSchema = z.object({
@@ -47,7 +49,8 @@ const updateProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
-    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional()
+    improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
+    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).nullable().optional()
 })
 
 const listQuerySchema = z.object({
@@ -128,6 +131,12 @@ export function createProjectsRoutes(options: {
 }): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
+    app.get('/workflow-strategies', (c) => {
+        return c.json({
+            strategies: listWorkflowStrategyDescriptors()
+        })
+    })
+
     app.get('/projects', (c) => {
         const namespace = c.get('namespace')
         const query = listQuerySchema.safeParse(c.req.query())
@@ -185,7 +194,8 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks,
+            workflowProfile: parsed.data.workflowProfile ?? null
         })
 
         const createdWorkspaces: StoredWorkspace[] = []
@@ -318,7 +328,8 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks,
+            workflowProfile: parsed.data.workflowProfile
         })
 
         if (!updated) {

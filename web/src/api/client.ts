@@ -27,6 +27,7 @@ import type {
     TasksResponse,
     UploadFileResponse,
     VisibilityPayload,
+    WorkflowStrategiesResponse,
     WorkspaceResponse,
     WorkspacesResponse,
     SessionResponse,
@@ -213,6 +214,10 @@ export class ApiClient {
         return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`)
     }
 
+    async listWorkflowStrategies(): Promise<WorkflowStrategiesResponse> {
+        return await this.request<WorkflowStrategiesResponse>('/api/workflow-strategies')
+    }
+
     async createProject(payload: {
         machineId: string
         name: string
@@ -229,6 +234,7 @@ export class ApiClient {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        workflowProfile?: string | null
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>('/api/projects', {
             method: 'POST',
@@ -250,6 +256,7 @@ export class ApiClient {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        workflowProfile?: string | null
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
             method: 'PATCH',
@@ -304,6 +311,7 @@ export class ApiClient {
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         permissionMode?: PermissionMode
         modelMode?: string
+        workflowPhase?: string | null
         sortKey?: number
         attachments?: Array<{
             id: string
@@ -340,6 +348,7 @@ export class ApiClient {
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
         modelMode?: ModelMode | null
+        workflowPhase?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
         attachments?: Array<{

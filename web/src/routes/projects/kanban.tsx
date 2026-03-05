@@ -417,6 +417,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                     {t(getTaskPriorityLabelKey(props.task.priority))}
                                 </Tag>
                             ) : null}
+                            {props.task.workflowPhase ? (
+                                <Tag size="xs" variant="default">
+                                    {props.task.workflowPhase}
+                                </Tag>
+                            ) : null}
                             {subTaskProgress ? (
                                 <Tag size="xs" variant={subTaskProgress.completed === subTaskProgress.total ? 'success' : 'default'}>
                                     {t('projects.tasks.subtasksProgress', {

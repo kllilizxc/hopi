@@ -4,6 +4,7 @@ export const queryKeys = {
     messages: (sessionId: string) => ['messages', sessionId] as const,
     machines: ['machines'] as const,
     projects: ['projects'] as const,
+    workflowStrategies: ['workflow-strategies'] as const,
     project: (projectId: string) => ['project', projectId] as const,
     workspaces: (projectId: string) => ['workspaces', projectId] as const,
     tasks: (projectId: string) => ['tasks', projectId] as const,

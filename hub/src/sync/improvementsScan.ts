@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
+import { getDefaultWorkflowPhase } from './workflowStrategy'
 
 export const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const MAX_IMPROVEMENTS_PER_SCAN = 3
@@ -525,7 +526,7 @@ export async function runImprovementsScan(options: {
     store: Store
     engine: SyncEngine
     namespace: string
-    project: { id: string; name: string; improvementsMaxPendingTasks: number }
+    project: { id: string; name: string; improvementsMaxPendingTasks: number; workflowProfile?: string | null }
     finishedTask: StoredTask
     targetSessionId: string
     maxToCreate: number
@@ -628,6 +629,7 @@ export async function runImprovementsScan(options: {
             priority: suggestion.priority,
             sortKey: Date.now() + createdTaskIds.length,
             workspaceId,
+            workflowPhase: getDefaultWorkflowPhase(options.project),
             attachments: undefined,
             source: 'improvements_scan',
             sourceTaskId: options.finishedTask.id
