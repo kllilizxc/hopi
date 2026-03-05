@@ -8,6 +8,10 @@ type CreateProjectInput = {
     name: string
     description?: string
     workspaces: Array<{ path: string; label?: string }>
+    defaultSessionType?: 'simple' | 'worktree'
+    worktreeTargetBranch?: string
+    worktreeAutoCommitMode?: 'off' | 'per_conversation'
+    worktreeCleanupAfterMerge?: boolean
     defaultAgentFlavor?: AgentFlavor
     defaultPermissionMode?: PermissionMode
     defaultModelMode?: ModelMode

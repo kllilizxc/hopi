@@ -63,6 +63,10 @@ function CreateProjectDialog(props: {
         name: string
         description?: string
         workspaces: Array<{ path: string; label?: string }>
+        defaultSessionType?: 'simple' | 'worktree'
+        worktreeTargetBranch?: string
+        worktreeAutoCommitMode?: 'off' | 'per_conversation'
+        worktreeCleanupAfterMerge?: boolean
     }) => Promise<string | null>
     isPending: boolean
     error: string | null
@@ -74,6 +78,10 @@ function CreateProjectDialog(props: {
     const [workspacePath, setWorkspacePath] = useState('')
     const [workspaceLabel, setWorkspaceLabel] = useState('')
     const [workspaces, setWorkspaces] = useState<Array<{ path: string; label?: string }>>([])
+    const [defaultSessionType, setDefaultSessionType] = useState<'simple' | 'worktree'>('simple')
+    const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
+    const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
+    const [worktreeCleanupAfterMerge, setWorktreeCleanupAfterMerge] = useState(false)
 
     const machineOptions = useMemo(() => {
         if (props.isMachinesLoading) {
@@ -107,11 +115,16 @@ function CreateProjectDialog(props: {
 
     const handleSubmit = async () => {
         if (!canSubmit) return
+        const normalizedTargetBranch = worktreeTargetBranch.trim()
         const createdId = await props.onCreate({
             machineId,
             name: name.trim(),
             description: description.trim() ? description.trim() : undefined,
-            workspaces
+            workspaces,
+            defaultSessionType,
+            worktreeTargetBranch: defaultSessionType === 'worktree' && normalizedTargetBranch ? normalizedTargetBranch : undefined,
+            worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : undefined,
+            worktreeCleanupAfterMerge: defaultSessionType === 'worktree' ? worktreeCleanupAfterMerge : undefined
         })
         if (createdId) {
             setName('')
@@ -119,6 +132,10 @@ function CreateProjectDialog(props: {
             setWorkspacePath('')
             setWorkspaceLabel('')
             setWorkspaces([])
+            setDefaultSessionType('simple')
+            setWorktreeTargetBranch('')
+            setWorktreeAutoCommitMode('off')
+            setWorktreeCleanupAfterMerge(false)
             props.onClose()
         }
     }
@@ -263,6 +280,57 @@ function CreateProjectDialog(props: {
                             {t('projects.create.workspaceRequired')}
                         </div>
                     )}
+
+                    <div className="space-y-2">
+                        <div className="text-sm font-semibold">{t('projects.worktree.title')}</div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <Checkbox
+                                checked={defaultSessionType === 'worktree'}
+                                onCheckedChange={(enabled) => {
+                                    setDefaultSessionType(enabled ? 'worktree' : 'simple')
+                                    if (!enabled) {
+                                        setWorktreeAutoCommitMode('off')
+                                    }
+                                }}
+                                disabled={props.isPending}
+                            />
+                            {t('projects.worktree.enable')}
+                        </label>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.worktree.targetBranch')}</label>
+                            <input
+                                type="text"
+                                value={worktreeTargetBranch}
+                                onChange={(e) => setWorktreeTargetBranch(e.target.value)}
+                                disabled={props.isPending || defaultSessionType !== 'worktree'}
+                                placeholder={t('projects.worktree.targetBranchPlaceholder')}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            />
+                            <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.targetBranchHint')}</div>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <Checkbox
+                                checked={worktreeAutoCommitMode === 'per_conversation'}
+                                onCheckedChange={(enabled) => setWorktreeAutoCommitMode(enabled ? 'per_conversation' : 'off')}
+                                disabled={props.isPending || defaultSessionType !== 'worktree'}
+                            />
+                            {t('projects.worktree.autoCommit')}
+                        </label>
+                        <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.autoCommitHint')}</div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <Checkbox
+                                checked={worktreeCleanupAfterMerge}
+                                onCheckedChange={setWorktreeCleanupAfterMerge}
+                                disabled={props.isPending || defaultSessionType !== 'worktree'}
+                            />
+                            {t('projects.worktree.cleanup')}
+                        </label>
+                        <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.cleanupHint')}</div>
+                    </div>
 
                     {props.error ? (
                         <div className="text-sm text-red-600">
@@ -538,6 +606,10 @@ export default function ProjectsPage() {
         name: string
         description?: string
         workspaces: Array<{ path: string; label?: string }>
+        defaultSessionType?: 'simple' | 'worktree'
+        worktreeTargetBranch?: string
+        worktreeAutoCommitMode?: 'off' | 'per_conversation'
+        worktreeCleanupAfterMerge?: boolean
     }): Promise<string | null> => {
         try {
             const created = await createProject(input)

@@ -231,6 +231,16 @@ export default {
   'projects.automation.improvements': 'Improvements scan on finish',
   'projects.automation.maxPendingTasks': 'Max pending auto-generated tasks',
 
+  'projects.worktree.title': 'Worktree',
+  'projects.worktree.enable': 'Use worktree sessions by default',
+  'projects.worktree.targetBranch': 'Target branch',
+  'projects.worktree.targetBranchPlaceholder': 'e.g. main',
+  'projects.worktree.targetBranchHint': 'Reviewed task worktrees merge into this branch.',
+  'projects.worktree.autoCommit': 'Auto-commit before merge',
+  'projects.worktree.autoCommitHint': 'Commit task changes before merge checks and retries.',
+  'projects.worktree.cleanup': 'Cleanup worktree after merge',
+  'projects.worktree.cleanupHint': 'Remove temporary worktree directories after successful merges.',
+
   'projects.workspaces.title': 'Workspaces',
   'projects.workspaces.hint': 'Workspaces are fixed at project creation and read-only here.',
   'projects.workspaces.empty': 'No workspaces yet. Add at least one to start sessions.',

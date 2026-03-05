@@ -231,6 +231,16 @@ export default {
   'projects.automation.improvements': '完成后生成改进任务',
   'projects.automation.maxPendingTasks': '待审批自动生成任务上限',
 
+  'projects.worktree.title': '工作树',
+  'projects.worktree.enable': '默认使用工作树会话',
+  'projects.worktree.targetBranch': '目标分支',
+  'projects.worktree.targetBranchPlaceholder': '例如 main',
+  'projects.worktree.targetBranchHint': '已评审任务的工作树将合并到该分支。',
+  'projects.worktree.autoCommit': '合并前自动提交',
+  'projects.worktree.autoCommitHint': '在合并检查与重试前自动提交任务改动。',
+  'projects.worktree.cleanup': '合并后清理工作树',
+  'projects.worktree.cleanupHint': '合并成功后删除临时工作树目录。',
+
   'projects.workspaces.title': '工作区',
   'projects.workspaces.hint': '工作区在创建项目时确定，之后在此页面只读。',
   'projects.workspaces.empty': '暂无工作区。至少添加一个才能启动会话。',
