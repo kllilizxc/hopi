@@ -153,6 +153,35 @@ type KanbanTaskSubTask = {
     status: 'pending' | 'in_progress' | 'completed'
 }
 
+function getSubTaskStatusLabelKey(status: KanbanTaskSubTask['status']): string {
+    switch (status) {
+        case 'completed':
+            return 'projects.task.subtasks.status.completed'
+        case 'in_progress':
+            return 'projects.task.subtasks.status.inProgress'
+        case 'pending':
+            return 'projects.task.subtasks.status.pending'
+        default: {
+            const _exhaustive: never = status
+            return _exhaustive
+        }
+    }
+}
+
+function getSubTaskStatusIconColor(status: KanbanTaskSubTask['status']): string {
+    switch (status) {
+        case 'completed':
+            return 'var(--app-kanban-finished)'
+        case 'in_progress':
+            return 'var(--app-kanban-in-progress)'
+        case 'pending':
+            return 'var(--app-hint)'
+        default: {
+            const _exhaustive: never = status
+            return _exhaustive
+        }
+    }
+}
 function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
     if (!Array.isArray(task.subTasks)) return []
     return task.subTasks.filter((item): item is KanbanTaskSubTask => {
@@ -435,52 +464,6 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 </Button>
                             </div>
                         ) : null}
-                        {canExpandSubTasks ? (
-                            <div className="mt-2">
-                                <button
-                                    type="button"
-                                    draggable={false}
-                                    className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] cursor-pointer"
-                                    onClick={(event) => {
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                        setIsSubTasksExpanded((current) => !current)
-                                    }}
-                                    aria-label={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
-                                    title={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
-                                >
-                                    {isSubTasksExpanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
-                                    <span>{isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}</span>
-                                </button>
-                                {isSubTasksExpanded ? (
-                                    <div className="mt-1.5 flex flex-col gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2">
-                                        {subTasks.map((subTask) => (
-                                            <div key={subTask.id} className="flex items-start gap-1.5 text-xs">
-                                                <Tag
-                                                    size="xs"
-                                                    variant={
-                                                        subTask.status === 'completed'
-                                                            ? 'success'
-                                                            : subTask.status === 'in_progress'
-                                                                ? 'warning'
-                                                                : 'default'
-                                                    }
-                                                >
-                                                    {subTask.status === 'completed'
-                                                        ? t('projects.task.subtasks.status.completed')
-                                                        : subTask.status === 'in_progress'
-                                                            ? t('projects.task.subtasks.status.inProgress')
-                                                            : t('projects.task.subtasks.status.pending')}
-                                                </Tag>
-                                                <span className={`min-w-0 break-words leading-tight ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}>
-                                                    {subTask.content}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : null}
-                            </div>
-                        ) : null}
                     </div>
                     <AdaptiveSelect
                         title={t('projects.tasks.moveTo')}
@@ -509,6 +492,46 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         }
                     />
                 </div>
+                {canExpandSubTasks ? (
+                    <div className="mt-2 w-full">
+                        <button
+                            type="button"
+                            draggable={false}
+                            className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] cursor-pointer"
+                            onClick={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                setIsSubTasksExpanded((current) => !current)
+                            }}
+                            aria-label={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
+                            title={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
+                        >
+                            {isSubTasksExpanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
+                            <span>{isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}</span>
+                        </button>
+                        {isSubTasksExpanded ? (
+                            <div className="mt-1.5 w-full flex flex-col gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2">
+                                {subTasks.map((subTask) => {
+                                    const statusLabel = t(getSubTaskStatusLabelKey(subTask.status))
+                                    return (
+                                        <div key={subTask.id} className="w-full flex items-start gap-2 text-xs">
+                                            <span
+                                                aria-hidden
+                                                className="mt-[4px] h-2 w-2 shrink-0 rounded-full"
+                                                style={{ backgroundColor: getSubTaskStatusIconColor(subTask.status) }}
+                                                title={statusLabel}
+                                            />
+                                            <span className="sr-only">{statusLabel}</span>
+                                            <span className={`min-w-0 flex-1 break-words leading-tight ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}>
+                                                {subTask.content}
+                                            </span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
             </div>
         </div>
     )

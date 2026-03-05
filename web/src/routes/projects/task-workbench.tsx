@@ -472,8 +472,8 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                 <div className="flex flex-col gap-2">
                     {props.subTasks.map((subTask) => (
                         <div key={subTask.id} className="space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                                <label className="min-w-0 flex items-center gap-2 cursor-pointer select-none">
                                     <Checkbox
                                         checked={subTask.status === 'completed'}
                                         onCheckedChange={(checked) => {
@@ -481,7 +481,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                                         }}
                                         disabled={props.isUpdatingTask}
                                     />
-                                    <span className="text-xs text-[var(--app-hint)]">
+                                    <span className="truncate whitespace-nowrap text-xs text-[var(--app-hint)]">
                                         {subTask.status === 'completed'
                                             ? t('projects.task.subtasks.status.completed')
                                             : subTask.status === 'in_progress'
@@ -490,7 +490,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                                     </span>
                                 </label>
 
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="shrink-0 flex items-center gap-2">
                                     <AdaptiveSelectField
                                         title={t('projects.task.priority')}
                                         value={subTask.priority}
