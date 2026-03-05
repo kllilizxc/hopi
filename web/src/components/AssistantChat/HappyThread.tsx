@@ -130,6 +130,8 @@ export function HappyThread(props: {
     // Smart scroll state: autoScroll enabled when user is near bottom
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
     const autoScrollEnabledRef = useRef(autoScrollEnabled)
+    const userIsScrollingRef = useRef(false)
+    const scrollTimeoutRef = useRef<number | null>(null)
 
     // Keep refs in sync with state
     useEffect(() => {
@@ -168,13 +170,28 @@ export function HappyThread(props: {
         const handleScroll = () => {
             if (rafId !== null) return
 
+            // Mark that user is actively scrolling
+            userIsScrollingRef.current = true
+            if (scrollTimeoutRef.current !== null) {
+                clearTimeout(scrollTimeoutRef.current)
+            }
+            scrollTimeoutRef.current = window.setTimeout(() => {
+                userIsScrollingRef.current = false
+                scrollTimeoutRef.current = null
+            }, 150)
+
             rafId = requestAnimationFrame(() => {
                 rafId = null
                 const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
                 const isNearBottom = distanceFromBottom < THRESHOLD_PX
 
+                // Only enable auto-scroll if user scrolled to near bottom
+                // Disable auto-scroll immediately if user scrolls away
+                // Don't re-enable auto-scroll while user is actively scrolling
                 if (isNearBottom) {
-                    if (!autoScrollEnabledRef.current) setAutoScrollEnabled(true)
+                    if (!autoScrollEnabledRef.current && !userIsScrollingRef.current) {
+                        setAutoScrollEnabled(true)
+                    }
                 } else if (autoScrollEnabledRef.current) {
                     setAutoScrollEnabled(false)
                 }
@@ -194,6 +211,9 @@ export function HappyThread(props: {
             viewport.removeEventListener('scroll', handleScroll)
             if (rafId !== null) {
                 cancelAnimationFrame(rafId)
+            }
+            if (scrollTimeoutRef.current !== null) {
+                clearTimeout(scrollTimeoutRef.current)
             }
         }
     }, []) // Stable: no dependencies, reads from refs
