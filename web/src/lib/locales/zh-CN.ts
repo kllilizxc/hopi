@@ -82,6 +82,8 @@ export default {
   'projects.tasks.moveFailed': '移动失败',
   'projects.tasks.generated': '自动生成',
   'projects.tasks.subtasksProgress': '子任务 {completed}/{total}',
+  'projects.tasks.subtasks.expand': '展开子任务',
+  'projects.tasks.subtasks.collapse': '收起子任务',
   'projects.tasks.approve': '批准',
   'projects.tasks.reject': '拒绝',
   'projects.tasks.rejectFailed': '拒绝失败',

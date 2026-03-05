@@ -147,8 +147,24 @@ function getTaskOrderValue(task: Task): number {
     return task.updatedAt
 }
 
-function getTaskSubTaskProgress(task: Task): { completed: number; total: number } | null {
-    const subTasks = Array.isArray(task.subTasks) ? task.subTasks : []
+type KanbanTaskSubTask = {
+    id: string
+    content: string
+    status: 'pending' | 'in_progress' | 'completed'
+}
+
+function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
+    if (!Array.isArray(task.subTasks)) return []
+    return task.subTasks.filter((item): item is KanbanTaskSubTask => {
+        if (!item || typeof item !== 'object') return false
+        if (typeof item.id !== 'string') return false
+        if (typeof item.content !== 'string') return false
+        if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return false
+        return true
+    })
+}
+
+function getTaskSubTaskProgress(subTasks: KanbanTaskSubTask[]): { completed: number; total: number } | null {
     if (subTasks.length === 0) {
         return null
     }
@@ -287,13 +303,22 @@ type KanbanTaskCardProps = {
 const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) {
     const { t } = useTranslation()
     const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
+    const [isSubTasksExpanded, setIsSubTasksExpanded] = useState(false)
 
     const isGeneratedPending = props.task.source === 'improvements_scan'
     const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const useArchiveStyle = props.task.status === 'finished'
-    const subTaskProgress = getTaskSubTaskProgress(props.task)
+    const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
+    const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
     const cardBackground = useArchiveStyle ? ARCHIVE_TASK_CARD_BACKGROUND : ACTIVE_TASK_CARD_BACKGROUND
+    const canExpandSubTasks = subTasks.length > 0
+
+    useEffect(() => {
+        if (!canExpandSubTasks) {
+            setIsSubTasksExpanded(false)
+        }
+    }, [canExpandSubTasks])
 
     return (
         <div className="relative">
@@ -408,6 +433,52 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 >
                                     {t('projects.tasks.reject')}
                                 </Button>
+                            </div>
+                        ) : null}
+                        {canExpandSubTasks ? (
+                            <div className="mt-2">
+                                <button
+                                    type="button"
+                                    draggable={false}
+                                    className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] cursor-pointer"
+                                    onClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        setIsSubTasksExpanded((current) => !current)
+                                    }}
+                                    aria-label={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
+                                    title={isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}
+                                >
+                                    {isSubTasksExpanded ? <ChevronDownIcon className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
+                                    <span>{isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}</span>
+                                </button>
+                                {isSubTasksExpanded ? (
+                                    <div className="mt-1.5 flex flex-col gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2">
+                                        {subTasks.map((subTask) => (
+                                            <div key={subTask.id} className="flex items-start gap-1.5 text-xs">
+                                                <Tag
+                                                    size="xs"
+                                                    variant={
+                                                        subTask.status === 'completed'
+                                                            ? 'success'
+                                                            : subTask.status === 'in_progress'
+                                                                ? 'warning'
+                                                                : 'default'
+                                                    }
+                                                >
+                                                    {subTask.status === 'completed'
+                                                        ? t('projects.task.subtasks.status.completed')
+                                                        : subTask.status === 'in_progress'
+                                                            ? t('projects.task.subtasks.status.inProgress')
+                                                            : t('projects.task.subtasks.status.pending')}
+                                                </Tag>
+                                                <span className={`min-w-0 break-words leading-tight ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}>
+                                                    {subTask.content}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : null}
                             </div>
                         ) : null}
                     </div>

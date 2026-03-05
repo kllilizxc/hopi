@@ -82,6 +82,8 @@ export default {
   'projects.tasks.moveFailed': 'Move failed',
   'projects.tasks.generated': 'Auto-generated',
   'projects.tasks.subtasksProgress': 'Subtasks {completed}/{total}',
+  'projects.tasks.subtasks.expand': 'Expand subtasks',
+  'projects.tasks.subtasks.collapse': 'Collapse subtasks',
   'projects.tasks.approve': 'Approve',
   'projects.tasks.reject': 'Reject',
   'projects.tasks.rejectFailed': 'Reject failed',
