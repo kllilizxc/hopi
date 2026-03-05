@@ -167,13 +167,24 @@ export class RpcGateway {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        resumeSessionId?: string
+        resumeSessionId?: string,
+        worktreeWorkspacePaths?: string[]
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
                 machineId,
                 'spawn-happy-session',
-                { type: 'spawn-in-directory', directory, agent, model, yolo, sessionType, worktreeName, resumeSessionId }
+                {
+                    type: 'spawn-in-directory',
+                    directory,
+                    worktreeWorkspacePaths,
+                    agent,
+                    model,
+                    yolo,
+                    sessionType,
+                    worktreeName,
+                    resumeSessionId
+                }
             )
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>

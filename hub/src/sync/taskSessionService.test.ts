@@ -177,6 +177,108 @@ describe('startSessionFromTask', () => {
         expect(spawnedAgent).toBe('codex')
     })
 
+    it('passes all project workspace paths for multi-workspace worktree sessions', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+        const machineId = 'machine-1'
+        const workspaceAId = 'workspace-a'
+        const workspaceBId = 'workspace-b'
+        const workspaceAPath = '/tmp/workspace-a'
+        const workspaceBPath = '/tmp/workspace-b'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            defaultWorkspaceId: workspaceAId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceAId,
+            projectId,
+            path: workspaceAPath
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceBId,
+            projectId,
+            path: workspaceBPath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId: workspaceBId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session',
+            { path: workspaceBPath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeWorkspacePaths: string[] | undefined
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                worktreeWorkspacePaths?: string[]
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(workspaceBPath)
+        expect(spawnedSessionType).toBe('worktree')
+        expect(spawnedWorktreeWorkspacePaths?.[0]).toBe(workspaceBPath)
+        expect(spawnedWorktreeWorkspacePaths).toContain(workspaceAPath)
+        expect(spawnedWorktreeWorkspacePaths).toContain(workspaceBPath)
+        expect(spawnedWorktreeWorkspacePaths?.length).toBe(2)
+    })
+
     it('includes previous session messages in kickoff text when task restarts', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

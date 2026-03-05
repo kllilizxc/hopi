@@ -243,6 +243,24 @@ async function applySessionConfigWithRetry(options: {
     }
 }
 
+function resolveWorktreeWorkspacePaths(projectWorkspacePaths: string[], primaryPath: string): string[] | undefined {
+    const normalizedPrimaryPath = primaryPath.trim()
+    if (!normalizedPrimaryPath) {
+        return undefined
+    }
+
+    const normalizedPaths = projectWorkspacePaths
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0)
+
+    if (normalizedPaths.length <= 1) {
+        return undefined
+    }
+
+    const deduped = Array.from(new Set([normalizedPrimaryPath, ...normalizedPaths]))
+    return deduped.length > 1 ? deduped : undefined
+}
+
 export type StartTaskSessionResult =
     | { ok: true; task: StoredTask; sessionId: string }
     | { ok: false; error: string }
@@ -266,6 +284,7 @@ export async function startSessionFromTask(options: {
     if (!project) {
         return { ok: false, error: 'Project not found' }
     }
+    const projectWorkspaces = options.store.workspaces.listWorkspacesByProject(project.id)
 
     const resolvedWorkspaceId = overrides.workspaceId
         ?? task.workspaceId
@@ -313,6 +332,9 @@ export async function startSessionFromTask(options: {
     const worktreeName = sessionType === 'worktree'
         ? `task-${task.id.slice(0, 8)}-${task.title}`.slice(0, 80)
         : undefined
+    const worktreeWorkspacePaths = sessionType === 'worktree'
+        ? resolveWorktreeWorkspacePaths(projectWorkspaces.map((item) => item.path), workspace.path)
+        : undefined
 
     const machine = options.engine.getMachineByNamespace(project.machineId, options.namespace)
     if (!machine) {
@@ -334,7 +356,17 @@ export async function startSessionFromTask(options: {
         }
     }
 
-    const spawn = await options.engine.spawnSession(project.machineId, workspace.path, agent, model, yolo, sessionType, worktreeName)
+    const spawn = await options.engine.spawnSession(
+        project.machineId,
+        workspace.path,
+        agent,
+        model,
+        yolo,
+        sessionType,
+        worktreeName,
+        undefined,
+        worktreeWorkspacePaths
+    )
     if (spawn.type !== 'success') {
         return { ok: false, error: spawn.message }
     }

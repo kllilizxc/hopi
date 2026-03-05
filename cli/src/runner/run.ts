@@ -17,9 +17,9 @@ import { isRetryableConnectionError } from '@/utils/errorUtils';
 
 import { cleanupRunnerState, getInstalledCliMtimeMs, isRunnerRunningCurrentlyInstalledHappyVersion, stopRunner } from './controlClient';
 import { startRunnerControlServer } from './controlServer';
-import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
+import { createWorktree, removeWorktree, resolveGitRepoRoot, type WorktreeInfo } from './worktree';
 import { PreviewManager } from './previewManager';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { PRODUCT_ENV, PRODUCT_SLUG, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
 
@@ -189,10 +189,55 @@ export async function startRunner(): Promise<void> {
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
       const worktreeName = options.worktreeName;
+      const normalizedWorktreeWorkspacePaths = sessionType === 'worktree'
+        ? Array.from(new Set([
+            directory,
+            ...(Array.isArray(options.worktreeWorkspacePaths) ? options.worktreeWorkspacePaths : [])
+          ]
+            .filter((path): path is string => typeof path === 'string')
+            .map((path) => path.trim())
+            .filter((path) => path.length > 0)))
+        : [];
       let directoryCreated = false;
       let spawnDirectory = directory;
-      let worktreeInfo: WorktreeInfo | null = null;
+      let primaryWorktreeInfo: WorktreeInfo | null = null;
+      let multiWorkspaceRoot: string | null = null;
+      const worktreeInfos: WorktreeInfo[] = [];
       let happyProcess: ReturnType<typeof spawnHappyCLI> | null = null;
+
+      const cleanupWorktrees = async () => {
+        for (const info of [...worktreeInfos].reverse()) {
+          const result = await removeWorktree({
+            repoRoot: info.basePath,
+            worktreePath: info.worktreePath
+          });
+          if (!result.ok) {
+            logger.debug(`[RUNNER RUN] Failed to remove worktree ${info.worktreePath}: ${result.error}`);
+          }
+        }
+
+        if (multiWorkspaceRoot) {
+          try {
+            await fs.rm(multiWorkspaceRoot, { recursive: true, force: true });
+          } catch (error) {
+            logger.debug(`[RUNNER RUN] Failed to remove multi-workspace root ${multiWorkspaceRoot}:`, error);
+          }
+        }
+      };
+      const maybeCleanupWorktree = async (reason: string) => {
+        if (worktreeInfos.length === 0 && !multiWorkspaceRoot) {
+          return;
+        }
+        const pid = happyProcess?.pid;
+        if (pid && isProcessAlive(pid)) {
+          logger.debug(`[RUNNER RUN] Skipping worktree cleanup after ${reason}; child still running`, {
+            pid,
+            worktreePath: primaryWorktreeInfo?.worktreePath ?? null
+          });
+          return;
+        }
+        await cleanupWorktrees();
+      };
 
       if (sessionType === 'simple') {
         try {
@@ -238,61 +283,90 @@ export async function startRunner(): Promise<void> {
           }
         }
       } else {
-        try {
-          await fs.access(directory);
-          logger.debug(`[RUNNER RUN] Worktree base directory exists: ${directory}`);
-        } catch (error) {
-          logger.debug(`[RUNNER RUN] Worktree base directory missing: ${directory}`);
-          return {
-            type: 'error',
-            errorMessage: `Worktree sessions require an existing Git repository. Directory not found: ${directory}`
-          };
+        for (const workspacePath of normalizedWorktreeWorkspacePaths) {
+          try {
+            await fs.access(workspacePath);
+          } catch (error) {
+            logger.debug(`[RUNNER RUN] Worktree base directory missing: ${workspacePath}`);
+            return {
+              type: 'error',
+              errorMessage: `Worktree sessions require an existing directory. Directory not found: ${workspacePath}`
+            };
+          }
         }
+        logger.debug(`[RUNNER RUN] Worktree base directories validated (${normalizedWorktreeWorkspacePaths.length})`);
       }
 
       if (sessionType === 'worktree') {
-        const worktreeResult = await createWorktree({
-          basePath: directory,
-          nameHint: worktreeName
-        });
-        if (!worktreeResult.ok) {
-          logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);
-          return {
-            type: 'error',
-            errorMessage: worktreeResult.error
-          };
-        }
-        worktreeInfo = worktreeResult.info;
-        spawnDirectory = worktreeInfo.worktreePath;
-        logger.debug(`[RUNNER RUN] Created worktree ${worktreeInfo.worktreePath} (branch ${worktreeInfo.branch})`);
-      }
+        if (normalizedWorktreeWorkspacePaths.length > 1) {
+          const primaryWorkspacePath = normalizedWorktreeWorkspacePaths[0]!;
+          let primaryRepoRoot: string;
+          try {
+            primaryRepoRoot = await resolveGitRepoRoot(primaryWorkspacePath);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              type: 'error',
+              errorMessage: `Failed to resolve Git repository for multi-workspace root: ${message}`
+            };
+          }
 
-      const cleanupWorktree = async () => {
-        if (!worktreeInfo) {
-          return;
-        }
-        const result = await removeWorktree({
-          repoRoot: worktreeInfo.basePath,
-          worktreePath: worktreeInfo.worktreePath
-        });
-        if (!result.ok) {
-          logger.debug(`[RUNNER RUN] Failed to remove worktree ${worktreeInfo.worktreePath}: ${result.error}`);
-        }
-      };
-      const maybeCleanupWorktree = async (reason: string) => {
-        if (!worktreeInfo) {
-          return;
-        }
-        const pid = happyProcess?.pid;
-        if (pid && isProcessAlive(pid)) {
-          logger.debug(`[RUNNER RUN] Skipping worktree cleanup after ${reason}; child still running`, {
-            pid,
-            worktreePath: worktreeInfo.worktreePath
+          try {
+            const multiWorkspaceParent = join(dirname(primaryRepoRoot), `${basename(primaryRepoRoot)}-worktrees`);
+            await fs.mkdir(multiWorkspaceParent, { recursive: true });
+            multiWorkspaceRoot = await fs.mkdtemp(join(multiWorkspaceParent, `${PRODUCT_SLUG}-multi-`));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              type: 'error',
+              errorMessage: `Failed to create multi-workspace root folder: ${message}`
+            };
+          }
+
+          for (let index = 0; index < normalizedWorktreeWorkspacePaths.length; index += 1) {
+            const workspacePath = normalizedWorktreeWorkspacePaths[index]!;
+            const workspaceBaseName = basename(workspacePath) || `workspace-${index + 1}`;
+            const nameHint = [workspaceBaseName, worktreeName]
+              .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+              .join('-');
+
+            const worktreeResult = await createWorktree({
+              basePath: workspacePath,
+              nameHint: nameHint || `workspace-${index + 1}`,
+              worktreeRootDir: multiWorkspaceRoot ?? undefined
+            });
+            if (!worktreeResult.ok) {
+              logger.debug(`[RUNNER RUN] Worktree creation failed for ${workspacePath}: ${worktreeResult.error}`);
+              await cleanupWorktrees();
+              return {
+                type: 'error',
+                errorMessage: worktreeResult.error
+              };
+            }
+            worktreeInfos.push(worktreeResult.info);
+          }
+
+          primaryWorktreeInfo = worktreeInfos[0] ?? null;
+          spawnDirectory = multiWorkspaceRoot ?? spawnDirectory;
+          logger.debug(`[RUNNER RUN] Created ${worktreeInfos.length} worktrees under ${multiWorkspaceRoot}`);
+        } else {
+          const worktreeResult = await createWorktree({
+            basePath: normalizedWorktreeWorkspacePaths[0] ?? directory,
+            nameHint: worktreeName
           });
-          return;
+          if (!worktreeResult.ok) {
+            logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);
+            return {
+              type: 'error',
+              errorMessage: worktreeResult.error
+            };
+          }
+          worktreeInfos.push(worktreeResult.info);
+          primaryWorktreeInfo = worktreeResult.info;
+          spawnDirectory = worktreeResult.info.worktreePath;
+          logger.debug(`[RUNNER RUN] Created worktree ${worktreeResult.info.worktreePath} (branch ${worktreeResult.info.branch})`);
         }
-        await cleanupWorktree();
-      };
+      }
 
       try {
 
@@ -318,15 +392,15 @@ export async function startRunner(): Promise<void> {
           }
         }
 
-        if (worktreeInfo) {
+        if (primaryWorktreeInfo) {
           extraEnv = {
             ...extraEnv,
-            [PRODUCT_ENV.WORKTREE_BASE_PATH]: worktreeInfo.basePath,
-            [PRODUCT_ENV.WORKTREE_BRANCH]: worktreeInfo.branch,
-            [PRODUCT_ENV.WORKTREE_NAME]: worktreeInfo.name,
-            [PRODUCT_ENV.WORKTREE_PATH]: worktreeInfo.worktreePath,
-            [PRODUCT_ENV.WORKTREE_CREATED_AT]: String(worktreeInfo.createdAt),
-            ...(worktreeInfo.baseCommit ? { [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: worktreeInfo.baseCommit } : {})
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: primaryWorktreeInfo.basePath,
+            [PRODUCT_ENV.WORKTREE_BRANCH]: primaryWorktreeInfo.branch,
+            [PRODUCT_ENV.WORKTREE_NAME]: primaryWorktreeInfo.name,
+            [PRODUCT_ENV.WORKTREE_PATH]: primaryWorktreeInfo.worktreePath,
+            [PRODUCT_ENV.WORKTREE_CREATED_AT]: String(primaryWorktreeInfo.createdAt),
+            ...(primaryWorktreeInfo.baseCommit ? { [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: primaryWorktreeInfo.baseCommit } : {})
           };
         }
 
