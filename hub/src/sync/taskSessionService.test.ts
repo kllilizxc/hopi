@@ -177,6 +177,193 @@ describe('startSessionFromTask', () => {
         expect(spawnedAgent).toBe('codex')
     })
 
+    it('includes previous session messages in kickoff text when task restarts', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-session',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+        store.messages.addMessage(previousSession.id, {
+            role: 'user',
+            content: { type: 'text', text: 'Please keep this context.' }
+        })
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: { type: 'codex', data: { type: 'message', message: 'Acknowledged and implemented.' } }
+        })
+        store.messages.addMessage(previousSession.id, {
+            role: 'user',
+            content: { type: 'text', text: 'skip kickoff payload' }
+        }, `auto:kickoff:${taskId}:1`)
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            description: 'Make restart carry full history',
+            status: 'in_progress',
+            workspaceId,
+            activeSessionId: previousSession.id
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Previous session messages:')
+        expect(kickoffText).toContain('User:\nPlease keep this context.')
+        expect(kickoffText).toContain('Assistant:\nAcknowledged and implemented.')
+        expect(kickoffText).not.toContain('skip kickoff payload')
+    })
+
+    it('includes message history across all pages when previous session is long', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-session-long',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+        for (let index = 1; index <= 205; index += 1) {
+            store.messages.addMessage(previousSession.id, {
+                role: 'user',
+                content: { type: 'text', text: `history message ${index}` }
+            })
+        }
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'in_progress',
+            workspaceId,
+            activeSessionId: previousSession.id
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-long',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('history message 1')
+        expect(kickoffText).toContain('history message 205')
+    })
+
     it('uses task permission mode before project defaults when starting session', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

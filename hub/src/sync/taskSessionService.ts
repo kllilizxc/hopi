@@ -1,13 +1,205 @@
 import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
+import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import { z } from 'zod'
-import type { Store, StoredTask } from '../store'
+import type { Store, StoredMessage, StoredTask } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { setSessionTaskLink } from './sessionTaskLink'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
     return comma < 0 ? dataUrl : dataUrl.slice(comma + 1)
+}
+
+const KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
+const MESSAGE_HISTORY_PAGE_SIZE = 200
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null
+}
+
+function stringifyUnknown(value: unknown): string {
+    if (typeof value === 'string') return value
+    try {
+        const serialized = JSON.stringify(value)
+        if (typeof serialized === 'string') return serialized
+    } catch {
+    }
+    return String(value)
+}
+
+function normalizeText(value: string): string {
+    return value.replace(/\r\n/g, '\n').trim()
+}
+
+function collectCodexPlanText(data: Record<string, unknown>): string | null {
+    const explanation = typeof data.explanation === 'string' ? normalizeText(data.explanation) : ''
+    const entries = Array.isArray(data.entries) ? data.entries : []
+    const lines: string[] = []
+    for (const entry of entries) {
+        const item = toRecord(entry)
+        if (!item) continue
+        const content = typeof item.content === 'string'
+            ? normalizeText(item.content)
+            : typeof item.step === 'string'
+                ? normalizeText(item.step)
+                : typeof item.text === 'string'
+                    ? normalizeText(item.text)
+                    : ''
+        if (!content) continue
+        const rawStatus = typeof item.status === 'string' ? item.status.toLowerCase().replace(/[\s_-]/g, '') : ''
+        const done = rawStatus === 'completed'
+        lines.push(`- [${done ? 'x' : ' '}] ${content}`)
+    }
+
+    if (lines.length === 0) {
+        return explanation || null
+    }
+    return explanation
+        ? `${explanation}\n${lines.join('\n')}`
+        : lines.join('\n')
+}
+
+function extractMessageText(content: unknown): string | null {
+    if (typeof content === 'string') {
+        const normalized = normalizeText(content)
+        return normalized || null
+    }
+
+    if (Array.isArray(content)) {
+        const blocks = content
+            .map((item) => extractMessageText(item))
+            .filter((text): text is string => Boolean(text))
+        if (blocks.length === 0) return null
+        return blocks.join('\n')
+    }
+
+    const objectContent = toRecord(content)
+    if (!objectContent) {
+        return null
+    }
+
+    if (objectContent.type === 'event') {
+        return null
+    }
+
+    if (objectContent.type === 'text' && typeof objectContent.text === 'string') {
+        const normalized = normalizeText(objectContent.text)
+        return normalized || null
+    }
+
+    if (objectContent.type === 'output') {
+        const data = toRecord(objectContent.data)
+        if (!data || data.isMeta || data.isCompactSummary) {
+            return null
+        }
+
+        if (data.type === 'summary' && typeof data.summary === 'string') {
+            const normalized = normalizeText(data.summary)
+            return normalized || null
+        }
+
+        if (data.type === 'assistant' || data.type === 'user') {
+            const message = toRecord(data.message)
+            if (message) {
+                return extractMessageText(message.content)
+            }
+        }
+    }
+
+    if (objectContent.type === 'codex') {
+        const data = toRecord(objectContent.data)
+        if (!data) {
+            return null
+        }
+
+        if ((data.type === 'message' || data.type === 'reasoning') && typeof data.message === 'string') {
+            const normalized = normalizeText(data.message)
+            return normalized || null
+        }
+
+        if (data.type === 'plan') {
+            return collectCodexPlanText(data)
+        }
+
+        if (data.type === 'tool-call-result') {
+            return extractMessageText(data.output)
+        }
+    }
+
+    if (typeof objectContent.text === 'string') {
+        const normalized = normalizeText(objectContent.text)
+        if (normalized) return normalized
+    }
+
+    if ('content' in objectContent) {
+        const fromContent = extractMessageText(objectContent.content)
+        if (fromContent) return fromContent
+    }
+
+    if ('message' in objectContent) {
+        const fromMessage = extractMessageText(objectContent.message)
+        if (fromMessage) return fromMessage
+    }
+
+    const fallback = normalizeText(stringifyUnknown(content))
+    return fallback || null
+}
+
+function getCarryoverMessages(store: Store, previousSessionId: string): StoredMessage[] {
+    const pages: StoredMessage[][] = []
+    let beforeSeq: number | undefined
+
+    while (true) {
+        const page = store.messages.getMessages(previousSessionId, MESSAGE_HISTORY_PAGE_SIZE, beforeSeq)
+        if (page.length === 0) {
+            break
+        }
+
+        pages.push(page)
+        const oldestSeq = page[0]?.seq
+        if (page.length < MESSAGE_HISTORY_PAGE_SIZE || typeof oldestSeq !== 'number' || oldestSeq <= 1) {
+            break
+        }
+        beforeSeq = oldestSeq
+    }
+
+    const messages: StoredMessage[] = []
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+        messages.push(...pages[index])
+    }
+    return messages
+}
+
+function buildCarryoverHistorySection(store: Store, previousSessionId: string): string {
+    const messages = getCarryoverMessages(store, previousSessionId)
+    const lines: string[] = []
+
+    for (const message of messages) {
+        if (message.localId?.startsWith(KICKOFF_LOCAL_ID_PREFIX)) {
+            continue
+        }
+
+        const record = unwrapRoleWrappedRecordEnvelope(message.content)
+        const role = record?.role
+        const roleLabel = role === 'user'
+            ? 'User'
+            : role === 'assistant' || role === 'agent'
+                ? 'Assistant'
+                : 'Message'
+        const sourceContent = record ? record.content : message.content
+        const text = extractMessageText(sourceContent)
+        if (!text) continue
+        lines.push(`${roleLabel}:\n${text}`)
+    }
+
+    if (lines.length === 0) {
+        return ''
+    }
+
+    return `\n\nPrevious session messages:\n${lines.join('\n\n')}`
 }
 
 export type StartSessionOverrides = {
@@ -68,6 +260,7 @@ export async function startSessionFromTask(options: {
     if (!task) {
         return { ok: false, error: 'Task not found' }
     }
+    const previousSessionId = task.activeSessionId
 
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
     if (!project) {
@@ -257,13 +450,22 @@ export async function startSessionFromTask(options: {
             ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
             : ''
 
-        if (title && desc) {
-            return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
+        const baseKickoff = (() => {
+            if (title && desc) {
+                return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
+            }
+            if (desc) return `${desc}${subTasksSection}`
+            if (title) return `Task: ${title}${subTasksSection}`
+            if (subTasksSection) return `Task${subTasksSection}`
+            return 'Task'
+        })()
+
+        if (!previousSessionId || previousSessionId === spawn.sessionId) {
+            return baseKickoff
         }
-        if (desc) return `${desc}${subTasksSection}`
-        if (title) return `Task: ${title}${subTasksSection}`
-        if (subTasksSection) return `Task${subTasksSection}`
-        return 'Task'
+
+        const historySection = buildCarryoverHistorySection(options.store, previousSessionId)
+        return `${baseKickoff}${historySection}`
     })()
 
     try {
