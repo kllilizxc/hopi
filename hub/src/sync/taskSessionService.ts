@@ -408,11 +408,11 @@ export async function startSessionFromTask(options: {
         })
     }
 
-    const getSessionByNamespace = (options.engine as unknown as {
+    const engineWithSessionLookup = options.engine as unknown as {
         getSessionByNamespace?: (sessionId: string, namespace: string) => { metadata?: { path?: unknown } } | undefined
-    }).getSessionByNamespace
-    const runtimeSession = typeof getSessionByNamespace === 'function'
-        ? getSessionByNamespace(spawn.sessionId, options.namespace)
+    }
+    const runtimeSession = typeof engineWithSessionLookup.getSessionByNamespace === 'function'
+        ? engineWithSessionLookup.getSessionByNamespace.call(options.engine, spawn.sessionId, options.namespace)
         : undefined
     const runtimePath = typeof runtimeSession?.metadata?.path === 'string'
         ? runtimeSession.metadata.path.trim()

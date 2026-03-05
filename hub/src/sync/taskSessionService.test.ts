@@ -93,6 +93,93 @@ describe('startSessionFromTask', () => {
         expect(sequence).toEqual(['init', 'kickoff'])
     })
 
+    it('calls getSessionByNamespace with engine context when resolving init script cwd', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-session-context'
+        const taskId = 'task-session-context'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const runtimePath = '/tmp/runtime-from-session'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-context',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let observedCwd = ''
+        function getSessionByNamespace(this: { runtimePath: string }, sessionId: string, ns: string) {
+            return {
+                id: sessionId,
+                namespace: ns,
+                metadata: { path: this.runtimePath, host: 'localhost' }
+            }
+        }
+
+        const engine = {
+            runtimePath,
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace,
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash(_sessionId: string, params: { cwd?: string }) {
+                observedCwd = params.cwd ?? ''
+                return { success: true, stdout: '', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(observedCwd).toBe(runtimePath)
+    })
+
     it('fails start when init script execution fails', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
