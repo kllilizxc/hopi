@@ -16,6 +16,8 @@ type ScrollShadowState = {
 }
 
 const SCROLL_EPSILON_PX = 1
+const SHADOW_SIZE_PX = 14
+const SHADOW_SPREAD_PX = -12
 
 function setRefValue<T>(ref: Ref<T> | undefined, value: T): void {
     if (!ref) return
@@ -101,8 +103,12 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
 
     const baseStyle = style as ScrollShadowStyle | undefined
     const dynamicShadow = [
-        shadowState.top ? 'inset 0 10px 10px -10px var(--scroll-shadow-color)' : '',
-        shadowState.bottom ? 'inset 0 -10px 10px -10px var(--scroll-shadow-color)' : ''
+        shadowState.top
+            ? `inset 0 ${SHADOW_SIZE_PX}px ${SHADOW_SIZE_PX}px ${SHADOW_SPREAD_PX}px var(--scroll-shadow-color)`
+            : '',
+        shadowState.bottom
+            ? `inset 0 -${SHADOW_SIZE_PX}px ${SHADOW_SIZE_PX}px ${SHADOW_SPREAD_PX}px var(--scroll-shadow-color)`
+            : ''
     ].filter(Boolean).join(', ')
     const mergedBoxShadow = [baseStyle?.boxShadow, dynamicShadow].filter(Boolean).join(', ')
     const mergedStyle: ScrollShadowStyle = {
