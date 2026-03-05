@@ -35,6 +35,59 @@ function normalizeAgentEvent(value: unknown): AgentEvent | null {
     return value as AgentEvent
 }
 
+type PlanStatus = 'pending' | 'in_progress' | 'completed'
+
+type PlanEntry = {
+    content: string
+    status: PlanStatus
+}
+
+function normalizePlanStatus(value: unknown): PlanStatus | null {
+    if (typeof value !== 'string') return null
+    const normalized = value.toLowerCase().replace(/[\s_-]/g, '')
+    if (normalized === 'pending') return 'pending'
+    if (normalized === 'inprogress') return 'in_progress'
+    if (normalized === 'completed') return 'completed'
+    return null
+}
+
+function normalizePlanEntries(value: unknown): PlanEntry[] {
+    if (!Array.isArray(value)) return []
+
+    const entries: PlanEntry[] = []
+    for (const item of value) {
+        if (!isObject(item)) continue
+
+        const content = asString(item.content ?? item.step ?? item.text)?.trim()
+        const status = normalizePlanStatus(item.status)
+        if (!content || !status) continue
+
+        entries.push({ content, status })
+    }
+
+    return entries
+}
+
+function formatPlanText(entries: PlanEntry[], explanation?: string): string {
+    const lines: string[] = []
+
+    if (explanation) {
+        lines.push(explanation)
+    }
+
+    if (entries.length > 0) {
+        if (lines.length > 0) {
+            lines.push('')
+        }
+        for (const entry of entries) {
+            const checkbox = entry.status === 'completed' ? 'x' : ' '
+            lines.push(`- [${checkbox}] ${entry.content}`)
+        }
+    }
+
+    return lines.join('\n')
+}
+
 function normalizeAssistantOutput(
     messageId: string,
     localId: string | null,
@@ -324,6 +377,23 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'reasoning', text: data.message, uuid: messageId, parentUUID: null }],
+                meta
+            }
+        }
+
+        if (data.type === 'plan') {
+            const entries = normalizePlanEntries(data.entries)
+            const explanation = asString(data.explanation) ?? undefined
+            const text = formatPlanText(entries, explanation)
+            if (!text) return null
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
                 meta
             }
         }

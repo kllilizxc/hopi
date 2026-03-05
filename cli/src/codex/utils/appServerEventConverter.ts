@@ -123,6 +123,44 @@ function extractReasoningText(item: Record<string, unknown>): string | null {
     return null;
 }
 
+type PlanUpdateStatus = 'pending' | 'in_progress' | 'completed';
+
+type PlanUpdateEntry = {
+    content: string;
+    status: PlanUpdateStatus;
+};
+
+function normalizePlanStatus(value: unknown): PlanUpdateStatus | null {
+    const raw = asString(value);
+    if (!raw) return null;
+
+    const normalized = raw.toLowerCase().replace(/[\s_-]/g, '');
+    if (normalized === 'pending') return 'pending';
+    if (normalized === 'inprogress') return 'in_progress';
+    if (normalized === 'completed') return 'completed';
+    return null;
+}
+
+function normalizePlanEntries(value: unknown): PlanUpdateEntry[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const entries: PlanUpdateEntry[] = [];
+    for (const item of value) {
+        const record = asRecord(item);
+        if (!record) continue;
+
+        const content = asString(record.step ?? record.content ?? record.text);
+        const status = normalizePlanStatus(record.status);
+        if (!content || !status) continue;
+
+        entries.push({ content, status });
+    }
+
+    return entries;
+}
+
 export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
     private readonly reasoningBuffers = new Map<string, string>();
@@ -246,10 +284,31 @@ export class AppServerEventConverter {
             return error ? [{ type: 'task_failed', ...(turnId ? { turn_id: turnId } : {}), error }] : [];
         }
 
+        if (msgType === 'plan_update') {
+            const turnId = asString(msg.turn_id ?? msg.turnId);
+            const payload: Record<string, unknown> = {
+                plan: Array.isArray(msg.plan) ? msg.plan : []
+            };
+            const explanation = asString(msg.explanation ?? msg.overall_explanation ?? msg.message);
+            if (explanation) {
+                payload.explanation = explanation;
+            }
+            if (turnId) {
+                payload.turnId = turnId;
+            }
+            return this.handleNotification('turn/plan/updated', payload);
+        }
+
+        if (msgType === 'plan_delta') {
+            const itemId = asString(msg.item_id ?? msg.itemId ?? msg.id) ?? 'plan';
+            const delta = asString(msg.delta ?? msg.text ?? msg.message);
+            if (!delta) return [];
+            return this.handleNotification('item/plan/delta', { itemId, delta });
+        }
+
         if (
             msgType === 'mcp_startup_update' ||
             msgType === 'mcp_startup_complete' ||
-            msgType === 'plan_update' ||
             msgType === 'skills_update_available' ||
             msgType === 'stream_error' ||
             msgType === 'warning' ||
@@ -272,7 +331,7 @@ export class AppServerEventConverter {
             return this.handleWrappedCodexEvent(paramsRecord) ?? events;
         }
 
-        if (method === 'account/rateLimits/updated' || method === 'turn/plan/updated' || method === 'thread/compacted') {
+        if (method === 'account/rateLimits/updated' || method === 'thread/compacted') {
             return events;
         }
 
@@ -328,6 +387,24 @@ export class AppServerEventConverter {
             return events;
         }
 
+        if (method === 'turn/plan/updated') {
+            const plan = normalizePlanEntries(paramsRecord.plan);
+            const explanation = asString(paramsRecord.explanation ?? paramsRecord.overall_explanation ?? paramsRecord.message);
+            const turnId = asString(paramsRecord.turnId ?? paramsRecord.turn_id) ?? this.lastTurnId;
+
+            if (plan.length === 0 && !explanation) {
+                return events;
+            }
+
+            events.push({
+                type: 'plan_update',
+                ...(turnId ? { turn_id: turnId } : {}),
+                ...(explanation ? { explanation } : {}),
+                plan
+            });
+            return events;
+        }
+
         if (method === 'turn/diff/updated') {
             const diff = asString(paramsRecord.diff ?? paramsRecord.unified_diff ?? paramsRecord.unifiedDiff);
             if (diff) {
@@ -379,6 +456,14 @@ export class AppServerEventConverter {
                 this.lastReasoningDeltaByItemId.set(itemId, delta);
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
                 this.reasoningBuffers.set(itemId, prev + delta);
+                events.push({ type: 'agent_reasoning_delta', delta });
+            }
+            return events;
+        }
+
+        if (method === 'item/plan/delta') {
+            const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
+            if (delta) {
                 events.push({ type: 'agent_reasoning_delta', delta });
             }
             return events;

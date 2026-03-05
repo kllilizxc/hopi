@@ -48,6 +48,31 @@ describe('AppServerEventConverter', () => {
         expect(failed).toEqual([{ type: 'task_failed', turn_id: 'turn-1', error: 'boom' }]);
     });
 
+    it('maps turn/plan/updated to plan_update events', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('turn/plan/updated', {
+            turnId: 'turn-1',
+            explanation: 'Break this into phases.',
+            plan: [
+                { step: 'Inspect project structure', status: 'pending' },
+                { step: 'Implement fix', status: 'inProgress' },
+                { step: 'Run tests', status: 'completed' }
+            ]
+        });
+
+        expect(events).toEqual([{
+            type: 'plan_update',
+            turn_id: 'turn-1',
+            explanation: 'Break this into phases.',
+            plan: [
+                { content: 'Inspect project structure', status: 'pending' },
+                { content: 'Implement fix', status: 'in_progress' },
+                { content: 'Run tests', status: 'completed' }
+            ]
+        }]);
+    });
+
     it('accumulates agent message deltas', () => {
         const converter = new AppServerEventConverter();
 
@@ -280,6 +305,32 @@ describe('AppServerEventConverter', () => {
         });
 
         expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+    });
+
+    it('unwraps codex/event plan_update', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/plan_update', {
+            msg: {
+                type: 'plan_update',
+                turn_id: 'turn-2',
+                explanation: 'Ship in three steps.',
+                plan: [
+                    { step: 'Open files', status: 'pending' },
+                    { step: 'Patch implementation', status: 'inProgress' }
+                ]
+            }
+        });
+
+        expect(events).toEqual([{
+            type: 'plan_update',
+            turn_id: 'turn-2',
+            explanation: 'Ship in three steps.',
+            plan: [
+                { content: 'Open files', status: 'pending' },
+                { content: 'Patch implementation', status: 'in_progress' }
+            ]
+        }]);
     });
 
     it('unwraps codex/event reasoning completion from summary text', () => {

@@ -6,7 +6,8 @@ const harness = vi.hoisted(() => ({
     notifications: [] as Array<{ method: string; params: unknown }>,
     registerRequestCalls: [] as string[],
     startTurnParams: [] as Array<Record<string, unknown>>,
-    failOnCollaboration: false
+    failOnCollaboration: false,
+    emitPlanUpdate: false
 }));
 
 vi.mock('./codexAppServerClient', () => {
@@ -43,6 +44,19 @@ vi.mock('./codexAppServerClient', () => {
             const started = { turn: {} };
             harness.notifications.push({ method: 'turn/started', params: started });
             this.notificationHandler?.('turn/started', started);
+
+            if (harness.emitPlanUpdate) {
+                const planUpdated = {
+                    turnId: 'turn-plan-1',
+                    explanation: 'Split work into plan steps.',
+                    plan: [
+                        { step: 'Inspect files', status: 'pending' },
+                        { step: 'Apply patch', status: 'inProgress' }
+                    ]
+                };
+                harness.notifications.push({ method: 'turn/plan/updated', params: planUpdated });
+                this.notificationHandler?.('turn/plan/updated', planUpdated);
+            }
 
             const completed = { status: 'Completed', turn: {} };
             harness.notifications.push({ method: 'turn/completed', params: completed });
@@ -167,6 +181,7 @@ describe('codexRemoteLauncher', () => {
         harness.registerRequestCalls = [];
         harness.startTurnParams = [];
         harness.failOnCollaboration = false;
+        harness.emitPlanUpdate = false;
         delete process.env.CODEX_USE_MCP_SERVER;
     });
 
@@ -212,5 +227,30 @@ describe('codexRemoteLauncher', () => {
                 && event.message.includes('Falling back to default mode')
             )
         ).toBe(true);
+    });
+
+    it('emits codex plan messages for turn plan updates', async () => {
+        harness.emitPlanUpdate = true;
+        const {
+            session,
+            codexMessages,
+            sessionEvents
+        } = createSessionStub(createMode('plan'));
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(
+            codexMessages.some((message) => {
+                if (!message || typeof message !== 'object') return false;
+                const record = message as Record<string, unknown>;
+                return record.type === 'plan'
+                    && Array.isArray(record.entries)
+                    && record.entries.length === 2;
+            })
+        ).toBe(true);
+        const readyEvents = sessionEvents.filter((event) => event.type === 'ready');
+        expect(readyEvents.length).toBeGreaterThanOrEqual(1);
+        expect(readyEvents.some((event) => event.hasAssistantReply === true)).toBe(true);
     });
 });
