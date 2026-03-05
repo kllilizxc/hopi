@@ -247,6 +247,10 @@ function statusColorClass(state: ToolCallBlock['tool']['state']): string {
     return 'text-[var(--app-hint)]'
 }
 
+function shouldForceInlineResult(toolName: string): boolean {
+    return toolName === 'Bash' || toolName === 'CodexBash' || toolName === 'shell_command'
+}
+
 type ToolCardProps = {
     api: ApiClient
     sessionId: string
@@ -279,7 +283,7 @@ function ToolCardInner(props: ToolCardProps) {
     const subtitle = presentation.subtitle ?? props.block.tool.description
     const taskSummary = renderTaskSummary(props.block, props.metadata)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
-    const showInline = !presentation.minimal && toolName !== 'Task'
+    const showInline = toolName !== 'Task' && (!presentation.minimal || shouldForceInlineResult(toolName))
     const CompactToolView = showInline ? getToolViewComponent(toolName) : null
     const FullToolView = getToolFullViewComponent(toolName)
     const ResultToolView = getToolResultViewComponent(toolName)

@@ -910,7 +910,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 'var(--app-secondary-bg)'
                             ].join(', ')
                         } as React.CSSProperties
-                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-[280px]'}`
+                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-full max-w-[360px]'}`
                         const headerClass = isCollapsed
                             ? 'px-2 py-2 flex flex-col items-center gap-2 backdrop-blur-sm'
                             : 'px-3 py-2 flex items-center justify-between gap-2 backdrop-blur-sm'

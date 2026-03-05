@@ -6,6 +6,7 @@ import { HappyChatProvider } from '@/components/AssistantChat/context'
 import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
 import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessage'
 import { HappySystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
+import { CommandLiveOutput } from '@/components/CommandLiveOutput'
 import { ScrollShadow } from '@/components/ui/scroll-shadow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
@@ -103,6 +104,9 @@ export function HappyThread(props: {
     previewActionLabel?: string
     onPreviewAction?: () => void
     previewEvents?: PreviewThreadEvent[]
+    showPreviewLogs?: boolean
+    previewLogTail?: string[]
+    previewCommand?: string | null
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -317,6 +321,8 @@ export function HappyThread(props: {
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
     const mergeEvents = props.mergeEvents ?? EMPTY_MERGE_EVENTS
     const previewEvents = props.previewEvents ?? EMPTY_PREVIEW_EVENTS
+    const previewLogTail = props.previewLogTail ?? []
+    const previewLogsText = useMemo(() => previewLogTail.join('\n'), [previewLogTail])
     const hasRetryMessage = Boolean(props.onRetryMessage)
     const handleRefresh = useCallback(() => {
         onRefreshRef.current()
@@ -457,6 +463,25 @@ export function HappyThread(props: {
                                     </div>
                                 </div>
                             ))}
+                            {props.showPreviewLogs && (previewLogsText.length > 0 || props.previewCommand) ? (
+                                <div className="py-2">
+                                    <div className="mx-auto w-full max-w-[92%] rounded-md bg-[var(--app-secondary-bg)] p-2">
+                                        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-[var(--app-hint)]">
+                                            <span>{t('projects.task.preview.logs')}</span>
+                                            {props.previewCommand ? (
+                                                <span className="max-w-[65%] truncate font-mono" title={props.previewCommand}>
+                                                    {props.previewCommand}
+                                                </span>
+                                            ) : null}
+                                        </div>
+                                        <CommandLiveOutput
+                                            text={previewLogsText}
+                                            emptyText={t('misc.loading')}
+                                            maxHeightClassName="max-h-52"
+                                        />
+                                    </div>
+                                </div>
+                            ) : null}
                             {props.showPreviewAction && props.onPreviewAction ? (
                                 <div className="py-2">
                                     <div className="mx-auto w-fit max-w-[92%]">
