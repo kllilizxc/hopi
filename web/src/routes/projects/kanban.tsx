@@ -1083,6 +1083,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                 {isCollapsed ? null : (
                                     <ScrollShadow
                                         className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-2"
+                                        style={{ '--scroll-shadow-bg': 'var(--app-secondary-bg)' } as React.CSSProperties}
                                         onDragOver={(event) => {
                                             event.preventDefault()
                                             if (!dragStateRef.current) return
