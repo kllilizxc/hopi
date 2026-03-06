@@ -32,6 +32,7 @@ describe('SessionCache.deleteSession', () => {
             projectId,
             title: 'Task',
             status: 'in_progress',
+            workflowProfile: 'default',
             sortKey: Date.now(),
             activeSessionId: storedSession.id
         })
@@ -103,6 +104,7 @@ describe('SessionCache.mergeSessions', () => {
             projectId,
             title: 'Task merge',
             status: 'in_progress',
+            workflowProfile: 'default',
             sortKey: Date.now(),
             activeSessionId: oldSession.id
         })

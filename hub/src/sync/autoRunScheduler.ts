@@ -16,14 +16,13 @@ function isTaskAutoRunnable(task: {
     activeSessionId: string | null
     source: string | null
     workflowPhase: string | null
-}, project: {
-    workflowProfile: string | null
+    workflowProfile: string
 }): boolean {
     if (task.status !== 'planned') return false
     if (task.archivedAt) return false
     if (task.activeSessionId) return false
     if (task.source === 'improvements_scan') return false
-    const strategy = getWorkflowStrategy(project)
+    const strategy = getWorkflowStrategy(task)
     return strategy.canAutoRunTask(task)
 }
 
@@ -94,8 +93,7 @@ export class AutoRunScheduler {
 
         if ((event.type === 'task-added' || event.type === 'task-updated') && event.projectId && event.taskId && event.namespace) {
             const task = this.store.tasks.getTaskByNamespace(event.taskId, event.namespace)
-            const project = this.store.projects.getProjectByNamespace(event.projectId, event.namespace)
-            if (task && project && isTaskAutoRunnable(task, project)) {
+            if (task && isTaskAutoRunnable(task)) {
                 this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
             }
         }
@@ -138,7 +136,7 @@ export class AutoRunScheduler {
                 if (started >= capacity) {
                     break
                 }
-                if (!isTaskAutoRunnable(task, project)) continue
+                if (!isTaskAutoRunnable(task)) continue
 
                 const result = await startSessionFromTask({
                     store: this.store,

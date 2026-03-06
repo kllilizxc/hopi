@@ -587,7 +587,7 @@ describe('startSessionFromTask', () => {
         )
 
         const realtimeEvents: SyncEvent[] = []
-        let resolveSendMessage: (() => void) | null = null
+        let resolveSendMessage: () => void = () => {}
         let sendMessageCalled = false
 
         const engine = {
@@ -616,7 +616,7 @@ describe('startSessionFromTask', () => {
             async sendMessage() {
                 sendMessageCalled = true
                 await new Promise<void>((resolve) => {
-                    resolveSendMessage = resolve
+                    resolveSendMessage = () => resolve()
                 })
             },
             handleRealtimeEvent(event: SyncEvent) {
@@ -636,7 +636,7 @@ describe('startSessionFromTask', () => {
         expect(sendMessageCalled).toBe(true)
         expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === taskId)).toBe(true)
 
-        resolveSendMessage?.()
+        resolveSendMessage()
         const result = await pending
         expect(result.ok).toBe(true)
         if (result.ok) {
@@ -680,7 +680,7 @@ describe('startSessionFromTask', () => {
             namespace
         )
 
-        let spawnedAgent: string | null = null
+        let spawnedAgent = ''
         const engine = {
             getMachineByNamespace() {
                 return {

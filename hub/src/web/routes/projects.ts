@@ -32,7 +32,6 @@ const createProjectSchema = z.object({
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
-    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).nullable().optional()
 })
 
 const updateProjectSchema = z.object({
@@ -50,7 +49,6 @@ const updateProjectSchema = z.object({
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
-    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).nullable().optional()
 })
 
 const listQuerySchema = z.object({
@@ -194,8 +192,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks,
-            workflowProfile: parsed.data.workflowProfile ?? null
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
 
         const createdWorkspaces: StoredWorkspace[] = []
@@ -235,7 +232,8 @@ export function createProjectsRoutes(options: {
             status: 'planned',
             sortKey: Date.now(),
             workspaceId: defaultWorkspaceId,
-            source: 'project_init'
+            source: 'project_init',
+            workflowProfile: 'default'
         })
 
         const engine = options.getSyncEngine()
@@ -328,8 +326,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             improvementsEnabled: parsed.data.improvementsEnabled,
-            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks,
-            workflowProfile: parsed.data.workflowProfile
+            improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
 
         if (!updated) {

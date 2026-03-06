@@ -20,6 +20,7 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
@@ -598,6 +599,7 @@ export default function ProjectsPage() {
     const [newTaskOpen, setNewTaskOpen] = useState(false)
 
     const { project } = useProject(api, selectedProjectId ?? '')
+    const { strategies: workflowStrategies } = useWorkflowStrategies(api)
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
 
@@ -634,6 +636,7 @@ export default function ProjectsPage() {
         agent: AgentType
         permissionMode: PermissionMode
         model: string
+        workflowProfile: string
     }) => {
         if (!selectedProjectId) return
 
@@ -646,7 +649,8 @@ export default function ProjectsPage() {
                 status: 'planned',
                 agentFlavor: data.agent,
                 permissionMode: data.permissionMode,
-                model: data.model,
+                modelMode: data.agent === 'claude' && data.model !== 'auto' ? data.model : undefined,
+                workflowProfile: data.workflowProfile,
                 sortKey: Date.now()
             })
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
@@ -745,6 +749,7 @@ export default function ProjectsPage() {
                     onOpenChange={setNewTaskOpen}
                     defaultAgent={defaultTaskAgent}
                     defaultPermissionMode={projectDefaultPermissionMode}
+                    workflowStrategies={workflowStrategies}
                     isCreating={isCreatingTask}
                     onCreate={handleCreateTask}
                 />

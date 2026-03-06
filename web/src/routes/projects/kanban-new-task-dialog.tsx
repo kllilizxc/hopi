@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PermissionMode, TaskPriority } from '@/types/api'
+import type { PermissionMode, TaskPriority, WorkflowStrategyDescriptor } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -39,6 +39,7 @@ type NewTaskDialogProps = {
     onOpenChange: (open: boolean) => void
     defaultAgent: AgentType
     defaultPermissionMode: PermissionMode | null
+    workflowStrategies: WorkflowStrategyDescriptor[]
     isCreating: boolean
     onCreate: (data: {
         title: string
@@ -47,6 +48,7 @@ type NewTaskDialogProps = {
         agent: AgentType
         permissionMode: PermissionMode
         model: string
+        workflowProfile: string
     }) => void
 }
 
@@ -61,6 +63,7 @@ type StoredOptions = {
     agent: AgentType
     model: string
     permissionMode: PermissionMode
+    workflowProfile: string
 }
 
 type LoadStoredOptionsResult = {
@@ -105,6 +108,9 @@ function loadStoredOptions(): LoadStoredOptionsResult {
         if (typeof parsed.permissionMode === 'string' && VALID_PERMISSION_MODES.has(parsed.permissionMode as PermissionMode)) {
             options.permissionMode = parsed.permissionMode as PermissionMode
         }
+        if (typeof parsed.workflowProfile === 'string') {
+            options.workflowProfile = parsed.workflowProfile
+        }
 
         return { hasStoredOptions: true, options }
     } catch {
@@ -132,6 +138,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>(storedOptions.priority ?? '')
     const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(initialAgent)
     const [newTaskModel, setNewTaskModel] = useState(storedOptions.model ?? 'auto')
+    const [newTaskWorkflowProfile, setNewTaskWorkflowProfile] = useState((storedOptions.workflowProfile ?? 'default').trim() || 'default')
     const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => {
         if (storedOptions.permissionMode) {
             return storedOptions.permissionMode
@@ -169,9 +176,10 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
             priority: newTaskPriority,
             agent: newTaskAgent,
             model: newTaskModel,
-            permissionMode: newTaskPermissionMode
+            permissionMode: newTaskPermissionMode,
+            workflowProfile: newTaskWorkflowProfile
         })
-    }, [newTaskPriority, newTaskAgent, newTaskModel, newTaskPermissionMode])
+    }, [newTaskPriority, newTaskAgent, newTaskModel, newTaskPermissionMode, newTaskWorkflowProfile])
 
     // Reset only task details when dialog closes
     useEffect(() => {
@@ -198,9 +206,10 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
             priority: newTaskPriority,
             agent: newTaskAgent,
             permissionMode: newTaskPermissionMode,
-            model: newTaskModel
+            model: newTaskModel,
+            workflowProfile: newTaskWorkflowProfile
         })
-    }, [props.onCreate, newTaskPriority, newTaskAgent, newTaskPermissionMode, newTaskModel])
+    }, [props.onCreate, newTaskPriority, newTaskAgent, newTaskPermissionMode, newTaskModel, newTaskWorkflowProfile])
 
     const handlePriorityChange = useCallback((value: string) => {
         setNewTaskPriority((value as TaskPriority) || '')
@@ -218,12 +227,42 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         setNewTaskPermissionMode(value as PermissionMode)
     }, [])
 
+    const handleWorkflowProfileChange = useCallback((value: string) => {
+        const next = value.trim().toLowerCase()
+        if (!next) return
+        setNewTaskWorkflowProfile(next)
+    }, [])
+
     const priorityOptions = useMemo(() => [
         { value: '', label: t('projects.task.priority.none') },
         { value: 'high', label: t('projects.task.priority.high') },
         { value: 'medium', label: t('projects.task.priority.medium') },
         { value: 'low', label: t('projects.task.priority.low') },
     ], [t])
+
+    const workflowStrategyOptions = useMemo(() => {
+        const base = props.workflowStrategies.length > 0
+            ? props.workflowStrategies
+            : [
+                { id: 'default', label: 'Default', defaultTaskPhase: null, phaseOptions: [] },
+                { id: 'gsd', label: 'GSD', defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
+            ]
+
+        const options = base.map((strategy) => ({
+            value: strategy.id,
+            label: strategy.id === 'default'
+                ? t('projects.automation.workflowDefault')
+                : strategy.id === 'gsd'
+                    ? t('projects.automation.workflowGsd')
+                    : strategy.label || strategy.id
+        }))
+
+        if (!options.some((option) => option.value === newTaskWorkflowProfile)) {
+            options.push({ value: newTaskWorkflowProfile, label: newTaskWorkflowProfile })
+        }
+
+        return options
+    }, [newTaskWorkflowProfile, props.workflowStrategies, t])
 
     const permissionModeSelectOptions = useMemo(() =>
         newTaskPermissionOptions.map((opt) => ({
@@ -271,6 +310,22 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                             />
                         </div>
                         <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-[var(--app-hint)]">
+                                {t('projects.automation.workflowStrategy')}
+                            </label>
+                            <AdaptiveSelectField
+                                title={t('projects.automation.workflowStrategy')}
+                                value={newTaskWorkflowProfile}
+                                options={workflowStrategyOptions}
+                                onValueChange={handleWorkflowProfileChange}
+                                disabled={props.isCreating}
+                                align="start"
+                            />
+                            <div className="text-xs text-[var(--app-hint)]">
+                                {t('projects.automation.workflowHint')}
+                            </div>
+                        </div>
+                        <div className="space-y-1.5">
                             <AgentSelector
                                 agent={newTaskAgent}
                                 isDisabled={props.isCreating}
@@ -311,7 +366,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                         <Button type="button" variant="secondary" onClick={() => props.onOpenChange(false)} disabled={props.isCreating}>
                             {t('button.cancel')}
                         </Button>
-                        <Button type="submit" variant="secondary" disabled={props.isCreating || !hasTitle}>
+                        <Button type="submit" variant="secondary" disabled={props.isCreating || !hasTitle || !newTaskWorkflowProfile}>
                             {props.isCreating ? t('projects.tasks.creating') : t('projects.tasks.create')}
                         </Button>
                     </div>

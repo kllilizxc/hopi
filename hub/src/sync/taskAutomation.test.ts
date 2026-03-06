@@ -376,8 +376,8 @@ describe('TaskAutomation', () => {
         session.agentState = {
             requests: {
                 'req-1': {
-                    type: 'filesystem',
-                    title: 'allow read',
+                    tool: 'filesystem',
+                    arguments: { title: 'allow read' },
                     createdAt: Date.now()
                 }
             }
@@ -475,8 +475,8 @@ describe('TaskAutomation', () => {
         session.agentState = {
             requests: {
                 'req-1': {
-                    type: 'filesystem',
-                    title: 'allow read',
+                    tool: 'filesystem',
+                    arguments: { title: 'allow read' },
                     createdAt: Date.now()
                 }
             }
@@ -770,8 +770,7 @@ describe('TaskAutomation', () => {
             id: projectId,
             namespace,
             machineId: 'machine-1',
-            name: 'GSD project',
-            workflowProfile: 'gsd'
+            name: 'GSD project'
         })
 
         const { sessionId, session } = createLinkedSession(store, {
@@ -786,6 +785,7 @@ describe('TaskAutomation', () => {
             projectId,
             title: 'GSD task',
             status: 'planned',
+            workflowProfile: 'gsd',
             workflowPhase: 'execute_ready',
             activeSessionId: sessionId
         })

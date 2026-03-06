@@ -23,7 +23,7 @@ function createProjectWithTask(store: Store, options: {
     namespace: string
     projectId: string
     taskId: string
-    workflowProfile: string | null
+    workflowProfile: string
     workflowPhase: string | null
 }): void {
     store.projects.createProject({
@@ -32,8 +32,7 @@ function createProjectWithTask(store: Store, options: {
         machineId: 'machine-1',
         name: 'Project',
         autoRunEnabled: true,
-        maxRunningSessions: 1,
-        workflowProfile: options.workflowProfile
+        maxRunningSessions: 1
     })
 
     store.tasks.createTask({
@@ -41,6 +40,7 @@ function createProjectWithTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Task',
         status: 'planned',
+        workflowProfile: options.workflowProfile,
         workflowPhase: options.workflowPhase
     })
 }

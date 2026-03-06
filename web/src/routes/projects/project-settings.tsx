@@ -13,7 +13,6 @@ import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useProject } from '@/hooks/queries/useProject'
-import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { useArchiveProject } from '@/hooks/mutations/useArchiveProject'
 import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
@@ -71,7 +70,6 @@ export function ProjectSettingsPage() {
     const { projectId } = useParams({ from: '/projects/$projectId/settings' })
 
     const { project, isLoading: projectLoading, error: projectError } = useProject(api, projectId)
-    const { strategies: workflowStrategies } = useWorkflowStrategies(api)
     const { workspaces, isLoading: workspacesLoading, error: workspacesError } = useWorkspaces(api, projectId)
     const { updateProject, isPending: isSavingProject } = useUpdateProject(api)
     const { archiveProject, isPending: isArchivingProject } = useArchiveProject(api)
@@ -92,7 +90,6 @@ export function ProjectSettingsPage() {
     const [maxRunningSessions, setMaxRunningSessions] = useState(5)
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
     const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
-    const [workflowProfile, setWorkflowProfile] = useState('default')
 
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
 
@@ -113,7 +110,6 @@ export function ProjectSettingsPage() {
         setMaxRunningSessions(project.maxRunningSessions ?? 5)
         setImprovementsEnabled(Boolean(project.improvementsEnabled))
         setImprovementsMaxPendingTasks(project.improvementsMaxPendingTasks ?? 5)
-        setWorkflowProfile((project.workflowProfile ?? 'default').trim() || 'default')
     }, [project])
 
     const permissionOptions = useMemo(() => {
@@ -130,30 +126,6 @@ export function ProjectSettingsPage() {
     const modelModes = useMemo(() => {
         return getModelModesForFlavor(defaultAgentFlavor)
     }, [defaultAgentFlavor])
-
-    const workflowStrategyOptions = useMemo(() => {
-        const base = workflowStrategies.length > 0
-            ? workflowStrategies
-            : [
-                { id: 'default', label: 'Default' },
-                { id: 'gsd', label: 'GSD' }
-            ]
-
-        const options = base.map((strategy) => ({
-            value: strategy.id,
-            label: strategy.id === 'default'
-                ? t('projects.automation.workflowDefault')
-                : strategy.id === 'gsd'
-                    ? t('projects.automation.workflowGsd')
-                    : strategy.label || strategy.id
-        }))
-
-        if (!options.some((option) => option.value === workflowProfile)) {
-            options.push({ value: workflowProfile, label: workflowProfile })
-        }
-
-        return options
-    }, [workflowProfile, workflowStrategies, t])
 
     useEffect(() => {
         if (!isPermissionModeAllowedForFlavor(defaultPermissionMode, defaultAgentFlavor)) {
@@ -214,8 +186,7 @@ export function ProjectSettingsPage() {
                 autoRunEnabled,
                 maxRunningSessions,
                 improvementsEnabled,
-                improvementsMaxPendingTasks,
-                workflowProfile: workflowProfile === 'default' ? null : workflowProfile
+                improvementsMaxPendingTasks
             }
         })
         addToast({ title: t('projects.toast.saved'), body: '', sessionId: '', url: '' })
@@ -236,8 +207,7 @@ export function ProjectSettingsPage() {
         autoRunEnabled,
         maxRunningSessions,
         improvementsEnabled,
-        improvementsMaxPendingTasks,
-        workflowProfile
+        improvementsMaxPendingTasks
     ])
 
     const handleArchiveProject = useCallback(async () => {
@@ -367,19 +337,6 @@ export function ProjectSettingsPage() {
 
                         <div className="space-y-2">
                             <div className="text-sm font-semibold">{t('projects.automation.title')}</div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.workflowStrategy')}</label>
-                                <AdaptiveSelectField
-                                    title={t('projects.automation.workflowStrategy')}
-                                    value={workflowProfile}
-                                    options={workflowStrategyOptions}
-                                    onValueChange={(value) => setWorkflowProfile(value)}
-                                    disabled={isPending}
-                                    align="start"
-                                />
-                                <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.workflowHint')}</div>
-                            </div>
 
                             <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                                 <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={isPending} />
