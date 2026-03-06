@@ -120,6 +120,57 @@ export class SyncEngine {
         return undefined
     }
 
+    private resolveOnlineMachineForSessionRpc(sessionId: string): {
+        ok: true
+        machineId: string
+        sessionPath: string
+    } | {
+        ok: false
+        error: string
+    } {
+        const session = this.getSession(sessionId)
+        if (!session) {
+            return { ok: false, error: 'Session not found' }
+        }
+
+        const sessionPath = session.metadata?.path
+        if (!sessionPath) {
+            return { ok: false, error: 'Session path not available' }
+        }
+
+        const namespace = session.namespace
+        const metadata = session.metadata
+
+        const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        if (onlineMachines.length === 0) {
+            return {
+                ok: false,
+                error: 'No machine online. Start the runner and try again: hopi runner start'
+            }
+        }
+
+        const targetMachine = (() => {
+            if (metadata?.machineId) {
+                const exact = onlineMachines.find((machine) => machine.id === metadata.machineId)
+                if (exact) return exact
+            }
+            if (metadata?.host) {
+                const hostMatch = onlineMachines.find((machine) => machine.metadata?.host === metadata.host)
+                if (hostMatch) return hostMatch
+            }
+            return null
+        })()
+
+        if (!targetMachine) {
+            return {
+                ok: false,
+                error: 'Session machine is offline. Start the runner on that machine and try again.'
+            }
+        }
+
+        return { ok: true, machineId: targetMachine.id, sessionPath }
+    }
+
     getSessions(): Session[] {
         return this.sessionCache.getSessions()
     }
@@ -566,15 +617,63 @@ export class SyncEngine {
         return await this.rpcGateway.previewStopForSession(sessionId, params)
     }
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitStatus(sessionId, cwd)
+        try {
+            return await this.rpcGateway.getGitStatus(sessionId, cwd)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitStatusOnMachine(
+                fallback.machineId,
+                cwd ?? fallback.sessionPath
+            )
+        }
     }
 
     async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
+        try {
+            return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitDiffNumstatOnMachine(fallback.machineId, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
+        }
     }
 
     async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitDiffFile(sessionId, options)
+        try {
+            return await this.rpcGateway.getGitDiffFile(sessionId, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitDiffFileOnMachine(fallback.machineId, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
+        }
     }
 
     async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
@@ -590,11 +689,45 @@ export class SyncEngine {
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.rpcGateway.readSessionFile(sessionId, path)
+        try {
+            return await this.rpcGateway.readSessionFile(sessionId, path)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.readFileOnMachine(
+                fallback.machineId,
+                path,
+                fallback.sessionPath
+            )
+        }
     }
 
     async listDirectory(sessionId: string, path: string): Promise<RpcListDirectoryResponse> {
-        return await this.rpcGateway.listDirectory(sessionId, path)
+        try {
+            return await this.rpcGateway.listDirectory(sessionId, path)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.listDirectoryOnMachine(
+                fallback.machineId,
+                path,
+                fallback.sessionPath
+            )
+        }
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
@@ -606,7 +739,24 @@ export class SyncEngine {
     }
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
+        try {
+            return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.runRipgrepOnMachine(
+                fallback.machineId,
+                args,
+                cwd ?? fallback.sessionPath
+            )
+        }
     }
 
     async listSlashCommands(sessionId: string, agent: string): Promise<{
