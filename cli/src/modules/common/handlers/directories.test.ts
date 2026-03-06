@@ -44,6 +44,31 @@ describe('directory RPC handlers', () => {
         expect(names).toContain('README.md')
     })
 
+    it('lists a scoped cwd directory via listDirectory', async () => {
+        const response = await rpc.handleRequest({
+            method: 'session-test:listDirectory',
+            params: JSON.stringify({ cwd: 'src', path: '' })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; entries?: Array<{ name: string; type: string }> }
+        expect(parsed.success).toBe(true)
+
+        const names = (parsed.entries ?? []).map((entry) => entry.name)
+        expect(names).toContain('index.ts')
+        expect(names).not.toContain('README.md')
+    })
+
+    it('rejects path traversal outside cwd when cwd is provided', async () => {
+        const response = await rpc.handleRequest({
+            method: 'session-test:listDirectory',
+            params: JSON.stringify({ cwd: 'src', path: '..' })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; error?: string }
+        expect(parsed.success).toBe(false)
+        expect(parsed.error ?? '').toContain('outside the working directory')
+    })
+
     it('skips symlink stat in listDirectory', async () => {
         try {
             await symlink('/definitely-not-a-real-path', join(rootDir, 'bad-link'))

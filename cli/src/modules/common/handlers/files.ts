@@ -8,6 +8,7 @@ import { getErrorMessage, rpcError } from '../rpcResponses'
 
 interface ReadFileRequest {
     path: string
+    cwd?: string
 }
 
 interface ReadFileResponse {
@@ -32,13 +33,23 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>('readFile', async (data) => {
         logger.debug('Read file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
+        const requestedCwd = typeof data.cwd === 'string' ? data.cwd : undefined
+        let scopedWorkingDirectory = workingDirectory
+        if (requestedCwd) {
+            const cwdValidation = validatePath(requestedCwd, workingDirectory)
+            if (!cwdValidation.valid) {
+                return rpcError(cwdValidation.error ?? 'Invalid working directory')
+            }
+            scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
+        }
+
+        const validation = validatePath(data.path, scopedWorkingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid file path')
         }
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = resolve(scopedWorkingDirectory, data.path)
             const buffer = await readFile(resolvedPath)
             const content = buffer.toString('base64')
             return { success: true, content }
