@@ -323,7 +323,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     top: var(--scroll-shadow-offset, 0px);
     background: linear-gradient(
         to bottom,
-        var(--app-scroll-shadow) 0%,
+        transparent 0%,
+        var(--app-scroll-shadow) 20%,
         transparent 100%
     );
 }
@@ -332,7 +333,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     bottom: var(--scroll-shadow-offset, 0px);
     background: linear-gradient(
         to top,
-        var(--app-scroll-shadow) 0%,
+        transparent 0%,
+        var(--app-scroll-shadow) 20%,
         transparent 100%
     );
 }
@@ -359,7 +361,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     right: auto;
     background: linear-gradient(
         to right,
-        var(--app-scroll-shadow) 0%,
+        transparent 0%,
+        var(--app-scroll-shadow) 20%,
         transparent 100%
     );
 }
@@ -369,7 +372,8 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     left: auto;
     background: linear-gradient(
         to left,
-        var(--app-scroll-shadow) 0%,
+        transparent 0%,
+        var(--app-scroll-shadow) 20%,
         transparent 100%
     );
 }

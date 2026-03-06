@@ -60,7 +60,7 @@ function computeScrollShadowState(el: HTMLDivElement, orientation: 'vertical' | 
 }
 
 export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(function ScrollShadow(
-    { className, style, size = 40, offset = 0, orientation = 'vertical', hideScrollBar = false, children, ...rest },
+    { className, style, size = 24, offset = 0, orientation = 'vertical', hideScrollBar = false, children, ...rest },
     ref
 ) {
     const viewportRef = useRef<HTMLDivElement | null>(null)
