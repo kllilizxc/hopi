@@ -492,8 +492,18 @@ describe('tasks merge route unexpected errors', () => {
     it('returns retry-scheduled response when post-auto-resolve retry fails transiently', async () => {
         const store = new Store(':memory:')
         const taskId = 'task-merge-auto-retry-scheduled'
-        const sessionId = 'session-merge-auto-retry-scheduled'
         const namespace = 'default'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-merge-auto-retry-scheduled',
+            {
+                worktree: {
+                    branch: 'task-branch',
+                    baseCommit: 'abc1234'
+                }
+            },
+            null,
+            namespace
+        ).id
         seedMergeTask(store, {
             namespace,
             projectId: 'project-merge-auto-retry-scheduled',

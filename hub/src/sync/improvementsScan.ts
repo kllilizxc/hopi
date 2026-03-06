@@ -471,6 +471,7 @@ export async function waitForAssistantCompletion(options: {
         if (!session || !session.active) {
             return null
         }
+        const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
 
         const stored = options.store.messages.getMessagesAfter(options.sessionId, options.afterSeq, 200)
         for (const msg of stored) {
@@ -497,10 +498,10 @@ export async function waitForAssistantCompletion(options: {
             }
         }
 
-        if (requireAssistantText && lastAssistant && !session.thinking) {
+        if (requireAssistantText && lastAssistant && !session.thinking && !hasPendingRequests) {
             return lastAssistant
         }
-        if (!requireAssistantText && sawAssistantMessage && !session.thinking) {
+        if (!requireAssistantText && sawAssistantMessage && !session.thinking && !hasPendingRequests) {
             return lastAssistant
         }
 
