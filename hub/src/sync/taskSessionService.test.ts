@@ -93,6 +93,274 @@ describe('startSessionFromTask', () => {
         expect(sequence).toEqual(['init', 'kickoff'])
     })
 
+    it('calls getSessionByNamespace with engine context when resolving init script cwd', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-session-context'
+        const taskId = 'task-session-context'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const runtimePath = '/tmp/runtime-from-session'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-context',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let observedCwd = ''
+        function getSessionByNamespace(this: { runtimePath: string }, sessionId: string, ns: string) {
+            return {
+                id: sessionId,
+                namespace: ns,
+                metadata: { path: this.runtimePath, host: 'localhost' }
+            }
+        }
+
+        const engine = {
+            runtimePath,
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace,
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash(_sessionId: string, params: { cwd?: string }) {
+                observedCwd = params.cwd ?? ''
+                return { success: true, stdout: '', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(observedCwd).toBe(runtimePath)
+    })
+
+    it('falls back to workspace path when init script is missing in runtime path', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-fallback'
+        const taskId = 'task-init-fallback'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const runtimePath = '/tmp/worktree-path'
+        const workspacePath = '/tmp/base-workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-fallback',
+            { path: runtimePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const runBashCwds: string[] = []
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    metadata: { path: runtimePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                runBashCwds.push(params.cwd ?? '')
+                if ((params.cwd ?? '') === runtimePath) {
+                    const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
+                    return { success: true, stdout: marker, stderr: '' }
+                }
+                return { success: true, stdout: 'init ok', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(runBashCwds).toEqual([runtimePath, workspacePath])
+        expect(kickoffText).toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+    })
+
+    it('skips init when shell reports init script not found', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-not-found'
+        const taskId = 'task-init-not-found'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-not-found',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let sendMessageCalled = false
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                return {
+                    success: false,
+                    error: 'Command failed: bash .hopi/init.sh',
+                    stdout: '',
+                    stderr: 'bash: .hopi/init.sh: No such file or directory'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(sendMessageCalled).toBe(true)
+    })
+
     it('fails start when init script execution fails', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

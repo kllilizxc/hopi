@@ -20,6 +20,7 @@ export default defineConfig({
     },
     server: {
         host: true,
+        port: webPort ?? undefined,
         allowedHosts: ['hopidev.weishu.me', 'ruilimacbook-pro.tailfbf761.ts.net'],
         // Only enforce strict port when caller explicitly pinned the port (preview mode).
         strictPort: Boolean(webPortEnv),

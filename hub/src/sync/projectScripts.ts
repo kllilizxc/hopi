@@ -74,14 +74,15 @@ async function runScriptIfPresent(options: {
     timeoutMs: number
     env: Record<string, string | undefined>
 }): Promise<ScriptExecutionResult> {
-    const runBash = (options.engine as unknown as {
+    const engineWithRunBash = options.engine as unknown as {
         runBash?: (sessionId: string, params: { command: string; cwd?: string; timeout?: number }) => Promise<{
             success: boolean
             stdout?: string
             stderr?: string
             error?: string
         }>
-    }).runBash
+    }
+    const runBash = engineWithRunBash.runBash
 
     if (typeof runBash !== 'function') {
         return {
@@ -106,7 +107,7 @@ async function runScriptIfPresent(options: {
     }
 
     try {
-        result = await runBash(options.sessionId, {
+        result = await runBash.call(options.engine, options.sessionId, {
             command,
             cwd: options.cwd,
             timeout: options.timeoutMs
