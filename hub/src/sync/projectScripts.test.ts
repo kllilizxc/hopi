@@ -58,4 +58,30 @@ describe('runInitScriptIfPresent', () => {
         expect(runBashCalls[0]?.cwd).toBe('/tmp/workspace')
         expect(runBashCalls[0]?.command).toContain(PRODUCT_INIT_SCRIPT_RELATIVE_PATH)
     })
+
+    it('skips when cwd is outside working directory', async () => {
+        const engine = {
+            async runBash() {
+                return {
+                    success: false,
+                    error: 'Access denied: Path \'/tmp/base-workspace\' is outside the working directory',
+                    stdout: '',
+                    stderr: ''
+                }
+            }
+        } as unknown as SyncEngine
+
+        const result = await runInitScriptIfPresent({
+            engine,
+            sessionId: 'session-1',
+            cwd: '/tmp/base-workspace',
+            taskId: 'task-1',
+            projectId: 'project-1'
+        })
+
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+            expect(result.executed).toBe(false)
+        }
+    })
 })
