@@ -14,6 +14,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import os from 'node:os'
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
 
 interface ServerToRunnerEvents {
@@ -135,7 +136,11 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         })
 
-        registerCommonHandlers(this.rpcHandlerManager, resolveCliWorkingDirectory())
+        const handlerRoot = typeof this.machine.metadata?.homeDir === 'string' && this.machine.metadata.homeDir.trim().length > 0
+            ? this.machine.metadata.homeDir.trim()
+            : os.homedir() || resolveCliWorkingDirectory()
+
+        registerCommonHandlers(this.rpcHandlerManager, handlerRoot)
 
         this.rpcHandlerManager.registerHandler<PathExistsRequest, PathExistsResponse>('path-exists', async (params) => {
             const rawPaths = Array.isArray(params?.paths) ? params.paths : []
