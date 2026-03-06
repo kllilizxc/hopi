@@ -496,8 +496,14 @@ describe('tasks merge route unexpected errors', () => {
         const taskId = 'task-merge-auto-retry-scheduled'
         const namespace = 'default'
         const sessionId = store.sessions.getOrCreateSession(
-            'merge-auto-retry-scheduled',
-            { path: '/tmp/merge-auto-retry-scheduled' },
+            'session-merge-auto-retry-scheduled',
+            {
+                path: '/tmp/merge-auto-retry-scheduled',
+                worktree: {
+                    branch: 'task-branch',
+                    baseCommit: 'abc1234'
+                }
+            },
             null,
             namespace
         ).id

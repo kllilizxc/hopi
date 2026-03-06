@@ -14,7 +14,6 @@ import type { Store, StoredTask } from '../../store'
 import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
-import { runMergeScriptIfPresent } from '../../sync/projectScripts'
 import { setSessionTaskLink } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
@@ -27,6 +26,8 @@ const AUTO_MERGE_CONFLICT_TIMEOUT_MS = 180_000
 const AUTO_MERGE_BACKGROUND_RETRY_TIMEOUT_MS = 180_000
 const AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS = 4_000
 const AUTO_MERGE_BACKGROUND_RETRY_MAX_ATTEMPTS = 30
+const AUTO_MERGE_SCRIPT_LOCAL_ID_PREFIX = 'auto:merge_script:'
+const AUTO_MERGE_SCRIPT_TIMEOUT_MS = 300_000
 const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
 const AUTO_PREVIEW_SETUP_TIMEOUT_MS = 240_000
 const inFlightAutoMergeRetryKeys = new Set<string>()
@@ -537,6 +538,253 @@ function createMergeConflictPrompt(options: {
         '- Keep unrelated refactors out.',
         '- If tests are available for touched code, run focused checks before finishing.'
     ].join('\n')
+}
+
+function quoteForShell(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function pickScriptErrorMessage(result: {
+    error?: string
+    stderr?: string
+    stdout?: string
+}): string {
+    const explicit = result.error?.trim()
+    if (explicit) {
+        return explicit
+    }
+
+    const stderr = result.stderr?.trim()
+    if (stderr) {
+        const first = stderr.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    const stdout = result.stdout?.trim()
+    if (stdout) {
+        const first = stdout.split('\n').find((line) => line.trim().length > 0)?.trim()
+        if (first) {
+            return first
+        }
+    }
+
+    return 'Script execution failed'
+}
+
+function isOutsideWorkingDirectoryError(parts: Array<string | undefined>): boolean {
+    const combined = parts
+        .map((part) => part?.trim() ?? '')
+        .filter((part) => part.length > 0)
+        .join('\n')
+        .toLowerCase()
+    if (!combined) {
+        return false
+    }
+
+    return combined.includes('outside the working directory')
+        || (combined.includes('access denied') && combined.includes('working directory'))
+}
+
+type MergeScriptPresenceResult =
+    | { ok: true; present: boolean }
+    | { ok: false; error: string }
+
+async function checkMergeScriptPresence(options: {
+    engine: SyncEngine
+    sessionId: string
+    cwd: string
+}): Promise<MergeScriptPresenceResult> {
+    const engineWithRunBash = options.engine as unknown as {
+        runBash?: (sessionId: string, params: { command: string; cwd?: string; timeout?: number }) => Promise<{
+            success: boolean
+            stdout?: string
+            stderr?: string
+            error?: string
+        }>
+    }
+    const runBash = engineWithRunBash.runBash
+
+    if (typeof runBash !== 'function') {
+        return { ok: true, present: false }
+    }
+
+    const marker = `__HOPI_MERGE_SCRIPT_PRESENT__:${Date.now()}`
+    const markerToken = quoteForShell(marker)
+    const scriptPath = quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
+    const command = `if [ -f ${scriptPath} ]; then echo ${markerToken}; fi`
+
+    let result: {
+        success: boolean
+        stdout?: string
+        stderr?: string
+        error?: string
+    }
+
+    try {
+        result = await runBash.call(options.engine, options.sessionId, {
+            command,
+            cwd: options.cwd,
+            timeout: 10_000
+        })
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (isOutsideWorkingDirectoryError([message])) {
+            return { ok: true, present: false }
+        }
+        if (message.startsWith('RPC handler not registered:') && message.includes(':bash')) {
+            return { ok: true, present: false }
+        }
+        return { ok: false, error: message }
+    }
+
+    const stdout = result.stdout ?? ''
+    const stderr = result.stderr ?? ''
+
+    if (!result.success) {
+        const message = pickScriptErrorMessage(result)
+        if (isOutsideWorkingDirectoryError([message, stderr, stdout])) {
+            return { ok: true, present: false }
+        }
+        if (message.startsWith('RPC handler not registered:') && message.includes(':bash')) {
+            return { ok: true, present: false }
+        }
+        return { ok: false, error: message }
+    }
+
+    return { ok: true, present: stdout.includes(marker) }
+}
+
+function createMergeScriptPrompt(options: {
+    task: {
+        id: string
+        title: string
+    }
+    projectId: string
+    rootPath: string
+    targetBranch: string
+    sourceBranch: string | null
+}): string {
+    const sourceBranchLine = options.sourceBranch
+        ? options.sourceBranch
+        : '(unknown; read from worktree metadata)'
+
+    const recommendedCommand = [
+        `cd ${quoteForShell(options.rootPath)}`,
+        `chmod +x ${quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)}`,
+        `${PRODUCT_ENV.PROJECT_ROOT}=${quoteForShell(options.rootPath)}`,
+        `${PRODUCT_ENV.TASK_ID}=${quoteForShell(options.task.id)}`,
+        `${PRODUCT_ENV.TASK_PROJECT_ID}=${quoteForShell(options.projectId)}`,
+        `${PRODUCT_ENV.MERGE_TARGET_BRANCH}=${quoteForShell(options.targetBranch)}`,
+        `${PRODUCT_ENV.MERGE_SOURCE_BRANCH}=${quoteForShell(options.sourceBranch ?? '')}`,
+        `bash ${quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)}`
+    ].join(' && ')
+
+    return [
+        'Worktree merge requested.',
+        '',
+        `Task: ${options.task.title}`,
+        `Task id: ${options.task.id}`,
+        `Source branch: ${sourceBranchLine}`,
+        `Target branch: ${options.targetBranch}`,
+        '',
+        `Please run the merge script \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` as a single CLI tool call (bash).`,
+        '',
+        `Working directory (script root): ${options.rootPath}`,
+        '',
+        'Recommended command (single tool call):',
+        `\`${recommendedCommand}\``,
+        '',
+        'If it fails:',
+        '- Inspect stdout/stderr.',
+        '- Fix the underlying issue (merge conflicts, wrong branch, missing remote auth, etc.).',
+        `- Re-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` until the merge is fully completed.`,
+        '',
+        'Required outcome:',
+        '- The worktree branch should no longer be mergeable into target (target contains your changes).',
+        '- Reply with a short summary of what happened and any manual steps required.'
+    ].join('\n')
+}
+
+type AutoRunMergeScriptResult =
+    | { ok: true }
+    | {
+        ok: false
+        status: 500 | 503 | 504
+        error: string
+    }
+
+async function tryAutoRunMergeScript(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    sessionId: string
+    task: {
+        id: string
+        title: string
+    }
+    projectId: string
+    rootPath: string
+    targetBranch: string
+    sourceBranch: string | null
+}): Promise<AutoRunMergeScriptResult> {
+    const latest = options.store.messages.getMessages(options.sessionId, 1)
+    const afterSeq = latest[0]?.seq ?? 0
+    const localId = `${AUTO_MERGE_SCRIPT_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
+
+    const prompt = createMergeScriptPrompt({
+        task: options.task,
+        projectId: options.projectId,
+        rootPath: options.rootPath,
+        targetBranch: options.targetBranch,
+        sourceBranch: options.sourceBranch
+    })
+
+    try {
+        await options.engine.sendMessage(options.sessionId, {
+            text: prompt,
+            localId,
+            sentFrom: 'webapp'
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Failed to send merge script prompt')
+        return {
+            ok: false,
+            status: resolveMergeExecutionErrorStatus(message),
+            error: message
+        }
+    }
+
+    let assistantMessage: Awaited<ReturnType<typeof waitForAssistantCompletion>> | null = null
+    try {
+        assistantMessage = await waitForAssistantCompletion({
+            store: options.store,
+            engine: options.engine,
+            sessionId: options.sessionId,
+            namespace: options.namespace,
+            afterSeq,
+            timeoutMs: AUTO_MERGE_SCRIPT_TIMEOUT_MS,
+            requireAssistantText: false
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Agent merge script run failed unexpectedly')
+        return {
+            ok: false,
+            status: resolveMergeExecutionErrorStatus(message),
+            error: message
+        }
+    }
+
+    if (!assistantMessage) {
+        return {
+            ok: false,
+            status: 504,
+            error: 'Agent merge script run timed out or session became inactive'
+        }
+    }
+
+    return { ok: true }
 }
 
 type AutoResolveMergeConflictResult =
@@ -1914,23 +2162,45 @@ export function createTasksRoutes(options: {
             ].filter((value) => value.length > 0)))
 
             for (const mergeScriptCwd of mergeScriptCwdCandidates) {
-                const mergeScript = await runMergeScriptIfPresent({
+                const mergeScriptPresence = await checkMergeScriptPresence({
                     engine,
                     sessionId: session.id,
-                    cwd: mergeScriptCwd,
-                    taskId: task.id,
+                    cwd: mergeScriptCwd
+                })
+
+                if (!mergeScriptPresence.ok) {
+                    console.warn('[Tasks] Failed to check merge script presence; falling back to built-in merge', {
+                        taskId,
+                        sessionId: session.id,
+                        targetBranch,
+                        cwd: mergeScriptCwd,
+                        error: mergeScriptPresence.error
+                    })
+                    continue
+                }
+
+                if (!mergeScriptPresence.present) {
+                    continue
+                }
+
+                const mergeScriptRun = await tryAutoRunMergeScript({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    sessionId: session.id,
+                    task: {
+                        id: task.id,
+                        title: task.title
+                    },
                     projectId: task.projectId,
+                    rootPath: mergeScriptCwd,
                     targetBranch,
                     sourceBranch
                 })
 
-                if (!mergeScript.ok) {
-                    const message = `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}: ${mergeScript.error}`
-                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
-                }
-
-                if (!mergeScript.executed) {
-                    continue
+                if (!mergeScriptRun.ok) {
+                    const message = `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}: ${mergeScriptRun.error}`
+                    return c.json({ error: message }, mergeScriptRun.status)
                 }
 
                 const afterScriptMergeState = await computeMergeGitState({

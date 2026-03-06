@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${HOPI_TASK_ROOT:-$(pwd)}"
-TARGET_BRANCH="${HOPI_TARGET_BRANCH:-dev}"
-TASK_BRANCH="${HOPI_TASK_BRANCH:-$(git -C "$ROOT" branch --show-current)}"
+ROOT="${HOPI_PROJECT_ROOT:-${HOPI_TASK_ROOT:-$(pwd)}}"
+TARGET_BRANCH="${HOPI_MERGE_TARGET_BRANCH:-${HOPI_TARGET_BRANCH:-dev}}"
+TASK_BRANCH="${HOPI_MERGE_SOURCE_BRANCH:-${HOPI_TASK_BRANCH:-$(git -C "$ROOT" branch --show-current)}}"
 
 cd "$ROOT"
 
 echo "[hopi-merge] merging $TASK_BRANCH into $TARGET_BRANCH..." >&2
 
-# Ensure we're on the task branch
+# Ensure we're on either the task branch or the target branch (common in worktree setups)
 CURRENT_BRANCH="$(git branch --show-current)"
-if [[ "$CURRENT_BRANCH" != "$TASK_BRANCH" ]]; then
-  echo "[hopi-merge] error: not on task branch (current: $CURRENT_BRANCH, expected: $TASK_BRANCH)" >&2
+if [[ "$CURRENT_BRANCH" != "$TASK_BRANCH" && "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]]; then
+  echo "[hopi-merge] error: unexpected current branch: $CURRENT_BRANCH (expected: $TASK_BRANCH or $TARGET_BRANCH)" >&2
   exit 1
 fi
 
