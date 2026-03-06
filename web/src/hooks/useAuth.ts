@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiClient, ApiError } from '@/api/client'
 import type { AuthResponse } from '@/types/api'
+import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
 export type AuthSource =
     | { type: 'telegram'; initData: string }
     | { type: 'accessToken'; token: string }
+
+const SESSION_TOKEN_PREFIX = `${productStorageNamespaceKey('session-token')}::`
 
 function decodeJwtExpMs(token: string): number | null {
     const parts = token.split('.')
@@ -24,6 +27,54 @@ function decodeJwtExpMs(token: string): number | null {
     } catch {
         return null
     }
+}
+
+function getSessionTokenKey(baseUrl: string): string {
+    return `${SESSION_TOKEN_PREFIX}${baseUrl}`
+}
+
+function readStoredSessionToken(key: string): string | null {
+    try {
+        const stored = localStorage.getItem(key)
+        if (!stored) {
+            return null
+        }
+        const trimmed = stored.trim()
+        return trimmed.length > 0 ? trimmed : null
+    } catch {
+        return null
+    }
+}
+
+function clearStoredSessionToken(key: string): void {
+    try {
+        localStorage.removeItem(key)
+    } catch {
+        // Ignore storage errors
+    }
+}
+
+function storeSessionToken(key: string, token: string): void {
+    try {
+        localStorage.setItem(key, token)
+    } catch {
+        // Ignore storage errors
+    }
+}
+
+function getValidStoredSessionToken(key: string): string | null {
+    const stored = readStoredSessionToken(key)
+    if (!stored) {
+        return null
+    }
+
+    const expMs = decodeJwtExpMs(stored)
+    if (expMs !== null && Date.now() >= expMs) {
+        clearStoredSessionToken(key)
+        return null
+    }
+
+    return stored
 }
 
 function getAuthPayload(source: AuthSource): { initData: string } | { accessToken: string } {
@@ -46,7 +97,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
     needsBinding: boolean
     bind: (accessToken: string) => Promise<void>
 } {
-    const [token, setToken] = useState<string | null>(null)
+    const [token, setToken] = useState<string | null>(() => getValidStoredSessionToken(getSessionTokenKey(baseUrl)))
     const [user, setUser] = useState<AuthResponse['user'] | null>(null)
     const [isLoading, setIsLoading] = useState<boolean>(false)
     const [error, setError] = useState<string | null>(null)
@@ -54,6 +105,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
     const refreshPromiseRef = useRef<Promise<string | null> | null>(null)
     const tokenRef = useRef<string | null>(null)
     const lastRefreshAttemptRef = useRef<number>(0)
+    const sessionTokenKey = useMemo(() => getSessionTokenKey(baseUrl), [baseUrl])
 
     // Stable reference for auth source to use in effects
     const authSourceRef = useRef(authSource)
@@ -95,6 +147,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
                 tokenRef.current = auth.token
                 setToken(auth.token)
                 setUser(auth.user)
+                storeSessionToken(getSessionTokenKey(baseUrl), auth.token)
                 setError(null)
                 setNeedsBinding(false)
                 return auth.token
@@ -103,6 +156,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
                     tokenRef.current = null
                     setToken(null)
                     setUser(null)
+                    clearStoredSessionToken(getSessionTokenKey(baseUrl))
                     setError(null)
                     setNeedsBinding(true)
                     return null
@@ -112,6 +166,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
                     tokenRef.current = null
                     setToken(null)
                     setUser(null)
+                    clearStoredSessionToken(getSessionTokenKey(baseUrl))
                     const msg = currentSource.type === 'telegram'
                         ? 'Session expired. Reopen the Mini App from Telegram.'
                         : 'Session expired. Please login again.'
@@ -148,6 +203,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
             tokenRef.current = auth.token
             setToken(auth.token)
             setUser(auth.user)
+            storeSessionToken(sessionTokenKey, auth.token)
             setNeedsBinding(false)
         } catch (error) {
             setError(error instanceof Error ? error.message : 'Binding failed')
@@ -155,7 +211,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
         } finally {
             setIsLoading(false)
         }
-    }, [baseUrl])
+    }, [baseUrl, sessionTokenKey])
 
     const api = useMemo(() => (
         token
@@ -186,12 +242,14 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
                 if (isCancelled) return
                 setToken(auth.token)
                 setUser(auth.user)
+                storeSessionToken(sessionTokenKey, auth.token)
                 setNeedsBinding(false)
             } catch (e) {
                 if (isCancelled) return
                 if (authSource.type === 'telegram' && isNotBoundError(e)) {
                     setToken(null)
                     setUser(null)
+                    clearStoredSessionToken(sessionTokenKey)
                     setError(null)
                     setNeedsBinding(true)
                     return
@@ -210,13 +268,14 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
         return () => {
             isCancelled = true
         }
-    }, [authSource, baseUrl])
+    }, [authSource, baseUrl, sessionTokenKey])
 
     useEffect(() => {
-        tokenRef.current = null
+        const stored = getValidStoredSessionToken(getSessionTokenKey(baseUrl))
+        tokenRef.current = stored
         refreshPromiseRef.current = null
         lastRefreshAttemptRef.current = 0
-        setToken(null)
+        setToken(stored)
         setUser(null)
         setError(null)
         setNeedsBinding(false)

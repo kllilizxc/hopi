@@ -6,6 +6,7 @@ import { initializeTheme } from '@/hooks/useTheme'
 import { initializeMotionPreference } from '@/hooks/useMotionPreference'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
+import type { ApiClient } from '@/api/client'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { useSSE } from '@/hooks/useSSE'
 import { useSyncingState } from '@/hooks/useSyncingState'
@@ -29,7 +30,6 @@ import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
 import { useToast } from '@/lib/toast-context'
 import type { SyncEvent } from '@/types/api'
-import type { ApiClient } from '@/api/client'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
 
@@ -297,9 +297,29 @@ function AppInner() {
         enabled: Boolean(api && token)
     })
 
+    // Guard: avoid a 1-render mismatch when baseUrl changes.
+    // (The effect below will clear query + reset refs.)
+    if (baseUrlRef.current !== baseUrl) {
+        return (
+            <div className="h-full flex items-center justify-center p-4">
+                <LoadingState label={t('loading')} className="text-sm" />
+            </div>
+        )
+    }
+
+    // Mark that we've successfully loaded once and cache token/api.
+    // Keep this BEFORE early returns so a persisted session token can render immediately.
+    if (token && api) {
+        hasLoadedOnceRef.current = true
+        cachedTokenRef.current = token
+        cachedApiRef.current = api
+    }
+
+    const hasLoadedOnce = hasLoadedOnceRef.current
+
     // Loading auth source - only show full screen loading on first load
     if (isAuthSourceLoading) {
-        if (!hasLoadedOnceRef.current) {
+        if (!hasLoadedOnce) {
             return (
                 <div className="h-full flex items-center justify-center p-4">
                     <LoadingState label={t('loading')} className="text-sm" />
@@ -310,7 +330,7 @@ function AppInner() {
 
     // No auth source (browser environment, not logged in)
     if (!authSource) {
-        if (!hasLoadedOnceRef.current) {
+        if (!hasLoadedOnce) {
             return (
                 <LoginPrompt
                     onLogin={setAccessToken}
@@ -325,7 +345,7 @@ function AppInner() {
     }
 
     if (needsBinding) {
-        if (!hasLoadedOnceRef.current) {
+        if (!hasLoadedOnce) {
             return (
                 <LoginPrompt
                     mode="bind"
@@ -344,7 +364,7 @@ function AppInner() {
     // Authenticating (also covers the gap before useAuth effect starts)
     // Only show full screen loading on first load, otherwise show overlay
     if (isAuthLoading || (authSource && !token && !authError)) {
-        if (!hasLoadedOnceRef.current) {
+        if (!hasLoadedOnce) {
             return (
                 <div className="h-full flex items-center justify-center p-4">
                     <LoadingState label={t('authorizing')} className="text-sm" />
@@ -357,7 +377,7 @@ function AppInner() {
     if (authError || !token || !api) {
         // If using access token and auth failed, show login again
         if (authSource?.type === 'accessToken') {
-            if (!hasLoadedOnceRef.current) {
+            if (!hasLoadedOnce) {
                 return (
                     <LoginPrompt
                         onLogin={setAccessToken}
@@ -373,7 +393,7 @@ function AppInner() {
         }
 
         // Telegram auth failed
-        if (!hasLoadedOnceRef.current) {
+        if (!hasLoadedOnce) {
             return (
                 <div className="p-4 space-y-3">
                     <div className="text-base font-semibold">{t('login.title')}</div>
@@ -388,32 +408,36 @@ function AppInner() {
         }
     }
 
-    // Mark that we've successfully loaded once and cache token/api
-    if (token && api) {
-        hasLoadedOnceRef.current = true
-        cachedTokenRef.current = token
-        cachedApiRef.current = api
-    }
-
     // Use cached values during reconnection
     const effectiveToken = token ?? cachedTokenRef.current
     const effectiveApi = api ?? cachedApiRef.current
 
 
     // Show reconnecting overlay if we're reconnecting after initial load
-    const isReconnecting = hasLoadedOnceRef.current && (
+    const isReconnecting = hasLoadedOnce && (
         isAuthSourceLoading ||
         isAuthLoading ||
         (authSource && !token && !authError) ||
         sseDisconnected
     )
 
+    const reconnectLabel = isAuthLoading || (authSource && !token && !authError)
+        ? t('authorizing')
+        : sseDisconnected
+            ? null
+            : isAuthSourceLoading
+                ? t('loading')
+                : null
+
     return (
         <AppContextProvider value={{ api: effectiveApi!, token: effectiveToken!, baseUrl }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
                 <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing && !isReconnecting} />
-                <ReconnectingOverlay isReconnecting={isReconnecting} />
+                <ReconnectingOverlay
+                    isReconnecting={isReconnecting}
+                    label={reconnectLabel}
+                />
                 <VoiceErrorBanner />
                 <OfflineBanner />
                 <div className="h-full flex flex-col">
