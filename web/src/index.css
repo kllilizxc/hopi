@@ -320,21 +320,19 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
 }
 
 .scroll-shadow::before {
-    top: 0;
+    top: var(--scroll-shadow-offset, 0px);
     background: linear-gradient(
         to bottom,
-        var(--scroll-shadow-bg, var(--app-bg)) 0%,
-        var(--app-scroll-shadow) 50%,
+        var(--app-scroll-shadow) 0%,
         transparent 100%
     );
 }
 
 .scroll-shadow::after {
-    bottom: 0;
+    bottom: var(--scroll-shadow-offset, 0px);
     background: linear-gradient(
         to top,
-        var(--scroll-shadow-bg, var(--app-bg)) 0%,
-        var(--app-scroll-shadow) 50%,
+        var(--app-scroll-shadow) 0%,
         transparent 100%
     );
 }
@@ -357,23 +355,21 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
 }
 
 .scroll-shadow-horizontal::before {
-    left: 0;
+    left: var(--scroll-shadow-offset, 0px);
     right: auto;
     background: linear-gradient(
         to right,
-        var(--scroll-shadow-bg, var(--app-bg)) 0%,
-        var(--app-scroll-shadow) 50%,
+        var(--app-scroll-shadow) 0%,
         transparent 100%
     );
 }
 
 .scroll-shadow-horizontal::after {
-    right: 0;
+    right: var(--scroll-shadow-offset, 0px);
     left: auto;
     background: linear-gradient(
         to left,
-        var(--scroll-shadow-bg, var(--app-bg)) 0%,
-        var(--app-scroll-shadow) 50%,
+        var(--app-scroll-shadow) 0%,
         transparent 100%
     );
 }
