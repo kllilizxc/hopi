@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 
 type ScrollShadowStyle = CSSProperties & {
     '--scroll-shadow-size'?: string
+    '--scroll-shadow-offset'?: string
 }
 
 export type ScrollShadowProps = HTMLAttributes<HTMLDivElement> & {
@@ -133,6 +134,7 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
 
     const mergedStyle: ScrollShadowStyle = {
         '--scroll-shadow-size': `${size}px`,
+        '--scroll-shadow-offset': `${offset}px`,
         ...style
     }
 
