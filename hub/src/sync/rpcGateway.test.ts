@@ -51,4 +51,18 @@ describe('RpcGateway RPC timeout settings', () => {
         expect(socket.timeoutCalls[0]).toBe(90_000)
         expect(socket.timeoutCalls[1]).toBe(30_000)
     })
+
+    it('supports machine-scoped RPC wrappers', async () => {
+        const io = new FakeServer()
+        const registry = new RpcRegistry()
+        const gateway = new RpcGateway(io as unknown as Server, registry)
+        const socket = new FakeCliSocket('cli-1')
+
+        io.cliNamespace.sockets.set(socket.id, socket)
+        registry.register(socket as unknown as Socket, 'machine-1:listDirectory')
+
+        const result = await gateway.listDirectoryOnMachine('machine-1', '')
+        expect(result.success).toBe(true)
+        expect(socket.timeoutCalls[0]).toBe(30_000)
+    })
 })

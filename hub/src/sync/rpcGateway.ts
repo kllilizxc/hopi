@@ -287,12 +287,24 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-status', { cwd }) as RpcCommandResponse
     }
 
+    async getGitStatusOnMachine(machineId: string, cwd?: string): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-status', { cwd }) as RpcCommandResponse
+    }
+
     async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-numstat', options) as RpcCommandResponse
     }
 
+    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-diff-numstat', options) as RpcCommandResponse
+    }
+
     async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-file', options) as RpcCommandResponse
+    }
+
+    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-diff-file', options) as RpcCommandResponse
     }
 
     async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
@@ -309,12 +321,20 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-merge-worktree-state', options) as RpcGitMergeWorktreeStateResponse
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.sessionRpc(sessionId, 'readFile', { path }) as RpcReadFileResponse
+    async readSessionFile(sessionId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.sessionRpc(sessionId, 'readFile', { path, cwd }) as RpcReadFileResponse
     }
 
-    async listDirectory(sessionId: string, path: string): Promise<RpcListDirectoryResponse> {
-        return await this.sessionRpc(sessionId, 'listDirectory', { path }) as RpcListDirectoryResponse
+    async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.machineRpc(machineId, 'readFile', { path, cwd }) as RpcReadFileResponse
+    }
+
+    async listDirectory(sessionId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
+        return await this.sessionRpc(sessionId, 'listDirectory', { path, cwd }) as RpcListDirectoryResponse
+    }
+
+    async listDirectoryOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
+        return await this.machineRpc(machineId, 'listDirectory', { path, cwd }) as RpcListDirectoryResponse
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
@@ -327,6 +347,10 @@ export class RpcGateway {
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'ripgrep', { args, cwd }) as RpcCommandResponse
+    }
+
+    async runRipgrepOnMachine(machineId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'ripgrep', { args, cwd }) as RpcCommandResponse
     }
 
     async listSlashCommands(sessionId: string, agent: string): Promise<{

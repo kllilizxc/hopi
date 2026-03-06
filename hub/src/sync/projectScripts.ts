@@ -66,6 +66,20 @@ function pickScriptErrorMessage(result: {
     return 'Script execution failed'
 }
 
+function isOutsideWorkingDirectoryError(parts: Array<string | undefined>): boolean {
+    const combined = parts
+        .map((part) => part?.trim() ?? '')
+        .filter((part) => part.length > 0)
+        .join('\n')
+        .toLowerCase()
+    if (!combined) {
+        return false
+    }
+
+    return combined.includes('outside the working directory')
+        || (combined.includes('access denied') && combined.includes('working directory'))
+}
+
 async function runScriptIfPresent(options: {
     engine: SyncEngine
     sessionId: string
@@ -114,6 +128,14 @@ async function runScriptIfPresent(options: {
         })
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        if (isOutsideWorkingDirectoryError([message])) {
+            return {
+                ok: true,
+                executed: false,
+                stdout: '',
+                stderr: ''
+            }
+        }
         if (message.startsWith('RPC handler not registered:') && message.includes(':bash')) {
             return {
                 ok: true,
@@ -134,9 +156,18 @@ async function runScriptIfPresent(options: {
     const stderr = result.stderr ?? ''
 
     if (!result.success) {
+        const errorMessage = pickScriptErrorMessage(result)
+        if (isOutsideWorkingDirectoryError([errorMessage, stderr, stdout])) {
+            return {
+                ok: true,
+                executed: false,
+                stdout,
+                stderr
+            }
+        }
         return {
             ok: false,
-            error: pickScriptErrorMessage(result),
+            error: errorMessage,
             stdout,
             stderr
         }

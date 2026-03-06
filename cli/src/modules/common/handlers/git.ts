@@ -608,7 +608,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         if (resolved.error) {
             return rpcError(resolved.error)
         }
-        const fileError = validateFilePath(data.filePath, workingDirectory)
+        const fileError = validateFilePath(data.filePath, resolved.cwd)
         if (fileError) {
             return rpcError(fileError)
         }

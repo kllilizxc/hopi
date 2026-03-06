@@ -361,6 +361,104 @@ describe('startSessionFromTask', () => {
         expect(sendMessageCalled).toBe(true)
     })
 
+    it('skips init fallback when base workspace path is outside working directory', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-outside-working-dir'
+        const taskId = 'task-init-outside-working-dir'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const runtimePath = '/tmp/worktree-path'
+        const workspacePath = '/tmp/base-workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-outside-working-dir',
+            { path: runtimePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const runBashCwds: string[] = []
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    metadata: { path: runtimePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                const cwd = params.cwd ?? ''
+                runBashCwds.push(cwd)
+                if (cwd === runtimePath) {
+                    const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
+                    return { success: true, stdout: marker, stderr: '' }
+                }
+                return {
+                    success: false,
+                    error: `Access denied: Path '${workspacePath}' is outside the working directory`,
+                    stdout: '',
+                    stderr: ''
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(runBashCwds).toEqual([runtimePath, workspacePath])
+        expect(kickoffText).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+    })
+
     it('fails start when init script execution fails', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
