@@ -19,7 +19,7 @@ function createTestApp(store: Store): Hono {
 }
 
 describe('tasks workflow strategy routes', () => {
-    it('defaults new task workflow phase from project strategy', async () => {
+    it('defaults new task workflow phase from task strategy', async () => {
         const store = new Store(':memory:')
         const projectId = 'project-gsd'
         store.projects.createProject({
@@ -27,14 +27,13 @@ describe('tasks workflow strategy routes', () => {
             namespace: 'default',
             machineId: 'machine-1',
             name: 'GSD Project',
-            workflowProfile: 'gsd'
         })
 
         const app = createTestApp(store)
         const response = await app.request(`/api/projects/${projectId}/tasks`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ title: 'Task 1' })
+            body: JSON.stringify({ title: 'Task 1', workflowProfile: 'gsd' })
         })
 
         expect(response.status).toBe(200)
@@ -52,13 +51,13 @@ describe('tasks workflow strategy routes', () => {
             namespace: 'default',
             machineId: 'machine-1',
             name: 'GSD Project',
-            workflowProfile: 'gsd'
         })
         store.tasks.createTask({
             id: taskId,
             projectId,
             title: 'Task',
             status: 'in_review',
+            workflowProfile: 'gsd',
             workflowPhase: 'verify'
         })
 

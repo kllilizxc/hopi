@@ -74,7 +74,6 @@ export type StoredProject = {
     maxRunningSessions: number
     improvementsEnabled: boolean
     improvementsMaxPendingTasks: number
-    workflowProfile: string | null
     lastImprovementsAt: number | null
     createdAt: number
     updatedAt: number
@@ -107,6 +106,7 @@ export type StoredTask = {
     attachments: unknown | null
     source: string | null
     sourceTaskId: string | null
+    workflowProfile: string
     workflowPhase: string | null
     subTasks: unknown | null
     subTasksUpdatedAt: number | null

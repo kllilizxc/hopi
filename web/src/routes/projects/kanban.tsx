@@ -152,6 +152,7 @@ type KanbanTaskSubTask = {
     id: string
     content: string
     status: 'pending' | 'in_progress' | 'completed'
+    priority: 'high' | 'medium' | 'low'
 }
 
 function getSubTaskStatusLabelKey(status: KanbanTaskSubTask['status']): string {
@@ -190,6 +191,7 @@ function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
         if (typeof item.id !== 'string') return false
         if (typeof item.content !== 'string') return false
         if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return false
+        if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') return false
         return true
     })
 }

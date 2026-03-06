@@ -526,7 +526,7 @@ export async function runImprovementsScan(options: {
     store: Store
     engine: SyncEngine
     namespace: string
-    project: { id: string; name: string; improvementsMaxPendingTasks: number; workflowProfile?: string | null }
+    project: { id: string; name: string; improvementsMaxPendingTasks: number }
     finishedTask: StoredTask
     targetSessionId: string
     maxToCreate: number
@@ -618,6 +618,7 @@ export async function runImprovementsScan(options: {
 
     for (const suggestion of selectedSuggestions) {
         const workspaceId = mapWorkspaceHintToWorkspaceId(suggestion, workspaces)
+        const workflowProfile = options.finishedTask.workflowProfile
 
         const taskId = randomUUID()
         options.store.tasks.createTask({
@@ -629,7 +630,8 @@ export async function runImprovementsScan(options: {
             priority: suggestion.priority,
             sortKey: Date.now() + createdTaskIds.length,
             workspaceId,
-            workflowPhase: getDefaultWorkflowPhase(options.project),
+            workflowProfile,
+            workflowPhase: getDefaultWorkflowPhase({ workflowProfile }),
             attachments: undefined,
             source: 'improvements_scan',
             sourceTaskId: options.finishedTask.id

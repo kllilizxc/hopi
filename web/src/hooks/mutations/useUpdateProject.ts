@@ -19,7 +19,6 @@ type UpdateProjectInput = {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
-        workflowProfile?: string | null
     }
 }
 

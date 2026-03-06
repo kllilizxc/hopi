@@ -16,7 +16,8 @@ const MODEL_CONTEXT_WINDOWS: Record<ModelMode, number> = {
     // Claude Code modes used in this app; currently treated as ~200k context.
     default: 200_000,
     sonnet: 200_000,
-    opus: 200_000
+    opus: 200_000,
+    'opus[1m]': 1_000_000
 }
 
 export function getContextBudgetTokens(modelMode: ModelMode | undefined): number | null {

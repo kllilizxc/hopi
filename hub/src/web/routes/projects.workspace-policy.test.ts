@@ -7,8 +7,9 @@ import { createWorkspacesRoutes } from './workspaces'
 function createTestApp(store: Store): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
-        c.set('userId', 1)
-        c.set('namespace', 'default')
+        const setContext = c.set as unknown as (key: string, value: unknown) => void
+        setContext('userId', 1)
+        setContext('namespace', 'default')
         await next()
     })
     app.route('/api', createProjectsRoutes({ store, getSyncEngine: () => null }))
@@ -80,7 +81,7 @@ describe('project workspace policy', () => {
             workspaces: Array<{ id: string }>
         }
         expect(listBody.workspaces.length).toBe(2)
-        expect(listBody.workspaces[0]?.id).toBe(body.project.defaultWorkspaceId)
+        expect(listBody.workspaces[0]?.id).toBe(body.project.defaultWorkspaceId as string)
     })
 
     it('rejects workspace changes after project creation', async () => {
@@ -212,7 +213,8 @@ describe('project workspace policy', () => {
             id: 'task-1',
             projectId,
             title: 'seed',
-            status: 'planned'
+            status: 'planned',
+            workflowProfile: 'default'
         })
 
         const getResponse = await app.request(`/api/projects/${projectId}`)

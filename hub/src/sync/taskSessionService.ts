@@ -475,7 +475,7 @@ export async function startSessionFromTask(options: {
             error: `${PRODUCT_INIT_SCRIPT_RELATIVE_PATH} failed: ${initScript.error}`
         }
     }
-    const workflowStrategy = getWorkflowStrategy(project)
+    const workflowStrategy = getWorkflowStrategy(task)
     const workflowPatch = workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
 
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {

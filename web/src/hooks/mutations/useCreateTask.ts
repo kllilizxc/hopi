@@ -29,6 +29,7 @@ type CreateTaskInput = {
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     permissionMode?: PermissionMode
     modelMode?: string
+    workflowProfile: string
     workflowPhase?: string | null
     sortKey?: number
     attachments?: TaskAttachmentInput[]
@@ -56,6 +57,7 @@ export function useCreateTask(api: ApiClient | null): {
                 agentFlavor: input.agentFlavor,
                 permissionMode: input.permissionMode,
                 modelMode: input.modelMode,
+                workflowProfile: input.workflowProfile,
                 workflowPhase: input.workflowPhase,
                 sortKey: input.sortKey,
                 attachments: input.attachments,

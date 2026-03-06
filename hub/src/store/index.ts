@@ -381,6 +381,7 @@ export class Store {
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
+                workflow_profile TEXT,
                 workflow_phase TEXT,
                 sub_tasks TEXT,
                 sub_tasks_updated_at INTEGER,
@@ -595,6 +596,18 @@ export class Store {
         if (!taskColumns.has('merged_diff_snapshot')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN merged_diff_snapshot TEXT')
         }
+        if (!taskColumns.has('workflow_profile')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_profile TEXT')
+        }
+        this.db.exec(`
+            UPDATE tasks
+            SET workflow_profile = COALESCE(
+                NULLIF(TRIM(workflow_profile), ''),
+                (SELECT workflow_profile FROM projects WHERE projects.id = tasks.project_id),
+                'default'
+            )
+            WHERE workflow_profile IS NULL OR TRIM(workflow_profile) = ''
+        `)
         if (!taskColumns.has('workflow_phase')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_phase TEXT')
         }

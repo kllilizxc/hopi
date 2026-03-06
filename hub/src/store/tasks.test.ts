@@ -16,6 +16,7 @@ describe('Task store worktree merge fields', () => {
             projectId: 'project-1',
             title: 'Task',
             status: 'in_progress',
+            workflowProfile: 'default',
             activeSessionId: 'session-a',
             worktreeMergedAt: Date.now(),
             worktreeMergeCommit: 'abc123'
@@ -52,13 +53,15 @@ describe('Task store worktree merge fields', () => {
             id: 'task-default',
             projectId: 'project-default',
             title: 'Task Default',
-            status: 'planned'
+            status: 'planned',
+            workflowProfile: 'default'
         })
         store.tasks.createTask({
             id: 'task-other',
             projectId: 'project-other',
             title: 'Task Other',
-            status: 'planned'
+            status: 'planned',
+            workflowProfile: 'default'
         })
 
         expect(store.tasks.deleteTaskByNamespace('task-default', 'other')).toBe(false)
@@ -83,6 +86,7 @@ describe('Task store worktree merge fields', () => {
             projectId: 'project-1',
             title: 'Task',
             status: 'planned',
+            workflowProfile: 'default',
             permissionMode: 'plan'
         })
 
@@ -109,6 +113,7 @@ describe('Task store worktree merge fields', () => {
             projectId: 'project-1',
             title: 'Manual task',
             status: 'planned',
+            workflowProfile: 'default',
             source: 'manual'
         })
         store.tasks.createTask({
@@ -116,6 +121,7 @@ describe('Task store worktree merge fields', () => {
             projectId: 'project-1',
             title: 'Generated pending approval',
             status: 'planned',
+            workflowProfile: 'default',
             source: 'improvements_scan'
         })
 

@@ -77,6 +77,7 @@ describe('tasks improvements automation', () => {
             projectId,
             title: 'Finish A',
             status: 'finished',
+            workflowProfile: 'default',
             activeSessionId: sessionId
         })
         store.tasks.createTask({
@@ -84,6 +85,7 @@ describe('tasks improvements automation', () => {
             projectId,
             title: 'Finish B',
             status: 'finished',
+            workflowProfile: 'default',
             activeSessionId: sessionId
         })
 
@@ -170,6 +172,7 @@ describe('tasks improvements automation', () => {
             projectId: 'project-a',
             title: 'Task A',
             status: 'finished',
+            workflowProfile: 'default',
             activeSessionId: sessionAId
         })
         store.tasks.createTask({
@@ -177,6 +180,7 @@ describe('tasks improvements automation', () => {
             projectId: 'project-b',
             title: 'Task B',
             status: 'finished',
+            workflowProfile: 'default',
             activeSessionId: sessionBId
         })
 

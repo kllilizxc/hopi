@@ -176,10 +176,9 @@ async function persistSuccessfulTaskMerge(options: {
     const mergedAt = Date.now()
     const shouldMarkFinished = options.markFinishedOnMerge ?? options.task.status === 'in_review'
     const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'finished'
-    const project = options.store.projects.getProjectByNamespace(options.task.projectId, options.namespace)
-    const strategy = project ? getWorkflowStrategy(project) : null
+    const strategy = getWorkflowStrategy(options.task)
     const finishedTransitionPatch = statusChangingToFinished
-        ? strategy?.getTaskPatchForTransition('task_finished', options.task)
+        ? strategy.getTaskPatchForTransition('task_finished', options.task)
         : null
 
     let diffSnapshot: unknown = null
@@ -251,6 +250,7 @@ const createTaskSchema = z.object({
     agentFlavor: AgentFlavorSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
     modelMode: ModelModeSchema.optional(),
+    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     sortKey: z.number().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
@@ -267,6 +267,7 @@ const updateTaskSchema = z.object({
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     permissionMode: PermissionModeSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
+    workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).optional(),
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
@@ -1245,8 +1246,9 @@ export function createTasksRoutes(options: {
         if (!attachmentsCheck.ok) {
             return c.json({ error: attachmentsCheck.error }, 413)
         }
+        const workflowProfile = parsed.data.workflowProfile.trim().toLowerCase()
         const defaultWorkflowPhase = parsed.data.workflowPhase
-            ?? getDefaultWorkflowPhase(project)
+            ?? getDefaultWorkflowPhase({ workflowProfile })
 
         const taskId = randomUUID()
         const created = options.store.tasks.createTask({
@@ -1261,6 +1263,7 @@ export function createTasksRoutes(options: {
             agentFlavor: parsed.data.agentFlavor ?? null,
             permissionMode: parsed.data.permissionMode ?? null,
             modelMode: parsed.data.modelMode ?? null,
+            workflowProfile,
             workflowPhase: defaultWorkflowPhase,
             attachments: attachments.length > 0 ? attachments : undefined,
             subTasks: parsed.data.subTasks,
@@ -1313,10 +1316,9 @@ export function createTasksRoutes(options: {
 
         const statusChangingToFinished = parsed.data.status === 'finished' && existing.status !== 'finished'
         const finishedAt = statusChangingToFinished ? Date.now() : undefined
-        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
-        const strategy = project ? getWorkflowStrategy(project) : null
+        const strategy = getWorkflowStrategy(existing)
         const finishedTransitionPatch = statusChangingToFinished
-            ? strategy?.getTaskPatchForTransition('task_finished', existing)
+            ? strategy.getTaskPatchForTransition('task_finished', existing)
             : null
 
         const updated = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
@@ -1331,6 +1333,7 @@ export function createTasksRoutes(options: {
             workflowPhase: parsed.data.workflowPhase !== undefined
                 ? parsed.data.workflowPhase
                 : finishedTransitionPatch?.workflowPhase,
+            workflowProfile: parsed.data.workflowProfile?.trim().toLowerCase(),
             sortKey: parsed.data.sortKey,
             activeSessionId: parsed.data.activeSessionId,
             attachments: attachments,

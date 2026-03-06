@@ -69,6 +69,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Ship archived style refresh',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 
@@ -159,6 +160,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Finalize archived kanban card',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 
@@ -233,6 +235,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Finalize release notes',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 
@@ -308,6 +311,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Complete polish pass',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 
@@ -377,6 +381,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Ship project board refresh',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 
@@ -466,6 +471,7 @@ describe('runImprovementsScan', () => {
             projectId,
             title: 'Ship baseline refactor',
             status: 'finished',
+            workflowProfile: 'default',
             sortKey: 1
         })
 

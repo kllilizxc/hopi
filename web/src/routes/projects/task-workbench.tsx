@@ -661,6 +661,8 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     canEditModelMode: boolean
     modelMode: ModelMode
     modelModeOptions: Array<{ value: ModelMode; label: string }>
+    workflowProfile: string
+    workflowStrategyOptions: Array<{ value: string; label: string }>
     workflowPhase: string
     workflowPhaseOptions: Array<{ value: string; label: string }>
     sessionId: string | null
@@ -672,6 +674,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     onWorkspaceChange: (value: string) => void
     onAgentFlavorChange: (value: string) => void
     onModelModeChange: (value: string) => void
+    onWorkflowProfileChange: (value: string) => void
     onWorkflowPhaseChange: (value: string) => void
     onOpenChat: () => void
     onOpenStart: () => void
@@ -697,6 +700,23 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                         disabled={props.isUpdatingTask}
                         align="start"
                     />
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        {t('projects.automation.workflowStrategy')}
+                    </label>
+                    <AdaptiveSelectField
+                        title={t('projects.automation.workflowStrategy')}
+                        value={props.workflowProfile}
+                        options={props.workflowStrategyOptions}
+                        onValueChange={props.onWorkflowProfileChange}
+                        disabled={props.isUpdatingTask}
+                        align="start"
+                    />
+                    <div className="text-xs text-[var(--app-hint)]">
+                        {t('projects.automation.workflowHint')}
+                    </div>
                 </div>
 
                 {props.workflowPhaseOptions.length > 0 ? (
@@ -827,6 +847,7 @@ function TaskDetailsPanel(props: {
         permissionMode: PermissionMode
         modelMode: ModelMode | null
     }
+    workflowStrategies: WorkflowStrategyDescriptor[]
     workflowStrategy: WorkflowStrategyDescriptor | null
 }) {
     const navigate = useNavigate()
@@ -844,6 +865,7 @@ function TaskDetailsPanel(props: {
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
     const [modelMode, setModelMode] = useState<ModelMode>((props.task.modelMode as ModelMode | null) ?? 'default')
+    const [workflowProfile, setWorkflowProfile] = useState<string>((props.task.workflowProfile ?? 'default').trim() || 'default')
     const [workflowPhase, setWorkflowPhase] = useState<string>(
         props.task.workflowPhase ?? props.workflowStrategy?.defaultTaskPhase ?? ''
     )
@@ -865,6 +887,7 @@ function TaskDetailsPanel(props: {
         setWorkspaceId(props.task.workspaceId ?? '')
         setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
         setModelMode((props.task.modelMode as ModelMode | null) ?? 'default')
+        setWorkflowProfile((props.task.workflowProfile ?? 'default').trim() || 'default')
         setWorkflowPhase(
             props.task.workflowPhase ?? props.workflowStrategy?.defaultTaskPhase ?? ''
         )
@@ -911,6 +934,30 @@ function TaskDetailsPanel(props: {
             label: getAgentFlavorLabel(agent),
         })),
     ]), [t])
+
+    const workflowStrategyOptions = useMemo(() => {
+        const base = props.workflowStrategies.length > 0
+            ? props.workflowStrategies
+            : [
+                { id: 'default', label: 'Default', defaultTaskPhase: null, phaseOptions: [] },
+                { id: 'gsd', label: 'GSD', defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
+            ]
+
+        const options = base.map((strategy) => ({
+            value: strategy.id,
+            label: strategy.id === 'default'
+                ? t('projects.automation.workflowDefault')
+                : strategy.id === 'gsd'
+                    ? t('projects.automation.workflowGsd')
+                    : strategy.label || strategy.id
+        }))
+
+        if (!options.some((option) => option.value === workflowProfile)) {
+            options.push({ value: workflowProfile, label: workflowProfile })
+        }
+
+        return options
+    }, [props.workflowStrategies, t, workflowProfile])
 
     const workflowPhaseOptions = useMemo<Array<{ value: string; label: string }>>(() => {
         const phaseOptions = props.workflowStrategy?.phaseOptions ?? []
@@ -986,6 +1033,13 @@ function TaskDetailsPanel(props: {
         const next = value.trim()
         setWorkflowPhase(next)
         void savePatch({ workflowPhase: next || null })
+    }, [savePatch])
+
+    const handleWorkflowProfileChange = useCallback((value: string) => {
+        const next = value.trim().toLowerCase()
+        if (!next) return
+        setWorkflowProfile(next)
+        void savePatch({ workflowProfile: next })
     }, [savePatch])
 
     const handlePriorityChange = useCallback((value: string) => {
@@ -1248,6 +1302,8 @@ function TaskDetailsPanel(props: {
                             canEditModelMode={canEditModelMode}
                             modelMode={modelMode}
                             modelModeOptions={modelModeOptions}
+                            workflowProfile={workflowProfile}
+                            workflowStrategyOptions={workflowStrategyOptions}
                             workflowPhase={workflowPhase}
                             workflowPhaseOptions={workflowPhaseOptions}
                             sessionId={sessionId}
@@ -1259,6 +1315,7 @@ function TaskDetailsPanel(props: {
                             onWorkspaceChange={handleWorkspaceChange}
                             onAgentFlavorChange={handleAgentFlavorChange}
                             onModelModeChange={handleModelModeChange}
+                            onWorkflowProfileChange={handleWorkflowProfileChange}
                             onWorkflowPhaseChange={handleWorkflowPhaseChange}
                             onOpenChat={handleOpenChat}
                             onOpenStart={handleOpenStart}
@@ -1439,7 +1496,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModelMode])
 
     const workflowStrategy = useMemo<WorkflowStrategyDescriptor | null>(() => {
-        const profile = (project?.workflowProfile ?? 'default').trim().toLowerCase()
+        const profile = (task?.workflowProfile ?? 'default').trim().toLowerCase()
         const normalizedProfile = profile.length > 0 ? profile : 'default'
         if (workflowStrategies.length === 0) {
             if (normalizedProfile === 'gsd') {
@@ -1460,7 +1517,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         return workflowStrategies.find((strategy) => strategy.id === normalizedProfile)
             ?? workflowStrategies.find((strategy) => strategy.id === 'default')
             ?? null
-    }, [project?.workflowProfile, workflowStrategies])
+    }, [task?.workflowProfile, workflowStrategies])
 
     if (taskSessionLoading || (shouldLoadTaskDetails && (taskLoading || projectLoading || workspacesLoading))) {
         return (
@@ -1494,6 +1551,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
             projectDefaultWorkspaceId={project.defaultWorkspaceId ?? null}
             projectMachineId={project.machineId}
             projectDefaults={projectDefaults}
+            workflowStrategies={workflowStrategies}
             workflowStrategy={workflowStrategy}
         />
     ) : null
