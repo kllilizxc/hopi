@@ -126,6 +126,9 @@ describe('tasks merge route with custom merge script', () => {
                     content: { type: 'text', text: 'merge script done' }
                 }, payload.localId)
             },
+            injectMessage(_sessionId: string, payload: { content: unknown; localId?: string }) {
+                store.messages.addMessage(sessionId, payload.content, payload.localId)
+            },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
                 return {
@@ -234,6 +237,9 @@ describe('tasks merge route with custom merge script', () => {
                     role: 'assistant',
                     content: { type: 'text', text: 'merge failed' }
                 }, payload.localId)
+            },
+            injectMessage(_sessionId: string, payload: { content: unknown; localId?: string }) {
+                store.messages.addMessage(sessionId, payload.content, payload.localId)
             },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
@@ -353,6 +359,9 @@ describe('tasks merge route with custom merge script', () => {
                     content: { type: 'text', text: 'merge script done' }
                 }, payload.localId)
             },
+            injectMessage(_sessionId: string, payload: { content: unknown; localId?: string }) {
+                store.messages.addMessage(sessionId, payload.content, payload.localId)
+            },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
                 return {
@@ -382,7 +391,7 @@ describe('tasks merge route with custom merge script', () => {
         expect(body.commitHash).toBeNull()
         expect(body.skippedReason).toBeNull()
         expect(typeof body.mergedAt).toBe('number')
-        expect(runBashCwds).toEqual(['/tmp/worktree', '/tmp/base'])
+        expect(runBashCwds).toEqual(['/tmp/worktree', '/tmp/base', '/tmp/base'])
         expect(sendMessageCalls).toBe(1)
         expect(gitMergeCalls).toBe(0)
     })

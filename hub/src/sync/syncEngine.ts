@@ -268,6 +268,16 @@ export class SyncEngine {
         await this.messageService.sendMessage(sessionId, payload)
     }
 
+    injectMessage(
+        sessionId: string,
+        payload: {
+            content: unknown
+            localId?: string | null
+        }
+    ): void {
+        this.messageService.injectMessage(sessionId, payload)
+    }
+
     async approvePermission(
         sessionId: string,
         requestId: string,

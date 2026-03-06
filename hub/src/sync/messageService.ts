@@ -89,7 +89,20 @@ export class MessageService {
             }
         }
 
-        const msg = this.store.messages.addMessage(sessionId, content, payload.localId ?? undefined)
+        this.injectMessage(sessionId, {
+            content,
+            localId: payload.localId ?? undefined
+        })
+    }
+
+    injectMessage(
+        sessionId: string,
+        payload: {
+            content: unknown
+            localId?: string | null
+        }
+    ): void {
+        const msg = this.store.messages.addMessage(sessionId, payload.content, payload.localId ?? undefined)
 
         const update = {
             id: msg.id,
