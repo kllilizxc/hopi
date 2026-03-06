@@ -30,7 +30,6 @@ export function createCorsMiddleware(options: CorsMiddlewareOptions): Middleware
             return c.body(null, 204)
         }
 
-        await next()
+        return await next()
     }
 }
-

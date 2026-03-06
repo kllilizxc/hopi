@@ -23,6 +23,7 @@ function seedPreviewTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Preview Task',
         status: 'in_progress',
+        workflowProfile: 'default',
         activeSessionId: options.sessionId
     })
 }
@@ -30,8 +31,9 @@ function seedPreviewTask(store: Store, options: {
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
-        c.set('userId', 1)
-        c.set('namespace', 'default')
+        const setContext = c.set as unknown as (key: string, value: unknown) => void
+        setContext('userId', 1)
+        setContext('namespace', 'default')
         await next()
     })
     app.route('/api', createTasksRoutes({
@@ -59,7 +61,7 @@ describe('tasks preview start route', () => {
         })
 
         let startCalls = 0
-        let sentPrompt: { text?: string; localId?: string } | null = null
+        let sentPrompt: { text?: string; localId?: string } = {}
         const session = {
             id: sessionId,
             active: true,

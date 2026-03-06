@@ -28,7 +28,6 @@ export class ProjectStore {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
-        workflowProfile?: string | null
     }): StoredProject {
         return createProject(this.db, project)
     }
@@ -63,7 +62,6 @@ export class ProjectStore {
             maxRunningSessions?: number
             improvementsEnabled?: boolean
             improvementsMaxPendingTasks?: number
-            workflowProfile?: string | null
             lastImprovementsAt?: number | null
             archivedAt?: number | null
         }

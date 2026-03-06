@@ -25,6 +25,7 @@ function seedMergeTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Merge Task',
         status: options.status ?? 'in_review',
+        workflowProfile: 'default',
         activeSessionId: options.sessionId
     })
 }
@@ -32,8 +33,9 @@ function seedMergeTask(store: Store, options: {
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
-        c.set('userId', 1)
-        c.set('namespace', 'default')
+        const setContext = c.set as unknown as (key: string, value: unknown) => void
+        setContext('userId', 1)
+        setContext('namespace', 'default')
         await next()
     })
     app.route('/api', createTasksRoutes({
@@ -492,8 +494,19 @@ describe('tasks merge route unexpected errors', () => {
     it('returns retry-scheduled response when post-auto-resolve retry fails transiently', async () => {
         const store = new Store(':memory:')
         const taskId = 'task-merge-auto-retry-scheduled'
-        const sessionId = 'session-merge-auto-retry-scheduled'
         const namespace = 'default'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-merge-auto-retry-scheduled',
+            {
+                path: '/tmp/merge-auto-retry-scheduled',
+                worktree: {
+                    branch: 'task-branch',
+                    baseCommit: 'abc1234'
+                }
+            },
+            null,
+            namespace
+        ).id
         seedMergeTask(store, {
             namespace,
             projectId: 'project-merge-auto-retry-scheduled',

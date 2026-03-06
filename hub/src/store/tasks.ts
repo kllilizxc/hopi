@@ -19,6 +19,7 @@ type DbTaskRow = {
     attachments: string | null
     source: string | null
     source_task_id: string | null
+    workflow_profile?: string | null
     workflow_phase: string | null
     sub_tasks: string | null
     sub_tasks_updated_at: number | null
@@ -48,6 +49,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
+        workflowProfile: (row.workflow_profile ?? '').trim() || 'default',
         workflowPhase: row.workflow_phase,
         subTasks: safeJsonParse(row.sub_tasks),
         subTasksUpdatedAt: row.sub_tasks_updated_at,
@@ -159,6 +161,7 @@ export function createTask(
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        workflowProfile?: string | null
         workflowPhase?: string | null
         subTasks?: unknown
         subTasksUpdatedAt?: number | null
@@ -171,13 +174,13 @@ export function createTask(
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
-            attachments, source, source_task_id, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
+            attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
             permission_mode, model_mode,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
-            @attachments, @source, @source_task_id, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
+            @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
             @permission_mode, @model_mode,
             @created_at, @updated_at, NULL, NULL
         )
@@ -197,6 +200,7 @@ export function createTask(
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
+        workflow_profile: (task.workflowProfile ?? '').trim() || 'default',
         workflow_phase: task.workflowPhase ?? null,
         sub_tasks: task.subTasks !== undefined ? JSON.stringify(task.subTasks) : null,
         sub_tasks_updated_at: task.subTasksUpdatedAt ?? null,
@@ -229,6 +233,7 @@ export function updateTaskByNamespace(
         permissionMode?: string | null
         modelMode?: string | null
         source?: string | null
+        workflowProfile?: string
         workflowPhase?: string | null
         attachments?: unknown
         subTasks?: unknown
@@ -261,6 +266,7 @@ export function updateTaskByNamespace(
         permissionMode: patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode,
         modelMode: patch.modelMode !== undefined ? patch.modelMode : current.modelMode,
         source: patch.source !== undefined ? patch.source : current.source,
+        workflowProfile: patch.workflowProfile !== undefined ? patch.workflowProfile : current.workflowProfile,
         workflowPhase: patch.workflowPhase !== undefined ? patch.workflowPhase : current.workflowPhase,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
         subTasks: patch.subTasks !== undefined ? patch.subTasks : current.subTasks,
@@ -299,6 +305,7 @@ export function updateTaskByNamespace(
             permission_mode = @permission_mode,
             model_mode = @model_mode,
             source = @source,
+            workflow_profile = @workflow_profile,
             workflow_phase = @workflow_phase,
             attachments = @attachments,
             sub_tasks = @sub_tasks,
@@ -324,6 +331,7 @@ export function updateTaskByNamespace(
         permission_mode: next.permissionMode,
         model_mode: next.modelMode,
         source: next.source,
+        workflow_profile: (next.workflowProfile ?? '').trim() || 'default',
         workflow_phase: next.workflowPhase,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
         sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,

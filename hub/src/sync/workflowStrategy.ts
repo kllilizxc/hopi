@@ -1,5 +1,5 @@
 import type { TaskStatus, TaskWorkflowPhase } from '@hopi/protocol/types'
-import type { StoredProject, StoredTask } from '../store'
+import type { StoredTask } from '../store'
 
 export type WorkflowTransition = 'session_started' | 'task_prompted' | 'assistant_ready' | 'thinking_resumed' | 'task_finished'
 
@@ -23,7 +23,7 @@ export type WorkflowStrategy = WorkflowStrategyDescriptor & {
     ) => WorkflowTaskPatch | null
 }
 
-type WorkflowProfileSource = Pick<StoredProject, 'workflowProfile'> | { workflowProfile?: string | null }
+type WorkflowProfileSource = Pick<StoredTask, 'workflowProfile'> | { workflowProfile?: string | null }
 
 const strategyRegistry = new Map<string, WorkflowStrategy>()
 
@@ -118,15 +118,15 @@ export function listWorkflowStrategyDescriptors(): WorkflowStrategyDescriptor[] 
         })
 }
 
-export function getWorkflowStrategy(project: WorkflowProfileSource): WorkflowStrategy {
-    const profile = normalizeProfile(project.workflowProfile)
+export function getWorkflowStrategy(source: WorkflowProfileSource): WorkflowStrategy {
+    const profile = normalizeProfile(source.workflowProfile)
     return strategyRegistry.get(profile) ?? defaultStrategy
 }
 
-export function getDefaultWorkflowPhase(project: WorkflowProfileSource): TaskWorkflowPhase | null {
-    return getWorkflowStrategy(project).defaultTaskPhase
+export function getDefaultWorkflowPhase(source: WorkflowProfileSource): TaskWorkflowPhase | null {
+    return getWorkflowStrategy(source).defaultTaskPhase
 }
 
-export function getWorkflowPhaseOptions(project: WorkflowProfileSource): TaskWorkflowPhase[] {
-    return [...getWorkflowStrategy(project).phaseOptions]
+export function getWorkflowPhaseOptions(source: WorkflowProfileSource): TaskWorkflowPhase[] {
+    return [...getWorkflowStrategy(source).phaseOptions]
 }

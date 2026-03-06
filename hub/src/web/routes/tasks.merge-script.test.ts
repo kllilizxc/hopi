@@ -7,8 +7,9 @@ import { createTasksRoutes } from './tasks'
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
-        c.set('userId', 1)
-        c.set('namespace', 'default')
+        const setContext = c.set as unknown as (key: string, value: unknown) => void
+        setContext('userId', 1)
+        setContext('namespace', 'default')
         await next()
     })
     app.route('/api', createTasksRoutes({
@@ -36,6 +37,7 @@ function seedMergeTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Merge Task',
         status: 'in_progress',
+        workflowProfile: 'default',
         activeSessionId: options.sessionId
     })
 }
@@ -45,12 +47,24 @@ describe('tasks merge route with custom merge script', () => {
         const store = new Store(':memory:')
         const projectId = 'project-merge-script'
         const taskId = 'task-merge-script'
-        const sessionId = 'session-merge-script'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-merge-script',
+            {
+                path: '/tmp/worktree',
+                worktree: {
+                    basePath: '/tmp/base',
+                    branch: 'task-branch',
+                    name: 'task-branch'
+                }
+            },
+            null,
+            'default'
+        ).id
         seedMergeTask(store, { projectId, taskId, sessionId })
 
         let mergeStateCalls = 0
-        let runBashCalls = 0
         let gitMergeCalls = 0
+        let sendMessageCalls = 0
         const session = {
             id: sessionId,
             active: true,
@@ -74,6 +88,12 @@ describe('tasks merge route with custom merge script', () => {
                     session
                 }
             },
+            getSessionByNamespace(id: string) {
+                if (id !== sessionId) {
+                    return null
+                }
+                return session
+            },
             async gitMergeWorktreeState() {
                 mergeStateCalls += 1
                 if (mergeStateCalls === 1) {
@@ -93,13 +113,20 @@ describe('tasks merge route with custom merge script', () => {
                     mergeable: false
                 }
             },
-            async runBash() {
-                runBashCalls += 1
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
                 return {
                     success: true,
-                    stdout: 'merge script ok',
+                    stdout: marker,
                     stderr: ''
                 }
+            },
+            async sendMessage(_sessionId: string, payload: { text?: string; localId?: string }) {
+                sendMessageCalls += 1
+                store.messages.addMessage(sessionId, {
+                    role: 'assistant',
+                    content: { type: 'text', text: 'merge script done' }
+                }, payload.localId)
             },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
@@ -130,7 +157,7 @@ describe('tasks merge route with custom merge script', () => {
         expect(body.commitHash).toBeNull()
         expect(body.skippedReason).toBeNull()
         expect(typeof body.mergedAt).toBe('number')
-        expect(runBashCalls).toBe(1)
+        expect(sendMessageCalls).toBe(1)
         expect(gitMergeCalls).toBe(0)
 
         const updated = store.tasks.getTaskByNamespace(taskId, 'default')
@@ -142,7 +169,19 @@ describe('tasks merge route with custom merge script', () => {
         const store = new Store(':memory:')
         const projectId = 'project-merge-script-fail'
         const taskId = 'task-merge-script-fail'
-        const sessionId = 'session-merge-script-fail'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-merge-script-fail',
+            {
+                path: '/tmp/worktree',
+                worktree: {
+                    basePath: '/tmp/base',
+                    branch: 'task-branch',
+                    name: 'task-branch'
+                }
+            },
+            null,
+            'default'
+        ).id
         seedMergeTask(store, { projectId, taskId, sessionId })
 
         let gitMergeCalls = 0
@@ -169,6 +208,12 @@ describe('tasks merge route with custom merge script', () => {
                     session
                 }
             },
+            getSessionByNamespace(id: string) {
+                if (id !== sessionId) {
+                    return null
+                }
+                return session
+            },
             async gitMergeWorktreeState() {
                 return {
                     success: true,
@@ -178,13 +223,19 @@ describe('tasks merge route with custom merge script', () => {
                     mergeable: true
                 }
             },
-            async runBash() {
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
                 return {
-                    success: false,
-                    error: 'custom merge failed',
-                    stdout: '',
-                    stderr: 'custom merge failed'
+                    success: true,
+                    stdout: marker,
+                    stderr: ''
                 }
+            },
+            async sendMessage(_sessionId: string, payload: { text?: string; localId?: string }) {
+                store.messages.addMessage(sessionId, {
+                    role: 'assistant',
+                    content: { type: 'text', text: 'merge failed' }
+                }, payload.localId)
             },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
@@ -217,12 +268,25 @@ describe('tasks merge route with custom merge script', () => {
         const store = new Store(':memory:')
         const projectId = 'project-merge-script-fallback'
         const taskId = 'task-merge-script-fallback'
-        const sessionId = 'session-merge-script-fallback'
+        const sessionId = store.sessions.getOrCreateSession(
+            'session-merge-script-fallback',
+            {
+                path: '/tmp/worktree',
+                worktree: {
+                    basePath: '/tmp/base',
+                    branch: 'task-branch',
+                    name: 'task-branch'
+                }
+            },
+            null,
+            'default'
+        ).id
         seedMergeTask(store, { projectId, taskId, sessionId })
 
         let mergeStateCalls = 0
         let gitMergeCalls = 0
         const runBashCwds: string[] = []
+        let sendMessageCalls = 0
         const session = {
             id: sessionId,
             active: true,
@@ -246,6 +310,12 @@ describe('tasks merge route with custom merge script', () => {
                     session
                 }
             },
+            getSessionByNamespace(id: string) {
+                if (id !== sessionId) {
+                    return null
+                }
+                return session
+            },
             async gitMergeWorktreeState() {
                 mergeStateCalls += 1
                 if (mergeStateCalls === 1) {
@@ -268,19 +338,22 @@ describe('tasks merge route with custom merge script', () => {
             async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
                 const cwd = params.cwd ?? ''
                 runBashCwds.push(cwd)
+                const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
                 if (cwd === '/tmp/worktree') {
-                    const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
-                    return {
-                        success: true,
-                        stdout: marker,
-                        stderr: ''
-                    }
+                    return { success: true, stdout: '', stderr: '' }
                 }
                 return {
                     success: true,
-                    stdout: 'merge script ok',
+                    stdout: marker,
                     stderr: ''
                 }
+            },
+            async sendMessage(_sessionId: string, payload: { text?: string; localId?: string }) {
+                sendMessageCalls += 1
+                store.messages.addMessage(sessionId, {
+                    role: 'assistant',
+                    content: { type: 'text', text: 'merge script done' }
+                }, payload.localId)
             },
             async gitMergeWorktree() {
                 gitMergeCalls += 1
@@ -312,6 +385,7 @@ describe('tasks merge route with custom merge script', () => {
         expect(body.skippedReason).toBeNull()
         expect(typeof body.mergedAt).toBe('number')
         expect(runBashCwds).toEqual(['/tmp/worktree', '/tmp/base'])
+        expect(sendMessageCalls).toBe(1)
         expect(gitMergeCalls).toBe(0)
     })
 })

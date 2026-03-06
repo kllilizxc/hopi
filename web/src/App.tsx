@@ -29,6 +29,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
 import { useToast } from '@/lib/toast-context'
 import type { SyncEvent } from '@/types/api'
+import type { ApiClient } from '@/api/client'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
 
@@ -355,7 +356,7 @@ function AppInner() {
     // Auth error
     if (authError || !token || !api) {
         // If using access token and auth failed, show login again
-        if (authSource.type === 'accessToken') {
+        if (authSource?.type === 'accessToken') {
             if (!hasLoadedOnceRef.current) {
                 return (
                     <LoginPrompt

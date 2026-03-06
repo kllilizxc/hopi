@@ -234,7 +234,6 @@ export class ApiClient {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
-        workflowProfile?: string | null
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>('/api/projects', {
             method: 'POST',
@@ -256,7 +255,6 @@ export class ApiClient {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
-        workflowProfile?: string | null
     }): Promise<ProjectResponse> {
         return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
             method: 'PATCH',
@@ -311,6 +309,7 @@ export class ApiClient {
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         permissionMode?: PermissionMode
         modelMode?: string
+        workflowProfile: string
         workflowPhase?: string | null
         sortKey?: number
         attachments?: Array<{
@@ -348,6 +347,7 @@ export class ApiClient {
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
         modelMode?: ModelMode | null
+        workflowProfile?: string
         workflowPhase?: string | null
         sortKey?: number | null
         activeSessionId?: string | null

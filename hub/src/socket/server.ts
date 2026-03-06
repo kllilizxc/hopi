@@ -52,12 +52,7 @@ export function createSocketServer(deps: SocketServerDeps): {
     const isOriginAllowed = createCorsOriginChecker(corsOrigins)
     const allowAllOrigins = corsOrigins.includes('*')
 
-    type CorsOriginCallback = (error: Error | null, allow?: boolean) => void
-    const corsOriginOption = allowAllOrigins
-        ? '*'
-        : (origin: string | undefined, callback: CorsOriginCallback) => {
-            callback(null, isOriginAllowed(origin))
-        }
+    const corsOriginOption = allowAllOrigins ? '*' : corsOrigins
     const corsOptions = {
         origin: corsOriginOption,
         methods: ['GET', 'POST'],

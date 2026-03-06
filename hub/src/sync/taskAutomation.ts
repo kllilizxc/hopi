@@ -219,10 +219,8 @@ export class TaskAutomation {
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
-            const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
-            if (!project) return
 
-            const strategy = getWorkflowStrategy(project)
+            const strategy = getWorkflowStrategy(current)
             const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'in_progress' }
             const shouldApplyTransition = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
                 || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
@@ -364,10 +362,7 @@ export class TaskAutomation {
             }
         }
 
-        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
-        if (!project) return
-
-        const strategy = getWorkflowStrategy(project)
+        const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
@@ -397,10 +392,7 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_progress') return
 
-        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
-        if (!project) return
-
-        const strategy = getWorkflowStrategy(project)
+        const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
@@ -430,10 +422,7 @@ export class TaskAutomation {
         if (current.archivedAt) return
         if (current.status !== 'in_review') return
 
-        const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
-        if (!project) return
-
-        const strategy = getWorkflowStrategy(project)
+        const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'in_progress' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
