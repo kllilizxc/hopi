@@ -56,9 +56,20 @@ function normalizeTaskMergeRuntime(
     const normalizedLatestNote = typeof value.latestNote === 'string'
         ? value.latestNote.trim().replace(/\s+/g, ' ').slice(0, TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH)
         : value.latestNote
+    const normalizedBlockedReason = typeof value.blockedReason === 'string'
+        ? value.blockedReason.trim().replace(/\s+/g, ' ').slice(0, TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH)
+        : value.blockedReason
+    const normalizedSessionId = typeof value.sessionId === 'string'
+        ? value.sessionId.trim()
+        : value.sessionId
 
     const normalized: TaskMergeRuntime = {
         ...value,
+        sessionId: normalizedSessionId && normalizedSessionId.length > 0
+            ? normalizedSessionId
+            : normalizedSessionId === null
+                ? null
+                : undefined,
         updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : updatedAt,
         retryCount: typeof value.retryCount === 'number' && Number.isFinite(value.retryCount)
             ? Math.max(0, Math.floor(value.retryCount))
@@ -75,6 +86,11 @@ function normalizeTaskMergeRuntime(
         latestNote: normalizedLatestNote && normalizedLatestNote.length > 0
             ? normalizedLatestNote
             : normalizedLatestNote === null
+                ? null
+                : undefined,
+        blockedReason: normalizedBlockedReason && normalizedBlockedReason.length > 0
+            ? normalizedBlockedReason
+            : normalizedBlockedReason === null
                 ? null
                 : undefined
     }
@@ -205,6 +221,7 @@ export function createTask(
         priority?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
+        preserveMergeResultOnSessionChange?: boolean
         workspaceId?: string | null
         agentFlavor?: string | null
         permissionMode?: string | null
@@ -222,7 +239,14 @@ export function createTask(
     }
 ): StoredTask {
     const now = Date.now()
-    const mergeRuntime = normalizeTaskMergeRuntime(task.mergeRuntime, now)
+    const mergeRuntime = task.mergeRuntime === undefined
+        ? undefined
+        : task.mergeRuntime === null
+            ? null
+            : normalizeTaskMergeRuntime({
+                ...task.mergeRuntime,
+                sessionId: task.mergeRuntime.sessionId ?? task.activeSessionId ?? null
+            }, now)
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
@@ -282,6 +306,7 @@ export function updateTaskByNamespace(
         priority?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
+        preserveMergeResultOnSessionChange?: boolean
         workspaceId?: string | null
         agentFlavor?: string | null
         permissionMode?: string | null
@@ -306,6 +331,8 @@ export function updateTaskByNamespace(
     }
 
     const activeSessionChanged = patch.activeSessionId !== undefined && patch.activeSessionId !== current.activeSessionId
+    const preserveMergeResultOnSessionChange = patch.preserveMergeResultOnSessionChange === true
+    const nextActiveSessionId = patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId
     const now = Date.now()
 
     const next = {
@@ -315,7 +342,7 @@ export function updateTaskByNamespace(
         status: patch.status ?? current.status,
         priority: patch.priority !== undefined ? patch.priority : current.priority,
         sortKey: patch.sortKey !== undefined ? patch.sortKey : current.sortKey,
-        activeSessionId: patch.activeSessionId !== undefined ? patch.activeSessionId : current.activeSessionId,
+        activeSessionId: nextActiveSessionId,
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
         agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
         permissionMode: patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode,
@@ -329,20 +356,31 @@ export function updateTaskByNamespace(
             ? patch.subTasksUpdatedAt
             : (patch.subTasks !== undefined ? now : current.subTasksUpdatedAt),
         mergeRuntime: patch.mergeRuntime !== undefined
-            ? normalizeTaskMergeRuntime(patch.mergeRuntime, now)
-            : current.mergeRuntime,
+            ? patch.mergeRuntime === null
+                ? null
+                : normalizeTaskMergeRuntime({
+                    ...patch.mergeRuntime,
+                    sessionId: patch.mergeRuntime.sessionId ?? nextActiveSessionId ?? null
+                }, now)
+            : activeSessionChanged && current.mergeRuntime
+                ? normalizeTaskMergeRuntime({
+                    ...current.mergeRuntime,
+                    sessionId: nextActiveSessionId ?? null,
+                    updatedAt: now
+                }, now)
+                : current.mergeRuntime,
         worktreeMergedAt: activeSessionChanged
-            ? null
+            ? (preserveMergeResultOnSessionChange ? current.worktreeMergedAt : null)
             : patch.worktreeMergedAt !== undefined
                 ? patch.worktreeMergedAt
                 : current.worktreeMergedAt,
         worktreeMergeCommit: activeSessionChanged
-            ? null
+            ? (preserveMergeResultOnSessionChange ? current.worktreeMergeCommit : null)
             : patch.worktreeMergeCommit !== undefined
                 ? patch.worktreeMergeCommit
                 : current.worktreeMergeCommit,
         mergedDiffSnapshot: activeSessionChanged
-            ? null
+            ? (preserveMergeResultOnSessionChange ? current.mergedDiffSnapshot : null)
             : patch.mergedDiffSnapshot !== undefined
                 ? patch.mergedDiffSnapshot
                 : current.mergedDiffSnapshot,

@@ -53,12 +53,13 @@ export class TaskStore {
         title: string
         description?: string | null
         status: string
-        priority?: string | null
-        sortKey?: number | null
-        activeSessionId?: string | null
-        workspaceId?: string | null
-        agentFlavor?: string | null
-        permissionMode?: string | null
+            priority?: string | null
+            sortKey?: number | null
+            activeSessionId?: string | null
+            preserveMergeResultOnSessionChange?: boolean
+            workspaceId?: string | null
+            agentFlavor?: string | null
+            permissionMode?: string | null
         modelMode?: string | null
         attachments?: unknown
         source?: string | null
@@ -84,6 +85,7 @@ export class TaskStore {
             priority?: string | null
             sortKey?: number | null
             activeSessionId?: string | null
+            preserveMergeResultOnSessionChange?: boolean
             workspaceId?: string | null
             agentFlavor?: string | null
             permissionMode?: string | null

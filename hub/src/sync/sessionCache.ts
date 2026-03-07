@@ -3,6 +3,7 @@ import type { ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'
+import { readSessionTaskLinkMetadata, relinkTaskToSession } from './sessionTaskLink'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema } from './todos'
 
 export class SessionCache {
@@ -402,17 +403,18 @@ export class SessionCache {
             throw new Error('Failed to delete old session during merge')
         }
 
+        const eventEngine = {
+            handleRealtimeEvent: (event: Parameters<EventPublisher['emit']>[0]) => this.publisher.emit(event)
+        }
+
         for (const task of linkedTasks) {
-            const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, { activeSessionId: newSessionId })
-            if (!updated) {
-                continue
-            }
-            this.publisher.emit({
-                type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+            relinkTaskToSession({
+                store: this.store,
+                engine: eventEngine,
+                task,
                 namespace,
-                data: { taskId: updated.id, activeSessionId: newSessionId }
+                sessionId: newSessionId,
+                preserveMergeResultOnSessionChange: true
             })
         }
 
@@ -439,7 +441,20 @@ export class SessionCache {
         const merged: Record<string, unknown> = { ...newObj }
         let changed = false
 
-        if (typeof oldObj.name === 'string' && typeof newObj.name !== 'string') {
+        const oldTaskLink = readSessionTaskLinkMetadata(oldMetadata)
+        const newTaskLink = readSessionTaskLinkMetadata(newMetadata)
+        if (oldTaskLink?.projectId && newTaskLink?.projectId !== oldTaskLink.projectId) {
+            merged.projectId = oldTaskLink.projectId
+            changed = true
+        }
+        if (oldTaskLink?.taskId && newTaskLink?.taskId !== oldTaskLink.taskId) {
+            merged.taskId = oldTaskLink.taskId
+            changed = true
+        }
+        if (oldTaskLink?.name && typeof newObj.name !== 'string') {
+            merged.name = oldTaskLink.name
+            changed = true
+        } else if (typeof oldObj.name === 'string' && typeof newObj.name !== 'string') {
             merged.name = oldObj.name
             changed = true
         }

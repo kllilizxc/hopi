@@ -232,6 +232,7 @@ export type MergedDiffSnapshot = z.infer<typeof MergedDiffSnapshotSchema>
 
 export const TaskMergeRuntimeStatusSchema = z.enum([
     'queued',
+    'waiting',
     'approval_pending',
     'running',
     'retrying',
@@ -244,12 +245,14 @@ export type TaskMergeRuntimeStatus = z.infer<typeof TaskMergeRuntimeStatusSchema
 
 export const TaskMergeRuntimeSchema = z.object({
     status: TaskMergeRuntimeStatusSchema,
+    sessionId: z.string().trim().min(1).max(128).nullable().optional(),
     updatedAt: z.number(),
     requestedAt: z.number().optional(),
     startedAt: z.number().nullable().optional(),
     completedAt: z.number().nullable().optional(),
     retryCount: z.number().int().min(0).optional(),
-    latestNote: z.string().trim().min(1).max(280).nullable().optional()
+    latestNote: z.string().trim().min(1).max(280).nullable().optional(),
+    blockedReason: z.string().trim().min(1).max(280).nullable().optional()
 })
 
 export type TaskMergeRuntime = z.infer<typeof TaskMergeRuntimeSchema>
