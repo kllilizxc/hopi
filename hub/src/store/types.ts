@@ -1,3 +1,5 @@
+import type { TaskMergeRuntime } from '@hopi/protocol/types'
+
 export type StoredSession = {
     id: string
     tag: string | null
@@ -113,6 +115,7 @@ export type StoredTask = {
     worktreeMergedAt: number | null
     worktreeMergeCommit: string | null
     mergedDiffSnapshot: unknown | null
+    mergeRuntime: TaskMergeRuntime | null
     createdAt: number
     updatedAt: number
     finishedAt: number | null

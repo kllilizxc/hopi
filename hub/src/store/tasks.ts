@@ -1,7 +1,10 @@
 import type { Database } from 'bun:sqlite'
+import { TaskMergeRuntimeSchema, type TaskMergeRuntime } from '@hopi/protocol/schemas'
 
 import { safeJsonParse } from './json'
 import type { StoredTask } from './types'
+
+const TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH = 280
 
 type DbTaskRow = {
     id: string
@@ -26,10 +29,57 @@ type DbTaskRow = {
     worktree_merged_at: number | null
     worktree_merge_commit: string | null
     merged_diff_snapshot: string | null
+    merge_runtime: string | null
     created_at: number
     updated_at: number
     finished_at: number | null
     archived_at: number | null
+}
+
+function parseTaskMergeRuntime(value: unknown): TaskMergeRuntime | null {
+    const parsed = TaskMergeRuntimeSchema.safeParse(value)
+    return parsed.success ? parsed.data : null
+}
+
+function normalizeTaskMergeRuntime(
+    value: TaskMergeRuntime | null | undefined,
+    updatedAt: number
+): TaskMergeRuntime | null | undefined {
+    if (value === undefined) {
+        return undefined
+    }
+
+    if (value === null) {
+        return null
+    }
+
+    const normalizedLatestNote = typeof value.latestNote === 'string'
+        ? value.latestNote.trim().replace(/\s+/g, ' ').slice(0, TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH)
+        : value.latestNote
+
+    const normalized: TaskMergeRuntime = {
+        ...value,
+        updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : updatedAt,
+        retryCount: typeof value.retryCount === 'number' && Number.isFinite(value.retryCount)
+            ? Math.max(0, Math.floor(value.retryCount))
+            : undefined,
+        requestedAt: typeof value.requestedAt === 'number' && Number.isFinite(value.requestedAt)
+            ? value.requestedAt
+            : undefined,
+        startedAt: value.startedAt === null || (typeof value.startedAt === 'number' && Number.isFinite(value.startedAt))
+            ? value.startedAt
+            : undefined,
+        completedAt: value.completedAt === null || (typeof value.completedAt === 'number' && Number.isFinite(value.completedAt))
+            ? value.completedAt
+            : undefined,
+        latestNote: normalizedLatestNote && normalizedLatestNote.length > 0
+            ? normalizedLatestNote
+            : normalizedLatestNote === null
+                ? null
+                : undefined
+    }
+
+    return parseTaskMergeRuntime(normalized)
 }
 
 function toStoredTask(row: DbTaskRow): StoredTask {
@@ -56,6 +106,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         worktreeMergedAt: row.worktree_merged_at,
         worktreeMergeCommit: row.worktree_merge_commit,
         mergedDiffSnapshot: safeJsonParse(row.merged_diff_snapshot),
+        mergeRuntime: parseTaskMergeRuntime(safeJsonParse(row.merge_runtime)),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         finishedAt: row.finished_at,
@@ -167,21 +218,23 @@ export function createTask(
         subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
+        mergeRuntime?: TaskMergeRuntime | null
     }
 ): StoredTask {
     const now = Date.now()
+    const mergeRuntime = normalizeTaskMergeRuntime(task.mergeRuntime, now)
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
-            permission_mode, model_mode,
+            permission_mode, model_mode, merge_runtime,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
-            @permission_mode, @model_mode,
+            @permission_mode, @model_mode, @merge_runtime,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -206,6 +259,7 @@ export function createTask(
         sub_tasks_updated_at: task.subTasksUpdatedAt ?? null,
         worktree_merged_at: task.worktreeMergedAt ?? null,
         worktree_merge_commit: task.worktreeMergeCommit ?? null,
+        merge_runtime: mergeRuntime !== undefined && mergeRuntime !== null ? JSON.stringify(mergeRuntime) : null,
         created_at: now,
         updated_at: now
     })
@@ -241,6 +295,7 @@ export function updateTaskByNamespace(
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
         mergedDiffSnapshot?: unknown
+        mergeRuntime?: TaskMergeRuntime | null
         finishedAt?: number | null
         archivedAt?: number | null
     }
@@ -273,6 +328,9 @@ export function updateTaskByNamespace(
         subTasksUpdatedAt: patch.subTasksUpdatedAt !== undefined
             ? patch.subTasksUpdatedAt
             : (patch.subTasks !== undefined ? now : current.subTasksUpdatedAt),
+        mergeRuntime: patch.mergeRuntime !== undefined
+            ? normalizeTaskMergeRuntime(patch.mergeRuntime, now)
+            : current.mergeRuntime,
         worktreeMergedAt: activeSessionChanged
             ? null
             : patch.worktreeMergedAt !== undefined
@@ -310,6 +368,7 @@ export function updateTaskByNamespace(
             attachments = @attachments,
             sub_tasks = @sub_tasks,
             sub_tasks_updated_at = @sub_tasks_updated_at,
+            merge_runtime = @merge_runtime,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
             merged_diff_snapshot = @merged_diff_snapshot,
@@ -336,6 +395,7 @@ export function updateTaskByNamespace(
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,
         sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,
         sub_tasks_updated_at: next.subTasksUpdatedAt,
+        merge_runtime: next.mergeRuntime !== undefined && next.mergeRuntime !== null ? JSON.stringify(next.mergeRuntime) : null,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
         merged_diff_snapshot: next.mergedDiffSnapshot !== undefined && next.mergedDiffSnapshot !== null ? JSON.stringify(next.mergedDiffSnapshot) : null,

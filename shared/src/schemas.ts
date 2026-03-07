@@ -230,6 +230,30 @@ export const MergedDiffSnapshotSchema = z.object({
 
 export type MergedDiffSnapshot = z.infer<typeof MergedDiffSnapshotSchema>
 
+export const TaskMergeRuntimeStatusSchema = z.enum([
+    'queued',
+    'approval_pending',
+    'running',
+    'retrying',
+    'blocked',
+    'succeeded',
+    'canceled'
+])
+
+export type TaskMergeRuntimeStatus = z.infer<typeof TaskMergeRuntimeStatusSchema>
+
+export const TaskMergeRuntimeSchema = z.object({
+    status: TaskMergeRuntimeStatusSchema,
+    updatedAt: z.number(),
+    requestedAt: z.number().optional(),
+    startedAt: z.number().nullable().optional(),
+    completedAt: z.number().nullable().optional(),
+    retryCount: z.number().int().min(0).optional(),
+    latestNote: z.string().trim().min(1).max(280).nullable().optional()
+})
+
+export type TaskMergeRuntime = z.infer<typeof TaskMergeRuntimeSchema>
+
 export const TaskSchema = z.object({
     id: z.string(),
     projectId: z.string(),
@@ -253,6 +277,7 @@ export const TaskSchema = z.object({
     worktreeMergedAt: z.number().nullable().optional(),
     worktreeMergeCommit: z.string().nullable().optional(),
     mergedDiffSnapshot: MergedDiffSnapshotSchema.nullable().optional(),
+    mergeRuntime: TaskMergeRuntimeSchema.nullable().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     finishedAt: z.number().nullable().optional(),

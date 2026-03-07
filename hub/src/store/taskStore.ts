@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite'
+import type { TaskMergeRuntime } from '@hopi/protocol/types'
 
 import type { StoredTask } from './types'
 import {
@@ -68,6 +69,7 @@ export class TaskStore {
         subTasksUpdatedAt?: number | null
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
+        mergeRuntime?: TaskMergeRuntime | null
     }): StoredTask {
         return createTask(this.db, task)
     }
@@ -95,6 +97,7 @@ export class TaskStore {
             worktreeMergedAt?: number | null
             worktreeMergeCommit?: string | null
             mergedDiffSnapshot?: unknown
+            mergeRuntime?: TaskMergeRuntime | null
             finishedAt?: number | null
             archivedAt?: number | null
         }

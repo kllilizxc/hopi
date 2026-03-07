@@ -9,6 +9,8 @@ export type {
     Session,
     SyncEvent,
     Task,
+    TaskMergeRuntime,
+    TaskMergeRuntimeStatus,
     TaskAttachment,
     TaskPriority,
     TaskWorkflowPhase,

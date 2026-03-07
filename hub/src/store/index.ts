@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 8
+const SCHEMA_VERSION: number = 9
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -244,6 +244,21 @@ export class Store {
             return
         }
 
+        if (currentVersion > 0 && currentVersion < SCHEMA_VERSION) {
+            if (currentVersion < 2) {
+                this.migrateFromV1ToV2()
+            }
+            if (currentVersion < 3) {
+                this.migrateFromV2ToV3()
+            }
+            if (currentVersion < 4) {
+                this.migrateFromV3ToV4()
+            }
+            this.ensureLatestSchemaColumns()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(currentVersion)
         }
@@ -388,6 +403,7 @@ export class Store {
                 worktree_merged_at INTEGER,
                 worktree_merge_commit TEXT,
                 merged_diff_snapshot TEXT,
+                merge_runtime TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 finished_at INTEGER,
@@ -510,6 +526,9 @@ export class Store {
         if (SCHEMA_VERSION >= 8) {
             this.migrateFromV7ToV8()
         }
+        if (SCHEMA_VERSION >= 9) {
+            this.migrateFromV8ToV9()
+        }
     }
 
     private migrateFromV4ToV5(): void {
@@ -612,6 +631,16 @@ export class Store {
             this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_phase TEXT')
         }
         this.db.exec("UPDATE tasks SET status = 'planned' WHERE status = 'new'")
+    }
+
+    private migrateFromV8ToV9(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v8 to v9 migration.')
+        }
+        if (!taskColumns.has('merge_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN merge_runtime TEXT')
+        }
     }
 
     private getMachineColumnNames(): Set<string> {
