@@ -225,6 +225,16 @@ export type StartSessionOverrides = {
     modelMode?: z.infer<typeof ModelModeSchema>
 }
 
+export type StartSessionKickoffOptions =
+    | { kind?: 'default' }
+    | { kind: 'skip' }
+    | {
+        kind: 'custom'
+        text: string
+        localId?: string
+        includeCarryoverHistory?: boolean
+    }
+
 type SessionConfigPatch = {
     permissionMode?: z.infer<typeof PermissionModeSchema>
     modelMode?: z.infer<typeof ModelModeSchema>
@@ -285,8 +295,10 @@ export async function startSessionFromTask(options: {
     namespace: string
     taskId: string
     overrides?: StartSessionOverrides
+    kickoff?: StartSessionKickoffOptions
 }): Promise<StartTaskSessionResult> {
     const overrides = options.overrides ?? {}
+    const kickoff = options.kickoff ?? { kind: 'default' }
 
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!task) {
@@ -498,6 +510,7 @@ export async function startSessionFromTask(options: {
         data: { taskId: updatedTask.id, activeSessionId: spawn.sessionId }
     })
 
+    const shouldSendKickoffMessage = kickoff.kind !== 'skip'
     const uploadedAttachments: Array<{
         id: string
         filename: string
@@ -507,84 +520,102 @@ export async function startSessionFromTask(options: {
         previewUrl?: string
     }> = []
 
-    const attachments = Array.isArray(updatedTask.attachments) ? updatedTask.attachments as Array<{
-        id: string
-        filename: string
-        mimeType: string
-        size: number
-        dataUrl: string
-        previewUrl?: string
-    }> : []
+    if (shouldSendKickoffMessage) {
+        const attachments = Array.isArray(updatedTask.attachments) ? updatedTask.attachments as Array<{
+            id: string
+            filename: string
+            mimeType: string
+            size: number
+            dataUrl: string
+            previewUrl?: string
+        }> : []
 
-    for (const attachment of attachments) {
-        const base64 = dataUrlToBase64(attachment.dataUrl)
-        try {
-            const result = await options.engine.uploadFile(spawn.sessionId, attachment.filename, base64, attachment.mimeType)
-            if (result && result.success && result.path) {
-                uploadedAttachments.push({
-                    id: attachment.id,
-                    filename: attachment.filename,
-                    mimeType: attachment.mimeType,
-                    size: attachment.size,
-                    path: result.path,
-                    previewUrl: attachment.previewUrl
-                })
+        for (const attachment of attachments) {
+            const base64 = dataUrlToBase64(attachment.dataUrl)
+            try {
+                const result = await options.engine.uploadFile(spawn.sessionId, attachment.filename, base64, attachment.mimeType)
+                if (result && result.success && result.path) {
+                    uploadedAttachments.push({
+                        id: attachment.id,
+                        filename: attachment.filename,
+                        mimeType: attachment.mimeType,
+                        size: attachment.size,
+                        path: result.path,
+                        previewUrl: attachment.previewUrl
+                    })
+                }
+            } catch {
             }
-        } catch {
         }
-    }
 
-    const kickoffText = (() => {
-        const title = (updatedTask.title ?? '').trim()
-        const desc = (updatedTask.description ?? '').trim()
-        const subTasks = Array.isArray(updatedTask.subTasks)
-            ? updatedTask.subTasks as Array<{
-                content?: unknown
-                status?: unknown
-            }>
-            : []
-        const subTaskLines = subTasks
-            .map((subTask) => {
-                const content = typeof subTask.content === 'string' ? subTask.content.trim() : ''
-                if (!content) return null
-                const done = subTask.status === 'completed'
-                return `- [${done ? 'x' : ' '}] ${content}`
-            })
-            .filter((line): line is string => Boolean(line))
-        const subTasksSection = subTaskLines.length > 0
-            ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
-            : ''
-
-        const baseKickoff = (() => {
-            if (title && desc) {
-                return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
+        const kickoffText = (() => {
+            if (kickoff.kind === 'custom') {
+                const baseKickoff = normalizeText(kickoff.text)
+                if (!baseKickoff) {
+                    return ''
+                }
+                if (!kickoff.includeCarryoverHistory || !previousSessionId || previousSessionId === spawn.sessionId) {
+                    return baseKickoff
+                }
+                const historySection = buildCarryoverHistorySection(options.store, previousSessionId)
+                return `${baseKickoff}${historySection}`
             }
-            if (desc) return `${desc}${subTasksSection}`
-            if (title) return `Task: ${title}${subTasksSection}`
-            if (subTasksSection) return `Task${subTasksSection}`
-            return 'Task'
+
+            const title = (updatedTask.title ?? '').trim()
+            const desc = (updatedTask.description ?? '').trim()
+            const subTasks = Array.isArray(updatedTask.subTasks)
+                ? updatedTask.subTasks as Array<{
+                    content?: unknown
+                    status?: unknown
+                }>
+                : []
+            const subTaskLines = subTasks
+                .map((subTask) => {
+                    const content = typeof subTask.content === 'string' ? subTask.content.trim() : ''
+                    if (!content) return null
+                    const done = subTask.status === 'completed'
+                    return `- [${done ? 'x' : ' '}] ${content}`
+                })
+                .filter((line): line is string => Boolean(line))
+            const subTasksSection = subTaskLines.length > 0
+                ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
+                : ''
+
+            const baseKickoff = (() => {
+                if (title && desc) {
+                    return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
+                }
+                if (desc) return `${desc}${subTasksSection}`
+                if (title) return `Task: ${title}${subTasksSection}`
+                if (subTasksSection) return `Task${subTasksSection}`
+                return 'Task'
+            })()
+
+            if (!previousSessionId || previousSessionId === spawn.sessionId) {
+                return baseKickoff
+            }
+
+            const historySection = buildCarryoverHistorySection(options.store, previousSessionId)
+            return `${baseKickoff}${historySection}`
         })()
 
-        if (!previousSessionId || previousSessionId === spawn.sessionId) {
-            return baseKickoff
+        if (kickoffText) {
+            const kickoffWithInitNotice = initScript.executed
+                ? `${kickoffText}\n\nSystem note: Ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` successfully before this prompt.`
+                : kickoffText
+
+            try {
+                await options.engine.sendMessage(spawn.sessionId, {
+                    text: kickoffWithInitNotice,
+                    localId: kickoff.kind === 'custom' && kickoff.localId
+                        ? kickoff.localId
+                        : `auto:kickoff:${updatedTask.id}:${Date.now()}`,
+                    attachments: uploadedAttachments,
+                    sentFrom: 'webapp'
+                })
+            } catch {
+            }
         }
-
-        const historySection = buildCarryoverHistorySection(options.store, previousSessionId)
-        return `${baseKickoff}${historySection}`
-    })()
-
-    const kickoffWithInitNotice = initScript.executed
-        ? `${kickoffText}\n\nSystem note: Ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` successfully before this prompt.`
-        : kickoffText
-
-    try {
-        await options.engine.sendMessage(spawn.sessionId, {
-            text: kickoffWithInitNotice,
-            localId: `auto:kickoff:${updatedTask.id}:${Date.now()}`,
-            attachments: uploadedAttachments,
-            sentFrom: 'webapp'
-        })
-    } catch {
     }
 
     return { ok: true, task: updatedTask, sessionId: spawn.sessionId }
