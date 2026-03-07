@@ -14,7 +14,7 @@ import type { Store, StoredTask } from '../../store'
 import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
-import { setSessionTaskLink } from '../../sync/sessionTaskLink'
+import { relinkTaskToSession, resolveBestUsableTaskSession } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
@@ -1686,24 +1686,16 @@ export function createTasksRoutes(options: {
             return c.json({ error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found' }, access.reason === 'access-denied' ? 403 : 404)
         }
 
-        const updated = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
-            activeSessionId: access.sessionId
+        const updated = relinkTaskToSession({
+            store: options.store,
+            engine,
+            task,
+            namespace,
+            sessionId: access.sessionId
         })
         if (!updated) {
             return c.json({ error: 'Task not found' }, 404)
         }
-
-        setSessionTaskLink({
-            store: options.store,
-            engine,
-            sessionId: access.sessionId,
-            namespace,
-            projectId: updated.projectId,
-            taskId: updated.id,
-            name: updated.title
-        })
-
-        engine.handleRealtimeEvent({ type: 'task-updated', taskId, projectId: updated.projectId, namespace, data: { taskId, activeSessionId: access.sessionId } })
 
         return c.json({ task: updated })
     })
@@ -2114,12 +2106,27 @@ export function createTasksRoutes(options: {
                 return c.json({ error: 'Not connected' }, 503)
             }
 
-            const access = engine.resolveSessionAccess(task.activeSessionId, namespace)
-            if (!access.ok) {
-                return c.json({ error: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found' }, access.reason === 'access-denied' ? 403 : 404)
+            const resolvedSession = await resolveBestUsableTaskSession({
+                store: options.store,
+                engine,
+                task,
+                namespace,
+                requireWorktree: true,
+                allowResume: true
+            })
+            if (!resolvedSession.ok) {
+                if (resolvedSession.reason === 'not_worktree_session') {
+                    return c.json({ error: 'Session is not a worktree session' }, 400)
+                }
+
+                return c.json(
+                    { error: resolvedSession.reason === 'session_access_denied' ? 'Session access denied' : 'Session not found' },
+                    resolvedSession.reason === 'session_access_denied' ? 403 : 404
+                )
             }
 
-            const session = access.session
+            const resolvedTask = resolvedSession.task
+            const session = resolvedSession.session
             if (!session.metadata?.worktree) {
                 return c.json({ error: 'Session is not a worktree session' }, 400)
             }
@@ -2134,13 +2141,13 @@ export function createTasksRoutes(options: {
             }
 
             const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
-            const markFinishedOnMerge = task.status === 'in_review'
+            const markFinishedOnMerge = resolvedTask.status === 'in_review'
             const mergeState = await computeMergeGitState({
                 engine,
                 sessionId: session.id,
                 targetBranch,
                 sourceBranch,
-                taskMergedAt: task.worktreeMergedAt ?? null
+                taskMergedAt: resolvedTask.worktreeMergedAt ?? null
             })
             if (!mergeState.canMerge) {
                 if (mergeState.reason === 'merge_check_failed') {
@@ -2150,9 +2157,9 @@ export function createTasksRoutes(options: {
 
                 return c.json({
                     ok: true,
-                    commitHash: task.worktreeMergeCommit ?? null,
+                    commitHash: resolvedTask.worktreeMergeCommit ?? null,
                     skippedReason: mergeState.reason === 'already_merged' ? 'already_merged' : 'no_changes',
-                    mergedAt: task.worktreeMergedAt ?? null
+                    mergedAt: resolvedTask.worktreeMergedAt ?? null
                 })
             }
 
@@ -2189,10 +2196,10 @@ export function createTasksRoutes(options: {
                     namespace,
                     sessionId: session.id,
                     task: {
-                        id: task.id,
-                        title: task.title
+                        id: resolvedTask.id,
+                        title: resolvedTask.title
                     },
-                    projectId: task.projectId,
+                    projectId: resolvedTask.projectId,
                     rootPath: mergeScriptCwd,
                     targetBranch,
                     sourceBranch
@@ -2226,7 +2233,7 @@ export function createTasksRoutes(options: {
                     store: options.store,
                     engine,
                     namespace,
-                    task,
+                    task: resolvedTask,
                     sessionId: session.id,
                     sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
                     mergeResult: { success: true },
@@ -2245,7 +2252,7 @@ export function createTasksRoutes(options: {
                 })
             }
 
-            const commitMessage = buildWorktreeMergeCommitMessage(task)
+            const commitMessage = buildWorktreeMergeCommitMessage(resolvedTask)
             let result: Awaited<ReturnType<SyncEngine['gitMergeWorktree']>>
             let autoResolved = false
             try {
@@ -2265,8 +2272,8 @@ export function createTasksRoutes(options: {
                         namespace,
                         sessionId: session.id,
                         task: {
-                            id: task.id,
-                            title: task.title
+                            id: resolvedTask.id,
+                            title: resolvedTask.title
                         },
                         sourceBranch: session.metadata.worktree.branch,
                         targetBranch,
@@ -2288,7 +2295,7 @@ export function createTasksRoutes(options: {
                             store: options.store,
                             getSyncEngine: options.getSyncEngine,
                             namespace,
-                            taskId: task.id,
+                            taskId: resolvedTask.id,
                             targetBranch,
                             markFinishedOnMerge,
                             preferredLocale
@@ -2374,7 +2381,7 @@ export function createTasksRoutes(options: {
                 store: options.store,
                 engine,
                 namespace,
-                task,
+                task: resolvedTask,
                 sessionId: session.id,
                 sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
                 mergeResult: result,

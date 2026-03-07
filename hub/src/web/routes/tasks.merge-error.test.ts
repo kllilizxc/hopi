@@ -30,6 +30,26 @@ function seedMergeTask(store: Store, options: {
     })
 }
 
+function seedWorktreeSession(store: Store, options: {
+    namespace: string
+    tag: string
+    path: string
+    taskId?: string
+    projectId?: string
+}): { id: string } {
+    return store.sessions.getOrCreateSession(options.tag, {
+        path: options.path,
+        host: 'test-host',
+        taskId: options.taskId,
+        projectId: options.projectId,
+        worktree: {
+            basePath: options.path,
+            branch: 'task-branch',
+            name: `${options.tag}-worktree`
+        }
+    }, null, options.namespace)
+}
+
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
@@ -619,5 +639,217 @@ describe('tasks merge route unexpected errors', () => {
         expect(updatedTask?.status).toBe('finished')
         expect(updatedTask?.worktreeMergeCommit).toBe('merged789')
         expect(updatedTask?.finishedAt).toBeTypeOf('number')
+    })
+
+    it('resumes stale linked sessions and relinks task state without clearing merge markers', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-resume-relink'
+        const staleSession = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-stale',
+            path: '/tmp/stale'
+        })
+        const resumedSession = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-resumed',
+            path: '/tmp/resumed'
+        })
+        const taskId = 'task-merge-resume-relink'
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: staleSession.id
+        })
+
+        const mergedAt = Date.now() - 60_000
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'commit-before-relink',
+            mergedDiffSnapshot: {
+                files: [],
+                capturedAt: mergedAt
+            }
+        })
+
+        let resumeCalls = 0
+        const engine = {
+            resolveSessionAccess(sessionId: string) {
+                if (sessionId === staleSession.id) {
+                    return {
+                        ok: true,
+                        sessionId,
+                        session: {
+                            id: sessionId,
+                            namespace,
+                            active: false,
+                            thinking: false,
+                            metadata: {
+                                path: '/tmp/stale',
+                                host: 'test-host',
+                                worktree: {
+                                    basePath: '/tmp/stale',
+                                    branch: 'task-branch',
+                                    name: 'stale-worktree'
+                                }
+                            },
+                            agentState: null
+                        }
+                    }
+                }
+
+                if (sessionId === resumedSession.id) {
+                    return {
+                        ok: true,
+                        sessionId,
+                        session: {
+                            id: sessionId,
+                            namespace,
+                            active: true,
+                            thinking: false,
+                            metadata: {
+                                path: '/tmp/resumed',
+                                host: 'test-host',
+                                worktree: {
+                                    basePath: '/tmp/resumed',
+                                    branch: 'task-branch',
+                                    name: 'resumed-worktree'
+                                }
+                            },
+                            agentState: null
+                        }
+                    }
+                }
+
+                return { ok: false, reason: 'not-found' }
+            },
+            async resumeSession() {
+                resumeCalls += 1
+                return { type: 'success', sessionId: resumedSession.id }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: false,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 0
+                }
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            skippedReason?: string | null
+            mergedAt?: number | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBe('already_merged')
+        expect(body.mergedAt).toBe(mergedAt)
+        expect(resumeCalls).toBe(1)
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.activeSessionId).toBe(resumedSession.id)
+        expect(updatedTask?.worktreeMergedAt).toBe(mergedAt)
+        expect(updatedTask?.worktreeMergeCommit).toBe('commit-before-relink')
+
+        const resumedStoredSession = store.sessions.getSessionByNamespace(resumedSession.id, namespace)
+        expect(resumedStoredSession?.metadata).toMatchObject({
+            projectId,
+            taskId
+        })
+    })
+
+    it('relinks drifted tasks to the best usable backlink session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-drift-relink'
+        const taskId = 'task-merge-drift-relink'
+        const backlinkSession = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-backlink',
+            path: '/tmp/backlink',
+            taskId,
+            projectId
+        })
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: 'missing-session-id'
+        })
+
+        const engine = {
+            resolveSessionAccess(sessionId: string) {
+                if (sessionId === backlinkSession.id) {
+                    return {
+                        ok: true,
+                        sessionId,
+                        session: {
+                            id: sessionId,
+                            namespace,
+                            active: true,
+                            thinking: false,
+                            metadata: {
+                                path: '/tmp/backlink',
+                                host: 'test-host',
+                                projectId,
+                                taskId,
+                                worktree: {
+                                    basePath: '/tmp/backlink',
+                                    branch: 'task-branch',
+                                    name: 'backlink-worktree'
+                                }
+                            },
+                            agentState: null
+                        }
+                    }
+                }
+
+                return { ok: false, reason: 'not-found' }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: false,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 0
+                }
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            skippedReason?: string | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBe('no_changes')
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.activeSessionId).toBe(backlinkSession.id)
     })
 })
