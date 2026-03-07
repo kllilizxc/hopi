@@ -64,28 +64,28 @@ Deferred until merge-first flow is trusted.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MERGE-01 | TBD | Pending |
-| MERGE-02 | TBD | Pending |
-| MERGE-03 | TBD | Pending |
-| MERGE-04 | TBD | Pending |
-| MERGE-05 | TBD | Pending |
-| REPAIR-01 | TBD | Pending |
-| REPAIR-02 | TBD | Pending |
-| REPAIR-03 | TBD | Pending |
-| REPAIR-04 | TBD | Pending |
-| REPAIR-05 | TBD | Pending |
-| ACTION-01 | TBD | Pending |
-| ACTION-02 | TBD | Pending |
-| ACTION-03 | TBD | Pending |
-| VERIFY-01 | TBD | Pending |
-| VERIFY-02 | TBD | Pending |
-| VERIFY-03 | TBD | Pending |
+| MERGE-01 | Phase 1 | Pending |
+| MERGE-02 | Phase 2 | Pending |
+| MERGE-03 | Phase 1 | Pending |
+| MERGE-04 | Phase 2 | Pending |
+| MERGE-05 | Phase 2 | Pending |
+| REPAIR-01 | Phase 2 | Pending |
+| REPAIR-02 | Phase 2 | Pending |
+| REPAIR-03 | Phase 2 | Pending |
+| REPAIR-04 | Phase 3 | Pending |
+| REPAIR-05 | Phase 2 | Pending |
+| ACTION-01 | Phase 1 | Pending |
+| ACTION-02 | Phase 1 | Pending |
+| ACTION-03 | Phase 1 | Pending |
+| VERIFY-01 | Phase 3 | Pending |
+| VERIFY-02 | Phase 3 | Pending |
+| VERIFY-03 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 16 total
-- Mapped to phases: 0
-- Unmapped: 16 ⚠️
+- Mapped to phases: 16
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-07*
-*Last updated: 2026-03-07 after initialization*
+*Last updated: 2026-03-07 after roadmap draft*
