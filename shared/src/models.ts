@@ -14,6 +14,8 @@ export const MODEL_PRESET_OPTIONS: Record<AgentFlavor, readonly ModelPresetOptio
     ],
     codex: [
         { value: 'auto', label: 'Auto' },
+        { value: 'gpt-5.4-codex', label: 'GPT-5.4 Codex' },
+        { value: 'gpt-5.4', label: 'GPT-5.4' },
         { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
         { value: 'gpt-5.2', label: 'GPT-5.2' },
         { value: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
