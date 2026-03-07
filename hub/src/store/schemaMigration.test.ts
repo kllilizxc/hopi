@@ -170,7 +170,13 @@ describe('Store schema migration safety', () => {
             agentFlavor: 'codex',
             subTasks: [{ id: 'st1', content: 'subtask', status: 'pending', priority: 'medium' }],
             subTasksUpdatedAt: Date.now(),
-            permissionMode: 'plan'
+            permissionMode: 'plan',
+            mergeRuntime: {
+                status: 'queued',
+                sessionId: 'session-migrated',
+                updatedAt: Date.now(),
+                latestNote: 'queueing merge'
+            }
         })
         expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
         expect(updatedTask?.worktreeMergeCommit).toBe('abc123')
@@ -178,6 +184,11 @@ describe('Store schema migration safety', () => {
         expect(updatedTask?.subTasks).toEqual([{ id: 'st1', content: 'subtask', status: 'pending', priority: 'medium' }])
         expect(updatedTask?.subTasksUpdatedAt).toBeTypeOf('number')
         expect(updatedTask?.permissionMode).toBe('plan')
+        expect(updatedTask?.mergeRuntime).toMatchObject({
+            status: 'queued',
+            sessionId: 'session-migrated',
+            latestNote: 'queueing merge'
+        })
 
             ; (store as unknown as { db: Database }).db.close()
     })

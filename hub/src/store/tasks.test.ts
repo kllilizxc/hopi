@@ -34,6 +34,43 @@ describe('Task store worktree merge fields', () => {
         expect(updated?.worktreeMergeCommit).toBeNull()
     })
 
+    it('keeps merge runtime linked when active session changes', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-runtime',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        const created = store.tasks.createTask({
+            id: 'task-runtime',
+            projectId: 'project-runtime',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default',
+            activeSessionId: 'session-a',
+            mergeRuntime: {
+                status: 'running',
+                sessionId: 'session-a',
+                updatedAt: Date.now(),
+                latestNote: '  merge   still running  ' ,
+                blockedReason: '  merge conflict  '
+            }
+        })
+
+        expect(created.mergeRuntime?.sessionId).toBe('session-a')
+        expect(created.mergeRuntime?.latestNote).toBe('merge still running')
+        expect(created.mergeRuntime?.blockedReason).toBe('merge conflict')
+
+        const updated = store.tasks.updateTaskByNamespace('task-runtime', 'default', {
+            activeSessionId: 'session-b'
+        })
+
+        expect(updated?.mergeRuntime?.sessionId).toBe('session-b')
+        expect(updated?.mergeRuntime?.status).toBe('running')
+    })
+
     it('deletes task only inside matching namespace', () => {
         const store = new Store(':memory:')
         store.projects.createProject({

@@ -106,7 +106,14 @@ describe('SessionCache.mergeSessions', () => {
             status: 'in_progress',
             workflowProfile: 'default',
             sortKey: Date.now(),
-            activeSessionId: oldSession.id
+            activeSessionId: oldSession.id,
+            worktreeMergedAt: Date.now() - 5_000,
+            worktreeMergeCommit: 'commit-before-resume',
+            mergeRuntime: {
+                status: 'running',
+                updatedAt: Date.now() - 2_000,
+                latestNote: 'Continuing merge after resume'
+            }
         })
 
         const visibilityTracker = new VisibilityTracker()
@@ -123,6 +130,16 @@ describe('SessionCache.mergeSessions', () => {
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.activeSessionId).toBe(newSession.id)
+        expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
+        expect(updatedTask?.worktreeMergeCommit).toBe('commit-before-resume')
+        expect(updatedTask?.mergeRuntime?.status).toBe('running')
+        expect(updatedTask?.mergeRuntime?.sessionId).toBe(newSession.id)
+
+        const newStoredSession = store.sessions.getSessionByNamespace(newSession.id, namespace)
+        expect(newStoredSession?.metadata).toMatchObject({
+            projectId,
+            taskId
+        })
 
         const hasTaskUpdated = events.some((event) => {
             if (!event || typeof event !== 'object') return false
