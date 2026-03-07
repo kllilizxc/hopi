@@ -190,6 +190,11 @@ describe('Store schema migration safety', () => {
             latestNote: 'queueing merge'
         })
 
+        const taskColumns = ((store as unknown as { db: Database }).db.prepare('PRAGMA table_info(tasks)').all() as Array<{
+            name: string
+        }>).map((column) => column.name)
+        expect(taskColumns).toContain('merge_runtime')
+
             ; (store as unknown as { db: Database }).db.close()
     })
 })

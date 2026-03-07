@@ -71,6 +71,114 @@ describe('Task store worktree merge fields', () => {
         expect(updated?.mergeRuntime?.status).toBe('running')
     })
 
+    it('persists compact merge runtime vocabulary across store round-trips', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-runtime-vocabulary',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-runtime-vocabulary',
+            projectId: 'project-runtime-vocabulary',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default',
+            activeSessionId: 'session-runtime-vocabulary'
+        })
+
+        const statuses = [
+            'queued',
+            'waiting',
+            'approval_pending',
+            'running',
+            'retrying',
+            'blocked',
+            'succeeded',
+            'canceled'
+        ] as const
+
+        for (const runtimeStatus of statuses) {
+            const updated = store.tasks.updateTaskByNamespace('task-runtime-vocabulary', 'default', {
+                mergeRuntime: {
+                    status: runtimeStatus,
+                    sessionId: 'session-runtime-vocabulary',
+                    updatedAt: Date.now(),
+                    retryCount: runtimeStatus === 'retrying' ? 2 : undefined,
+                    latestNote: `  ${runtimeStatus} note  `,
+                    blockedReason: runtimeStatus === 'blocked' ? '  waiting on manual conflict resolution  ' : undefined
+                }
+            })
+
+            expect(updated?.mergeRuntime?.status).toBe(runtimeStatus)
+            expect(updated?.mergeRuntime?.latestNote).toBe(`${runtimeStatus} note`)
+            if (runtimeStatus === 'retrying') {
+                expect(updated?.mergeRuntime?.retryCount).toBe(2)
+            }
+            if (runtimeStatus === 'blocked') {
+                expect(updated?.mergeRuntime?.blockedReason).toBe('waiting on manual conflict resolution')
+            }
+
+            const roundTripped = store.tasks.getTaskByNamespace('task-runtime-vocabulary', 'default')
+            expect(roundTripped?.mergeRuntime?.status).toBe(runtimeStatus)
+        }
+    })
+
+    it('preserves merge markers when relinking with preserve flag', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-preserve-relink',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        const mergedAt = Date.now() - 10_000
+        const created = store.tasks.createTask({
+            id: 'task-preserve-relink',
+            projectId: 'project-preserve-relink',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default',
+            activeSessionId: 'session-a',
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'merge-before-relink',
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId: 'session-a',
+                updatedAt: Date.now(),
+                retryCount: 1,
+                latestNote: 'retrying merge'
+            }
+        })
+
+        expect(created.worktreeMergeCommit).toBe('merge-before-relink')
+
+        const updated = store.tasks.updateTaskByNamespace('task-preserve-relink', 'default', {
+            activeSessionId: 'session-b',
+            preserveMergeResultOnSessionChange: true,
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId: 'session-b',
+                updatedAt: Date.now(),
+                retryCount: 2,
+                latestNote: 'still retrying'
+            }
+        })
+
+        expect(updated?.activeSessionId).toBe('session-b')
+        expect(updated?.worktreeMergedAt).toBe(mergedAt)
+        expect(updated?.worktreeMergeCommit).toBe('merge-before-relink')
+        expect(updated?.mergeRuntime).toMatchObject({
+            status: 'retrying',
+            sessionId: 'session-b',
+            retryCount: 2,
+            latestNote: 'still retrying'
+        })
+    })
+
     it('deletes task only inside matching namespace', () => {
         const store = new Store(':memory:')
         store.projects.createProject({
