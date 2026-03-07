@@ -348,6 +348,7 @@ export class Store {
                 default_workspace_id TEXT,
                 default_agent_flavor TEXT,
                 default_permission_mode TEXT,
+                default_model TEXT,
                 default_model_mode TEXT,
                 default_session_type TEXT NOT NULL DEFAULT 'simple',
                 worktree_target_branch TEXT,
@@ -392,6 +393,7 @@ export class Store {
                 workspace_id TEXT,
                 agent_flavor TEXT,
                 permission_mode TEXT,
+                model TEXT,
                 model_mode TEXT,
                 attachments TEXT,
                 source TEXT,
@@ -634,13 +636,26 @@ export class Store {
     }
 
     private migrateFromV8ToV9(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v8 to v9 migration.')
+        }
+        if (!projectColumns.has('default_model')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN default_model TEXT')
+        }
+        this.db.exec('UPDATE projects SET default_model = COALESCE(default_model, default_model_mode) WHERE default_model IS NULL AND default_model_mode IS NOT NULL')
+
         const taskColumns = this.getColumnNames('tasks')
         if (taskColumns.size === 0) {
             throw new Error('SQLite schema missing tasks table for v8 to v9 migration.')
         }
+        if (!taskColumns.has('model')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN model TEXT')
+        }
         if (!taskColumns.has('merge_runtime')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN merge_runtime TEXT')
         }
+        this.db.exec('UPDATE tasks SET model = COALESCE(model, model_mode) WHERE model IS NULL AND model_mode IS NOT NULL')
     }
 
     private getMachineColumnNames(): Set<string> {

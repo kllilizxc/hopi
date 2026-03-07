@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { getModelModesForFlavor, getPermissionModeOptionsForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
-import type { AgentFlavor, ModelMode, PermissionMode, Workspace } from '@/types/api'
+import { getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import type { AgentFlavor, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { PageHeader } from '@/components/PageHeader'
+import { ModelSelector } from '@/components/NewSession/ModelSelector'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
@@ -81,7 +82,7 @@ export function ProjectSettingsPage() {
     const [description, setDescription] = useState('')
     const [defaultAgentFlavor, setDefaultAgentFlavor] = useState<AgentFlavor>('claude')
     const [defaultPermissionMode, setDefaultPermissionMode] = useState<PermissionMode>('default')
-    const [defaultModelMode, setDefaultModelMode] = useState<ModelMode>('default')
+    const [defaultModel, setDefaultModel] = useState('auto')
     const [defaultSessionType, setDefaultSessionType] = useState<'simple' | 'worktree'>('simple')
     const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
     const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
@@ -101,7 +102,7 @@ export function ProjectSettingsPage() {
         setDescription(project.description ?? '')
         setDefaultAgentFlavor((project.defaultAgentFlavor as AgentFlavor | null) ?? 'claude')
         setDefaultPermissionMode((project.defaultPermissionMode as PermissionMode | null) ?? 'default')
-        setDefaultModelMode((project.defaultModelMode as ModelMode | null) ?? 'default')
+        setDefaultModel(resolveStoredModel(project.defaultModel, project.defaultModelMode) ?? 'auto')
         setDefaultSessionType(project.defaultSessionType === 'worktree' ? 'worktree' : 'simple')
         setWorktreeTargetBranch(project.worktreeTargetBranch ?? '')
         setWorktreeAutoCommitMode(project.worktreeAutoCommitMode === 'per_conversation' ? 'per_conversation' : 'off')
@@ -123,21 +124,18 @@ export function ProjectSettingsPage() {
         { value: 'opencode' as const, label: t('agent.opencode') },
     ]), [t])
 
-    const modelModes = useMemo(() => {
-        return getModelModesForFlavor(defaultAgentFlavor)
-    }, [defaultAgentFlavor])
-
     useEffect(() => {
         if (!isPermissionModeAllowedForFlavor(defaultPermissionMode, defaultAgentFlavor)) {
             setDefaultPermissionMode('default')
         }
-        if (defaultAgentFlavor !== 'claude') {
-            setDefaultModelMode('default')
+        if (defaultAgentFlavor === 'opencode' && defaultModel !== 'auto') {
+            setDefaultModel('auto')
+            return
         }
-        if (defaultAgentFlavor === 'claude' && defaultModelMode && !isModelModeAllowedForFlavor(defaultModelMode, defaultAgentFlavor)) {
-            setDefaultModelMode('default')
+        if (shouldResetModelForFlavor(defaultModel, defaultAgentFlavor)) {
+            setDefaultModel('auto')
         }
-    }, [defaultAgentFlavor, defaultPermissionMode, defaultModelMode])
+    }, [defaultAgentFlavor, defaultPermissionMode, defaultModel])
 
     useEffect(() => {
         let cancelled = false
@@ -171,6 +169,10 @@ export function ProjectSettingsPage() {
     const handleSaveBasics = useCallback(async () => {
         if (!project) return
 
+        const normalizedDefaultModel = defaultAgentFlavor === 'opencode'
+            ? null
+            : normalizeModelName(defaultModel)
+
         await updateProject({
             projectId: project.id,
             patch: {
@@ -178,7 +180,8 @@ export function ProjectSettingsPage() {
                 description: description.trim() ? description.trim() : null,
                 defaultAgentFlavor,
                 defaultPermissionMode,
-                defaultModelMode: defaultAgentFlavor === 'claude' ? defaultModelMode : null,
+                defaultModel: normalizedDefaultModel,
+                defaultModelMode: defaultAgentFlavor === 'claude' ? resolveClaudeModelMode(normalizedDefaultModel) : null,
                 defaultSessionType,
                 worktreeTargetBranch: worktreeTargetBranch.trim() ? worktreeTargetBranch.trim() : null,
                 worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : 'off',
@@ -199,7 +202,7 @@ export function ProjectSettingsPage() {
         description,
         defaultAgentFlavor,
         defaultPermissionMode,
-        defaultModelMode,
+        defaultModel,
         defaultSessionType,
         worktreeTargetBranch,
         worktreeAutoCommitMode,
@@ -317,20 +320,12 @@ export function ProjectSettingsPage() {
                             </div>
 
                             <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.defaults.modelMode')}</label>
-                                <AdaptiveSelectField
-                                    title={t('projects.defaults.modelMode')}
-                                    value={defaultModelMode}
-                                    options={[
-                                        { value: 'default' as const, label: t('misc.default') },
-                                        ...modelModes.map((mode) => ({
-                                            value: mode as ModelMode,
-                                            label: mode,
-                                        })),
-                                    ]}
-                                    onValueChange={(value) => setDefaultModelMode(value as ModelMode)}
-                                    disabled={isPending || defaultAgentFlavor !== 'claude'}
-                                    align="start"
+                                <ModelSelector
+                                    agent={defaultAgentFlavor}
+                                    model={defaultModel}
+                                    isDisabled={isPending}
+                                    onModelChange={setDefaultModel}
+                                    compact
                                 />
                             </div>
                         </div>

@@ -4,6 +4,7 @@ import { TASK_STATUS_ORDER } from './tasks'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
 export const ModelModeSchema = z.enum(MODEL_MODES)
+export const ModelNameSchema = z.string().trim().min(1)
 
 export const AgentFlavorSchema = z.enum(['claude', 'codex', 'gemini', 'opencode'])
 
@@ -161,6 +162,7 @@ export const ProjectSchema = z.object({
     defaultWorkspaceId: z.string().nullable().optional(),
     defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
     defaultPermissionMode: PermissionModeSchema.nullable().optional(),
+    defaultModel: ModelNameSchema.nullable().optional(),
     defaultModelMode: ModelModeSchema.nullable().optional(),
     defaultSessionType: SessionTypeSchema.nullable().optional(),
     worktreeTargetBranch: z.string().nullable().optional(),
@@ -269,6 +271,7 @@ export const TaskSchema = z.object({
     workspaceId: z.string().nullable().optional(),
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     permissionMode: PermissionModeSchema.nullable().optional(),
+    model: ModelNameSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
     source: z.enum(['manual', 'improvements_scan', 'project_init']).nullable().optional(),

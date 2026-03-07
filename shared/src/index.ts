@@ -1,5 +1,6 @@
 export * from './brand'
 export * from './messages'
+export * from './models'
 export * from './modes'
 export * from './socket'
 export * from './sessionSummary'

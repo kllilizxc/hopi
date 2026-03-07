@@ -67,6 +67,7 @@ export type StoredProject = {
     defaultWorkspaceId: string | null
     defaultAgentFlavor: string | null
     defaultPermissionMode: string | null
+    defaultModel: string | null
     defaultModelMode: string | null
     defaultSessionType: 'simple' | 'worktree' | null
     worktreeTargetBranch: string | null
@@ -104,6 +105,7 @@ export type StoredTask = {
     workspaceId: string | null
     agentFlavor: string | null
     permissionMode: string | null
+    model: string | null
     modelMode: string | null
     attachments: unknown | null
     source: string | null

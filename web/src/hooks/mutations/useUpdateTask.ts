@@ -30,6 +30,7 @@ type UpdateTaskInput = {
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
+        model?: string | null
         modelMode?: ModelMode | null
         workflowProfile?: string
         workflowPhase?: string | null

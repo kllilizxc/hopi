@@ -14,6 +14,7 @@ type CreateProjectInput = {
     worktreeCleanupAfterMerge?: boolean
     defaultAgentFlavor?: AgentFlavor
     defaultPermissionMode?: PermissionMode
+    defaultModel?: string
     defaultModelMode?: ModelMode
     autoRunEnabled?: boolean
     maxRunningSessions?: number

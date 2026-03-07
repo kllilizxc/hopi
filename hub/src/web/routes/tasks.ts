@@ -1,5 +1,5 @@
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ENV,
     PRODUCT_HEADERS,
@@ -665,6 +665,7 @@ const createTaskSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     agentFlavor: AgentFlavorSchema.optional(),
     permissionMode: PermissionModeSchema.optional(),
+    model: ModelNameSchema.optional(),
     modelMode: ModelModeSchema.optional(),
     workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
@@ -682,6 +683,7 @@ const updateTaskSchema = z.object({
     workspaceId: z.string().min(1).nullable().optional(),
     agentFlavor: AgentFlavorSchema.nullable().optional(),
     permissionMode: PermissionModeSchema.nullable().optional(),
+    model: ModelNameSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
     workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i).optional(),
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
@@ -702,7 +704,7 @@ const attachSessionSchema = z.object({
 const startSessionSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     agent: AgentFlavorSchema.optional(),
-    model: z.string().min(1).optional(),
+    model: ModelNameSchema.optional(),
     yolo: z.boolean().optional(),
     permissionMode: PermissionModeSchema.optional(),
     modelMode: ModelModeSchema.optional()
@@ -1925,6 +1927,7 @@ export function createTasksRoutes(options: {
             workspaceId: parsed.data.workspaceId ?? null,
             agentFlavor: parsed.data.agentFlavor ?? null,
             permissionMode: parsed.data.permissionMode ?? null,
+            model: parsed.data.model ?? null,
             modelMode: parsed.data.modelMode ?? null,
             workflowProfile,
             workflowPhase: defaultWorkflowPhase,
@@ -1993,6 +1996,8 @@ export function createTasksRoutes(options: {
             workspaceId: parsed.data.workspaceId,
             agentFlavor: parsed.data.agentFlavor,
             permissionMode: parsed.data.permissionMode,
+            model: parsed.data.model,
+            modelMode: parsed.data.modelMode,
             workflowPhase: parsed.data.workflowPhase !== undefined
                 ? parsed.data.workflowPhase
                 : finishedTransitionPatch?.workflowPhase,

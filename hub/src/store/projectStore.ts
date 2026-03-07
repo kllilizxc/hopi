@@ -19,6 +19,7 @@ export class ProjectStore {
         defaultWorkspaceId?: string | null
         defaultAgentFlavor?: string | null
         defaultPermissionMode?: string | null
+        defaultModel?: string | null
         defaultModelMode?: string | null
         defaultSessionType?: 'simple' | 'worktree' | null
         worktreeTargetBranch?: string | null
@@ -53,6 +54,7 @@ export class ProjectStore {
             defaultWorkspaceId?: string | null
             defaultAgentFlavor?: string | null
             defaultPermissionMode?: string | null
+            defaultModel?: string | null
             defaultModelMode?: string | null
             defaultSessionType?: 'simple' | 'worktree' | null
             worktreeTargetBranch?: string | null

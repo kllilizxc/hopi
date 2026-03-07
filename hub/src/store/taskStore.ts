@@ -60,6 +60,7 @@ export class TaskStore {
             workspaceId?: string | null
             agentFlavor?: string | null
             permissionMode?: string | null
+            model?: string | null
         modelMode?: string | null
         attachments?: unknown
         source?: string | null
@@ -89,6 +90,7 @@ export class TaskStore {
             workspaceId?: string | null
             agentFlavor?: string | null
             permissionMode?: string | null
+            model?: string | null
             modelMode?: string | null
             source?: string | null
             workflowProfile?: string

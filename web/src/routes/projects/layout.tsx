@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
+import { normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
 import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
@@ -641,6 +642,7 @@ export default function ProjectsPage() {
         if (!selectedProjectId) return
 
         try {
+            const model = normalizeModelName(data.model)
             const created = await createTask({
                 projectId: selectedProjectId,
                 title: data.title,
@@ -649,7 +651,8 @@ export default function ProjectsPage() {
                 status: 'planned',
                 agentFlavor: data.agent,
                 permissionMode: data.permissionMode,
-                modelMode: data.agent === 'claude' && data.model !== 'auto' ? data.model : undefined,
+                model: model ?? undefined,
+                modelMode: data.agent === 'claude' ? resolveClaudeModelMode(model) ?? undefined : undefined,
                 workflowProfile: data.workflowProfile,
                 sortKey: Date.now()
             })

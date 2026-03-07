@@ -18,6 +18,7 @@ type DbTaskRow = {
     workspace_id: string | null
     agent_flavor: string | null
     permission_mode: string | null
+    model: string | null
     model_mode: string | null
     attachments: string | null
     source: string | null
@@ -111,6 +112,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         workspaceId: row.workspace_id,
         agentFlavor: row.agent_flavor,
         permissionMode: row.permission_mode,
+        model: row.model,
         modelMode: row.model_mode,
         attachments: safeJsonParse(row.attachments),
         source: row.source,
@@ -225,6 +227,7 @@ export function createTask(
         workspaceId?: string | null
         agentFlavor?: string | null
         permissionMode?: string | null
+        model?: string | null
         modelMode?: string | null
         attachments?: unknown
         source?: string | null
@@ -252,13 +255,13 @@ export function createTask(
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
-            permission_mode, model_mode, merge_runtime,
+            permission_mode, model, model_mode, merge_runtime,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
-            @permission_mode, @model_mode, @merge_runtime,
+            @permission_mode, @model, @model_mode, @merge_runtime,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -273,6 +276,7 @@ export function createTask(
         workspace_id: task.workspaceId ?? null,
         agent_flavor: task.agentFlavor ?? null,
         permission_mode: task.permissionMode ?? null,
+        model: task.model ?? null,
         model_mode: task.modelMode ?? null,
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
@@ -310,6 +314,7 @@ export function updateTaskByNamespace(
         workspaceId?: string | null
         agentFlavor?: string | null
         permissionMode?: string | null
+        model?: string | null
         modelMode?: string | null
         source?: string | null
         workflowProfile?: string
@@ -346,6 +351,7 @@ export function updateTaskByNamespace(
         workspaceId: patch.workspaceId !== undefined ? patch.workspaceId : current.workspaceId,
         agentFlavor: patch.agentFlavor !== undefined ? patch.agentFlavor : current.agentFlavor,
         permissionMode: patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode,
+        model: patch.model !== undefined ? patch.model : current.model,
         modelMode: patch.modelMode !== undefined ? patch.modelMode : current.modelMode,
         source: patch.source !== undefined ? patch.source : current.source,
         workflowProfile: patch.workflowProfile !== undefined ? patch.workflowProfile : current.workflowProfile,
@@ -399,6 +405,7 @@ export function updateTaskByNamespace(
             workspace_id = @workspace_id,
             agent_flavor = @agent_flavor,
             permission_mode = @permission_mode,
+            model = @model,
             model_mode = @model_mode,
             source = @source,
             workflow_profile = @workflow_profile,
@@ -426,6 +433,7 @@ export function updateTaskByNamespace(
         workspace_id: next.workspaceId,
         agent_flavor: next.agentFlavor,
         permission_mode: next.permissionMode,
+        model: next.model,
         model_mode: next.modelMode,
         source: next.source,
         workflow_profile: (next.workflowProfile ?? '').trim() || 'default',

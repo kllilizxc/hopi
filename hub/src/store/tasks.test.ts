@@ -244,6 +244,33 @@ describe('Task store worktree merge fields', () => {
         expect(updated?.permissionMode).toBe('default')
     })
 
+    it('persists generic task model updates', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-1',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        const created = store.tasks.createTask({
+            id: 'task-1',
+            projectId: 'project-1',
+            title: 'Task',
+            status: 'planned',
+            workflowProfile: 'default',
+            model: 'gpt-5.2-codex'
+        })
+
+        expect(created.model).toBe('gpt-5.2-codex')
+
+        const updated = store.tasks.updateTaskByNamespace('task-1', 'default', {
+            model: 'gpt-5.2'
+        })
+
+        expect(updated?.model).toBe('gpt-5.2')
+    })
+
     it('excludes unapproved improvements-scan tasks from auto-run planned queue', () => {
         const store = new Store(':memory:')
         store.projects.createProject({

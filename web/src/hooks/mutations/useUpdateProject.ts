@@ -10,6 +10,7 @@ type UpdateProjectInput = {
         description?: string | null
         defaultAgentFlavor?: AgentFlavor | null
         defaultPermissionMode?: PermissionMode | null
+        defaultModel?: string | null
         defaultModelMode?: ModelMode | null
         defaultSessionType?: 'simple' | 'worktree' | null
         worktreeTargetBranch?: string | null

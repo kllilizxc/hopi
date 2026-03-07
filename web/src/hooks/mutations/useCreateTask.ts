@@ -28,6 +28,7 @@ type CreateTaskInput = {
     workspaceId?: string
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     permissionMode?: PermissionMode
+    model?: string
     modelMode?: string
     workflowProfile: string
     workflowPhase?: string | null
@@ -56,6 +57,7 @@ export function useCreateTask(api: ApiClient | null): {
                 workspaceId: input.workspaceId,
                 agentFlavor: input.agentFlavor,
                 permissionMode: input.permissionMode,
+                model: input.model,
                 modelMode: input.modelMode,
                 workflowProfile: input.workflowProfile,
                 workflowPhase: input.workflowPhase,

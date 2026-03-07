@@ -1,4 +1,4 @@
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel } from '@hopi/protocol'
 import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
@@ -330,27 +330,39 @@ export async function startSessionFromTask(options: {
         ?? (project.defaultAgentFlavor as z.infer<typeof AgentFlavorSchema> | undefined)
         ?? 'claude'
 
-    const model = (() => {
-        if (overrides.model && overrides.model !== 'auto') {
-            return overrides.model
-        }
-        if (task.modelMode && task.modelMode !== 'default') {
-            return task.modelMode
-        }
-        if (agent === 'claude' && project.defaultModelMode && project.defaultModelMode !== 'default') {
-            return project.defaultModelMode
-        }
-        return undefined
-    })()
+    const overrideModel = normalizeModelName(overrides.model)
+    const taskModel = resolveStoredModel(task.model, task.modelMode)
+    const projectDefaultModel = resolveStoredModel(project.defaultModel, project.defaultModelMode)
+    const model = overrideModel ?? taskModel ?? projectDefaultModel ?? undefined
 
     const permissionMode = overrides.permissionMode
         ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? undefined
-    const modelMode = overrides.modelMode
-        ?? (task.modelMode as z.infer<typeof ModelModeSchema> | null)
-        ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
-        ?? undefined
+    const modelMode = (() => {
+        if (overrides.modelMode !== undefined) {
+            return overrides.modelMode
+        }
+        if (overrideModel !== null) {
+            return agent === 'claude' ? resolveClaudeModelMode(overrideModel) ?? undefined : undefined
+        }
+        if (agent !== 'claude') {
+            return undefined
+        }
+        if (taskModel !== null) {
+            return (task.modelMode as z.infer<typeof ModelModeSchema> | null)
+                ?? resolveClaudeModelMode(taskModel)
+                ?? undefined
+        }
+        if (projectDefaultModel !== null) {
+            return (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
+                ?? resolveClaudeModelMode(projectDefaultModel)
+                ?? undefined
+        }
+        return (task.modelMode as z.infer<typeof ModelModeSchema> | null)
+            ?? (project.defaultModelMode as z.infer<typeof ModelModeSchema> | null)
+            ?? undefined
+    })()
     const inferredYolo = permissionMode === 'yolo' && isPermissionModeAllowedForFlavor(permissionMode, agent)
     const yolo = overrides.yolo ?? inferredYolo
 

@@ -225,6 +225,7 @@ export class ApiClient {
         workspaces: Array<{ path: string; label?: string }>
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         defaultPermissionMode?: PermissionMode
+        defaultModel?: string
         defaultModelMode?: ModelMode
         defaultSessionType?: 'simple' | 'worktree'
         worktreeTargetBranch?: string
@@ -246,6 +247,7 @@ export class ApiClient {
         description?: string | null
         defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         defaultPermissionMode?: PermissionMode | null
+        defaultModel?: string | null
         defaultModelMode?: ModelMode | null
         defaultSessionType?: 'simple' | 'worktree' | null
         worktreeTargetBranch?: string | null
@@ -308,6 +310,7 @@ export class ApiClient {
         workspaceId?: string
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
         permissionMode?: PermissionMode
+        model?: string
         modelMode?: string
         workflowProfile: string
         workflowPhase?: string | null
@@ -346,6 +349,7 @@ export class ApiClient {
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
         permissionMode?: PermissionMode | null
+        model?: string | null
         modelMode?: ModelMode | null
         workflowProfile?: string
         workflowPhase?: string | null

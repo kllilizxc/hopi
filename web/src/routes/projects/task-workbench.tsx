@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getModelModesForFlavor, isModelModeAllowedForFlavor, MODEL_MODE_LABELS } from '@hopi/protocol'
+import { getModelLabel, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
 import { useMatchRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
-import type { AgentFlavor, ModelMode, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, WorkflowStrategyDescriptor, Workspace } from '@/types/api'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, WorkflowStrategyDescriptor, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
@@ -68,6 +68,10 @@ function getAttachmentsSizeBytes(attachments: TaskAttachment[]): number {
     return attachments.reduce((total, att) => total + (Number.isFinite(att.size) ? att.size : 0), 0)
 }
 
+function resolveSelectedModel(model?: string | null, legacyModelMode?: string | null): string {
+    return resolveStoredModel(model, legacyModelMode) ?? 'auto'
+}
+
 function normalizeTaskSubTasks(subTasks: Task['subTasks']): TodoItem[] {
     if (!Array.isArray(subTasks)) return []
     return subTasks.filter((item): item is TodoItem => {
@@ -103,11 +107,11 @@ function StartSessionDialog(props: {
     machineId: string
     taskAgentFlavor: AgentType | null
     taskPermissionMode: PermissionMode | null
-    taskModelMode: ModelMode | null
+    taskModel: string | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
-        modelMode: ModelMode | null
+        model: string | null
     }
     workspaces: Workspace[]
     defaultWorkspaceId: string | null
@@ -121,13 +125,7 @@ function StartSessionDialog(props: {
 
     const initialWorkspaceId = props.taskWorkspaceId ?? props.defaultWorkspaceId ?? props.workspaces[0]?.id ?? ''
     const initialAgent = props.taskAgentFlavor ?? props.projectDefaults.agent
-    const initialModel = (() => {
-        const mode = props.taskModelMode ?? props.projectDefaults.modelMode
-        if (initialAgent === 'claude' && (mode === 'sonnet' || mode === 'opus')) {
-            return mode
-        }
-        return 'auto'
-    })()
+    const initialModel = props.taskModel ?? props.projectDefaults.model ?? 'auto'
     const initialPermissionMode = useMemo(() => {
         return resolveTaskPermissionModeForFlavor(initialAgent, props.taskPermissionMode ?? props.projectDefaults.permissionMode)
     }, [initialAgent, props.taskPermissionMode, props.projectDefaults.permissionMode])
@@ -137,6 +135,16 @@ function StartSessionDialog(props: {
     const [model, setModel] = useState(initialModel)
     const [yolo, setYolo] = useState(false)
     const [permissionMode, setPermissionMode] = useState<PermissionMode>(initialPermissionMode)
+
+    useEffect(() => {
+        if (agent === 'opencode' && model !== 'auto') {
+            setModel('auto')
+            return
+        }
+        if (shouldResetModelForFlavor(model, agent)) {
+            setModel('auto')
+        }
+    }, [agent, model])
 
     useEffect(() => {
         if (!props.isOpen) return
@@ -160,10 +168,8 @@ function StartSessionDialog(props: {
 
     const handleStart = async () => {
         if (!canStart) return
-        const resolvedModel = model !== 'auto' ? model : undefined
-        const modelMode = agent === 'claude' && (model === 'sonnet' || model === 'opus' || model === 'opus[1m]')
-            ? (model as 'sonnet' | 'opus' | 'opus[1m]')
-            : undefined
+        const resolvedModel = normalizeModelName(model) ?? undefined
+        const modelMode = agent === 'claude' ? resolveClaudeModelMode(resolvedModel) ?? undefined : undefined
 
         const result = await startTaskSession({
             taskId: props.taskId,
@@ -366,8 +372,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
     description: string
     effectiveWorkspaceLabel: string
     effectiveAgentFlavor: AgentType
-    canEditModelMode: boolean
-    modelMode: ModelMode
+    model: string
     taskPriority: TaskPriority | null
     hasSession: boolean
     isUpdatingTask: boolean
@@ -395,8 +400,8 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
                         <Tag variant="default">{t('projects.task.workspace.label')}: {props.effectiveWorkspaceLabel}</Tag>
                         <Tag variant="default">{t('newSession.agent')}: {getAgentFlavorLabel(props.effectiveAgentFlavor)}</Tag>
-                        {props.canEditModelMode && props.modelMode !== 'default' ? (
-                            <Tag variant="default">{t('newSession.model')}: {MODEL_MODE_LABELS[props.modelMode]}</Tag>
+                        {normalizeModelName(props.model) ? (
+                            <Tag variant="default">{t('newSession.model')}: {getModelLabel(props.model, props.effectiveAgentFlavor)}</Tag>
                         ) : null}
                         {props.taskPriority ? (
                             <Tag variant={getTaskPriorityTagVariant(props.taskPriority)}>
@@ -656,11 +661,10 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     priorityOptions: Array<{ value: '' | TaskPriority; label: string }>
     workspaceId: string
     workspaceOptions: Array<{ value: string; label: string }>
+    effectiveAgentFlavor: AgentType
     agentFlavor: AgentType | ''
     agentOptions: Array<{ value: '' | AgentType; label: string }>
-    canEditModelMode: boolean
-    modelMode: ModelMode
-    modelModeOptions: Array<{ value: ModelMode; label: string }>
+    model: string
     workflowProfile: string
     workflowStrategyOptions: Array<{ value: string; label: string }>
     workflowPhase: string
@@ -673,7 +677,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     onPriorityChange: (value: string) => void
     onWorkspaceChange: (value: string) => void
     onAgentFlavorChange: (value: string) => void
-    onModelModeChange: (value: string) => void
+    onModelChange: (value: string) => void
     onWorkflowProfileChange: (value: string) => void
     onWorkflowPhaseChange: (value: string) => void
     onOpenChat: () => void
@@ -777,18 +781,14 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                     />
                 </div>
 
-                {props.canEditModelMode ? (
+                {props.effectiveAgentFlavor !== 'opencode' ? (
                     <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-[var(--app-hint)]">
-                            {t('newSession.model')}
-                        </label>
-                        <AdaptiveSelectField
-                            title={t('newSession.model')}
-                            value={props.modelMode}
-                            options={props.modelModeOptions}
-                            onValueChange={props.onModelModeChange}
-                            disabled={props.isUpdatingTask}
-                            align="start"
+                        <ModelSelector
+                            agent={props.effectiveAgentFlavor}
+                            model={props.model}
+                            isDisabled={props.isUpdatingTask}
+                            onModelChange={props.onModelChange}
+                            compact
                         />
                     </div>
                 ) : null}
@@ -845,7 +845,7 @@ function TaskDetailsPanel(props: {
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
-        modelMode: ModelMode | null
+        model: string | null
     }
     workflowStrategies: WorkflowStrategyDescriptor[]
     workflowStrategy: WorkflowStrategyDescriptor | null
@@ -864,7 +864,7 @@ function TaskDetailsPanel(props: {
     const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
-    const [modelMode, setModelMode] = useState<ModelMode>((props.task.modelMode as ModelMode | null) ?? 'default')
+    const [model, setModel] = useState<string>(resolveSelectedModel(props.task.model, props.task.modelMode))
     const [workflowProfile, setWorkflowProfile] = useState<string>((props.task.workflowProfile ?? 'default').trim() || 'default')
     const [workflowPhase, setWorkflowPhase] = useState<string>(
         props.task.workflowPhase ?? props.workflowStrategy?.defaultTaskPhase ?? ''
@@ -886,7 +886,7 @@ function TaskDetailsPanel(props: {
         setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
         setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
-        setModelMode((props.task.modelMode as ModelMode | null) ?? 'default')
+        setModel(resolveSelectedModel(props.task.model, props.task.modelMode))
         setWorkflowProfile((props.task.workflowProfile ?? 'default').trim() || 'default')
         setWorkflowPhase(
             props.task.workflowPhase ?? props.workflowStrategy?.defaultTaskPhase ?? ''
@@ -898,14 +898,6 @@ function TaskDetailsPanel(props: {
     }, [props.task.id, props.task.updatedAt, props.workflowStrategy?.defaultTaskPhase])
 
     const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
-    const modelModeOptions = useMemo<Array<{ value: ModelMode; label: string }>>(() => {
-        const modes = getModelModesForFlavor(effectiveAgentFlavor)
-        return modes.map((mode) => ({
-            value: mode as ModelMode,
-            label: MODEL_MODE_LABELS[mode as ModelMode] ?? mode,
-        }))
-    }, [effectiveAgentFlavor])
-    const canEditModelMode = modelModeOptions.length > 0
 
     const statusOptions = useMemo<Array<{ value: TaskStatus; label: string }>>(() => TASK_STATUS_ORDER.map((taskStatus) => ({
         value: taskStatus,
@@ -1059,25 +1051,27 @@ function TaskDetailsPanel(props: {
         const resolvedNextAgent = (next || props.projectDefaults.agent) as AgentType
 
         setAgentFlavor(next)
-        void savePatch({ agentFlavor: next || null })
+        const patch: {
+            agentFlavor?: AgentType | null
+            model?: string | null
+            modelMode?: ReturnType<typeof resolveClaudeModelMode>
+        } = { agentFlavor: next || null }
 
-        if (resolvedNextAgent !== 'claude' && modelMode !== 'default') {
-            setModelMode('default')
-            void savePatch({ modelMode: null })
-            return
+        if (resolvedNextAgent === 'opencode' || shouldResetModelForFlavor(model, resolvedNextAgent)) {
+            setModel('auto')
+            patch.model = null
+            patch.modelMode = null
         }
 
-        if (resolvedNextAgent === 'claude' && !isModelModeAllowedForFlavor(modelMode, resolvedNextAgent)) {
-            setModelMode('default')
-            void savePatch({ modelMode: null })
-        }
-    }, [modelMode, props.projectDefaults.agent, savePatch])
+        void savePatch(patch)
+    }, [model, props.projectDefaults.agent, savePatch])
 
-    const handleModelModeChange = useCallback((value: string) => {
-        const next = value as ModelMode
-        setModelMode(next)
+    const handleModelChange = useCallback((value: string) => {
+        setModel(value)
+        const normalizedModel = normalizeModelName(value)
         void savePatch({
-            modelMode: effectiveAgentFlavor === 'claude' && next !== 'default' ? next : null
+            model: normalizedModel,
+            modelMode: effectiveAgentFlavor === 'claude' ? resolveClaudeModelMode(normalizedModel) : null
         })
     }, [effectiveAgentFlavor, savePatch])
 
@@ -1251,8 +1245,7 @@ function TaskDetailsPanel(props: {
                                 description={description}
                                 effectiveWorkspaceLabel={effectiveWorkspaceLabel}
                                 effectiveAgentFlavor={effectiveAgentFlavor}
-                                canEditModelMode={canEditModelMode}
-                                modelMode={modelMode}
+                                model={model}
                                 taskPriority={props.task.priority ?? null}
                                 hasSession={Boolean(sessionId)}
                                 isUpdatingTask={isUpdatingTask}
@@ -1297,11 +1290,10 @@ function TaskDetailsPanel(props: {
                             priorityOptions={priorityOptions}
                             workspaceId={workspaceId}
                             workspaceOptions={workspaceOptions}
+                            effectiveAgentFlavor={effectiveAgentFlavor}
                             agentFlavor={agentFlavor}
                             agentOptions={agentOptions}
-                            canEditModelMode={canEditModelMode}
-                            modelMode={modelMode}
-                            modelModeOptions={modelModeOptions}
+                            model={model}
                             workflowProfile={workflowProfile}
                             workflowStrategyOptions={workflowStrategyOptions}
                             workflowPhase={workflowPhase}
@@ -1314,7 +1306,7 @@ function TaskDetailsPanel(props: {
                             onPriorityChange={handlePriorityChange}
                             onWorkspaceChange={handleWorkspaceChange}
                             onAgentFlavorChange={handleAgentFlavorChange}
-                            onModelModeChange={handleModelModeChange}
+                            onModelChange={handleModelChange}
                             onWorkflowProfileChange={handleWorkflowProfileChange}
                             onWorkflowPhaseChange={handleWorkflowPhaseChange}
                             onOpenChat={handleOpenChat}
@@ -1334,7 +1326,7 @@ function TaskDetailsPanel(props: {
                 machineId={props.projectMachineId}
                 taskAgentFlavor={agentFlavor || null}
                 taskPermissionMode={props.task.permissionMode ?? null}
-                taskModelMode={modelMode === 'default' ? null : modelMode}
+                taskModel={normalizeModelName(model)}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}
@@ -1491,9 +1483,9 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     const projectDefaults = useMemo(() => {
         const agent = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
         const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
-        const modelMode = (project?.defaultModelMode as ModelMode | null) ?? null
-        return { agent, permissionMode, modelMode }
-    }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModelMode])
+        const model = resolveStoredModel(project?.defaultModel, project?.defaultModelMode)
+        return { agent, permissionMode, model }
+    }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModel, project?.defaultModelMode])
 
     const workflowStrategy = useMemo<WorkflowStrategyDescriptor | null>(() => {
         const profile = (task?.workflowProfile ?? 'default').trim().toLowerCase()

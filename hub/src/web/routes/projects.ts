@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
     PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
@@ -23,6 +23,7 @@ const createProjectSchema = z.object({
     })).min(1).max(50),
     defaultAgentFlavor: AgentFlavorSchema.optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
+    defaultModel: ModelNameSchema.optional(),
     defaultModelMode: ModelModeSchema.optional(),
     defaultSessionType: SessionTypeSchema.optional(),
     worktreeTargetBranch: z.string().max(255).optional(),
@@ -40,6 +41,7 @@ const updateProjectSchema = z.object({
     description: z.string().max(10_000).nullable().optional(),
     defaultAgentFlavor: AgentFlavorSchema.nullable().optional(),
     defaultPermissionMode: PermissionModeSchema.nullable().optional(),
+    defaultModel: ModelNameSchema.nullable().optional(),
     defaultModelMode: ModelModeSchema.nullable().optional(),
     defaultSessionType: SessionTypeSchema.nullable().optional(),
     worktreeTargetBranch: z.string().max(255).nullable().optional(),
@@ -184,6 +186,7 @@ export function createProjectsRoutes(options: {
             defaultWorkspaceId: null,
             defaultAgentFlavor: parsed.data.defaultAgentFlavor ?? null,
             defaultPermissionMode: parsed.data.defaultPermissionMode ?? null,
+            defaultModel: parsed.data.defaultModel ?? null,
             defaultModelMode: parsed.data.defaultModelMode ?? null,
             defaultSessionType: parsed.data.defaultSessionType ?? null,
             worktreeTargetBranch: parsed.data.worktreeTargetBranch ?? null,
@@ -318,6 +321,7 @@ export function createProjectsRoutes(options: {
             description: parsed.data.description,
             defaultAgentFlavor: parsed.data.defaultAgentFlavor,
             defaultPermissionMode: parsed.data.defaultPermissionMode,
+            defaultModel: parsed.data.defaultModel,
             defaultModelMode: parsed.data.defaultModelMode,
             defaultSessionType: parsed.data.defaultSessionType,
             worktreeTargetBranch: parsed.data.worktreeTargetBranch,

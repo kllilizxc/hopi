@@ -1241,6 +1241,85 @@ describe('startSessionFromTask', () => {
         expect(appliedConfigs.some((patch) => patch.modelMode === 'sonnet')).toBe(false)
     })
 
+    it('uses task custom model without falling back to project model mode', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-custom-model'
+        const taskId = 'task-custom-model'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultModelMode: 'sonnet'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId,
+            agentFlavor: 'claude',
+            model: 'claude-sonnet-4-5'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-custom-model',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const appliedConfigs: Array<Record<string, unknown>> = []
+        let spawnedModel: string | undefined
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(_machineId: string, _path: string, _agent: string, model?: string) {
+                spawnedModel = model
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig(_sessionId: string, patch: Record<string, unknown>) {
+                appliedConfigs.push(patch)
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedModel).toBe('claude-sonnet-4-5')
+        expect(appliedConfigs.some((patch) => patch.modelMode === 'sonnet')).toBe(false)
+    })
+
     it('uses custom kickoff text when requested', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

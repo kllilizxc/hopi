@@ -6,8 +6,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
 import { ModelSelector } from '@/components/NewSession/ModelSelector'
-import { MODEL_OPTIONS, type AgentType } from '@/components/NewSession/types'
+import type { AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
+import { getModelOptionsForFlavor, shouldResetModelForFlavor } from '@hopi/protocol'
 import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
 function getTaskDraftTitle(draft: string): string {
@@ -159,14 +160,14 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, defaultPermissionPreference])
 
     useEffect(() => {
-        const options = MODEL_OPTIONS[newTaskAgent]
+        const options = getModelOptionsForFlavor(newTaskAgent)
         if (options.length === 0) {
             if (newTaskModel !== 'auto') {
                 setNewTaskModel('auto')
             }
             return
         }
-        if (!options.some((option) => option.value === newTaskModel)) {
+        if (shouldResetModelForFlavor(newTaskModel, newTaskAgent)) {
             setNewTaskModel('auto')
         }
     }, [newTaskAgent, newTaskModel])

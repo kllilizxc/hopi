@@ -11,6 +11,7 @@ type DbProjectRow = {
     default_workspace_id: string | null
     default_agent_flavor: string | null
     default_permission_mode: string | null
+    default_model: string | null
     default_model_mode: string | null
     default_session_type?: string | null
     worktree_target_branch?: string | null
@@ -37,6 +38,7 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         defaultWorkspaceId: row.default_workspace_id,
         defaultAgentFlavor: row.default_agent_flavor,
         defaultPermissionMode: row.default_permission_mode,
+        defaultModel: row.default_model,
         defaultModelMode: row.default_model_mode,
         defaultSessionType: row.default_session_type === 'worktree'
             ? 'worktree'
@@ -72,6 +74,7 @@ export function createProject(
         defaultWorkspaceId?: string | null
         defaultAgentFlavor?: string | null
         defaultPermissionMode?: string | null
+        defaultModel?: string | null
         defaultModelMode?: string | null
         defaultSessionType?: 'simple' | 'worktree' | null
         worktreeTargetBranch?: string | null
@@ -88,7 +91,7 @@ export function createProject(
         INSERT INTO projects (
             id, namespace, machine_id,
             name, description, default_workspace_id,
-            default_agent_flavor, default_permission_mode, default_model_mode,
+            default_agent_flavor, default_permission_mode, default_model, default_model_mode,
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
             auto_run_enabled, max_running_sessions,
             improvements_enabled, improvements_max_pending_tasks,
@@ -96,7 +99,7 @@ export function createProject(
         ) VALUES (
             @id, @namespace, @machine_id,
             @name, @description, @default_workspace_id,
-            @default_agent_flavor, @default_permission_mode, @default_model_mode,
+            @default_agent_flavor, @default_permission_mode, @default_model, @default_model_mode,
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
             @auto_run_enabled, @max_running_sessions,
             @improvements_enabled, @improvements_max_pending_tasks,
@@ -111,6 +114,7 @@ export function createProject(
         default_workspace_id: project.defaultWorkspaceId ?? null,
         default_agent_flavor: project.defaultAgentFlavor ?? null,
         default_permission_mode: project.defaultPermissionMode ?? null,
+        default_model: project.defaultModel ?? null,
         default_model_mode: project.defaultModelMode ?? null,
         default_session_type: project.defaultSessionType ?? 'simple',
         worktree_target_branch: project.worktreeTargetBranch ?? null,
@@ -169,6 +173,7 @@ export function updateProject(
         defaultWorkspaceId?: string | null
         defaultAgentFlavor?: string | null
         defaultPermissionMode?: string | null
+        defaultModel?: string | null
         defaultModelMode?: string | null
         defaultSessionType?: 'simple' | 'worktree' | null
         worktreeTargetBranch?: string | null
@@ -194,6 +199,7 @@ export function updateProject(
         defaultWorkspaceId: patch.defaultWorkspaceId !== undefined ? patch.defaultWorkspaceId : current.defaultWorkspaceId,
         defaultAgentFlavor: patch.defaultAgentFlavor !== undefined ? patch.defaultAgentFlavor : current.defaultAgentFlavor,
         defaultPermissionMode: patch.defaultPermissionMode !== undefined ? patch.defaultPermissionMode : current.defaultPermissionMode,
+        defaultModel: patch.defaultModel !== undefined ? patch.defaultModel : current.defaultModel,
         defaultModelMode: patch.defaultModelMode !== undefined ? patch.defaultModelMode : current.defaultModelMode,
         defaultSessionType: patch.defaultSessionType !== undefined ? patch.defaultSessionType : current.defaultSessionType,
         worktreeTargetBranch: patch.worktreeTargetBranch !== undefined ? patch.worktreeTargetBranch : current.worktreeTargetBranch,
@@ -215,6 +221,7 @@ export function updateProject(
             default_workspace_id = @default_workspace_id,
             default_agent_flavor = @default_agent_flavor,
             default_permission_mode = @default_permission_mode,
+            default_model = @default_model,
             default_model_mode = @default_model_mode,
             default_session_type = @default_session_type,
             worktree_target_branch = @worktree_target_branch,
@@ -236,6 +243,7 @@ export function updateProject(
         default_workspace_id: next.defaultWorkspaceId,
         default_agent_flavor: next.defaultAgentFlavor,
         default_permission_mode: next.defaultPermissionMode,
+        default_model: next.defaultModel,
         default_model_mode: next.defaultModelMode,
         default_session_type: next.defaultSessionType ?? 'simple',
         worktree_target_branch: next.worktreeTargetBranch,
