@@ -25,10 +25,10 @@ This roadmap evolves HOPI's existing project script and task-session system into
   2. Merge status survives refresh/reconnect and remains visible across HOPI surfaces.
   3. The product exposes clear action states for queued/running/blocked/succeeded behavior.
   4. Merge no longer feels like a detached backend-only workflow from the user's perspective.
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 
 Plans:
-- [ ] 01-01: Define canonical merge action contracts, state vocabulary, and persistence model
+- [x] 01-01: Define canonical merge action contracts, state vocabulary, and persistence model (completed 2026-03-07)
 - [ ] 01-02: Route Merge trigger into the linked task conversation/session flow
 - [ ] 01-03: Surface durable action status and replay across web/task views
 
@@ -71,6 +71,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Merge Action Runtime | 0/3 | Not started | - |
+| 1. Merge Action Runtime | 1/3 | In Progress | - |
 | 2. Self-Healing Merge Loop | 0/3 | Not started | - |
 | 3. Verified Completion & Recovery Control | 0/3 | Not started | - |
