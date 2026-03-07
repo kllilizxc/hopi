@@ -1240,4 +1240,161 @@ describe('startSessionFromTask', () => {
         expect(appliedConfigs.some((patch) => patch.modelMode === 'opus')).toBe(true)
         expect(appliedConfigs.some((patch) => patch.modelMode === 'sonnet')).toBe(false)
     })
+
+    it('uses custom kickoff text when requested', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-custom-kickoff'
+        const taskId = 'task-custom-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            description: 'Default kickoff should be replaced',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-custom-kickoff',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let payloadText = ''
+        let payloadLocalId = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
+                payloadText = payload.text
+                payloadLocalId = payload.localId ?? ''
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId,
+            kickoff: {
+                kind: 'custom',
+                text: 'Merge this worktree now.',
+                localId: 'custom-merge-kickoff'
+            }
+        })
+
+        expect(result.ok).toBe(true)
+        expect(payloadText).toBe('Merge this worktree now.')
+        expect(payloadLocalId).toBe('custom-merge-kickoff')
+    })
+
+    it('can skip kickoff message entirely', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-skip-kickoff'
+        const taskId = 'task-skip-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-skip-kickoff',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let sendMessageCalled = false
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId,
+            kickoff: { kind: 'skip' }
+        })
+
+        expect(result.ok).toBe(true)
+        expect(sendMessageCalled).toBe(false)
+    })
+
 })

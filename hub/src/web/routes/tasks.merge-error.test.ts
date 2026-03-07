@@ -4,13 +4,7 @@ import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { createTasksRoutes } from './tasks'
 
-function seedMergeTask(store: Store, options: {
-    namespace: string
-    projectId: string
-    taskId: string
-    sessionId: string
-    status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
-}): void {
+function seedProject(store: Store, options: { namespace: string; projectId: string }): void {
     store.projects.createProject({
         id: options.projectId,
         namespace: options.namespace,
@@ -19,6 +13,19 @@ function seedMergeTask(store: Store, options: {
         defaultSessionType: 'worktree',
         worktreeTargetBranch: 'main'
     })
+}
+
+function seedMergeTask(store: Store, options: {
+    namespace: string
+    projectId: string
+    taskId: string
+    sessionId?: string | null
+    status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
+}): void {
+    seedProject(store, {
+        namespace: options.namespace,
+        projectId: options.projectId
+    })
 
     store.tasks.createTask({
         id: options.taskId,
@@ -26,7 +33,7 @@ function seedMergeTask(store: Store, options: {
         title: 'Merge Task',
         status: options.status ?? 'in_review',
         workflowProfile: 'default',
-        activeSessionId: options.sessionId
+        activeSessionId: options.sessionId ?? null
     })
 }
 
@@ -65,27 +72,7 @@ function createTestApp(store: Store, engine: SyncEngine): Hono {
     return app
 }
 
-async function waitForTaskMergeResult(options: {
-    store: Store
-    taskId: string
-    namespace: string
-    timeoutMs?: number
-}): Promise<void> {
-    const timeoutMs = options.timeoutMs ?? 2_000
-    const startedAt = Date.now()
-
-    while (Date.now() - startedAt < timeoutMs) {
-        const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-        if (task?.worktreeMergedAt) {
-            return
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20))
-    }
-
-    throw new Error('Timed out waiting for background merge result')
-}
-
-describe('tasks merge route unexpected errors', () => {
+describe('tasks merge route runtime behavior', () => {
     it('returns thrown error message for unexpected merge failures', async () => {
         const store = new Store(':memory:')
         const taskId = 'task-merge-message'
@@ -112,533 +99,6 @@ describe('tasks merge route unexpected errors', () => {
         expect(response.status).toBe(500)
         const body = await response.json() as { error?: string }
         expect(body.error).toBe('simulated merge crash')
-    })
-
-    it('uses fallback message when thrown value has no readable message', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-fallback'
-        seedMergeTask(store, {
-            namespace: 'default',
-            projectId: 'project-merge-fallback',
-            taskId,
-            sessionId: 'session-merge-fallback'
-        })
-
-        const engine = {
-            resolveSessionAccess() {
-                throw null
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(500)
-        const body = await response.json() as { error?: string }
-        expect(body.error).toBe('Merge failed unexpectedly')
-    })
-
-    it('maps auto-resolve runtime failures to 503 instead of bubbling 500', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-auto-resolve-runtime'
-        seedMergeTask(store, {
-            namespace: 'default',
-            projectId: 'project-merge-auto-resolve-runtime',
-            taskId,
-            sessionId: 'session-merge-auto-resolve-runtime'
-        })
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-auto-resolve-runtime',
-                    session: {
-                        id: 'session-merge-auto-resolve-runtime',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktree() {
-                return {
-                    success: false,
-                    error: 'Merge conflicts detected; manual resolution required',
-                    conflictFiles: ['src/conflict.ts']
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 1
-                }
-            },
-            async sendMessage() {
-                return
-            },
-            getSessionByNamespace() {
-                throw new Error('RPC socket disconnected: session-merge-auto-resolve-runtime')
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(503)
-        const body = await response.json() as { error?: string; autoResolveAttempted?: boolean }
-        expect(body.error).toBe('RPC socket disconnected: session-merge-auto-resolve-runtime')
-        expect(body.autoResolveAttempted).toBe(true)
-    })
-
-    it('prefers stderr details over generic command-failed error text', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-command-failed-stderr'
-        seedMergeTask(store, {
-            namespace: 'default',
-            projectId: 'project-merge-command-failed-stderr',
-            taskId,
-            sessionId: 'session-merge-command-failed-stderr'
-        })
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-command-failed-stderr',
-                    session: {
-                        id: 'session-merge-command-failed-stderr',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktree() {
-                return {
-                    success: false,
-                    error: 'Command failed: git switch dev',
-                    stderr: 'fatal: unexpected repository state',
-                    stdout: ''
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 1
-                }
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ conflictStrategy: 'manual' })
-        })
-
-        expect(response.status).toBe(500)
-        const body = await response.json() as { error?: string }
-        expect(body.error).toBe('fatal: unexpected repository state')
-    })
-
-    it('exposes merge-state based on source-vs-target diff', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-state-no-changes'
-        seedMergeTask(store, {
-            namespace: 'default',
-            projectId: 'project-merge-state-no-changes',
-            taskId,
-            sessionId: 'session-merge-state-no-changes'
-        })
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-state-no-changes',
-                    session: {
-                        id: 'session-merge-state-no-changes',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: false,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 0
-                }
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge-state`)
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            ok?: boolean
-            canMerge?: boolean
-            reason?: string
-            committedChangedCount?: number | null
-        }
-        expect(body.ok).toBe(true)
-        expect(body.canMerge).toBe(false)
-        expect(body.reason).toBe('no_changes')
-        expect(body.committedChangedCount).toBe(0)
-    })
-
-    it('keeps merge-state checks available regardless of task status', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-state-planned'
-        seedMergeTask(store, {
-            namespace: 'default',
-            projectId: 'project-merge-state-planned',
-            taskId,
-            sessionId: 'session-merge-state-planned',
-            status: 'planned'
-        })
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-state-planned',
-                    session: {
-                        id: 'session-merge-state-planned',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 2
-                }
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge-state`)
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            canMerge?: boolean
-            reason?: string
-            committedChangedCount?: number | null
-        }
-        expect(body.canMerge).toBe(true)
-        expect(body.reason).toBe('mergeable')
-        expect(body.committedChangedCount).toBe(2)
-    })
-
-    it('does not short-circuit merge only from persisted merged marker', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-stale-marker'
-        const namespace = 'default'
-        seedMergeTask(store, {
-            namespace,
-            projectId: 'project-merge-stale-marker',
-            taskId,
-            sessionId: 'session-merge-stale-marker'
-        })
-
-        store.tasks.updateTaskByNamespace(taskId, namespace, {
-            worktreeMergedAt: Date.now() - 60_000,
-            worktreeMergeCommit: 'old123'
-        })
-
-        let mergeCalls = 0
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-stale-marker',
-                    session: {
-                        id: 'session-merge-stale-marker',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: true,
-                    committedChangedCount: 0
-                }
-            },
-            async gitMergeWorktree() {
-                mergeCalls += 1
-                return {
-                    success: true,
-                    commitHash: 'new456'
-                }
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            ok?: boolean
-            skippedReason?: string | null
-            commitHash?: string | null
-        }
-        expect(body.ok).toBe(true)
-        expect(body.skippedReason).toBeNull()
-        expect(body.commitHash).toBe('new456')
-        expect(mergeCalls).toBe(1)
-    })
-
-    it('keeps merge success response when realtime handler depends on engine context', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-handler-context'
-        const namespace = 'default'
-        seedMergeTask(store, {
-            namespace,
-            projectId: 'project-merge-handler-context',
-            taskId,
-            sessionId: 'session-merge-handler-context'
-        })
-
-        const engine = {
-            marker: true,
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId: 'session-merge-handler-context',
-                    session: {
-                        id: 'session-merge-handler-context',
-                        thinking: false,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch'
-                            }
-                        }
-                    }
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 1
-                }
-            },
-            async gitMergeWorktree() {
-                return {
-                    success: true,
-                    commitHash: 'ctx123'
-                }
-            },
-            handleRealtimeEvent(this: { marker?: boolean }, event: unknown) {
-                void event
-                if (!this.marker) {
-                    throw new Error('lost realtime handler context')
-                }
-            }
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            ok?: boolean
-            commitHash?: string | null
-        }
-        expect(body.ok).toBe(true)
-        expect(body.commitHash).toBe('ctx123')
-    })
-
-    it('returns retry-scheduled response when post-auto-resolve retry fails transiently', async () => {
-        const store = new Store(':memory:')
-        const taskId = 'task-merge-auto-retry-scheduled'
-        const namespace = 'default'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-auto-retry-scheduled',
-            {
-                path: '/tmp/merge-auto-retry-scheduled',
-                worktree: {
-                    branch: 'task-branch',
-                    baseCommit: 'abc1234'
-                }
-            },
-            null,
-            namespace
-        ).id
-        seedMergeTask(store, {
-            namespace,
-            projectId: 'project-merge-auto-retry-scheduled',
-            taskId,
-            sessionId
-        })
-
-        let mergeCalls = 0
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session: {
-                        id: sessionId,
-                        thinking: false,
-                        active: true,
-                        metadata: {
-                            worktree: {
-                                branch: 'task-branch',
-                                baseCommit: 'abc1234'
-                            }
-                        }
-                    }
-                }
-            },
-            getSessionByNamespace() {
-                return {
-                    id: sessionId,
-                    active: true,
-                    thinking: false
-                }
-            },
-            async gitMergeWorktree() {
-                mergeCalls += 1
-                if (mergeCalls === 1) {
-                    return {
-                        success: false,
-                        error: 'Merge conflicts detected; manual resolution required',
-                        conflictFiles: ['src/conflict.ts']
-                    }
-                }
-                if (mergeCalls === 2) {
-                    store.tasks.updateTaskByNamespace(taskId, namespace, {
-                        status: 'in_progress'
-                    })
-                    return {
-                        success: false,
-                        error: 'merge timed out'
-                    }
-                }
-                return {
-                    success: true,
-                    commitHash: 'merged789'
-                }
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    mergeable: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 1
-                }
-            },
-            async gitAutocommitWorktree() {
-                return { success: true, commitHash: 'resolve456' }
-            },
-            async sendMessage() {
-                store.messages.addMessage(sessionId, {
-                    role: 'agent',
-                    content: { type: 'text', text: 'conflicts resolved' }
-                })
-            },
-            async getGitDiffNumstat() {
-                return {
-                    success: true,
-                    stdout: '1\t0\tsrc/conflict.ts'
-                }
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            ok?: boolean
-            skippedReason?: string | null
-            autoResolved?: boolean | null
-            autoRetryScheduled?: boolean | null
-        }
-        expect(body.ok).toBe(true)
-        expect(body.skippedReason).toBe('auto_retry_scheduled')
-        expect(body.autoResolved).toBe(true)
-        expect(body.autoRetryScheduled).toBe(true)
-
-        await waitForTaskMergeResult({
-            store,
-            taskId,
-            namespace
-        })
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updatedTask?.status).toBe('finished')
-        expect(updatedTask?.worktreeMergeCommit).toBe('merged789')
-        expect(updatedTask?.finishedAt).toBeTypeOf('number')
     })
 
     it('resumes stale linked sessions and relinks task state without clearing merge markers', async () => {
@@ -725,6 +185,27 @@ describe('tasks merge route unexpected errors', () => {
 
                 return { ok: false, reason: 'not-found' }
             },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== resumedSession.id) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: {
+                        path: '/tmp/resumed',
+                        host: 'test-host',
+                        worktree: {
+                            basePath: '/tmp/resumed',
+                            branch: 'task-branch',
+                            name: 'resumed-worktree'
+                        }
+                    },
+                    agentState: null
+                }
+            },
             async resumeSession() {
                 resumeCalls += 1
                 return { type: 'success', sessionId: resumedSession.id }
@@ -764,12 +245,6 @@ describe('tasks merge route unexpected errors', () => {
         expect(updatedTask?.activeSessionId).toBe(resumedSession.id)
         expect(updatedTask?.worktreeMergedAt).toBe(mergedAt)
         expect(updatedTask?.worktreeMergeCommit).toBe('commit-before-relink')
-
-        const resumedStoredSession = store.sessions.getSessionByNamespace(resumedSession.id, namespace)
-        expect(resumedStoredSession?.metadata).toMatchObject({
-            projectId,
-            taskId
-        })
     })
 
     it('relinks drifted tasks to the best usable backlink session', async () => {
@@ -821,6 +296,29 @@ describe('tasks merge route unexpected errors', () => {
 
                 return { ok: false, reason: 'not-found' }
             },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== backlinkSession.id) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: {
+                        path: '/tmp/backlink',
+                        host: 'test-host',
+                        projectId,
+                        taskId,
+                        worktree: {
+                            basePath: '/tmp/backlink',
+                            branch: 'task-branch',
+                            name: 'backlink-worktree'
+                        }
+                    },
+                    agentState: null
+                }
+            },
             async gitMergeWorktreeState() {
                 return {
                     success: true,
@@ -851,5 +349,269 @@ describe('tasks merge route unexpected errors', () => {
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.activeSessionId).toBe(backlinkSession.id)
+    })
+
+    it('queues merge behind a thinking session and keeps durable runtime state', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-queued'
+        const taskId = 'task-merge-queued'
+        const session = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-queued',
+            path: '/tmp/queued'
+        })
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: session.id
+        })
+
+        let sendMessageCalls = 0
+        const engine = {
+            resolveSessionAccess(sessionId: string) {
+                return {
+                    ok: true,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        namespace,
+                        active: true,
+                        thinking: true,
+                        metadata: {
+                            path: '/tmp/queued',
+                            host: 'test-host',
+                            worktree: {
+                                basePath: '/tmp/queued',
+                                branch: 'task-branch',
+                                name: 'queued-worktree'
+                            }
+                        },
+                        agentState: null
+                    }
+                }
+            },
+            getSessionByNamespace(sessionId: string) {
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: true,
+                    metadata: {
+                        path: '/tmp/queued',
+                        host: 'test-host',
+                        worktree: {
+                            basePath: '/tmp/queued',
+                            branch: 'task-branch',
+                            name: 'queued-worktree'
+                        }
+                    },
+                    agentState: null
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
+            },
+            async sendMessage(sessionId: string, payload: { text: string; localId?: string }) {
+                sendMessageCalls += 1
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text }
+                }, payload.localId)
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { skippedReason?: string | null }
+        expect(body.skippedReason).toBe('queued')
+        expect(sendMessageCalls).toBe(1)
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.mergeRuntime?.status).toBe('queued')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('queued behind')
+    })
+
+    it('marks merge approval-pending when the linked session is waiting for permission', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-approval'
+        const taskId = 'task-merge-approval'
+        const session = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-approval',
+            path: '/tmp/approval'
+        })
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: session.id
+        })
+
+        const requests = { req1: { id: 'req1' } }
+        const engine = {
+            resolveSessionAccess(sessionId: string) {
+                return {
+                    ok: true,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: {
+                            path: '/tmp/approval',
+                            host: 'test-host',
+                            worktree: {
+                                basePath: '/tmp/approval',
+                                branch: 'task-branch',
+                                name: 'approval-worktree'
+                            }
+                        },
+                        agentState: { requests }
+                    }
+                }
+            },
+            getSessionByNamespace(sessionId: string) {
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: {
+                        path: '/tmp/approval',
+                        host: 'test-host',
+                        worktree: {
+                            basePath: '/tmp/approval',
+                            branch: 'task-branch',
+                            name: 'approval-worktree'
+                        }
+                    },
+                    agentState: { requests }
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1
+                }
+            },
+            async sendMessage(sessionId: string, payload: { text: string; localId?: string }) {
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text }
+                }, payload.localId)
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { skippedReason?: string | null }
+        expect(body.skippedReason).toBe('approval_pending')
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.mergeRuntime?.status).toBe('approval_pending')
+    })
+
+    it('cancels queued merge runtime and aborts the linked session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-cancel'
+        const taskId = 'task-merge-cancel'
+        const session = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-cancel',
+            path: '/tmp/cancel'
+        })
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: session.id
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            mergeRuntime: {
+                status: 'queued',
+                sessionId: session.id,
+                updatedAt: Date.now(),
+                requestedAt: Date.now() - 1_000,
+                latestNote: 'Queued already'
+            }
+        })
+
+        let abortCalls = 0
+        const engine = {
+            resolveSessionAccess(sessionId: string) {
+                return {
+                    ok: true,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        namespace,
+                        active: true,
+                        thinking: true,
+                        metadata: {
+                            path: '/tmp/cancel',
+                            host: 'test-host',
+                            worktree: {
+                                basePath: '/tmp/cancel',
+                                branch: 'task-branch',
+                                name: 'cancel-worktree'
+                            }
+                        },
+                        agentState: null
+                    }
+                }
+            },
+            async abortSession() {
+                abortCalls += 1
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge/cancel`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { canceled?: boolean }
+        expect(body.canceled).toBe(true)
+        expect(abortCalls).toBe(1)
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.mergeRuntime?.status).toBe('canceled')
     })
 })
