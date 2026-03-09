@@ -489,7 +489,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     projectId: string
     onBackToProjects: () => void
     onOpenSettings: () => void
-    onGoToSessions: () => void
     onOpenNewTask: () => void
 }) {
     const { api } = useAppContext()
@@ -556,10 +555,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                         <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
                             <ProjectIcon className="h-4 w-4" />
                             {t('projects.actions.projectSettings')}
-                        </Button>
-                        <Button type="button" variant="secondary" onClick={props.onGoToSessions} className="gap-2">
-                            <SessionIcon className="h-4 w-4" />
-                            {t('projects.actions.sessions')}
                         </Button>
                     </>
                 }
@@ -711,7 +706,6 @@ export default function ProjectsPage() {
                         projectId={selectedProjectId}
                         onBackToProjects={handleBackToProjects}
                         onOpenSettings={handleOpenProjectSettings}
-                        onGoToSessions={handleGoToSessions}
                         onOpenNewTask={handleOpenNewTaskDialog}
                     />
                 ) : (
