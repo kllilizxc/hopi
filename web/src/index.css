@@ -332,7 +332,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to bottom,
         transparent 0%,
-        var(--app-scroll-shadow) 40%,
+        var(--app-scroll-shadow) 60%,
         transparent 100%
     );
 }
@@ -342,7 +342,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to top,
         transparent 0%,
-        var(--app-scroll-shadow) 40%,
+        var(--app-scroll-shadow) 60%,
         transparent 100%
     );
 }
@@ -370,7 +370,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to right,
         transparent 0%,
-        var(--app-scroll-shadow) 40%,
+        var(--app-scroll-shadow) 60%,
         transparent 100%
     );
 }
@@ -381,7 +381,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to left,
         transparent 0%,
-        var(--app-scroll-shadow) 40%,
+        var(--app-scroll-shadow) 60%,
         transparent 100%
     );
 }
