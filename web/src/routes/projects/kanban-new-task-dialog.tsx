@@ -9,7 +9,7 @@ import { ModelSelector } from '@/components/NewSession/ModelSelector'
 import type { AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 import { getModelOptionsForFlavor, shouldResetModelForFlavor } from '@hopi/protocol'
-import { productStorageNamespaceKey } from '@hopi/protocol/brand'
+import { resolveNewTaskDialogOptions, saveStoredNewTaskDialogOptions } from './new-task-dialog-storage'
 
 function getTaskDraftTitle(draft: string): string {
     const trimmed = draft.trim()
@@ -53,99 +53,22 @@ type NewTaskDialogProps = {
     }) => void
 }
 
-const STORAGE_KEY = productStorageNamespaceKey('newTaskDialog:lastOptions')
-const DEFAULT_AGENT: AgentType = 'claude'
-const VALID_AGENTS: ReadonlySet<AgentType> = new Set(['claude', 'codex', 'gemini', 'opencode'])
-const VALID_PRIORITIES: ReadonlySet<TaskPriority | ''> = new Set(['', 'high', 'medium', 'low'])
-const VALID_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan'])
-
-type StoredOptions = {
-    priority: TaskPriority | ''
-    agent: AgentType
-    model: string
-    permissionMode: PermissionMode
-    workflowProfile: string
-}
-
-type LoadStoredOptionsResult = {
-    hasStoredOptions: boolean
-    options: Partial<StoredOptions>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null
-}
-
-function loadStoredOptions(): LoadStoredOptionsResult {
-    const empty = { hasStoredOptions: false, options: {} } as const
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (raw === null) {
-            return empty
-        }
-
-        let parsed: unknown
-        try {
-            parsed = JSON.parse(raw)
-        } catch {
-            return { hasStoredOptions: true, options: {} }
-        }
-
-        if (!isRecord(parsed)) {
-            return { hasStoredOptions: true, options: {} }
-        }
-
-        const options: Partial<StoredOptions> = {}
-
-        if (typeof parsed.agent === 'string' && VALID_AGENTS.has(parsed.agent as AgentType)) {
-            options.agent = parsed.agent as AgentType
-        }
-        if (typeof parsed.priority === 'string' && VALID_PRIORITIES.has(parsed.priority as TaskPriority | '')) {
-            options.priority = parsed.priority as TaskPriority | ''
-        }
-        if (typeof parsed.model === 'string') {
-            options.model = parsed.model
-        }
-        if (typeof parsed.permissionMode === 'string' && VALID_PERMISSION_MODES.has(parsed.permissionMode as PermissionMode)) {
-            options.permissionMode = parsed.permissionMode as PermissionMode
-        }
-        if (typeof parsed.workflowProfile === 'string') {
-            options.workflowProfile = parsed.workflowProfile
-        }
-
-        return { hasStoredOptions: true, options }
-    } catch {
-        return empty
-    }
-}
-
-function saveStoredOptions(options: StoredOptions): void {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(options))
-    } catch {
-        // Ignore storage errors
-    }
-}
-
 const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     const { t } = useTranslation()
     const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+    const wasOpenRef = useRef(props.open)
     const hasTitleRef = useRef(false)
     const [hasTitle, setHasTitle] = useState(false)
-    const { hasStoredOptions, options: storedOptions } = useMemo(() => loadStoredOptions(), [])
-    const defaultPermissionPreference = hasStoredOptions ? null : props.defaultPermissionMode
-    const initialAgent = storedOptions.agent ?? (hasStoredOptions ? DEFAULT_AGENT : props.defaultAgent)
+    const initialOptions = useMemo(() => resolveNewTaskDialogOptions({
+        defaultAgent: props.defaultAgent,
+        defaultPermissionMode: props.defaultPermissionMode
+    }), [props.defaultAgent, props.defaultPermissionMode])
 
-    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>(storedOptions.priority ?? '')
-    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(initialAgent)
-    const [newTaskModel, setNewTaskModel] = useState(storedOptions.model ?? 'auto')
-    const [newTaskWorkflowProfile, setNewTaskWorkflowProfile] = useState((storedOptions.workflowProfile ?? 'default').trim() || 'default')
-    const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(() => {
-        if (storedOptions.permissionMode) {
-            return storedOptions.permissionMode
-        }
-        return resolveTaskPermissionModeForFlavor(initialAgent, defaultPermissionPreference)
-    })
+    const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority | ''>(initialOptions.priority)
+    const [newTaskAgent, setNewTaskAgent] = useState<AgentType>(initialOptions.agent)
+    const [newTaskModel, setNewTaskModel] = useState(initialOptions.model)
+    const [newTaskWorkflowProfile, setNewTaskWorkflowProfile] = useState(initialOptions.workflowProfile)
+    const [newTaskPermissionMode, setNewTaskPermissionMode] = useState<PermissionMode>(initialOptions.permissionMode)
 
     const newTaskPermissionOptions = useMemo(
         () => getTaskPermissionModeOptionsForFlavor(newTaskAgent),
@@ -156,8 +79,8 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         if (newTaskPermissionOptions.some((option) => option.mode === newTaskPermissionMode)) {
             return
         }
-        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, defaultPermissionPreference))
-    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent, defaultPermissionPreference])
+        setNewTaskPermissionMode(resolveTaskPermissionModeForFlavor(newTaskAgent, null))
+    }, [newTaskPermissionOptions, newTaskPermissionMode, newTaskAgent])
 
     useEffect(() => {
         const options = getModelOptionsForFlavor(newTaskAgent)
@@ -173,7 +96,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     }, [newTaskAgent, newTaskModel])
 
     useEffect(() => {
-        saveStoredOptions({
+        saveStoredNewTaskDialogOptions({
             priority: newTaskPriority,
             agent: newTaskAgent,
             model: newTaskModel,
@@ -182,16 +105,31 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         })
     }, [newTaskPriority, newTaskAgent, newTaskModel, newTaskPermissionMode, newTaskWorkflowProfile])
 
-    // Reset only task details when dialog closes
     useEffect(() => {
-        if (!props.open) {
+        const wasOpen = wasOpenRef.current
+
+        if (props.open && !wasOpen) {
+            const restored = resolveNewTaskDialogOptions({
+                defaultAgent: props.defaultAgent,
+                defaultPermissionMode: props.defaultPermissionMode
+            })
+            setNewTaskPriority(restored.priority)
+            setNewTaskAgent(restored.agent)
+            setNewTaskModel(restored.model)
+            setNewTaskWorkflowProfile(restored.workflowProfile)
+            setNewTaskPermissionMode(restored.permissionMode)
+        }
+
+        if (!props.open && wasOpen) {
             hasTitleRef.current = false
             setHasTitle(false)
             if (draftTextareaRef.current) {
                 draftTextareaRef.current.value = ''
             }
         }
-    }, [props.open])
+
+        wasOpenRef.current = props.open
+    }, [props.open, props.defaultAgent, props.defaultPermissionMode])
 
     const handleSubmit = useCallback((event: React.FormEvent) => {
         event.preventDefault()
