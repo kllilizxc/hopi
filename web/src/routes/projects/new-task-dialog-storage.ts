@@ -1,3 +1,4 @@
+import { PERMISSION_MODES } from '@hopi/protocol'
 import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 import type { AgentType } from '@/components/NewSession/types'
 import { resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
@@ -8,7 +9,7 @@ export const NEW_TASK_DIALOG_STORAGE_KEY = productStorageNamespaceKey('newTaskDi
 const DEFAULT_AGENT: AgentType = 'claude'
 const VALID_AGENTS: ReadonlySet<AgentType> = new Set(['claude', 'codex', 'gemini', 'opencode'])
 const VALID_PRIORITIES: ReadonlySet<TaskPriority | ''> = new Set(['', 'high', 'medium', 'low'])
-const VALID_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(['default', 'acceptEdits', 'bypassPermissions', 'plan'])
+const VALID_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(PERMISSION_MODES)
 
 export type StoredNewTaskDialogOptions = {
     priority: TaskPriority | ''

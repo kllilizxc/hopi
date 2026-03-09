@@ -192,4 +192,23 @@ describe('NewTaskDialog', () => {
             expect(screen.getByLabelText('Permission Mode')).toHaveValue('plan')
         })
     })
+
+    it('reloads non-claude permission modes from localStorage', async () => {
+        renderWithProviders(<ReopenHarness />)
+
+        localStorage.setItem(NEW_TASK_DIALOG_STORAGE_KEY, JSON.stringify({
+            priority: '',
+            agent: 'codex',
+            model: 'auto',
+            permissionMode: 'safe-yolo',
+            workflowProfile: 'default',
+        }))
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+
+        await waitFor(() => {
+            expect(screen.getByLabelText('Agent')).toHaveValue('codex')
+            expect(screen.getByLabelText('Permission Mode')).toHaveValue('safe-yolo')
+        })
+    })
 })
