@@ -425,8 +425,9 @@ export function HappyThread(props: {
                 <ThreadPrimitive.Viewport asChild autoScroll={autoScrollEnabled}>
                     <ScrollShadow
                         ref={viewportRef}
-                        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-                        style={{ WebkitOverflowScrolling: 'touch' }}
+                        className="min-h-0 flex-1"
+                        viewportClassName="h-full overflow-y-auto overflow-x-hidden"
+                        viewportStyle={{ WebkitOverflowScrolling: 'touch' }}
                     >
                         <div className="mx-auto w-full max-w-content min-w-0 p-3">
                             <div ref={topSentinelRef} className="h-px w-full" aria-hidden="true" />
