@@ -386,11 +386,61 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     opacity: 1;
 }
 
+.app-interactive-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    transition:
+        transform var(--app-motion-duration-micro) var(--app-motion-ease-out),
+        box-shadow var(--app-motion-duration-micro) var(--app-motion-ease-out),
+        background-color var(--app-motion-duration-micro) var(--app-motion-ease-out);
+}
+
+.app-interactive-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 42%),
+        radial-gradient(140% 120% at 0% 0%, var(--app-card-hover-tint, var(--app-subtle-bg)) 0%, transparent 62%);
+    transition: opacity var(--app-motion-duration-micro) var(--app-motion-ease-out);
+}
+
+html[data-theme="dark"] .app-interactive-card::before {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 46%),
+        radial-gradient(140% 120% at 0% 0%, var(--app-card-hover-tint, var(--app-subtle-bg)) 0%, transparent 62%);
+}
+
 @media (hover: hover) and (pointer: fine) {
+    .app-interactive-card:hover {
+        transform: translateY(-2px);
+        box-shadow:
+            0 18px 32px -24px rgba(15, 23, 42, 0.32),
+            0 10px 18px -18px rgba(15, 23, 42, 0.22);
+    }
+
+    html[data-theme="dark"] .app-interactive-card:hover {
+        box-shadow:
+            0 22px 36px -24px rgba(0, 0, 0, 0.58),
+            0 12px 20px -18px rgba(0, 0, 0, 0.42);
+    }
+
+    .app-interactive-card:hover::before {
+        opacity: 1;
+    }
+
     .session-list-item:hover,
     .session-list-new-button:hover {
         background-color: var(--app-subtle-bg);
     }
+}
+
+.app-interactive-card:active {
+    transform: translateY(0);
 }
 
 /* Desktop-only: move the sidebar scrollbar to the left without flipping content. */

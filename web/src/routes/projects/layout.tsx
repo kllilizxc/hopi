@@ -69,6 +69,10 @@ function CreateProjectDialog(props: {
         worktreeTargetBranch?: string
         worktreeAutoCommitMode?: 'off' | 'per_conversation'
         worktreeCleanupAfterMerge?: boolean
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        improvementsEnabled?: boolean
+        improvementsMaxPendingTasks?: number
     }) => Promise<string | null>
     isPending: boolean
     error: string | null
@@ -84,6 +88,10 @@ function CreateProjectDialog(props: {
     const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
     const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
     const [worktreeCleanupAfterMerge, setWorktreeCleanupAfterMerge] = useState(false)
+    const [autoRunEnabled, setAutoRunEnabled] = useState(false)
+    const [maxRunningSessions, setMaxRunningSessions] = useState(5)
+    const [improvementsEnabled, setImprovementsEnabled] = useState(false)
+    const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
     const machineOptions = useMemo(() => {
         if (props.isMachinesLoading) {
@@ -126,7 +134,11 @@ function CreateProjectDialog(props: {
             defaultSessionType,
             worktreeTargetBranch: defaultSessionType === 'worktree' && normalizedTargetBranch ? normalizedTargetBranch : undefined,
             worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : undefined,
-            worktreeCleanupAfterMerge: defaultSessionType === 'worktree' ? worktreeCleanupAfterMerge : undefined
+            worktreeCleanupAfterMerge: defaultSessionType === 'worktree' ? worktreeCleanupAfterMerge : undefined,
+            autoRunEnabled,
+            maxRunningSessions,
+            improvementsEnabled,
+            improvementsMaxPendingTasks
         })
         if (createdId) {
             setName('')
@@ -138,6 +150,10 @@ function CreateProjectDialog(props: {
             setWorktreeTargetBranch('')
             setWorktreeAutoCommitMode('off')
             setWorktreeCleanupAfterMerge(false)
+            setAutoRunEnabled(false)
+            setMaxRunningSessions(5)
+            setImprovementsEnabled(false)
+            setImprovementsMaxPendingTasks(5)
             props.onClose()
         }
     }
@@ -282,6 +298,48 @@ function CreateProjectDialog(props: {
                             {t('projects.create.workspaceRequired')}
                         </div>
                     )}
+
+                    <div className="space-y-2">
+                        <div className="text-sm font-semibold">{t('projects.automation.title')}</div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={props.isPending} />
+                            {t('projects.automation.autoRun')}
+                        </label>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxRunning')}</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={50}
+                                    value={maxRunningSessions}
+                                    onChange={(e) => setMaxRunningSessions(Number(e.target.value))}
+                                    disabled={props.isPending}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                />
+                            </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <Checkbox checked={improvementsEnabled} onCheckedChange={setImprovementsEnabled} disabled={props.isPending} />
+                            {t('projects.automation.improvements')}
+                        </label>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxPendingTasks')}</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={50}
+                                    value={improvementsMaxPendingTasks}
+                                    onChange={(e) => setImprovementsMaxPendingTasks(Number(e.target.value))}
+                                    disabled={props.isPending}
+                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                />
+                            </div>
+                        </div>
+                    </div>
 
                     <div className="space-y-2">
                         <div className="text-sm font-semibold">{t('projects.worktree.title')}</div>
@@ -452,7 +510,7 @@ function ProjectsListPanel(props: {
                                 <Pressable
                                     key={project.id}
                                     onClick={() => props.onSelectProject(project.id)}
-                                    className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                    className="app-interactive-card w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left"
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
@@ -608,6 +666,10 @@ export default function ProjectsPage() {
         worktreeTargetBranch?: string
         worktreeAutoCommitMode?: 'off' | 'per_conversation'
         worktreeCleanupAfterMerge?: boolean
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        improvementsEnabled?: boolean
+        improvementsMaxPendingTasks?: number
     }): Promise<string | null> => {
         try {
             const created = await createProject(input)
