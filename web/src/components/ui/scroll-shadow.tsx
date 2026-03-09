@@ -12,6 +12,8 @@ export type ScrollShadowProps = HTMLAttributes<HTMLDivElement> & {
     offset?: number
     orientation?: 'vertical' | 'horizontal'
     hideScrollBar?: boolean
+    viewportClassName?: string
+    viewportStyle?: CSSProperties
 }
 
 type ScrollShadowState = {
@@ -60,7 +62,18 @@ function computeScrollShadowState(el: HTMLDivElement, orientation: 'vertical' | 
 }
 
 export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(function ScrollShadow(
-    { className, style, size = 32, offset = 0, orientation = 'vertical', hideScrollBar = false, children, ...rest },
+    {
+        className,
+        style,
+        size = 32,
+        offset = 0,
+        orientation = 'vertical',
+        hideScrollBar = false,
+        viewportClassName,
+        viewportStyle,
+        children,
+        ...rest
+    },
     ref
 ) {
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -140,21 +153,30 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
 
     return (
         <div
-            ref={setViewportRef}
             className={cn(
                 'scroll-shadow',
-                orientation === 'vertical' ? 'scroll-shadow-vertical' : 'scroll-shadow-horizontal',
-                hideScrollBar && 'scroll-shadow-hide-scrollbar',
                 className
             )}
             style={mergedStyle}
+            data-orientation={orientation}
             data-top-shadow={shadowState.top ? 'visible' : 'hidden'}
             data-bottom-shadow={shadowState.bottom ? 'visible' : 'hidden'}
             data-left-shadow={shadowState.left ? 'visible' : 'hidden'}
             data-right-shadow={shadowState.right ? 'visible' : 'hidden'}
-            {...rest}
         >
-            {children}
+            <div
+                ref={setViewportRef}
+                className={cn(
+                    'scroll-shadow-viewport',
+                    orientation === 'vertical' ? 'scroll-shadow-vertical' : 'scroll-shadow-horizontal',
+                    hideScrollBar && 'scroll-shadow-hide-scrollbar',
+                    viewportClassName
+                )}
+                style={viewportStyle}
+                {...rest}
+            >
+                {children}
+            </div>
         </div>
     )
 })
