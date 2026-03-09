@@ -354,15 +354,6 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
 
     return (
         <div className="relative">
-            {props.isSelectedTask ? (
-                <div
-                    aria-hidden
-                    className="pointer-events-none absolute -inset-0.5 rounded-2xl"
-                    style={{
-                        boxShadow: '0 0 0 1px var(--kanban-accent-1), 0 0 0 4px var(--kanban-wash-1)'
-                    }}
-                />
-            ) : null}
             <div
                 draggable
                 data-kanban-task-id={props.task.id}
@@ -393,11 +384,17 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                 className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset cursor-pointer ${useArchiveStyle
                     ? 'ring-[var(--app-kanban-archive-border)]'
                     : 'ring-[var(--app-divider)]'
+                    } ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
                     } ${props.isDragging ? 'opacity-60' : ''
                     }`}
                 style={{
                     background: cardBackground,
-                    '--app-card-hover-tint': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)'
+                    '--app-card-hover-tint-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
+                    '--app-card-hover-tint-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)',
+                    '--app-card-selected-tint-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
+                    '--app-card-selected-tint-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)',
+                    '--app-card-selected-shadow-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
+                    '--app-card-selected-shadow-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)'
                 } as CSSProperties}
             >
                 <div className="flex items-start justify-between gap-2">
