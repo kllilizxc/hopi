@@ -85,7 +85,7 @@
     --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
     --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
     /* Scroll shadow tint used by `.scroll-shadow` gradients */
-    --app-scroll-shadow: rgba(0, 0, 0, 0.05);
+    --app-scroll-shadow: rgba(0, 0, 0, 0.12);
 
     /* Viewport + motion tokens (mobile + Telegram-friendly) */
     --app-viewport-h: var(--tg-viewport-height, 100dvh);
@@ -179,7 +179,7 @@
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
     /* Scroll shadow tint used by `.scroll-shadow` gradients */
-    --app-scroll-shadow: rgba(255, 255, 255, 0.08);
+    --app-scroll-shadow: rgba(255, 255, 255, 0.15);
 
     color-scheme: dark;
 }
@@ -324,7 +324,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to bottom,
         transparent 0%,
-        var(--app-scroll-shadow) 20%,
+        var(--app-scroll-shadow) 40%,
         transparent 100%
     );
 }
@@ -334,7 +334,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to top,
         transparent 0%,
-        var(--app-scroll-shadow) 20%,
+        var(--app-scroll-shadow) 40%,
         transparent 100%
     );
 }
@@ -362,7 +362,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to right,
         transparent 0%,
-        var(--app-scroll-shadow) 20%,
+        var(--app-scroll-shadow) 40%,
         transparent 100%
     );
 }
@@ -373,7 +373,7 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: linear-gradient(
         to left,
         transparent 0%,
-        var(--app-scroll-shadow) 20%,
+        var(--app-scroll-shadow) 40%,
         transparent 100%
     );
 }
