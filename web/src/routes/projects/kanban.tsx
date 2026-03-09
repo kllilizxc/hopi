@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
@@ -390,14 +390,15 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     event.preventDefault()
                     setIsMoveMenuOpen(true)
                 }}
-                className={`group relative rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset transition-[transform,box-shadow] duration-150 hover:shadow-md hover:-translate-y-[1px] cursor-pointer ${useArchiveStyle
-                    ? 'ring-[var(--app-kanban-archive-border)] hover:ring-[var(--app-kanban-archive)]'
-                    : 'ring-[var(--app-divider)] hover:ring-[var(--kanban-wash-1)]'
+                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset cursor-pointer ${useArchiveStyle
+                    ? 'ring-[var(--app-kanban-archive-border)]'
+                    : 'ring-[var(--app-divider)]'
                     } ${props.isDragging ? 'opacity-60' : ''
                     }`}
                 style={{
-                    background: cardBackground
-                }}
+                    background: cardBackground,
+                    '--app-card-hover-tint': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)'
+                } as CSSProperties}
             >
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">

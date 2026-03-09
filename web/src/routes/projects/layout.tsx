@@ -510,7 +510,7 @@ function ProjectsListPanel(props: {
                                 <Pressable
                                     key={project.id}
                                     onClick={() => props.onSelectProject(project.id)}
-                                    className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                    className="app-interactive-card w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left"
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
