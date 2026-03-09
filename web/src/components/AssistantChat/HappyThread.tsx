@@ -166,6 +166,9 @@ export function HappyThread(props: {
 
         const THRESHOLD_PX = 120
         let rafId: number | null = null
+        const isNearBottom = () => (
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < THRESHOLD_PX
+        )
 
         const handleScroll = () => {
             if (rafId !== null) return
@@ -178,17 +181,20 @@ export function HappyThread(props: {
             scrollTimeoutRef.current = window.setTimeout(() => {
                 userIsScrollingRef.current = false
                 scrollTimeoutRef.current = null
+
+                if (isNearBottom() && !autoScrollEnabledRef.current) {
+                    setAutoScrollEnabled(true)
+                }
             }, 150)
 
             rafId = requestAnimationFrame(() => {
                 rafId = null
-                const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
-                const isNearBottom = distanceFromBottom < THRESHOLD_PX
+                const nearBottom = isNearBottom()
 
                 // Only enable auto-scroll if user scrolled to near bottom
                 // Disable auto-scroll immediately if user scrolls away
                 // Don't re-enable auto-scroll while user is actively scrolling
-                if (isNearBottom) {
+                if (nearBottom) {
                     if (!autoScrollEnabledRef.current && !userIsScrollingRef.current) {
                         setAutoScrollEnabled(true)
                     }
@@ -196,10 +202,10 @@ export function HappyThread(props: {
                     setAutoScrollEnabled(false)
                 }
 
-                if (isNearBottom !== atBottomRef.current) {
-                    atBottomRef.current = isNearBottom
-                    onAtBottomChangeRef.current(isNearBottom)
-                    if (isNearBottom) {
+                if (nearBottom !== atBottomRef.current) {
+                    atBottomRef.current = nearBottom
+                    onAtBottomChangeRef.current(nearBottom)
+                    if (nearBottom) {
                         onFlushPendingRef.current()
                     }
                 }
@@ -315,11 +321,19 @@ export function HappyThread(props: {
     }, [props.hasMoreMessages, props.isLoadingMessages])
 
     useLayoutEffect(() => {
-        const pending = pendingScrollRef.current
         const viewport = viewportRef.current
-        if (!pending || !viewport) {
+        if (!viewport) {
             return
         }
+
+        const pending = pendingScrollRef.current
+        if (!pending) {
+            if (autoScrollEnabledRef.current) {
+                viewport.scrollTop = viewport.scrollHeight
+            }
+            return
+        }
+
         const delta = viewport.scrollHeight - pending.scrollHeight
         viewport.scrollTop = pending.scrollTop + delta
         pendingScrollRef.current = null
