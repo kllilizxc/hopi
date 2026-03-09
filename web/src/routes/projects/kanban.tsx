@@ -299,14 +299,14 @@ type TouchDragState = {
 }
 
 const ACTIVE_TASK_CARD_BACKGROUND = [
-    'radial-gradient(140% 120% at 0% 0%, var(--kanban-wash-1) 0%, transparent 62%)',
-    'radial-gradient(130% 110% at 100% 0%, var(--kanban-wash-2) 0%, transparent 58%)',
+    'radial-gradient(96% 88% at 8% 0%, var(--kanban-wash-1) 0%, transparent 48%)',
+    'radial-gradient(92% 82% at 100% 0%, var(--kanban-wash-2) 0%, transparent 44%)',
     'var(--app-bg)'
 ].join(', ')
 
 const ARCHIVE_TASK_CARD_BACKGROUND = [
-    'radial-gradient(150% 120% at 0% 0%, var(--app-kanban-archive-bg) 0%, transparent 64%)',
-    'radial-gradient(140% 120% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 62%)',
+    'radial-gradient(104% 88% at 8% 0%, var(--app-kanban-archive-bg) 0%, transparent 50%)',
+    'radial-gradient(96% 84% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 46%)',
     'var(--app-bg)'
 ].join(', ')
 
@@ -1005,8 +1005,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                             '--kanban-wash-1': theme.wash1,
                             '--kanban-wash-2': theme.wash2,
                             background: [
-                                'radial-gradient(120% 70% at 50% 0%, var(--kanban-wash-1) 0%, transparent 70%)',
-                                'radial-gradient(120% 70% at 0% 0%, var(--kanban-wash-2) 0%, transparent 72%)',
+                                'radial-gradient(94% 46% at 50% 0%, var(--kanban-wash-1) 0%, transparent 54%)',
+                                'radial-gradient(84% 52% at 0% 0%, var(--kanban-wash-2) 0%, transparent 50%)',
                                 'var(--app-secondary-bg)'
                             ].join(', ')
                         } as React.CSSProperties
@@ -1047,8 +1047,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                                     className={headerClass}
                                     style={{
                                         background: [
-                                            'radial-gradient(120% 140% at 0% 0%, var(--kanban-wash-1) 0%, transparent 65%)',
-                                            'radial-gradient(120% 140% at 100% 0%, var(--kanban-wash-2) 0%, transparent 62%)',
+                                            'radial-gradient(84% 92% at 0% 0%, var(--kanban-wash-1) 0%, transparent 46%)',
+                                            'radial-gradient(82% 88% at 100% 0%, var(--kanban-wash-2) 0%, transparent 42%)',
                                             'rgba(0,0,0,0)'
                                         ].join(', ')
                                     }}

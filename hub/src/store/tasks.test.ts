@@ -34,7 +34,7 @@ describe('Task store worktree merge fields', () => {
         expect(updated?.worktreeMergeCommit).toBeNull()
     })
 
-    it('keeps merge runtime linked when active session changes', () => {
+    it('keeps merge, preview, and init runtimes linked when active session changes', () => {
         const store = new Store(':memory:')
         store.projects.createProject({
             id: 'project-runtime',
@@ -56,12 +56,26 @@ describe('Task store worktree merge fields', () => {
                 updatedAt: Date.now(),
                 latestNote: '  merge   still running  ' ,
                 blockedReason: '  merge conflict  '
+            },
+            previewRuntime: {
+                status: 'running',
+                updatedAt: Date.now(),
+                latestNote: '  preview   still running  '
+            },
+            initRuntime: {
+                status: 'running',
+                updatedAt: Date.now(),
+                latestNote: '  init   still running  '
             }
         })
 
         expect(created.mergeRuntime?.sessionId).toBe('session-a')
         expect(created.mergeRuntime?.latestNote).toBe('merge still running')
         expect(created.mergeRuntime?.blockedReason).toBe('merge conflict')
+        expect(created.previewRuntime?.sessionId).toBe('session-a')
+        expect(created.previewRuntime?.latestNote).toBe('preview still running')
+        expect(created.initRuntime?.sessionId).toBe('session-a')
+        expect(created.initRuntime?.latestNote).toBe('init still running')
 
         const updated = store.tasks.updateTaskByNamespace('task-runtime', 'default', {
             activeSessionId: 'session-b'
@@ -69,6 +83,66 @@ describe('Task store worktree merge fields', () => {
 
         expect(updated?.mergeRuntime?.sessionId).toBe('session-b')
         expect(updated?.mergeRuntime?.status).toBe('running')
+        expect(updated?.previewRuntime?.sessionId).toBe('session-b')
+        expect(updated?.previewRuntime?.status).toBe('running')
+        expect(updated?.initRuntime?.sessionId).toBe('session-b')
+        expect(updated?.initRuntime?.status).toBe('running')
+    })
+
+    it('persists compact preview runtime vocabulary across store round-trips', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-preview-runtime-vocabulary',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-preview-runtime-vocabulary',
+            projectId: 'project-preview-runtime-vocabulary',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default',
+            activeSessionId: 'session-preview-runtime-vocabulary'
+        })
+
+        const statuses = [
+            'queued',
+            'waiting',
+            'approval_pending',
+            'running',
+            'retrying',
+            'blocked',
+            'ready',
+            'stopped',
+            'canceled'
+        ] as const
+
+        for (const runtimeStatus of statuses) {
+            const updated = store.tasks.updateTaskByNamespace('task-preview-runtime-vocabulary', 'default', {
+                previewRuntime: {
+                    status: runtimeStatus,
+                    sessionId: 'session-preview-runtime-vocabulary',
+                    updatedAt: Date.now(),
+                    retryCount: runtimeStatus === 'retrying' ? 2 : undefined,
+                    latestNote: `  ${runtimeStatus} preview note  `,
+                    blockedReason: runtimeStatus === 'blocked' ? '  waiting on preview repair  ' : undefined
+                }
+            })
+
+            expect(updated?.previewRuntime?.status).toBe(runtimeStatus)
+            expect(updated?.previewRuntime?.latestNote).toBe(`${runtimeStatus} preview note`)
+            if (runtimeStatus === 'retrying') {
+                expect(updated?.previewRuntime?.retryCount).toBe(2)
+            }
+            if (runtimeStatus === 'blocked') {
+                expect(updated?.previewRuntime?.blockedReason).toBe('waiting on preview repair')
+            }
+
+            const roundTripped = store.tasks.getTaskByNamespace('task-preview-runtime-vocabulary', 'default')
+            expect(roundTripped?.previewRuntime?.status).toBe(runtimeStatus)
+        }
     })
 
     it('persists compact merge runtime vocabulary across store round-trips', () => {
@@ -126,6 +200,59 @@ describe('Task store worktree merge fields', () => {
         }
     })
 
+
+    it('persists compact init runtime vocabulary across store round-trips', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-init-runtime-vocabulary',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-init-runtime-vocabulary',
+            projectId: 'project-init-runtime-vocabulary',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default',
+            activeSessionId: 'session-init-runtime-vocabulary'
+        })
+
+        const statuses = [
+            'running',
+            'waiting',
+            'retrying',
+            'blocked',
+            'succeeded'
+        ] as const
+
+        for (const runtimeStatus of statuses) {
+            const updated = store.tasks.updateTaskByNamespace('task-init-runtime-vocabulary', 'default', {
+                initRuntime: {
+                    status: runtimeStatus,
+                    sessionId: 'session-init-runtime-vocabulary',
+                    updatedAt: Date.now(),
+                    retryCount: runtimeStatus === 'retrying' ? 2 : undefined,
+                    latestNote: `  ${runtimeStatus} init note  `,
+                    blockedReason: runtimeStatus === 'blocked' ? '  waiting on init repair  ' : undefined
+                }
+            })
+
+            expect(updated?.initRuntime?.status).toBe(runtimeStatus)
+            expect(updated?.initRuntime?.latestNote).toBe(`${runtimeStatus} init note`)
+            if (runtimeStatus === 'retrying') {
+                expect(updated?.initRuntime?.retryCount).toBe(2)
+            }
+            if (runtimeStatus === 'blocked') {
+                expect(updated?.initRuntime?.blockedReason).toBe('waiting on init repair')
+            }
+
+            const roundTripped = store.tasks.getTaskByNamespace('task-init-runtime-vocabulary', 'default')
+            expect(roundTripped?.initRuntime?.status).toBe(runtimeStatus)
+        }
+    })
+
     it('preserves merge markers when relinking with preserve flag', () => {
         const store = new Store(':memory:')
         store.projects.createProject({
@@ -151,6 +278,20 @@ describe('Task store worktree merge fields', () => {
                 updatedAt: Date.now(),
                 retryCount: 1,
                 latestNote: 'retrying merge'
+            },
+            previewRuntime: {
+                status: 'retrying',
+                sessionId: 'session-a',
+                updatedAt: Date.now(),
+                retryCount: 1,
+                latestNote: 'retrying preview'
+            },
+            initRuntime: {
+                status: 'retrying',
+                sessionId: 'session-a',
+                updatedAt: Date.now(),
+                retryCount: 1,
+                latestNote: 'retrying init'
             }
         })
 
@@ -165,6 +306,20 @@ describe('Task store worktree merge fields', () => {
                 updatedAt: Date.now(),
                 retryCount: 2,
                 latestNote: 'still retrying'
+            },
+            previewRuntime: {
+                status: 'retrying',
+                sessionId: 'session-b',
+                updatedAt: Date.now(),
+                retryCount: 2,
+                latestNote: 'preview still retrying'
+            },
+            initRuntime: {
+                status: 'retrying',
+                sessionId: 'session-b',
+                updatedAt: Date.now(),
+                retryCount: 2,
+                latestNote: 'init still retrying'
             }
         })
 
@@ -176,6 +331,18 @@ describe('Task store worktree merge fields', () => {
             sessionId: 'session-b',
             retryCount: 2,
             latestNote: 'still retrying'
+        })
+        expect(updated?.previewRuntime).toMatchObject({
+            status: 'retrying',
+            sessionId: 'session-b',
+            retryCount: 2,
+            latestNote: 'preview still retrying'
+        })
+        expect(updated?.initRuntime).toMatchObject({
+            status: 'retrying',
+            sessionId: 'session-b',
+            retryCount: 2,
+            latestNote: 'init still retrying'
         })
     })
 

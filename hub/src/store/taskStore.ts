@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite'
-import type { TaskMergeRuntime } from '@hopi/protocol/types'
+import type { TaskInitRuntime, TaskMergeRuntime, TaskPreviewRuntime } from '@hopi/protocol/types'
 
 import type { StoredTask } from './types'
 import {
@@ -53,14 +53,14 @@ export class TaskStore {
         title: string
         description?: string | null
         status: string
-            priority?: string | null
-            sortKey?: number | null
-            activeSessionId?: string | null
-            preserveMergeResultOnSessionChange?: boolean
-            workspaceId?: string | null
-            agentFlavor?: string | null
-            permissionMode?: string | null
-            model?: string | null
+        priority?: string | null
+        sortKey?: number | null
+        activeSessionId?: string | null
+        preserveMergeResultOnSessionChange?: boolean
+        workspaceId?: string | null
+        agentFlavor?: string | null
+        permissionMode?: string | null
+        model?: string | null
         modelMode?: string | null
         attachments?: unknown
         source?: string | null
@@ -72,6 +72,8 @@ export class TaskStore {
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
         mergeRuntime?: TaskMergeRuntime | null
+        previewRuntime?: TaskPreviewRuntime | null
+        initRuntime?: TaskInitRuntime | null
     }): StoredTask {
         return createTask(this.db, task)
     }
@@ -102,6 +104,8 @@ export class TaskStore {
             worktreeMergeCommit?: string | null
             mergedDiffSnapshot?: unknown
             mergeRuntime?: TaskMergeRuntime | null
+            previewRuntime?: TaskPreviewRuntime | null
+            initRuntime?: TaskInitRuntime | null
             finishedAt?: number | null
             archivedAt?: number | null
         }

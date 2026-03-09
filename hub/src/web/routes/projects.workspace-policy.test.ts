@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import { createProjectsRoutes } from './projects'
@@ -47,6 +48,37 @@ describe('project workspace policy', () => {
         expect(tasks[0]?.title).toBe('Initialize project scripts')
         expect(tasks[0]?.workspaceId).toBe(createBody.project.defaultWorkspaceId)
         expect(createBody.project.worktreeLocked).toBe(false)
+    })
+
+
+    it('seeds worktree projects with worktree-safe merge script guidance', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Worktree Guidance',
+                workspaces: [{ path: '/tmp/workspace-guidance' }],
+                defaultSessionType: 'worktree',
+                worktreeTargetBranch: 'main'
+            })
+        })
+        expect(createResponse.status).toBe(200)
+
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+            }
+        }
+
+        const tasks = store.tasks.listTasksByProjectAndNamespace(createBody.project.id, 'default')
+        expect(tasks).toHaveLength(1)
+        expect(tasks[0]?.description).toContain('Do not blindly `git checkout` the target branch inside that worktree')
+        expect(tasks[0]?.description).toContain(PRODUCT_ENV.WORKTREE_BASE_PATH)
+        expect(tasks[0]?.description).toContain(PRODUCT_ENV.MERGE_TARGET_BRANCH)
     })
 
     it('creates project workspaces during project creation and sets default workspace', async () => {

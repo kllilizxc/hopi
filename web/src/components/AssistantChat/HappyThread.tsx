@@ -10,6 +10,7 @@ import { CommandLiveOutput } from '@/components/CommandLiveOutput'
 import { ScrollShadow } from '@/components/ui/scroll-shadow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
+import type { TaskActionPreviewStatusSummary as PreviewStatusSummary, TaskActionStatusSummary as InitStatusSummary } from '@/lib/task-action-runtime'
 import { useTranslation } from '@/lib/use-translation'
 
 function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
@@ -57,20 +58,54 @@ const THREAD_MESSAGE_COMPONENTS = {
     SystemMessage: HappySystemMessage
 } as const
 
-type MergeThreadEvent = {
-    id: string
-    text: string
-    tone?: 'info' | 'success' | 'error'
-}
+type MergeStatusSummary = InitStatusSummary
 
-type PreviewThreadEvent = {
-    id: string
-    text: string
-    tone?: 'info' | 'success' | 'error'
-}
+export type { InitStatusSummary, PreviewStatusSummary }
 
-const EMPTY_MERGE_EVENTS: MergeThreadEvent[] = []
-const EMPTY_PREVIEW_EVENTS: PreviewThreadEvent[] = []
+function StatusCard(props: {
+    summary: InitStatusSummary | PreviewStatusSummary
+}) {
+    const url = 'url' in props.summary ? props.summary.url : null
+    const tone = props.summary.tone
+
+    return (
+        <div className="py-1">
+            <div
+                className={`mx-auto max-w-[92%] rounded-md px-3 py-2 text-xs ${
+                    tone === 'success'
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : tone === 'error'
+                            ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                            : 'bg-[var(--app-secondary-bg)] text-[var(--app-hint)]'
+                }`}
+            >
+                <div className="flex items-center justify-center gap-2 text-center font-medium">
+                    {props.summary.busy ? (
+                        <Spinner size="sm" label={null} className="text-current" />
+                    ) : null}
+                    <span>{props.summary.title}</span>
+                </div>
+                {props.summary.detail ? (
+                    <div className="mt-1 text-center opacity-80">
+                        {props.summary.detail}
+                    </div>
+                ) : null}
+                {url ? (
+                    <div className="mt-2 text-center">
+                        <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all underline underline-offset-2"
+                        >
+                            {url}
+                        </a>
+                    </div>
+                ) : null}
+            </div>
+        </div>
+    )
+}
 
 export function HappyThread(props: {
     api: ApiClient
@@ -94,16 +129,17 @@ export function HappyThread(props: {
     showContinueAction?: boolean
     continueActionDisabled?: boolean
     onContinueAction?: () => void
+    initStatus?: InitStatusSummary | null
     showMergeAction?: boolean
     mergeActionDisabled?: boolean
     mergeActionLabel?: string
     onMergeAction?: () => void
-    mergeEvents?: MergeThreadEvent[]
+    mergeStatus?: MergeStatusSummary | null
     showPreviewAction?: boolean
     previewActionDisabled?: boolean
     previewActionLabel?: string
     onPreviewAction?: () => void
-    previewEvents?: PreviewThreadEvent[]
+    previewStatus?: PreviewStatusSummary | null
     showPreviewLogs?: boolean
     previewLogTail?: string[]
     previewCommand?: string | null
@@ -353,8 +389,6 @@ export function HappyThread(props: {
     }, [props.isLoadingMoreMessages])
 
     const showSkeleton = props.isLoadingMessages && props.rawMessagesCount === 0 && props.pendingCount === 0
-    const mergeEvents = props.mergeEvents ?? EMPTY_MERGE_EVENTS
-    const previewEvents = props.previewEvents ?? EMPTY_PREVIEW_EVENTS
     const previewLogTail = props.previewLogTail ?? []
     const previewLogsText = useMemo(() => previewLogTail.join('\n'), [previewLogTail])
     const showContinueAction = Boolean(props.showContinueAction && props.onContinueAction)
@@ -479,36 +513,15 @@ export function HappyThread(props: {
                                     </div>
                                 </div>
                             ) : null}
-                            {mergeEvents.map((event) => (
-                                <div key={event.id} className="py-1">
-                                    <div
-                                        className={`mx-auto w-fit max-w-[92%] rounded-md px-2 text-center text-xs ${
-                                            event.tone === 'success'
-                                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                                : event.tone === 'error'
-                                                    ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-                                                    : 'text-[var(--app-hint)] opacity-80'
-                                        }`}
-                                    >
-                                        {event.text}
-                                    </div>
-                                </div>
-                            ))}
-                            {previewEvents.map((event) => (
-                                <div key={event.id} className="py-1">
-                                    <div
-                                        className={`mx-auto w-fit max-w-[92%] rounded-md px-2 text-center text-xs ${
-                                            event.tone === 'success'
-                                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                                : event.tone === 'error'
-                                                    ? 'bg-red-500/10 text-red-700 dark:text-red-300'
-                                                    : 'text-[var(--app-hint)] opacity-80'
-                                        }`}
-                                    >
-                                        {event.text}
-                                    </div>
-                                </div>
-                            ))}
+                            {props.initStatus ? (
+                                <StatusCard summary={props.initStatus} />
+                            ) : null}
+                            {props.mergeStatus ? (
+                                <StatusCard summary={props.mergeStatus} />
+                            ) : null}
+                            {props.previewStatus ? (
+                                <StatusCard summary={props.previewStatus} />
+                            ) : null}
                             {props.showPreviewLogs && (previewLogsText.length > 0 || props.previewCommand) ? (
                                 <div className="py-2">
                                     <div className="mx-auto w-full max-w-[92%] rounded-md bg-[var(--app-secondary-bg)] p-2">

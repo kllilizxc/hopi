@@ -373,6 +373,7 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(event.projectId) })
                 if ('taskId' in event) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.task(event.taskId) })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.taskPreview(event.taskId) })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.taskMergeState(event.taskId) })
                 }
             }

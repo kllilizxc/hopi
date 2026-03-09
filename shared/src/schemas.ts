@@ -232,7 +232,7 @@ export const MergedDiffSnapshotSchema = z.object({
 
 export type MergedDiffSnapshot = z.infer<typeof MergedDiffSnapshotSchema>
 
-export const TaskMergeRuntimeStatusSchema = z.enum([
+const TASK_ACTION_RUNTIME_CORE_STATUSES = [
     'queued',
     'waiting',
     'approval_pending',
@@ -241,23 +241,79 @@ export const TaskMergeRuntimeStatusSchema = z.enum([
     'blocked',
     'succeeded',
     'canceled'
-])
+] as const
 
-export type TaskMergeRuntimeStatus = z.infer<typeof TaskMergeRuntimeStatusSchema>
+const TASK_MERGE_RUNTIME_STATUSES = [
+    'queued',
+    'waiting',
+    'approval_pending',
+    'running',
+    'retrying',
+    'blocked',
+    'succeeded',
+    'canceled'
+] as const
 
-export const TaskMergeRuntimeSchema = z.object({
-    status: TaskMergeRuntimeStatusSchema,
+const TASK_PREVIEW_RUNTIME_STATUSES = [
+    'queued',
+    'waiting',
+    'approval_pending',
+    'running',
+    'retrying',
+    'blocked',
+    'ready',
+    'stopped',
+    'canceled'
+] as const
+
+const TASK_INIT_RUNTIME_STATUSES = [
+    'running',
+    'waiting',
+    'retrying',
+    'blocked',
+    'succeeded'
+] as const
+
+export const TaskActionRuntimeCoreStatusSchema = z.enum(TASK_ACTION_RUNTIME_CORE_STATUSES)
+export type TaskActionRuntimeCoreStatus = z.infer<typeof TaskActionRuntimeCoreStatusSchema>
+
+export const TaskActionRuntimeEnvelopeSchema = z.object({
     sessionId: z.string().trim().min(1).max(128).nullable().optional(),
     updatedAt: z.number(),
     requestedAt: z.number().optional(),
     startedAt: z.number().nullable().optional(),
     completedAt: z.number().nullable().optional(),
     retryCount: z.number().int().min(0).optional(),
+    failureFingerprint: z.string().trim().min(1).max(64).nullable().optional(),
     latestNote: z.string().trim().min(1).max(280).nullable().optional(),
     blockedReason: z.string().trim().min(1).max(280).nullable().optional()
 })
 
+export type TaskActionRuntimeEnvelope = z.infer<typeof TaskActionRuntimeEnvelopeSchema>
+
+function createTaskActionRuntimeSchema<Statuses extends readonly [string, ...string[]]>(statuses: Statuses) {
+    return TaskActionRuntimeEnvelopeSchema.extend({
+        status: z.enum(statuses)
+    })
+}
+
+export const TaskMergeRuntimeStatusSchema = z.enum(TASK_MERGE_RUNTIME_STATUSES)
+export type TaskMergeRuntimeStatus = z.infer<typeof TaskMergeRuntimeStatusSchema>
+
+export const TaskMergeRuntimeSchema = createTaskActionRuntimeSchema(TASK_MERGE_RUNTIME_STATUSES)
 export type TaskMergeRuntime = z.infer<typeof TaskMergeRuntimeSchema>
+
+export const TaskPreviewRuntimeStatusSchema = z.enum(TASK_PREVIEW_RUNTIME_STATUSES)
+export type TaskPreviewRuntimeStatus = z.infer<typeof TaskPreviewRuntimeStatusSchema>
+
+export const TaskPreviewRuntimeSchema = createTaskActionRuntimeSchema(TASK_PREVIEW_RUNTIME_STATUSES)
+export type TaskPreviewRuntime = z.infer<typeof TaskPreviewRuntimeSchema>
+
+export const TaskInitRuntimeStatusSchema = z.enum(TASK_INIT_RUNTIME_STATUSES)
+export type TaskInitRuntimeStatus = z.infer<typeof TaskInitRuntimeStatusSchema>
+
+export const TaskInitRuntimeSchema = createTaskActionRuntimeSchema(TASK_INIT_RUNTIME_STATUSES)
+export type TaskInitRuntime = z.infer<typeof TaskInitRuntimeSchema>
 
 export const TaskSchema = z.object({
     id: z.string(),
@@ -284,6 +340,8 @@ export const TaskSchema = z.object({
     worktreeMergeCommit: z.string().nullable().optional(),
     mergedDiffSnapshot: MergedDiffSnapshotSchema.nullable().optional(),
     mergeRuntime: TaskMergeRuntimeSchema.nullable().optional(),
+    previewRuntime: TaskPreviewRuntimeSchema.nullable().optional(),
+    initRuntime: TaskInitRuntimeSchema.nullable().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     finishedAt: z.number().nullable().optional(),

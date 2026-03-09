@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { AgentFlavor, ModelMode, PermissionMode, Task } from '@/types/api'
+import type { AgentFlavor, ModelMode, PermissionMode, Task, TaskStartSessionResponse } from '@/types/api'
+import { invalidateSessionCaches, replaceTaskInCaches } from '@/hooks/mutations/taskActionCache'
 import { queryKeys } from '@/lib/query-keys'
 
 type StartTaskSessionInput = {
@@ -17,7 +18,7 @@ type StartTaskSessionInput = {
 }
 
 export function useStartTaskSession(api: ApiClient | null): {
-    startTaskSession: (input: StartTaskSessionInput) => Promise<{ task: Task; sessionId: string }>
+    startTaskSession: (input: StartTaskSessionInput) => Promise<TaskStartSessionResponse>
     isPending: boolean
     error: string | null
 } {
@@ -28,16 +29,20 @@ export function useStartTaskSession(api: ApiClient | null): {
             if (!api) {
                 throw new Error('API unavailable')
             }
-            const result = await api.startTaskSession(input.taskId, input.payload)
-            return { task: result.task, sessionId: result.sessionId }
+            return await api.startTaskSession(input.taskId, input.payload)
         },
-        onSuccess: ({ task }, input) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(input.projectId) })
-            void queryClient.setQueryData(queryKeys.task(task.id), { task })
-            if (task.activeSessionId) {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.session(task.activeSessionId) })
-                void queryClient.invalidateQueries({ queryKey: queryKeys.messages(task.activeSessionId) })
-            }
+        onSuccess: (result) => {
+            const previousTask = queryClient.getQueryData<{ task: Task }>(queryKeys.task(result.task.id))?.task ?? null
+            replaceTaskInCaches({
+                queryClient,
+                taskId: result.task.id,
+                task: result.task
+            })
+            invalidateSessionCaches(queryClient, [
+                previousTask?.activeSessionId,
+                result.task.activeSessionId,
+                result.sessionId
+            ])
         }
     })
 
@@ -47,4 +52,3 @@ export function useStartTaskSession(api: ApiClient | null): {
         error: mutation.error instanceof Error ? mutation.error.message : mutation.error ? 'Failed to start session' : null,
     }
 }
-

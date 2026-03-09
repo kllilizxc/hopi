@@ -22,6 +22,7 @@ import type {
     TaskResponse,
     TaskPreviewResponse,
     TaskStartSessionResponse,
+    TaskWorktreeMergeCancelResponse,
     TaskWorktreeMergeResponse,
     TaskWorktreeMergeStateResponse,
     TasksResponse,
@@ -435,6 +436,13 @@ export class ApiClient {
         return await this.request<TaskWorktreeMergeResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`, {
             method: 'POST',
             body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async cancelTaskWorktreeMerge(taskId: string): Promise<TaskWorktreeMergeCancelResponse> {
+        return await this.request<TaskWorktreeMergeCancelResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge/cancel`, {
+            method: 'POST',
+            body: JSON.stringify({})
         })
     }
 

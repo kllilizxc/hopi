@@ -81,6 +81,33 @@ export type RpcGitMergeWorktreeStateResponse = {
     error?: string
 }
 
+export type RpcGitCaptureWorktreeMergeSnapshotResponse = {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcGitVerifyWorktreeMergeResponse = {
+    success: boolean
+    verified?: boolean
+    targetBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    targetHead?: string
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 export type RpcPreviewStatus = {
     active: boolean
     status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
@@ -319,6 +346,20 @@ export class RpcGateway {
 
     async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {
         return await this.sessionRpc(sessionId, 'git-merge-worktree-state', options) as RpcGitMergeWorktreeStateResponse
+    }
+
+    async gitCaptureWorktreeMergeSnapshot(sessionId: string, options: { targetBranch: string }): Promise<RpcGitCaptureWorktreeMergeSnapshotResponse> {
+        return await this.sessionRpc(sessionId, 'git-capture-worktree-merge-snapshot', options) as RpcGitCaptureWorktreeMergeSnapshotResponse
+    }
+
+    async gitVerifyWorktreeMerge(sessionId: string, options: {
+        targetBranch: string
+        mergeBase: string
+        snapshotRef: string
+    }): Promise<RpcGitVerifyWorktreeMergeResponse> {
+        return await this.sessionRpc(sessionId, 'git-verify-worktree-merge', options, {
+            timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
+        }) as RpcGitVerifyWorktreeMergeResponse
     }
 
     async readSessionFile(sessionId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {

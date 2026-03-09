@@ -3,18 +3,31 @@ import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSche
 import {
     PRODUCT_ENV,
     PRODUCT_HEADERS,
+    PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
     PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
     PRODUCT_NAME,
     PRODUCT_PREVIEW_READY_MARKER,
     PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
 } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredTask } from '../../store'
-import { getMergeWorktreeErrorStatus, isLikelyMergeConflict } from '../../sync/mergeConflictDetection'
-import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
+import {
+    buildApprovalPendingActionRuntimeNote,
+    buildQueuedActionRuntimeNote,
+    buildRepeatedTaskActionFailureNote,
+    buildTaskActionCommandReportLines,
+    getSessionRunnableState,
+    sessionHasPendingRequests,
+    trimTaskActionOutput,
+    waitForSessionToBecomeRunnable,
+    waitWithUnrefTimer
+} from '../../utils/taskActionFlow'
+import { buildTaskMergeRuntime as buildSharedTaskMergeRuntime, buildTaskPreviewRuntime as buildSharedTaskPreviewRuntime, hasMeaningfulTaskActionRuntimeChange } from '../../utils/taskActionRuntime'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
+import { buildMergeScriptCommand, runMergeScriptIfPresent, type ScriptExecutionResult } from '../../sync/projectScripts'
+import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { relinkTaskToSession, resolveBestUsableTaskSession } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
@@ -22,20 +35,21 @@ import type { WebAppEnv } from '../middleware/auth'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
-const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
-const AUTO_MERGE_CONFLICT_TIMEOUT_MS = 180_000
-const AUTO_MERGE_BACKGROUND_RETRY_TIMEOUT_MS = 180_000
-const AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS = 4_000
-const AUTO_MERGE_BACKGROUND_RETRY_MAX_ATTEMPTS = 30
-const AUTO_MERGE_SCRIPT_LOCAL_ID_PREFIX = 'auto:merge_script:'
-const AUTO_MERGE_SCRIPT_TIMEOUT_MS = 300_000
 const AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX = 'auto:merge_runtime:'
+const AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX = 'auto:merge_direct_result:'
 const AUTO_CONVERSATION_MERGE_TIMEOUT_MS = 1_800_000
 const AUTO_CONVERSATION_MERGE_POLL_INTERVAL_MS = 500
+const AUTO_PREVIEW_RESULT_LOCAL_ID_PREFIX = 'auto:preview_result:'
 const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
+const AUTO_PREVIEW_MONITOR_POLL_INTERVAL_MS = 500
+const AUTO_PREVIEW_MAX_REPAIR_ATTEMPTS = 2
+const AUTO_PREVIEW_MONITOR_TIMEOUT_MS = 1_800_000
+const AUTO_PREVIEW_START_OBSERVE_TIMEOUT_MS = 2_000
 const AUTO_PREVIEW_SETUP_TIMEOUT_MS = 240_000
-const inFlightAutoMergeRetryKeys = new Set<string>()
+const AUTO_PREVIEW_DEFERRED_START_TIMEOUT_MS = 1_800_000
 const inFlightConversationMergeMonitorKeys = new Set<string>()
+const inFlightPreviewDeferredStartControllers = new Map<string, { canceled: boolean }>()
+const inFlightPreviewMonitorControllers = new Map<string, { canceled: boolean }>()
 
 function estimateDataUrlBytes(dataUrl: string): number {
     const comma = dataUrl.indexOf(',')
@@ -108,42 +122,8 @@ function parseDiffNumstat(output: string): Array<{
     return files
 }
 
-function waitWithUnrefTimer(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        const timer = setTimeout(resolve, ms)
-        if (typeof timer === 'object' && timer && 'unref' in timer && typeof timer.unref === 'function') {
-            timer.unref()
-        }
-    })
-}
-
 function buildWorktreeMergeCommitMessage(task: Pick<StoredTask, 'id' | 'title'>): string {
     return `HOPI: task ${task.id.slice(0, 8)} — ${task.title}`.slice(0, 180)
-}
-
-function emitRealtimeToast(options: {
-    engine: SyncEngine
-    namespace: string
-    title: string
-    body: string
-    sessionId?: string
-}): void {
-    const handler = options.engine.handleRealtimeEvent
-
-    if (typeof handler !== 'function') {
-        return
-    }
-
-    handler.call(options.engine, {
-        type: 'toast',
-        namespace: options.namespace,
-        data: {
-            title: options.title,
-            body: options.body,
-            sessionId: options.sessionId ?? '',
-            url: ''
-        }
-    })
 }
 
 function emitTaskUpdatedEvent(options: {
@@ -171,7 +151,67 @@ function emitTaskUpdatedEvent(options: {
     })
 }
 
+function emitSessionMessageReceivedEvent(options: {
+    engine: SyncEngine
+    sessionId: string
+    message: {
+        id: string
+        seq: number
+        localId: string | null
+        content: unknown
+        createdAt: number
+    }
+}): void {
+    const handler = options.engine.handleRealtimeEvent
+
+    if (typeof handler !== 'function') {
+        return
+    }
+
+    handler.call(options.engine, {
+        type: 'message-received',
+        sessionId: options.sessionId,
+        message: options.message
+    })
+}
+
+function appendAssistantTextMessage(options: {
+    store: Store
+    engine: SyncEngine
+    sessionId: string
+    text: string
+    localId?: string
+}): void {
+    const message = options.store.messages.addMessage(options.sessionId, {
+        role: 'assistant',
+        content: {
+            type: 'text',
+            text: options.text
+        },
+        meta: {
+            sentFrom: 'webapp'
+        }
+    }, options.localId)
+
+    emitSessionMessageReceivedEvent({
+        engine: options.engine,
+        sessionId: options.sessionId,
+        message: {
+            id: message.id,
+            seq: message.seq,
+            localId: message.localId,
+            content: message.content,
+            createdAt: message.createdAt
+        }
+    })
+}
+
 type MergeKickoffRuntimeStatus = 'queued' | 'approval_pending' | 'running'
+
+type TaskPreviewRuntimeStatus = NonNullable<StoredTask['previewRuntime']>['status']
+type TaskPreviewRuntime = NonNullable<StoredTask['previewRuntime']>
+
+type StoredTaskWithPreviewRuntime = StoredTask
 
 function isActiveMergeRuntimeStatus(status: string | null | undefined): boolean {
     return status === 'queued'
@@ -181,40 +221,45 @@ function isActiveMergeRuntimeStatus(status: string | null | undefined): boolean 
         || status === 'retrying'
 }
 
+function isPendingPreviewRuntimeStatus(status: TaskPreviewRuntimeStatus | null | undefined): boolean {
+    return status === 'queued'
+        || status === 'waiting'
+        || status === 'approval_pending'
+        || status === 'running'
+        || status === 'retrying'
+}
+
+function isPreviewRetryAttempt(task: Pick<StoredTask, 'previewRuntime'>): boolean {
+    const status = task.previewRuntime?.status
+    return status === 'blocked'
+        || status === 'canceled'
+        || status === 'retrying'
+        || ((task.previewRuntime?.retryCount ?? 0) > 0)
+}
+
 function buildTaskMergeRuntime(options: {
     task: StoredTask
     status: NonNullable<StoredTask['mergeRuntime']>['status']
     sessionId?: string | null
+    retryCount?: number
+    failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
     startedAt?: number | null
     completedAt?: number | null
 }): NonNullable<StoredTask['mergeRuntime']> {
-    const now = Date.now()
-    const current = options.task.mergeRuntime
-    const requestedAt = current?.requestedAt ?? now
-    const startedAt = options.startedAt !== undefined
-        ? options.startedAt
-        : options.status === 'running' || options.status === 'retrying' || options.status === 'succeeded'
-            ? current?.startedAt ?? requestedAt
-            : current?.startedAt ?? null
-    const completedAt = options.completedAt !== undefined
-        ? options.completedAt
-        : options.status === 'blocked' || options.status === 'succeeded' || options.status === 'canceled'
-            ? now
-            : null
-
-    return {
+    return buildSharedTaskMergeRuntime({
+        current: options.task.mergeRuntime,
+        activeSessionId: options.task.activeSessionId,
         status: options.status,
-        sessionId: options.sessionId ?? current?.sessionId ?? options.task.activeSessionId ?? null,
-        updatedAt: now,
-        requestedAt,
-        startedAt,
-        completedAt,
-        retryCount: current?.retryCount,
-        latestNote: options.latestNote ?? null,
-        blockedReason: options.blockedReason ?? null
-    }
+        sessionId: options.sessionId,
+        retryCount: options.retryCount,
+        failureFingerprint: options.failureFingerprint,
+        latestNote: options.latestNote,
+        blockedReason: options.blockedReason,
+        startedAt: options.startedAt,
+        completedAt: options.completedAt
+    })
 }
 
 function updateTaskMergeRuntime(options: {
@@ -224,6 +269,8 @@ function updateTaskMergeRuntime(options: {
     task: StoredTask
     status: NonNullable<StoredTask['mergeRuntime']>['status']
     sessionId?: string | null
+    retryCount?: number
+    failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
     startedAt?: number | null
@@ -234,6 +281,8 @@ function updateTaskMergeRuntime(options: {
             task: options.task,
             status: options.status,
             sessionId: options.sessionId,
+            retryCount: options.retryCount,
+            failureFingerprint: options.failureFingerprint,
             latestNote: options.latestNote,
             blockedReason: options.blockedReason,
             startedAt: options.startedAt,
@@ -257,6 +306,279 @@ function updateTaskMergeRuntime(options: {
     })
 
     return updatedTask
+}
+
+function getTaskPreviewRuntime(task: Pick<StoredTask, 'previewRuntime'>): TaskPreviewRuntime | null {
+    return task.previewRuntime ?? null
+}
+
+function withTaskPreviewRuntime<T extends StoredTask>(task: T | null, previewRuntime?: TaskPreviewRuntime | null): T | null {
+    if (!task || previewRuntime === undefined) {
+        return task
+    }
+
+    return {
+        ...task,
+        previewRuntime
+    }
+}
+
+function normalizePreviewRuntimeText(text: string | null | undefined, maxChars = 280): string | null {
+    const normalized = text?.trim().replace(/\s+/g, ' ') ?? ''
+    if (!normalized) {
+        return null
+    }
+
+    if (normalized.length <= maxChars) {
+        return normalized
+    }
+
+    return `${normalized.slice(0, Math.max(0, maxChars - 1))}…`
+}
+
+function buildPreviewRunningNote(): string {
+    return 'Starting preview directly from the task action.'
+}
+
+function buildPreviewQueuedNote(): string {
+    return buildQueuedActionRuntimeNote({
+        actionLabel: 'Preview',
+        continuation: 'HOPI will auto-run preview start'
+    })
+}
+
+function buildPreviewApprovalPendingNote(): string {
+    return buildApprovalPendingActionRuntimeNote({
+        actionLabel: 'Preview',
+        continuation: 'HOPI will auto-run preview start'
+    })
+}
+
+function buildPreviewWaitingNote(): string {
+    return 'Preview is booting and waiting to report ready.'
+}
+
+function buildPreviewRetryingNote(): string {
+    return 'Preview start failed. HOPI is asking the linked session to repair the blocker before retrying.'
+}
+
+function buildPreviewReadyNote(preview: { url?: string | null }): string {
+    return normalizePreviewRuntimeText(
+        preview.url
+            ? `Preview is ready at ${preview.url}.`
+            : 'Preview is ready.'
+    ) ?? 'Preview is ready.'
+}
+
+function buildPreviewStoppedNote(): string {
+    return 'Preview stopped from the task action.'
+}
+
+function buildPreviewCanceledNote(): string {
+    return 'Preview canceled before it became ready.'
+}
+
+function buildPreviewBlockedNote(error: string, manualStep: string): string {
+    return normalizePreviewRuntimeText(`Preview blocked: ${error}. ${manualStep}`) ?? 'Preview blocked.'
+}
+
+function parsePreviewUrlPort(url: string | null | undefined): number | undefined {
+    if (!url) {
+        return undefined
+    }
+
+    try {
+        const parsed = new URL(url)
+        if (!parsed.port) {
+            return undefined
+        }
+        const value = Number.parseInt(parsed.port, 10)
+        return Number.isFinite(value) ? value : undefined
+    } catch {
+        return undefined
+    }
+}
+
+function normalizeLivePreviewStatus(preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>): Awaited<ReturnType<SyncEngine['previewStatusForSession']>> {
+    if (preview.status !== 'starting') {
+        return preview
+    }
+
+    const readyMarkerPattern = new RegExp(`${PRODUCT_PREVIEW_READY_MARKER}(\\S+)`, 'i')
+    const previewUrlPattern = /(https?:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}[^\s]*)/i
+    const logTail = Array.isArray(preview.logTail) ? [...preview.logTail].reverse() : []
+
+    for (const line of logTail) {
+        const readyUrl = line.match(readyMarkerPattern)?.[1]?.trim()
+            ?? line.match(previewUrlPattern)?.[1]?.trim()
+        if (!readyUrl) {
+            continue
+        }
+
+        return {
+            ...preview,
+            active: true,
+            status: 'ready',
+            url: readyUrl,
+            port: parsePreviewUrlPort(readyUrl) ?? preview.port,
+            error: undefined
+        }
+    }
+
+    return preview
+}
+
+function hasMeaningfulPreviewRuntimeChange(current: TaskPreviewRuntime | null, next: TaskPreviewRuntime): boolean {
+    return hasMeaningfulTaskActionRuntimeChange(current, next)
+}
+
+function buildTaskPreviewRuntime(options: {
+    task: StoredTaskWithPreviewRuntime
+    status: TaskPreviewRuntimeStatus
+    sessionId?: string | null
+    requestedAt?: number
+    retryCount?: number
+    failureFingerprint?: string | null
+    latestNote?: string | null
+    blockedReason?: string | null
+    startedAt?: number | null
+    completedAt?: number | null
+}): TaskPreviewRuntime {
+    return buildSharedTaskPreviewRuntime({
+        current: getTaskPreviewRuntime(options.task),
+        activeSessionId: options.task.activeSessionId,
+        status: options.status,
+        sessionId: options.sessionId,
+        requestedAt: options.requestedAt,
+        retryCount: options.retryCount,
+        failureFingerprint: options.failureFingerprint,
+        latestNote: options.latestNote,
+        blockedReason: options.blockedReason,
+        startedAt: options.startedAt,
+        completedAt: options.completedAt
+    })
+}
+
+function updateTaskPreviewRuntime(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTaskWithPreviewRuntime
+    status: TaskPreviewRuntimeStatus
+    sessionId?: string | null
+    requestedAt?: number
+    retryCount?: number
+    failureFingerprint?: string | null
+    latestNote?: string | null
+    blockedReason?: string | null
+    startedAt?: number | null
+    completedAt?: number | null
+}): StoredTaskWithPreviewRuntime | null {
+    const nextPreviewRuntime = buildTaskPreviewRuntime({
+        task: options.task,
+        status: options.status,
+        sessionId: options.sessionId,
+        requestedAt: options.requestedAt,
+        retryCount: options.retryCount,
+        failureFingerprint: options.failureFingerprint,
+        latestNote: options.latestNote,
+        blockedReason: options.blockedReason,
+        startedAt: options.startedAt,
+        completedAt: options.completedAt
+    })
+
+    if (!hasMeaningfulPreviewRuntimeChange(getTaskPreviewRuntime(options.task), nextPreviewRuntime)) {
+        const latestTask = options.store.tasks.getTaskByNamespace(options.task.id, options.namespace) ?? options.task
+        return withTaskPreviewRuntime(latestTask, nextPreviewRuntime)
+    }
+
+    const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
+        previewRuntime: nextPreviewRuntime
+    })
+
+    const nextTask = withTaskPreviewRuntime(updatedTask ?? options.task, nextPreviewRuntime)
+
+    if (updatedTask && nextTask) {
+        emitTaskUpdatedEvent({
+            engine: options.engine,
+            namespace: options.namespace,
+            taskId: nextTask.id,
+            projectId: nextTask.projectId,
+            data: {
+                activeSessionId: nextTask.activeSessionId,
+                previewRuntime: nextTask.previewRuntime
+            }
+        })
+    }
+
+    return nextTask
+}
+
+function syncPreviewRuntimeFromLivePreview(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTaskWithPreviewRuntime
+    preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
+}): StoredTaskWithPreviewRuntime {
+    const preview = normalizeLivePreviewStatus(options.preview)
+
+    if (preview.status === 'ready') {
+        return updateTaskPreviewRuntime({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: options.task,
+            status: 'ready',
+            sessionId: preview.sessionId ?? options.task.activeSessionId ?? null,
+            latestNote: buildPreviewReadyNote({ url: preview.url ?? null })
+        }) ?? options.task
+    }
+
+    if (preview.status === 'starting') {
+        return updateTaskPreviewRuntime({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: options.task,
+            status: 'waiting',
+            sessionId: preview.sessionId ?? options.task.activeSessionId ?? null,
+            latestNote: buildPreviewWaitingNote()
+        }) ?? options.task
+    }
+
+    return options.task
+}
+
+type TaskPreviewKickoffSkippedReason = 'queued' | 'waiting' | 'approval_pending' | 'running' | 'retrying'
+
+function buildTaskPreviewResponse(options: {
+    task: StoredTaskWithPreviewRuntime
+    preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
+    skippedReason?: TaskPreviewKickoffSkippedReason | null
+}): {
+    preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
+    previewRuntime: TaskPreviewRuntime | null
+    skippedReason?: TaskPreviewKickoffSkippedReason | null
+} {
+    const runtime = options.task.previewRuntime ?? null
+    const livePreview = normalizeLivePreviewStatus(options.preview)
+    const preview = livePreview.status === 'idle' && isPendingPreviewRuntimeStatus(runtime?.status)
+        ? {
+            ...livePreview,
+            active: true,
+            status: 'starting' as const,
+            taskId: livePreview.taskId ?? options.task.id,
+            sessionId: livePreview.sessionId ?? runtime?.sessionId ?? options.task.activeSessionId ?? undefined,
+            updatedAt: Math.max(livePreview.updatedAt, runtime?.updatedAt ?? livePreview.updatedAt)
+        }
+        : livePreview
+
+    return {
+        preview,
+        previewRuntime: runtime,
+        ...(options.skippedReason !== undefined ? { skippedReason: options.skippedReason } : {})
+    }
 }
 
 function buildMergeKickoffResponse(options: {
@@ -295,14 +617,166 @@ function buildMergeHandoffNote(options: {
     return null
 }
 
+function buildMergeStateCheckBlockedNote(error: string): string {
+    return `${error}. Inspect the linked session output, clear the repo blocker inside the workspace, then retry merge.`
+}
+
+function buildMergeConversationBlockedNote(): string {
+    return 'Merge request finished, but the branch is still mergeable. Inspect the linked session tool output, fix the blocker inside the workspace, and retry merge there. Stop only for manual judgment or out-of-sandbox work.'
+}
+
+type MergeVerificationSnapshot = {
+    mergeBase: string
+    snapshotRef: string
+    expectedChangeCount: number
+}
+
+function buildMergeVerificationCaptureBlockedNote(error: string): string {
+    return `Could not capture merge verification snapshot: ${error}. Inspect repo state in the linked session, then retry merge.`
+}
+
+function buildMergeVerificationBlockedNote(error?: string | null): string {
+    if (error && error.trim().length > 0) {
+        return `Merge finished, but repo-truth verification failed: ${error.trim()}. Inspect the linked session output, verify the target branch manually, then retry if needed.`
+    }
+
+    return 'Merge finished, but repo-truth verification could not prove the target branch contains the expected worktree changes. Inspect the linked session output, verify the target branch manually, then retry if needed.'
+}
+
+async function captureMergeVerificationSnapshot(options: {
+    engine: SyncEngine
+    sessionId: string
+    targetBranch: string
+}): Promise<
+    | { ok: true; snapshot: MergeVerificationSnapshot }
+    | { ok: false; error: string }
+> {
+    let result: Awaited<ReturnType<SyncEngine['gitCaptureWorktreeMergeSnapshot']>>
+    try {
+        result = await options.engine.gitCaptureWorktreeMergeSnapshot(options.sessionId, {
+            targetBranch: options.targetBranch
+        })
+    } catch (error) {
+        return {
+            ok: false,
+            error: formatErrorMessage(error, 'Failed to capture merge verification snapshot')
+        }
+    }
+
+    if (!result.success) {
+        return {
+            ok: false,
+            error: pickReadableMergeError(result, 'Failed to capture merge verification snapshot')
+        }
+    }
+
+    const mergeBase = typeof result.mergeBase === 'string' ? result.mergeBase.trim() : ''
+    const snapshotRef = typeof result.snapshotRef === 'string' ? result.snapshotRef.trim() : ''
+    const expectedChangeCount = typeof result.expectedChangeCount === 'number' && Number.isFinite(result.expectedChangeCount)
+        ? Math.max(0, Math.trunc(result.expectedChangeCount))
+        : NaN
+
+    if (!mergeBase || !snapshotRef || !Number.isFinite(expectedChangeCount)) {
+        return {
+            ok: false,
+            error: 'Merge verification snapshot was incomplete'
+        }
+    }
+
+    return {
+        ok: true,
+        snapshot: {
+            mergeBase,
+            snapshotRef,
+            expectedChangeCount
+        }
+    }
+}
+
+async function verifyMergeVerificationSnapshot(options: {
+    engine: SyncEngine
+    sessionId: string
+    targetBranch: string
+    snapshot: MergeVerificationSnapshot
+}): Promise<
+    | { ok: true; targetHead: string | null }
+    | { ok: false; note: string; blockedReason: string }
+> {
+    let result: Awaited<ReturnType<SyncEngine['gitVerifyWorktreeMerge']>>
+    try {
+        result = await options.engine.gitVerifyWorktreeMerge(options.sessionId, {
+            targetBranch: options.targetBranch,
+            mergeBase: options.snapshot.mergeBase,
+            snapshotRef: options.snapshot.snapshotRef
+        })
+    } catch (error) {
+        const message = formatErrorMessage(error, 'Merge verification failed unexpectedly')
+        return {
+            ok: false,
+            note: buildMergeVerificationBlockedNote(message),
+            blockedReason: message
+        }
+    }
+
+    if (!result.success) {
+        const message = pickReadableMergeError(result, 'Merge verification failed')
+        return {
+            ok: false,
+            note: buildMergeVerificationBlockedNote(message),
+            blockedReason: message
+        }
+    }
+
+    if (result.verified !== true) {
+        const message = typeof result.error === 'string' && result.error.trim().length > 0
+            ? result.error.trim()
+            : 'Target branch does not contain the expected worktree changes'
+        return {
+            ok: false,
+            note: buildMergeVerificationBlockedNote(message),
+            blockedReason: message
+        }
+    }
+
+    const targetHead = typeof result.targetHead === 'string' && result.targetHead.trim().length > 0
+        ? result.targetHead.trim()
+        : null
+
+    return {
+        ok: true,
+        targetHead
+    }
+}
+
 function buildConversationMergePrompt(options: {
     task: Pick<StoredTask, 'id' | 'title'>
+    projectId: string
     targetBranch: string
     sourceBranch: string | null
     rootPath: string | null
+    worktreeBasePath?: string | null
+    worktreePath?: string | null
     conflictStrategy: 'manual' | 'agent'
     handoffNote?: string | null
 }): string {
+    const missingScriptMessage = `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} not found; inspect repo state and continue with normal workspace CLI merge commands.`
+    const firstToolCall = options.rootPath
+        ? buildMergeScriptCommand({
+            rootPath: options.rootPath,
+            taskId: options.task.id,
+            projectId: options.projectId,
+            targetBranch: options.targetBranch,
+            sourceBranch: options.sourceBranch,
+            worktreeBasePath: options.worktreeBasePath,
+            worktreePath: options.worktreePath ?? options.rootPath,
+            worktreeBranch: options.sourceBranch,
+            missingMessage: missingScriptMessage
+        })
+        : null
+    const repairStrategyLine = options.conflictStrategy === 'manual'
+        ? '- Resolve repairable blockers in-session. If a merge conflict needs human judgment, stop and explain the exact decision that is needed.'
+        : '- Resolve repairable blockers in-session and retry until the target branch contains the task changes.'
+
     const lines = [
         options.handoffNote ?? null,
         'Worktree merge requested.',
@@ -311,14 +785,32 @@ function buildConversationMergePrompt(options: {
         `Task id: ${options.task.id}`,
         `Source branch: ${options.sourceBranch ?? '(inspect repo state first)'}`,
         `Target branch: ${options.targetBranch}`,
-        options.rootPath ? `Preferred working directory: ${options.rootPath}` : null,
+        options.rootPath
+            ? `Working directory: ${options.rootPath}`
+            : 'Working directory: inspect the linked worktree path before running merge commands.',
+        options.worktreeBasePath ? `Base repo path: ${options.worktreeBasePath}` : null,
         '',
-        `Prefer \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` if it exists; otherwise use normal CLI/git tool calls in the workspace sandbox.`,
-        '- Show the important command output in the thread.',
-        options.conflictStrategy === 'manual'
-            ? '- If merge conflicts need manual judgment, stop and explain the blocker clearly.'
-            : '- If the first merge attempt fails, inspect the output, fix the blocker, and retry in this session.',
-        '- Stop only when the task branch is no longer mergeable into target, or when you can name the blocker clearly.',
+        firstToolCall ? 'First tool call (single shell command):' : 'First step:',
+        firstToolCall
+            ? `\`${firstToolCall}\``
+            : `- Find the repo root in this worktree, then run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` if it exists.`,
+        firstToolCall
+            ? `- If the command prints "${missingScriptMessage}", continue with normal workspace CLI merge commands in the same session.`
+            : `- Prefer \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` when present; otherwise continue with normal workspace CLI merge commands.`,
+        '',
+        'Worktree safety:',
+        `- Do not assume \`git checkout ${options.targetBranch}\` inside the task worktree is safe; that branch may already be checked out in another worktree.`,
+        options.worktreeBasePath
+            ? `- If target-branch operations need the base repo, prefer \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` (${options.worktreeBasePath}) or another worktree-safe git flow.`
+            : `- If target-branch operations need the base repo, inspect \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` before editing the script.`,
+        '- If Git reports "already checked out at" or a similar checked-out-branch error, treat the script as wrong and change the strategy instead of retrying the same checkout.',
+        '',
+        'Recovery loop:',
+        '- Keep the important stdout/stderr from each tool call in the thread.',
+        '- Inspect git/worktree state before guessing at a fix.',
+        '- Edit `.hopi/merge.sh` or any other workspace files when they are the real blocker.',
+        repairStrategyLine,
+        '- Stop only for manual judgment, missing external access, or other out-of-sandbox blockers; when stopping, name the blocker, last failing command, and next manual step.',
         '',
         'Required outcome:',
         '- Target branch contains the task changes.',
@@ -326,6 +818,595 @@ function buildConversationMergePrompt(options: {
     ]
 
     return lines.filter((line): line is string => Boolean(line)).join('\n')
+}
+
+function trimMergeCommandOutput(output: string | undefined, maxChars: number): string | null {
+    return trimTaskActionOutput(output, maxChars)
+}
+
+
+const MERGE_STATE_CHECK_MANUAL_STEP = 'Inspect the linked session output, clear the repo blocker inside the workspace, then retry merge.'
+const MERGE_VERIFICATION_MANUAL_STEP = 'Inspect the linked session output, verify the target branch manually, then retry only after repo truth changes.'
+const MERGE_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, change the repo state or `.hopi/merge.sh`, then retry merge.'
+const MERGE_STILL_PENDING_BLOCKED_REASON = 'Target branch still missing the task changes after the latest agent turn'
+const PREVIEW_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, change the repo state or `.hopi/preview.sh`, then retry preview.'
+const PREVIEW_SESSION_MANUAL_STEP = 'Restart or relink the task session inside the workspace, then retry preview.'
+const PREVIEW_WAIT_MANUAL_STEP = 'Wait for the linked session to become idle, then retry preview.'
+const PREVIEW_SESSION_INACTIVE_BLOCKED_REASON = 'Linked session became inactive before preview could start.'
+const PREVIEW_WAIT_TIMEOUT_BLOCKED_REASON = 'Preview stayed queued because the linked session never became idle.'
+
+type MergeFailureFingerprintReason =
+    | 'script_not_executed'
+    | 'snapshot_capture_failed'
+    | 'merge_check_failed'
+    | 'verification_failed'
+    | 'merge_still_pending'
+
+function buildMergeFailureFingerprint(options: {
+    reason: MergeFailureFingerprintReason
+    blockedReason?: string | null
+    mergeState?: Pick<MergeGitState, 'reason' | 'sourceBranch' | 'hasWorkingTreeChanges' | 'committedChangedCount'> | null
+    scriptResult?: {
+        error?: string | null
+        stdout?: string
+        stderr?: string
+    } | null
+}): string {
+    const digest = createHash('sha1').update(JSON.stringify({
+        reason: options.reason,
+        blockedReason: options.blockedReason?.trim() ?? null,
+        mergeState: options.mergeState
+            ? {
+                reason: options.mergeState.reason,
+                sourceBranch: options.mergeState.sourceBranch,
+                hasWorkingTreeChanges: options.mergeState.hasWorkingTreeChanges,
+                committedChangedCount: options.mergeState.committedChangedCount
+            }
+            : null,
+        scriptResult: options.scriptResult
+            ? {
+                error: options.scriptResult.error ?? null,
+                stdout: trimMergeCommandOutput(options.scriptResult.stdout, 512),
+                stderr: trimMergeCommandOutput(options.scriptResult.stderr, 512)
+            }
+            : null
+    })).digest('hex').slice(0, 12)
+
+    return `${options.reason}:${digest}`
+}
+
+function buildRepeatedMergeFailureNote(options: {
+    blockedReason: string
+    manualStep: string
+}): string {
+    return buildRepeatedTaskActionFailureNote(options)
+}
+
+function buildMergeBlockedRuntimeState(options: {
+    task: Pick<StoredTask, 'mergeRuntime'>
+    note: string
+    blockedReason: string
+    failureFingerprint: string
+    manualStep: string
+}): {
+    latestNote: string
+    blockedReason: string
+    failureFingerprint: string
+} {
+    const repeated = options.task.mergeRuntime?.failureFingerprint === options.failureFingerprint
+
+    return {
+        latestNote: repeated
+            ? buildRepeatedMergeFailureNote({
+                blockedReason: options.blockedReason,
+                manualStep: options.manualStep
+            })
+            : options.note,
+        blockedReason: options.blockedReason,
+        failureFingerprint: options.failureFingerprint
+    }
+}
+
+function getNextMergeAttemptRetryCount(task: Pick<StoredTask, 'mergeRuntime'>): number | undefined {
+    const status = task.mergeRuntime?.status
+    if (status === 'blocked' || status === 'canceled') {
+        return (task.mergeRuntime?.retryCount ?? 0) + 1
+    }
+
+    return task.mergeRuntime?.retryCount
+}
+
+function isMergeRetryAttempt(task: Pick<StoredTask, 'mergeRuntime'>): boolean {
+    const status = task.mergeRuntime?.status
+    return status === 'blocked'
+        || status === 'canceled'
+        || status === 'retrying'
+        || ((task.mergeRuntime?.retryCount ?? 0) > 0)
+}
+
+type PreviewFailureFingerprintReason =
+    | 'preview_start_failed'
+    | 'repair_prompt_failed'
+    | 'session_inactive'
+    | 'session_busy_timeout'
+    | 'preview_path_unavailable'
+
+function buildPreviewFailureFingerprint(options: {
+    reason: PreviewFailureFingerprintReason
+    blockedReason: string
+    previewPath?: { mode: 'local' | 'worktree'; rootPath: string } | null
+    preview?: {
+        status?: string | null
+        command?: string | null
+        error?: string | null
+        logTail?: string[] | null
+    } | null
+}): string {
+    const digest = createHash('sha1').update(JSON.stringify({
+        reason: options.reason,
+        blockedReason: normalizePreviewRuntimeText(options.blockedReason, 512),
+        previewPath: options.previewPath
+            ? {
+                mode: options.previewPath.mode,
+                rootPath: options.previewPath.rootPath
+            }
+            : null,
+        preview: options.preview
+            ? {
+                status: options.preview.status ?? null,
+                command: options.preview.command ?? null,
+                error: options.preview.error ?? null,
+                logTail: trimMergeCommandOutput((options.preview.logTail ?? []).slice(-8).join('\n'), 512)
+            }
+            : null
+    })).digest('hex').slice(0, 12)
+
+    return `${options.reason}:${digest}`
+}
+
+function buildRepeatedPreviewFailureNote(options: {
+    blockedReason: string
+    manualStep: string
+}): string {
+    return normalizePreviewRuntimeText(buildRepeatedTaskActionFailureNote(options))
+        ?? `Same blocker repeated with no repo progress: ${options.blockedReason}.`
+}
+
+function buildPreviewBlockedRuntimeState(options: {
+    task: Pick<StoredTask, 'previewRuntime'>
+    note: string
+    blockedReason: string
+    failureFingerprint: string
+    manualStep: string
+}): {
+    latestNote: string
+    blockedReason: string
+    failureFingerprint: string
+} {
+    const blockedReason = normalizePreviewRuntimeText(options.blockedReason) ?? 'Preview start failed'
+    const repeated = options.task.previewRuntime?.failureFingerprint === options.failureFingerprint
+
+    return {
+        latestNote: repeated
+            ? buildRepeatedPreviewFailureNote({
+                blockedReason,
+                manualStep: options.manualStep
+            })
+            : normalizePreviewRuntimeText(options.note) ?? 'Preview blocked.',
+        blockedReason,
+        failureFingerprint: options.failureFingerprint
+    }
+}
+
+function blockPreviewRuntime(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTaskWithPreviewRuntime
+    sessionId: string
+    blockedReason: string
+    failureFingerprint: string
+    note: string
+    manualStep: string
+    retryCount?: number
+}): StoredTaskWithPreviewRuntime {
+    const blockedState = buildPreviewBlockedRuntimeState({
+        task: options.task,
+        note: options.note,
+        blockedReason: options.blockedReason,
+        failureFingerprint: options.failureFingerprint,
+        manualStep: options.manualStep
+    })
+
+    return updateTaskPreviewRuntime({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task: options.task,
+        status: 'blocked',
+        sessionId: options.sessionId,
+        retryCount: options.retryCount,
+        failureFingerprint: blockedState.failureFingerprint,
+        latestNote: blockedState.latestNote,
+        blockedReason: blockedState.blockedReason
+    }) ?? options.task
+}
+
+function getNextPreviewRepairAttemptRetryCount(task: Pick<StoredTask, 'previewRuntime'>): number {
+    return (task.previewRuntime?.retryCount ?? 0) + 1
+}
+
+function buildMergeCommandReportLines(options: {
+    command: string
+    summary: string
+    stdout?: string
+    stderr?: string
+    maxChars: number
+}): string[] {
+    return buildTaskActionCommandReportLines(options)
+}
+
+function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'subTasks'>): string {
+    const title = (task.title ?? '').trim()
+    const description = (task.description ?? '').trim()
+    const subTasks = Array.isArray(task.subTasks)
+        ? task.subTasks as Array<{ content?: unknown; status?: unknown }>
+        : []
+    const subTaskLines = subTasks
+        .map((subTask) => {
+            const content = typeof subTask.content === 'string' ? subTask.content.trim() : ''
+            if (!content) {
+                return null
+            }
+            const done = subTask.status === 'completed'
+            return `- [${done ? 'x' : ' '}] ${content}`
+        })
+        .filter((line): line is string => Boolean(line))
+    const subTasksSection = subTaskLines.length > 0
+        ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
+        : ''
+
+    if (title && description) {
+        return `Task: ${title}\n\nDescription:\n${description}${subTasksSection}`
+    }
+    if (description) {
+        return `${description}${subTasksSection}`
+    }
+    if (title) {
+        return `Task: ${title}${subTasksSection}`
+    }
+    if (subTasksSection) {
+        return `Task${subTasksSection}`
+    }
+    return 'Task'
+}
+
+function buildPreviewStartResultMessage(options: {
+    status: 'success' | 'failure'
+    mode: 'local' | 'worktree'
+    rootPath: string
+    command?: string | null
+    url?: string | null
+    previewStatus?: string | null
+    error?: string | null
+    logTail?: string[]
+    fallbackNote?: string | null
+}): string {
+    const trimmedLogs = trimMergeCommandOutput((options.logTail ?? []).slice(-8).join('\n'), 4_000)
+    const header = options.status === 'success'
+        ? 'HOPI started preview directly from the task action.'
+        : 'HOPI attempted preview start directly before any agent repair step.'
+
+    return [
+        header,
+        '',
+        `Mode: ${options.mode}`,
+        `Root path: ${options.rootPath}`,
+        options.command ? `Command: \`${options.command}\`` : 'Command: (unknown)',
+        options.url ? `URL: ${options.url}` : null,
+        options.previewStatus ? `Status: ${options.previewStatus}` : null,
+        options.error ? `Result: ${options.error}` : null,
+        options.fallbackNote ?? null,
+        trimmedLogs ? `Log tail:\n\`\`\`\n${trimmedLogs}\n\`\`\`` : null
+    ].filter((line): line is string => Boolean(line)).join('\n')
+}
+
+function buildDirectMergeResultMessage(options: {
+    command: string
+    summary: string
+    stdout?: string
+    stderr?: string
+    success: boolean
+}): string {
+    const header = options.success
+        ? `HOPI auto-ran \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked worktree.`
+        : `HOPI auto-ran \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` before continuing in the linked agent flow.`
+
+    return [
+        header,
+        '',
+        ...buildMergeCommandReportLines({
+            command: options.command,
+            summary: options.summary,
+            stdout: options.stdout,
+            stderr: options.stderr,
+            maxChars: 8_000
+        })
+    ].join('\n')
+}
+
+function buildDirectMergeRecoveryPrompt(options: {
+    task: Pick<StoredTask, 'id' | 'title'>
+    targetBranch: string
+    sourceBranch: string | null
+    rootPath: string
+    worktreeBasePath?: string | null
+    conflictStrategy: 'manual' | 'agent'
+    handoffNote?: string | null
+    command: string
+    summary: string
+    stdout?: string
+    stderr?: string
+}): string {
+    const repairStrategyLine = options.conflictStrategy === 'manual'
+        ? '- Resolve repairable blockers in-session. If a merge conflict needs human judgment, stop and explain the exact decision that is needed.'
+        : '- Resolve repairable blockers in-session and retry until the target branch contains the task changes.'
+
+    const lines = [
+        options.handoffNote ?? null,
+        'HOPI already attempted the repo merge script directly before this prompt.',
+        '',
+        `Task: ${options.task.title}`,
+        `Task id: ${options.task.id}`,
+        `Source branch: ${options.sourceBranch ?? '(inspect repo state first)'}`,
+        `Target branch: ${options.targetBranch}`,
+        `Working directory: ${options.rootPath}`,
+        options.worktreeBasePath ? `Base repo path: ${options.worktreeBasePath}` : null,
+        '',
+        'Direct CLI result:',
+        ...buildMergeCommandReportLines({
+            command: options.command,
+            summary: options.summary,
+            stdout: options.stdout,
+            stderr: options.stderr,
+            maxChars: 4_000
+        }),
+        '',
+        'Continue from the current repo state in this same worktree session.',
+        'Retry command after repairs:',
+        `\`${options.command}\``,
+        '',
+        'Worktree safety:',
+        `- Do not assume \`git checkout ${options.targetBranch}\` inside the task worktree is safe; that branch may already be checked out in another worktree.`,
+        options.worktreeBasePath
+            ? `- If target-branch operations need the base repo, prefer \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` (${options.worktreeBasePath}) or another worktree-safe git flow.`
+            : `- If target-branch operations need the base repo, inspect \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` before editing the script.`,
+        '- If Git reports "already checked out at" or a similar checked-out-branch error, fix the script or merge strategy instead of repeating the same checkout step.',
+        '',
+        'Recovery loop:',
+        '- Keep the important stdout/stderr from each tool call in the thread.',
+        '- Inspect git/worktree state before guessing at a fix.',
+        '- Edit `.hopi/merge.sh` or any other workspace files when they are the real blocker.',
+        repairStrategyLine,
+        '- Stop only for manual judgment, missing external access, or other out-of-sandbox blockers; when stopping, name the blocker, last failing command, and next manual step.',
+        '',
+        'Required outcome:',
+        '- Target branch contains the task changes.',
+        '- Reply with a short summary of the result or blocker.'
+    ]
+
+    return lines.filter((line): line is string => Boolean(line)).join('\n')
+}
+
+function resolveSessionMergeRootPath(session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>): string | null {
+    const worktreePath = typeof session.metadata?.worktree?.worktreePath === 'string'
+        ? session.metadata.worktree.worktreePath.trim()
+        : ''
+    const metadataPath = typeof session.metadata?.path === 'string' ? session.metadata.path.trim() : ''
+    const basePath = typeof session.metadata?.worktree?.basePath === 'string'
+        ? session.metadata.worktree.basePath.trim()
+        : ''
+
+    return worktreePath || metadataPath || basePath || null
+}
+
+type DirectMergeAttemptOutcome =
+    | {
+        kind: 'success'
+        transcriptText: string
+        targetHead: string | null
+    }
+    | {
+        kind: 'handoff'
+        transcriptText: string
+        promptText: string
+        failureFingerprint: string
+    }
+
+function describeDirectMergeAttempt(options: {
+    result: ScriptExecutionResult
+    mergeState?: MergeGitState | null
+    verification?:
+        | { ok: true; targetHead: string | null }
+        | { ok: false; note: string; blockedReason: string }
+        | null
+}): string {
+    if (!options.result.executed) {
+        return `Direct merge auto-run could not execute \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly; continuing in the linked agent session.`
+    }
+
+    if (options.mergeState?.reason === 'merge_check_failed') {
+        return `Merge-state verification after the direct script attempt failed: ${options.mergeState.error ?? 'unknown error'}.`
+    }
+
+    if (options.verification && !options.verification.ok) {
+        return `Direct merge script ran, but repo-truth verification failed: ${options.verification.blockedReason}.`
+    }
+
+    if (options.mergeState?.canMerge) {
+        const errorSuffix = !options.result.ok && options.result.error
+            ? ` Last script error: ${options.result.error}.`
+            : ''
+        return `Direct merge script ran, but the branch is still mergeable.${errorSuffix}`
+    }
+
+    if (!options.result.ok) {
+        return `Direct merge script reported an error, but repo-truth verification passed anyway: ${options.result.error ?? 'unknown error'}.`
+    }
+
+    return 'Direct merge script completed and repo-truth verification passed.'
+}
+
+async function runDirectMergeScriptAttempt(options: {
+    engine: SyncEngine
+    sessionId: string
+    task: Pick<StoredTask, 'id' | 'title'>
+    projectId: string
+    rootPath: string
+    worktreeBasePath?: string | null
+    worktreePath?: string | null
+    targetBranch: string
+    sourceBranch: string | null
+    conflictStrategy: 'manual' | 'agent'
+    handoffNote?: string | null
+    taskMergedAt: number | null
+    verificationSnapshot: MergeVerificationSnapshot
+}): Promise<DirectMergeAttemptOutcome> {
+    const command = buildMergeScriptCommand({
+        rootPath: options.rootPath,
+        taskId: options.task.id,
+        projectId: options.projectId,
+        targetBranch: options.targetBranch,
+        sourceBranch: options.sourceBranch,
+        worktreeBasePath: options.worktreeBasePath,
+        worktreePath: options.worktreePath ?? options.rootPath,
+        worktreeBranch: options.sourceBranch
+    })
+
+    const result = await runMergeScriptIfPresent({
+        engine: options.engine,
+        sessionId: options.sessionId,
+        cwd: options.rootPath,
+        taskId: options.task.id,
+        projectId: options.projectId,
+        targetBranch: options.targetBranch,
+        sourceBranch: options.sourceBranch,
+        worktreeBasePath: options.worktreeBasePath,
+        worktreePath: options.worktreePath ?? options.rootPath,
+        worktreeBranch: options.sourceBranch
+    })
+
+    if (!result.executed) {
+        const summary = describeDirectMergeAttempt({ result })
+        return {
+            kind: 'handoff',
+            transcriptText: buildDirectMergeResultMessage({
+                command,
+                summary,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                success: false
+            }),
+            promptText: buildDirectMergeRecoveryPrompt({
+                task: options.task,
+                targetBranch: options.targetBranch,
+                sourceBranch: options.sourceBranch,
+                rootPath: options.rootPath,
+                worktreeBasePath: options.worktreeBasePath,
+                conflictStrategy: options.conflictStrategy,
+                handoffNote: options.handoffNote,
+                command,
+                summary,
+                stdout: result.stdout,
+                stderr: result.stderr
+            }),
+            failureFingerprint: buildMergeFailureFingerprint({
+                reason: 'script_not_executed',
+                blockedReason: ('error' in result ? result.error : null) ?? summary,
+                scriptResult: result
+            })
+        }
+    }
+
+    const mergeState = await computeMergeGitState({
+        engine: options.engine,
+        sessionId: options.sessionId,
+        targetBranch: options.targetBranch,
+        sourceBranch: options.sourceBranch,
+        taskMergedAt: options.taskMergedAt
+    })
+
+    const verification = mergeState.canMerge
+        ? null
+        : await verifyMergeVerificationSnapshot({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            targetBranch: options.targetBranch,
+            snapshot: options.verificationSnapshot
+        })
+
+    const summary = describeDirectMergeAttempt({
+        result,
+        mergeState,
+        verification
+    })
+
+    if (!mergeState.canMerge && verification?.ok) {
+        return {
+            kind: 'success',
+            transcriptText: buildDirectMergeResultMessage({
+                command,
+                summary,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                success: true
+            }),
+            targetHead: verification.targetHead
+        }
+    }
+
+    const failureFingerprint = mergeState.reason === 'merge_check_failed'
+        ? buildMergeFailureFingerprint({
+            reason: 'merge_check_failed',
+            blockedReason: mergeState.error ?? 'Merge state check failed after direct merge attempt',
+            mergeState
+        })
+        : verification && !verification.ok
+            ? buildMergeFailureFingerprint({
+                reason: 'verification_failed',
+                blockedReason: verification.blockedReason,
+                mergeState
+            })
+            : buildMergeFailureFingerprint({
+                reason: 'merge_still_pending',
+                blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
+                mergeState
+            })
+
+    return {
+        kind: 'handoff',
+        transcriptText: buildDirectMergeResultMessage({
+            command,
+            summary,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            success: false
+        }),
+        promptText: buildDirectMergeRecoveryPrompt({
+            task: options.task,
+            targetBranch: options.targetBranch,
+            sourceBranch: options.sourceBranch,
+            rootPath: options.rootPath,
+            worktreeBasePath: options.worktreeBasePath,
+            conflictStrategy: options.conflictStrategy,
+            handoffNote: options.handoffNote,
+            command,
+            summary,
+            stdout: result.stdout,
+            stderr: result.stderr
+        }),
+        failureFingerprint
+    }
 }
 
 function getReadyEventLocalKey(content: unknown): string | null {
@@ -355,6 +1436,20 @@ function getReadyEventLocalKey(content: unknown): string | null {
         : null
 }
 
+function isAssistantTurnCompletionMessage(content: unknown): boolean {
+    const record = unwrapRoleWrappedRecordEnvelope(content)
+    if (!record || (record.role !== 'assistant' && record.role !== 'agent')) {
+        return false
+    }
+
+    const messageContent = record.content
+    if (!messageContent || typeof messageContent !== 'object') {
+        return true
+    }
+
+    return (messageContent as { type?: unknown }).type !== 'event'
+}
+
 async function waitForReadyEventForLocalId(options: {
     store: Store
     engine: SyncEngine
@@ -366,19 +1461,27 @@ async function waitForReadyEventForLocalId(options: {
 }): Promise<'ready' | 'session_inactive' | 'timeout'> {
     const startedAt = Date.now()
     let cursor = options.afterSeq
+    let sawAssistantTurnCompletion = false
 
     while (Date.now() - startedAt < options.timeoutMs) {
-        const session = options.engine.getSessionByNamespace(options.sessionId, options.namespace)
-        if (!session || !session.active) {
-            return 'session_inactive'
-        }
-
         const messages = options.store.messages.getMessagesAfter(options.sessionId, cursor, 200)
         for (const message of messages) {
             cursor = Math.max(cursor, message.seq)
             if (getReadyEventLocalKey(message.content) === options.localId) {
                 return 'ready'
             }
+            if (isAssistantTurnCompletionMessage(message.content)) {
+                sawAssistantTurnCompletion = true
+            }
+        }
+
+        const session = options.engine.getSessionByNamespace(options.sessionId, options.namespace)
+        const hasPendingRequests = sessionHasPendingRequests(session)
+        if (sawAssistantTurnCompletion && (!session || !session.active || (!session.thinking && !hasPendingRequests))) {
+            return 'ready'
+        }
+        if (!session || !session.active) {
+            return 'session_inactive'
         }
 
         await waitWithUnrefTimer(AUTO_CONVERSATION_MERGE_POLL_INTERVAL_MS)
@@ -403,14 +1506,59 @@ function buildMergeMonitorKey(namespace: string, taskId: string): string {
     return `${namespace}:${taskId}`
 }
 
+function buildPreviewMonitorKey(namespace: string, taskId: string): string {
+    return `${namespace}:${taskId}`
+}
+
+function cancelPreviewDeferredStart(namespace: string, taskId: string): void {
+    const key = buildPreviewMonitorKey(namespace, taskId)
+    const existing = inFlightPreviewDeferredStartControllers.get(key)
+    if (!existing) {
+        return
+    }
+
+    existing.canceled = true
+    inFlightPreviewDeferredStartControllers.delete(key)
+}
+
+function cancelPreviewSelfHealMonitor(namespace: string, taskId: string): void {
+    const key = buildPreviewMonitorKey(namespace, taskId)
+    const existing = inFlightPreviewMonitorControllers.get(key)
+    if (!existing) {
+        return
+    }
+
+    existing.canceled = true
+    inFlightPreviewMonitorControllers.delete(key)
+}
+
+type DeferredDirectMergeMonitorOptions = {
+    conflictStrategy: 'manual' | 'agent'
+    handoffNote?: string | null
+}
+
+async function waitForSessionToBecomeMergeRunnable(options: {
+    engine: SyncEngine
+    sessionId: string
+    namespace: string
+    timeoutMs: number
+}): Promise<'ready' | 'session_inactive' | 'timeout'> {
+    return waitForSessionToBecomeRunnable({
+        ...options,
+        pollIntervalMs: AUTO_CONVERSATION_MERGE_POLL_INTERVAL_MS
+    })
+}
+
 function scheduleConversationMergeMonitor(options: {
     store: Store
     engine: SyncEngine
     namespace: string
     taskId: string
     sessionId: string
-    promptLocalId: string
+    promptLocalId?: string | null
     targetBranch: string
+    verificationSnapshot?: MergeVerificationSnapshot
+    deferredDirectMerge?: DeferredDirectMergeMonitorOptions
     preferredLocale?: string
 }): boolean {
     const key = buildMergeMonitorKey(options.namespace, options.taskId)
@@ -421,14 +1569,331 @@ function scheduleConversationMergeMonitor(options: {
 
     void (async () => {
         try {
-            const promptMessage = options.store.messages.getMessageByLocalId(options.sessionId, options.promptLocalId)
+            let promptLocalId = options.promptLocalId ?? null
+            let promptSessionId = options.sessionId
+            let verificationSnapshot = options.verificationSnapshot ?? null
+
+            if (!promptLocalId && options.deferredDirectMerge) {
+                const runnableResult = await waitForSessionToBecomeMergeRunnable({
+                    engine: options.engine,
+                    sessionId: options.sessionId,
+                    namespace: options.namespace,
+                    timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
+                })
+
+                const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                if (!latestTask) {
+                    return
+                }
+
+                const resolved = await resolveBestUsableTaskSession({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task: latestTask,
+                    requireWorktree: true,
+                    allowResume: true
+                })
+
+                if (!resolved.ok) {
+                    if (latestTask.mergeRuntime?.status !== 'canceled') {
+                        updateTaskMergeRuntime({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task: latestTask,
+                            status: 'blocked',
+                            latestNote: 'Merge runtime lost its linked worktree session.',
+                            blockedReason: resolved.reason
+                        })
+                    }
+                    return
+                }
+
+                const task = resolved.task
+                const session = resolved.session
+                if (task.mergeRuntime?.status === 'canceled') {
+                    return
+                }
+
+                const hasPendingRequests = sessionHasPendingRequests(session)
+                if (runnableResult === 'timeout') {
+                    const timeoutStatus = hasPendingRequests
+                        ? 'approval_pending'
+                        : session.thinking
+                            ? 'queued'
+                            : 'waiting'
+                    const timeoutNote = hasPendingRequests
+                        ? `Merge is waiting for an approval request before HOPI can auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\`.`
+                        : session.thinking
+                            ? `Merge is still queued behind the current session turn. HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` when the session is free.`
+                            : `Waiting to auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` in the linked session.`
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: timeoutStatus,
+                        sessionId: session.id,
+                        latestNote: timeoutNote,
+                        startedAt: task.mergeRuntime?.startedAt ?? null,
+                        completedAt: null
+                    })
+                    return
+                }
+
+                if (runnableResult === 'session_inactive') {
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: 'blocked',
+                        sessionId: session.id,
+                        latestNote: 'Merge stopped because the linked session went inactive before HOPI could run the merge script. Re-open the worktree session and retry merge.',
+                        blockedReason: 'session_inactive',
+                        failureFingerprint: 'session_inactive'
+                    })
+                    return
+                }
+
+                const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
+                const mergeState = await computeMergeGitState({
+                    engine: options.engine,
+                    sessionId: session.id,
+                    targetBranch: options.targetBranch,
+                    sourceBranch,
+                    taskMergedAt: task.worktreeMergedAt ?? null
+                })
+
+                if (!mergeState.canMerge) {
+                    if (mergeState.reason === 'merge_check_failed') {
+                        const blockedReason = mergeState.error ?? 'Merge state check failed before auto-running the merge script'
+                        const blockedState = buildMergeBlockedRuntimeState({
+                            task,
+                            note: buildMergeStateCheckBlockedNote(blockedReason),
+                            blockedReason,
+                            failureFingerprint: buildMergeFailureFingerprint({
+                                reason: 'merge_check_failed',
+                                blockedReason,
+                                mergeState
+                            }),
+                            manualStep: MERGE_STATE_CHECK_MANUAL_STEP
+                        })
+                        updateTaskMergeRuntime({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task,
+                            status: 'blocked',
+                            sessionId: session.id,
+                            failureFingerprint: blockedState.failureFingerprint,
+                            latestNote: blockedState.latestNote,
+                            blockedReason: blockedState.blockedReason
+                        })
+                        return
+                    }
+
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: 'succeeded',
+                        sessionId: session.id,
+                        latestNote: mergeState.reason === 'already_merged'
+                            ? 'Target branch already contains this task.'
+                            : 'No committed changes are waiting to merge.',
+                        completedAt: Date.now()
+                    })
+                    return
+                }
+
+                const verificationSnapshotResult = await captureMergeVerificationSnapshot({
+                    engine: options.engine,
+                    sessionId: session.id,
+                    targetBranch: options.targetBranch
+                })
+                if (!verificationSnapshotResult.ok) {
+                    const message = verificationSnapshotResult.error
+                    const blockedState = buildMergeBlockedRuntimeState({
+                        task,
+                        note: buildMergeVerificationCaptureBlockedNote(message),
+                        blockedReason: message,
+                        failureFingerprint: buildMergeFailureFingerprint({
+                            reason: 'snapshot_capture_failed',
+                            blockedReason: message
+                        }),
+                        manualStep: 'Inspect repo state in the linked session, then retry merge.'
+                    })
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: 'blocked',
+                        sessionId: session.id,
+                        failureFingerprint: blockedState.failureFingerprint,
+                        latestNote: blockedState.latestNote,
+                        blockedReason: blockedState.blockedReason
+                    })
+                    return
+                }
+                verificationSnapshot = verificationSnapshotResult.snapshot
+
+                const rootPath = resolveSessionMergeRootPath(session)
+                if (rootPath) {
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
+                        sessionId: session.id,
+                        latestNote: `Running \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked session.`,
+                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
+                        completedAt: null
+                    })
+
+                    const directAttempt = await runDirectMergeScriptAttempt({
+                        engine: options.engine,
+                        sessionId: session.id,
+                        task,
+                        projectId: task.projectId,
+                        rootPath,
+                        worktreeBasePath: session.metadata?.worktree?.basePath,
+                        worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
+                        targetBranch: options.targetBranch,
+                        sourceBranch,
+                        conflictStrategy: options.deferredDirectMerge.conflictStrategy,
+                        handoffNote: options.deferredDirectMerge.handoffNote,
+                        taskMergedAt: task.worktreeMergedAt ?? null,
+                        verificationSnapshot
+                    })
+
+                    appendAssistantTextMessage({
+                        store: options.store,
+                        engine: options.engine,
+                        sessionId: session.id,
+                        localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`,
+                        text: directAttempt.transcriptText
+                    })
+
+                    if (directAttempt.kind === 'success') {
+                        await persistSuccessfulTaskMerge({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task,
+                            sessionId: session.id,
+                            sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
+                            mergeResult: {
+                                success: true,
+                                commitHash: directAttempt.targetHead ?? undefined
+                            },
+                            markFinishedOnMerge: task.status === 'in_review',
+                            preferredLocale: options.preferredLocale
+                        })
+                        return
+                    }
+
+                    promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`
+                    promptSessionId = session.id
+                    try {
+                        await options.engine.sendMessage(session.id, {
+                            text: directAttempt.promptText,
+                            localId: promptLocalId,
+                            sentFrom: 'webapp'
+                        })
+                    } catch (error) {
+                        const message = formatErrorMessage(error, 'Failed to send merge request')
+                        updateTaskMergeRuntime({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task,
+                            status: 'blocked',
+                            sessionId: session.id,
+                            latestNote: `Direct merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
+                            blockedReason: message
+                        })
+                        return
+                    }
+
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
+                        sessionId: session.id,
+                        failureFingerprint: directAttempt.failureFingerprint,
+                        latestNote: 'Direct merge tool call ran first. Follow the transcript for CLI output, repairs, and retries.',
+                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
+                        completedAt: null
+                    })
+                } else {
+                    promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`
+                    promptSessionId = session.id
+                    const prompt = buildConversationMergePrompt({
+                        task,
+                        projectId: task.projectId,
+                        targetBranch: options.targetBranch,
+                        sourceBranch,
+                        rootPath,
+                        worktreeBasePath: session.metadata?.worktree?.basePath,
+                        worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
+                        conflictStrategy: options.deferredDirectMerge.conflictStrategy,
+                        handoffNote: options.deferredDirectMerge.handoffNote
+                    })
+
+                    try {
+                        await options.engine.sendMessage(session.id, {
+                            text: prompt,
+                            localId: promptLocalId,
+                            sentFrom: 'webapp'
+                        })
+                    } catch (error) {
+                        const message = formatErrorMessage(error, 'Failed to send merge request')
+                        updateTaskMergeRuntime({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task,
+                            status: 'blocked',
+                            sessionId: session.id,
+                            latestNote: `Delayed merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
+                            blockedReason: message
+                        })
+                        return
+                    }
+
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
+                        sessionId: session.id,
+                        latestNote: 'Merge requested in the linked session. Follow the transcript for tool output and retries.',
+                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
+                        completedAt: null
+                    })
+                }
+            }
+
+            if (!promptLocalId || !verificationSnapshot) {
+                return
+            }
+
+            const promptMessage = options.store.messages.getMessageByLocalId(promptSessionId, promptLocalId)
             const afterSeq = promptMessage?.seq ?? 0
             const readyResult = await waitForReadyEventForLocalId({
                 store: options.store,
                 engine: options.engine,
-                sessionId: options.sessionId,
+                sessionId: promptSessionId,
                 namespace: options.namespace,
-                localId: options.promptLocalId,
+                localId: promptLocalId,
                 afterSeq,
                 timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
             })
@@ -476,6 +1941,18 @@ function scheduleConversationMergeMonitor(options: {
             if (!mergeState.canMerge) {
                 if (mergeState.reason === 'merge_check_failed') {
                     if (task.mergeRuntime?.status !== 'canceled') {
+                        const blockedReason = mergeState.error ?? 'Merge state check failed after conversation merge'
+                        const blockedState = buildMergeBlockedRuntimeState({
+                            task,
+                            note: buildMergeStateCheckBlockedNote(blockedReason),
+                            blockedReason,
+                            failureFingerprint: buildMergeFailureFingerprint({
+                                reason: 'merge_check_failed',
+                                blockedReason,
+                                mergeState
+                            }),
+                            manualStep: MERGE_STATE_CHECK_MANUAL_STEP
+                        })
                         updateTaskMergeRuntime({
                             store: options.store,
                             engine: options.engine,
@@ -483,10 +1960,43 @@ function scheduleConversationMergeMonitor(options: {
                             task,
                             status: 'blocked',
                             sessionId: session.id,
-                            latestNote: mergeState.error ?? 'Merge state check failed after conversation merge.',
-                            blockedReason: mergeState.error ?? 'merge_check_failed'
+                            failureFingerprint: blockedState.failureFingerprint,
+                            latestNote: blockedState.latestNote,
+                            blockedReason: blockedState.blockedReason
                         })
                     }
+                    return
+                }
+
+                const verificationResult = await verifyMergeVerificationSnapshot({
+                    engine: options.engine,
+                    sessionId: session.id,
+                    targetBranch: options.targetBranch,
+                    snapshot: verificationSnapshot
+                })
+                if (!verificationResult.ok) {
+                    const blockedState = buildMergeBlockedRuntimeState({
+                        task,
+                        note: verificationResult.note,
+                        blockedReason: verificationResult.blockedReason,
+                        failureFingerprint: buildMergeFailureFingerprint({
+                            reason: 'verification_failed',
+                            blockedReason: verificationResult.blockedReason,
+                            mergeState
+                        }),
+                        manualStep: MERGE_VERIFICATION_MANUAL_STEP
+                    })
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task,
+                        status: 'blocked',
+                        sessionId: session.id,
+                        failureFingerprint: blockedState.failureFingerprint,
+                        latestNote: blockedState.latestNote,
+                        blockedReason: blockedState.blockedReason
+                    })
                     return
                 }
 
@@ -497,7 +2007,10 @@ function scheduleConversationMergeMonitor(options: {
                     task,
                     sessionId: session.id,
                     sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
-                    mergeResult: { success: true },
+                    mergeResult: {
+                        success: true,
+                        commitHash: verificationResult.targetHead ?? undefined
+                    },
                     markFinishedOnMerge: task.status === 'in_review',
                     preferredLocale: options.preferredLocale
                 })
@@ -508,12 +2021,12 @@ function scheduleConversationMergeMonitor(options: {
                 return
             }
 
-            const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+            const hasPendingRequests = sessionHasPendingRequests(session)
             if (readyResult === 'timeout') {
                 const timeoutStatus = hasPendingRequests
                     ? 'approval_pending'
                     : session.thinking
-                        ? 'running'
+                        ? (isMergeRetryAttempt(task) ? 'retrying' : 'running')
                         : 'waiting'
                 const timeoutNote = hasPendingRequests
                     ? 'Merge is waiting for an approval request before it can continue.'
@@ -542,12 +2055,24 @@ function scheduleConversationMergeMonitor(options: {
                     task,
                     status: 'blocked',
                     sessionId: session.id,
-                    latestNote: 'Merge stopped because the linked session went inactive.',
-                    blockedReason: 'session_inactive'
+                    latestNote: 'Merge stopped because the linked session went inactive. Re-open the worktree session, inspect the last tool output, and retry merge from the task conversation.',
+                    blockedReason: 'session_inactive',
+                    failureFingerprint: 'session_inactive'
                 })
                 return
             }
 
+            const blockedState = buildMergeBlockedRuntimeState({
+                task,
+                note: buildMergeConversationBlockedNote(),
+                blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
+                failureFingerprint: buildMergeFailureFingerprint({
+                    reason: 'merge_still_pending',
+                    blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
+                    mergeState
+                }),
+                manualStep: MERGE_REPAIR_MANUAL_STEP
+            })
             updateTaskMergeRuntime({
                 store: options.store,
                 engine: options.engine,
@@ -555,8 +2080,9 @@ function scheduleConversationMergeMonitor(options: {
                 task,
                 status: 'blocked',
                 sessionId: session.id,
-                latestNote: 'Merge request finished, but the branch is still mergeable.',
-                blockedReason: 'merge_still_pending'
+                failureFingerprint: blockedState.failureFingerprint,
+                latestNote: blockedState.latestNote,
+                blockedReason: blockedState.blockedReason
             })
         } finally {
             inFlightConversationMergeMonitorKeys.delete(key)
@@ -912,597 +2438,6 @@ async function computeMergeGitState(options: {
     }
 }
 
-function shouldAutoResolveMergeConflict(result: {
-    error?: string
-    conflictFiles?: string[]
-    stdout?: string
-    stderr?: string
-}): boolean {
-    return isLikelyMergeConflict(result)
-}
-
-function createMergeConflictPrompt(options: {
-    taskTitle: string
-    sourceBranch: string
-    targetBranch: string
-    conflictFiles: string[]
-}): string {
-    const lines = options.conflictFiles.length > 0
-        ? options.conflictFiles.slice(0, 80).map((file) => `- ${file}`).join('\n')
-        : '- (not provided by git; inspect merge output)'
-
-    return [
-        'Merge to target branch failed with conflicts.',
-        '',
-        'The system is attempting to merge your worktree branch INTO the target branch, but conflicts occurred.',
-        'Please resolve these conflicts in the CURRENT worktree branch by integrating target branch changes first.',
-        '',
-        `Task: ${options.taskTitle}`,
-        `Source branch (current worktree): ${options.sourceBranch}`,
-        `Target branch (merge destination): ${options.targetBranch}`,
-        '',
-        'Known conflict files:',
-        lines,
-        '',
-        'Required outcome:',
-        '1) Merge target branch INTO current worktree branch to get its latest changes.',
-        '2) Resolve any conflicts with minimal/safe edits aligned to task intent.',
-        '3) Ensure git status is clean and all conflict resolutions are committed.',
-        '4) After this, the system will retry merging worktree INTO target. If immediate retry fails, it may continue retrying in background for a short window.',
-        '5) Reply with a brief summary of conflict decisions.',
-        '',
-        'Important:',
-        '- Keep unrelated refactors out.',
-        '- If tests are available for touched code, run focused checks before finishing.'
-    ].join('\n')
-}
-
-function quoteForShell(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-function pickScriptErrorMessage(result: {
-    error?: string
-    stderr?: string
-    stdout?: string
-}): string {
-    const explicit = result.error?.trim()
-    if (explicit) {
-        return explicit
-    }
-
-    const stderr = result.stderr?.trim()
-    if (stderr) {
-        const first = stderr.split('\n').find((line) => line.trim().length > 0)?.trim()
-        if (first) {
-            return first
-        }
-    }
-
-    const stdout = result.stdout?.trim()
-    if (stdout) {
-        const first = stdout.split('\n').find((line) => line.trim().length > 0)?.trim()
-        if (first) {
-            return first
-        }
-    }
-
-    return 'Script execution failed'
-}
-
-function isOutsideWorkingDirectoryError(parts: Array<string | undefined>): boolean {
-    const combined = parts
-        .map((part) => part?.trim() ?? '')
-        .filter((part) => part.length > 0)
-        .join('\n')
-        .toLowerCase()
-    if (!combined) {
-        return false
-    }
-
-    return combined.includes('outside the working directory')
-        || (combined.includes('access denied') && combined.includes('working directory'))
-}
-
-type MergeScriptPresenceResult =
-    | { ok: true; present: boolean }
-    | { ok: false; error: string }
-
-async function checkMergeScriptPresence(options: {
-    engine: SyncEngine
-    sessionId: string
-    cwd: string
-}): Promise<MergeScriptPresenceResult> {
-    const engineWithRunBash = options.engine as unknown as {
-        runBash?: (sessionId: string, params: { command: string; cwd?: string; timeout?: number }) => Promise<{
-            success: boolean
-            stdout?: string
-            stderr?: string
-            error?: string
-        }>
-    }
-    const runBash = engineWithRunBash.runBash
-
-    if (typeof runBash !== 'function') {
-        return { ok: true, present: false }
-    }
-
-    const marker = `__HOPI_MERGE_SCRIPT_PRESENT__:${Date.now()}`
-    const markerToken = quoteForShell(marker)
-    const scriptPath = quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
-    const command = `if [ -f ${scriptPath} ]; then echo ${markerToken}; fi`
-
-    let result: {
-        success: boolean
-        stdout?: string
-        stderr?: string
-        error?: string
-    }
-
-    try {
-        result = await runBash.call(options.engine, options.sessionId, {
-            command,
-            cwd: options.cwd,
-            timeout: 10_000
-        })
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (isOutsideWorkingDirectoryError([message])) {
-            return { ok: true, present: false }
-        }
-        if (message.startsWith('RPC handler not registered:') && message.includes(':bash')) {
-            return { ok: true, present: false }
-        }
-        return { ok: false, error: message }
-    }
-
-    const stdout = result.stdout ?? ''
-    const stderr = result.stderr ?? ''
-
-    if (!result.success) {
-        const message = pickScriptErrorMessage(result)
-        if (isOutsideWorkingDirectoryError([message, stderr, stdout])) {
-            return { ok: true, present: false }
-        }
-        if (message.startsWith('RPC handler not registered:') && message.includes(':bash')) {
-            return { ok: true, present: false }
-        }
-        return { ok: false, error: message }
-    }
-
-    return { ok: true, present: stdout.includes(marker) }
-}
-
-function createMergeScriptPrompt(options: {
-    task: {
-        id: string
-        title: string
-    }
-    projectId: string
-    rootPath: string
-    targetBranch: string
-    sourceBranch: string | null
-}): string {
-    const sourceBranchLine = options.sourceBranch
-        ? options.sourceBranch
-        : '(unknown; read from worktree metadata)'
-
-    const recommendedCommand = [
-        `cd ${quoteForShell(options.rootPath)}`,
-        `chmod +x ${quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)}`,
-        `${PRODUCT_ENV.PROJECT_ROOT}=${quoteForShell(options.rootPath)}`,
-        `${PRODUCT_ENV.TASK_ID}=${quoteForShell(options.task.id)}`,
-        `${PRODUCT_ENV.TASK_PROJECT_ID}=${quoteForShell(options.projectId)}`,
-        `${PRODUCT_ENV.MERGE_TARGET_BRANCH}=${quoteForShell(options.targetBranch)}`,
-        `${PRODUCT_ENV.MERGE_SOURCE_BRANCH}=${quoteForShell(options.sourceBranch ?? '')}`,
-        `bash ${quoteForShell(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)}`
-    ].join(' && ')
-
-    return [
-        'Worktree merge requested.',
-        '',
-        `Task: ${options.task.title}`,
-        `Task id: ${options.task.id}`,
-        `Source branch: ${sourceBranchLine}`,
-        `Target branch: ${options.targetBranch}`,
-        '',
-        `Please run the merge script \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` as a single CLI tool call (bash).`,
-        '',
-        `Working directory (script root): ${options.rootPath}`,
-        '',
-        'Recommended command (single tool call):',
-        `\`${recommendedCommand}\``,
-        '',
-        'If it fails:',
-        '- Inspect stdout/stderr.',
-        '- Fix the underlying issue (merge conflicts, wrong branch, missing remote auth, etc.).',
-        `- Re-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` until the merge is fully completed.`,
-        '',
-        'Required outcome:',
-        '- The worktree branch should no longer be mergeable into target (target contains your changes).',
-        '- Reply with a short summary of what happened and any manual steps required.'
-    ].join('\n')
-}
-
-type AutoRunMergeScriptResult =
-    | { ok: true }
-    | {
-        ok: false
-        status: 500 | 503 | 504
-        error: string
-    }
-
-async function tryAutoRunMergeScript(options: {
-    store: Store
-    engine: SyncEngine
-    namespace: string
-    sessionId: string
-    task: {
-        id: string
-        title: string
-    }
-    projectId: string
-    rootPath: string
-    targetBranch: string
-    sourceBranch: string | null
-}): Promise<AutoRunMergeScriptResult> {
-    const latest = options.store.messages.getMessages(options.sessionId, 1)
-    const afterSeq = latest[0]?.seq ?? 0
-    const localId = `${AUTO_MERGE_SCRIPT_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
-
-    const prompt = createMergeScriptPrompt({
-        task: options.task,
-        projectId: options.projectId,
-        rootPath: options.rootPath,
-        targetBranch: options.targetBranch,
-        sourceBranch: options.sourceBranch
-    })
-
-    try {
-        await options.engine.sendMessage(options.sessionId, {
-            text: prompt,
-            localId,
-            sentFrom: 'webapp'
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Failed to send merge script prompt')
-        return {
-            ok: false,
-            status: resolveMergeExecutionErrorStatus(message),
-            error: message
-        }
-    }
-
-    let assistantMessage: Awaited<ReturnType<typeof waitForAssistantCompletion>> | null = null
-    try {
-        assistantMessage = await waitForAssistantCompletion({
-            store: options.store,
-            engine: options.engine,
-            sessionId: options.sessionId,
-            namespace: options.namespace,
-            afterSeq,
-            timeoutMs: AUTO_MERGE_SCRIPT_TIMEOUT_MS,
-            requireAssistantText: false
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Agent merge script run failed unexpectedly')
-        return {
-            ok: false,
-            status: resolveMergeExecutionErrorStatus(message),
-            error: message
-        }
-    }
-
-    if (!assistantMessage) {
-        return {
-            ok: false,
-            status: 504,
-            error: 'Agent merge script run timed out or session became inactive'
-        }
-    }
-
-    return { ok: true }
-}
-
-type AutoResolveMergeConflictResult =
-    | { ok: true; mergeResult: RpcGitMergeWorktreeResponse }
-    | {
-        ok: false
-        status: 400 | 409 | 500 | 503 | 504
-        error: string
-        conflictFiles: string[]
-        stdout?: string
-        stderr?: string
-        retryableAfterAutoResolve?: boolean
-    }
-
-async function tryAutoResolveMergeConflict(options: {
-    store: Store
-    engine: SyncEngine
-    namespace: string
-    sessionId: string
-    task: {
-        id: string
-        title: string
-    }
-    sourceBranch: string
-    targetBranch: string
-    commitMessage: string
-    conflictFiles: string[]
-}): Promise<AutoResolveMergeConflictResult> {
-    const latest = options.store.messages.getMessages(options.sessionId, 1)
-    const afterSeq = latest[0]?.seq ?? 0
-    const localId = `${AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
-
-    const prompt = createMergeConflictPrompt({
-        taskTitle: options.task.title,
-        sourceBranch: options.sourceBranch,
-        targetBranch: options.targetBranch,
-        conflictFiles: options.conflictFiles
-    })
-
-    try {
-        await options.engine.sendMessage(options.sessionId, {
-            text: prompt,
-            localId,
-            sentFrom: 'webapp'
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Failed to send merge conflict prompt')
-        return {
-            ok: false,
-            status: resolveMergeExecutionErrorStatus(message),
-            error: message,
-            conflictFiles: options.conflictFiles
-        }
-    }
-
-    let assistantMessage: Awaited<ReturnType<typeof waitForAssistantCompletion>> | null = null
-    try {
-        assistantMessage = await waitForAssistantCompletion({
-            store: options.store,
-            engine: options.engine,
-            sessionId: options.sessionId,
-            namespace: options.namespace,
-            afterSeq,
-            timeoutMs: AUTO_MERGE_CONFLICT_TIMEOUT_MS,
-            requireAssistantText: false
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Agent conflict auto-resolution failed unexpectedly')
-        return {
-            ok: false,
-            status: resolveMergeExecutionErrorStatus(message),
-            error: message,
-            conflictFiles: options.conflictFiles
-        }
-    }
-
-    if (!assistantMessage) {
-        return {
-            ok: false,
-            status: 504,
-            error: 'Agent conflict auto-resolution timed out or session became inactive',
-            conflictFiles: options.conflictFiles
-        }
-    }
-
-    let autoCommitResult: Awaited<ReturnType<SyncEngine['gitAutocommitWorktree']>>
-    try {
-        autoCommitResult = await options.engine.gitAutocommitWorktree(options.sessionId, {
-            message: options.commitMessage
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Failed to auto-commit conflict resolution changes')
-        return {
-            ok: false,
-            status: resolveMergeExecutionErrorStatus(message),
-            error: message,
-            conflictFiles: options.conflictFiles
-        }
-    }
-    if (!autoCommitResult.success) {
-        const raw = `${autoCommitResult.error ?? ''}\n${autoCommitResult.stderr ?? ''}`.toLowerCase()
-        const status = raw.includes('unmerged') || raw.includes('conflict') ? 409 : 500
-        return {
-            ok: false,
-            status,
-            error: autoCommitResult.error ?? 'Failed to auto-commit conflict resolution changes',
-            conflictFiles: options.conflictFiles,
-            stdout: autoCommitResult.stdout,
-            stderr: autoCommitResult.stderr
-        }
-    }
-
-    let retryResult: RpcGitMergeWorktreeResponse
-    try {
-        retryResult = await options.engine.gitMergeWorktree(options.sessionId, {
-            targetBranch: options.targetBranch,
-            commitMessage: options.commitMessage
-        })
-    } catch (error) {
-        const message = formatErrorMessage(error, 'Merge retry failed unexpectedly')
-        const status = resolveMergeExecutionErrorStatus(message)
-        return {
-            ok: false,
-            status,
-            error: message,
-            conflictFiles: options.conflictFiles
-        }
-    }
-
-    if (!retryResult.success) {
-        const status = getMergeWorktreeErrorStatus(retryResult)
-        return {
-            ok: false,
-            status,
-            error: retryResult.error ?? 'Merge failed after agent conflict auto-resolution',
-            conflictFiles: retryResult.conflictFiles ?? options.conflictFiles,
-            stdout: retryResult.stdout,
-            stderr: retryResult.stderr,
-            retryableAfterAutoResolve: status >= 500
-        }
-    }
-
-    return { ok: true, mergeResult: retryResult }
-}
-
-function isRetryableAutoMergeFailureStatus(status: number): boolean {
-    return status >= 500
-}
-
-function buildAutoMergeRetryKey(namespace: string, taskId: string): string {
-    return `${namespace}:${taskId}`
-}
-
-function scheduleBackgroundAutoMergeRetry(options: {
-    store: Store
-    getSyncEngine: () => SyncEngine | null
-    namespace: string
-    taskId: string
-    targetBranch: string
-    markFinishedOnMerge?: boolean
-    preferredLocale?: string
-}): boolean {
-    const key = buildAutoMergeRetryKey(options.namespace, options.taskId)
-    if (inFlightAutoMergeRetryKeys.has(key)) {
-        return false
-    }
-    inFlightAutoMergeRetryKeys.add(key)
-
-    void (async () => {
-        const startedAt = Date.now()
-        try {
-            for (let attempt = 1; attempt <= AUTO_MERGE_BACKGROUND_RETRY_MAX_ATTEMPTS; attempt += 1) {
-                if (Date.now() - startedAt > AUTO_MERGE_BACKGROUND_RETRY_TIMEOUT_MS) {
-                    const engine = options.getSyncEngine()
-                    if (engine) {
-                        emitRealtimeToast({
-                            engine,
-                            namespace: options.namespace,
-                            title: 'Merge retry timed out',
-                            body: 'Automatic merge retry timed out. Please retry merge manually.'
-                        })
-                    }
-                    return
-                }
-
-                const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-                if (!task || task.archivedAt) {
-                    return
-                }
-                if (task.worktreeMergedAt) {
-                    return
-                }
-                if (!task.activeSessionId) {
-                    return
-                }
-
-                const engine = options.getSyncEngine()
-                if (!engine) {
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                const access = engine.resolveSessionAccess(task.activeSessionId, options.namespace)
-                if (!access.ok) {
-                    if (access.reason === 'access-denied') {
-                        return
-                    }
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                const session = access.session
-                if (!session.metadata?.worktree) {
-                    return
-                }
-
-                const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
-                if (session.thinking || hasPendingRequests) {
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
-                const mergeState = await computeMergeGitState({
-                    engine,
-                    sessionId: session.id,
-                    targetBranch: options.targetBranch,
-                    sourceBranch,
-                    taskMergedAt: task.worktreeMergedAt ?? null
-                })
-
-                if (!mergeState.canMerge) {
-                    if (mergeState.reason === 'already_merged' || mergeState.reason === 'no_changes') {
-                        return
-                    }
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                const commitMessage = buildWorktreeMergeCommitMessage(task)
-                let result: RpcGitMergeWorktreeResponse
-                try {
-                    result = await engine.gitMergeWorktree(session.id, {
-                        targetBranch: options.targetBranch,
-                        commitMessage
-                    })
-                } catch (error) {
-                    console.warn('[Tasks] Background merge retry failed unexpectedly:', error)
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                if (!result.success) {
-                    const status = getMergeWorktreeErrorStatus(result)
-                    if (!isRetryableAutoMergeFailureStatus(status)) {
-                        emitRealtimeToast({
-                            engine,
-                            namespace: options.namespace,
-                            title: 'Merge retry stopped',
-                            body: `Automatic merge retry stopped: ${pickReadableMergeError(result, 'Merge failed')}`,
-                            sessionId: session.id
-                        })
-                        return
-                    }
-
-                    await waitWithUnrefTimer(AUTO_MERGE_BACKGROUND_RETRY_INTERVAL_MS)
-                    continue
-                }
-
-                const updatedTask = await persistSuccessfulTaskMerge({
-                    store: options.store,
-                    engine,
-                    namespace: options.namespace,
-                    task,
-                    sessionId: session.id,
-                    sessionMetadataWorktreeBaseCommit: session.metadata.worktree.baseCommit,
-                    mergeResult: result,
-                    markFinishedOnMerge: options.markFinishedOnMerge,
-                    preferredLocale: options.preferredLocale
-                })
-                if (updatedTask) {
-                    emitRealtimeToast({
-                        engine,
-                        namespace: options.namespace,
-                        title: 'Merge completed',
-                        body: `Automatic retry merged task "${updatedTask.title}" successfully.`,
-                        sessionId: session.id
-                    })
-                }
-                return
-            }
-        } catch (error) {
-            console.error('[Tasks] Unexpected background merge retry error:', error)
-        } finally {
-            inFlightAutoMergeRetryKeys.delete(key)
-        }
-    })()
-
-    return true
-}
-
 function resolveRequestLocale(rawLocale: string | undefined): string | undefined {
     const trimmed = rawLocale?.trim()
     if (!trimmed) {
@@ -1639,7 +2574,8 @@ function createPreviewSetupPrompt(options: {
         : 'auto'
 
     return [
-        'Preview start failed because no runnable preview command was found.',
+        'HOPI already attempted preview start directly before this prompt.',
+        'No runnable preview command was found.',
         '',
         `Task: ${options.task.title} (${options.task.id})`,
         `Preview mode: ${options.mode}`,
@@ -1662,6 +2598,43 @@ function createPreviewSetupPrompt(options: {
     ].join('\n')
 }
 
+function createPreviewRepairPrompt(options: {
+    task: {
+        id: string
+        title: string
+    }
+    mode: 'local' | 'worktree'
+    rootPath: string
+    basePort?: number
+    failureMessage: string
+    command?: string | null
+    logTail?: string[]
+}): string {
+    const preferredPortLine = typeof options.basePort === 'number'
+        ? String(options.basePort)
+        : 'auto'
+    const recentLogs = trimMergeCommandOutput((options.logTail ?? []).slice(-12).join('\n'), 4_000)
+
+    return [
+        'HOPI already attempted preview start directly before this prompt.',
+        'The preview process still failed after launch.',
+        '',
+        `Task: ${options.task.title} (${options.task.id})`,
+        `Preview mode: ${options.mode}`,
+        `Project root path: ${options.rootPath}`,
+        `Preferred web port base: ${preferredPortLine}`,
+        options.command ? `Last preview command: \`${options.command}\`` : null,
+        `Last error: ${options.failureMessage}`,
+        recentLogs ? `Recent preview logs:\n\`\`\`\n${recentLogs}\n\`\`\`` : null,
+        '',
+        'Fix the real blocker so direct preview start works reliably from this session.',
+        `If \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\` exists, repair it when it is the blocker; otherwise fix the app/config/package scripts or ports.`,
+        'Keep changes minimal; avoid unrelated refactors.',
+        `If using \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\`, keep the readiness marker exactly as \`${PRODUCT_PREVIEW_READY_MARKER}http://127.0.0.1:<port>\`.`,
+        'Run a quick sanity check after repairs and reply with a short summary.'
+    ].filter((line): line is string => Boolean(line)).join('\n')
+}
+
 type PreviewStartAttemptResult =
     | { ok: true; preview: Awaited<ReturnType<SyncEngine['previewStartForSession']>> }
     | { ok: false; status: 500 | 503; error: string; rawMessage: string }
@@ -1673,12 +2646,12 @@ async function startPreviewWithFallback(options: {
     basePort?: number
 }): Promise<PreviewStartAttemptResult> {
     try {
-        const preview = await options.engine.previewStartForSession(options.resolved.session.id, {
+        const preview = normalizeLivePreviewStatus(await options.engine.previewStartForSession(options.resolved.session.id, {
             taskId: options.resolved.task.id,
             rootPath: options.previewPath.rootPath,
             mode: options.previewPath.mode,
             basePort: options.basePort
-        })
+        }))
         return { ok: true, preview }
     } catch (sessionError) {
         const sessionMessage = formatErrorMessage(sessionError, 'Preview start failed')
@@ -1701,13 +2674,13 @@ async function startPreviewWithFallback(options: {
         }
 
         try {
-            const preview = await options.engine.previewStart(options.resolved.machineId, {
+            const preview = normalizeLivePreviewStatus(await options.engine.previewStart(options.resolved.machineId, {
                 taskId: options.resolved.task.id,
                 sessionId: options.resolved.session.id,
                 rootPath: options.previewPath.rootPath,
                 mode: options.previewPath.mode,
                 basePort: options.basePort
-            })
+            }))
             return { ok: true, preview }
         } catch (machineError) {
             const machineMessage = formatErrorMessage(machineError, 'Preview start failed')
@@ -1724,7 +2697,7 @@ async function startPreviewWithFallback(options: {
     }
 }
 
-type AutoSetupPreviewResult =
+type PreviewRepairResult =
     | { ok: true }
     | {
         ok: false
@@ -1732,39 +2705,36 @@ type AutoSetupPreviewResult =
         error: string
     }
 
-async function tryAutoSetupPreviewScript(options: {
+type PreviewStatusLookupResult =
+    | { ok: true; preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> }
+    | { ok: false; status: 500 | 503; error: string; rawMessage: string }
+
+type ObservedPreviewStartResult =
+    | { kind: 'ready' | 'starting'; preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> }
+    | { kind: 'failed'; preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> | null; status: 500 | 503; error: string; rawMessage: string }
+
+async function sendPreviewRepairPrompt(options: {
     store: Store
     engine: SyncEngine
     namespace: string
     sessionId: string
-    task: {
-        id: string
-        title: string
-    }
-    mode: 'local' | 'worktree'
-    rootPath: string
-    basePort?: number
-    failureMessage: string
-}): Promise<AutoSetupPreviewResult> {
+    taskId: string
+    prompt: string
+    localIdPrefix: string
+    failureFallback: string
+}): Promise<PreviewRepairResult> {
     const latest = options.store.messages.getMessages(options.sessionId, 1)
     const afterSeq = latest[0]?.seq ?? 0
-    const localId = `${AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`
-    const prompt = createPreviewSetupPrompt({
-        task: options.task,
-        mode: options.mode,
-        rootPath: options.rootPath,
-        basePort: options.basePort,
-        failureMessage: options.failureMessage
-    })
+    const localId = `${options.localIdPrefix}${options.taskId}:${Date.now()}`
 
     try {
         await options.engine.sendMessage(options.sessionId, {
-            text: prompt,
+            text: options.prompt,
             localId,
             sentFrom: 'webapp'
         })
     } catch (error) {
-        const message = formatErrorMessage(error, 'Failed to send preview setup prompt')
+        const message = formatErrorMessage(error, options.failureFallback)
         return {
             ok: false,
             status: resolvePreviewAutomationErrorStatus(message),
@@ -1784,7 +2754,7 @@ async function tryAutoSetupPreviewScript(options: {
             requireAssistantText: false
         })
     } catch (error) {
-        const message = formatErrorMessage(error, 'Agent preview setup failed unexpectedly')
+        const message = formatErrorMessage(error, 'Agent preview repair failed unexpectedly')
         return {
             ok: false,
             status: resolvePreviewAutomationErrorStatus(message),
@@ -1796,11 +2766,1138 @@ async function tryAutoSetupPreviewScript(options: {
         return {
             ok: false,
             status: 504,
-            error: 'Agent preview setup timed out or session became inactive'
+            error: 'Agent preview repair timed out or session became inactive'
         }
     }
 
     return { ok: true }
+}
+
+async function tryAutoSetupPreviewScript(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    sessionId: string
+    task: {
+        id: string
+        title: string
+    }
+    mode: 'local' | 'worktree'
+    rootPath: string
+    basePort?: number
+    failureMessage: string
+}): Promise<PreviewRepairResult> {
+    return await sendPreviewRepairPrompt({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        sessionId: options.sessionId,
+        taskId: options.task.id,
+        prompt: createPreviewSetupPrompt({
+            task: options.task,
+            mode: options.mode,
+            rootPath: options.rootPath,
+            basePort: options.basePort,
+            failureMessage: options.failureMessage
+        }),
+        localIdPrefix: AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX,
+        failureFallback: 'Failed to send preview setup prompt'
+    })
+}
+
+async function tryAutoRepairPreviewFailure(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    sessionId: string
+    task: {
+        id: string
+        title: string
+    }
+    mode: 'local' | 'worktree'
+    rootPath: string
+    basePort?: number
+    failureMessage: string
+    command?: string | null
+    logTail?: string[]
+}): Promise<PreviewRepairResult> {
+    return await sendPreviewRepairPrompt({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        sessionId: options.sessionId,
+        taskId: options.task.id,
+        prompt: createPreviewRepairPrompt({
+            task: options.task,
+            mode: options.mode,
+            rootPath: options.rootPath,
+            basePort: options.basePort,
+            failureMessage: options.failureMessage,
+            command: options.command,
+            logTail: options.logTail
+        }),
+        localIdPrefix: AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX,
+        failureFallback: 'Failed to send preview repair prompt'
+    })
+}
+
+async function getPreviewStatusWithFallback(options: {
+    engine: SyncEngine
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+}): Promise<PreviewStatusLookupResult> {
+    try {
+        const preview = normalizeLivePreviewStatus(await options.engine.previewStatusForSession(options.resolved.session.id))
+        return { ok: true, preview }
+    } catch (sessionError) {
+        const sessionMessage = formatErrorMessage(sessionError, 'Preview status failed')
+        if (!isPreviewRpcUnavailable(sessionMessage)) {
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(sessionMessage),
+                error: sessionMessage,
+                rawMessage: sessionMessage
+            }
+        }
+
+        if (!options.resolved.machineId) {
+            return {
+                ok: false,
+                status: 503,
+                error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`,
+                rawMessage: sessionMessage
+            }
+        }
+
+        try {
+            const preview = normalizeLivePreviewStatus(await options.engine.previewStatus(options.resolved.machineId))
+            return { ok: true, preview }
+        } catch (machineError) {
+            const machineMessage = formatErrorMessage(machineError, 'Preview status failed')
+            const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                : machineMessage
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(machineMessage),
+                error: combinedMessage,
+                rawMessage: machineMessage
+            }
+        }
+    }
+}
+
+async function stopPreviewWithFallback(options: {
+    engine: SyncEngine
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+}): Promise<PreviewStatusLookupResult> {
+    try {
+        const preview = await options.engine.previewStopForSession(options.resolved.session.id, { taskId: options.resolved.task.id })
+        return { ok: true, preview }
+    } catch (sessionError) {
+        const sessionMessage = formatErrorMessage(sessionError, 'Preview stop failed')
+        if (!isPreviewRpcUnavailable(sessionMessage)) {
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(sessionMessage),
+                error: sessionMessage,
+                rawMessage: sessionMessage
+            }
+        }
+
+        if (!options.resolved.machineId) {
+            return {
+                ok: false,
+                status: 503,
+                error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`,
+                rawMessage: sessionMessage
+            }
+        }
+
+        try {
+            const preview = await options.engine.previewStop(options.resolved.machineId, { taskId: options.resolved.task.id })
+            return { ok: true, preview }
+        } catch (machineError) {
+            const machineMessage = formatErrorMessage(machineError, 'Preview stop failed')
+            const combinedMessage = isPreviewRpcUnavailable(machineMessage)
+                ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
+                : machineMessage
+            return {
+                ok: false,
+                status: resolvePreviewErrorStatus(machineMessage),
+                error: combinedMessage,
+                rawMessage: machineMessage
+            }
+        }
+    }
+}
+
+async function observePreviewStart(options: {
+    engine: SyncEngine
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+    initialPreview: Awaited<ReturnType<SyncEngine['previewStartForSession']>>
+    timeoutMs?: number
+}): Promise<ObservedPreviewStartResult> {
+    const timeoutMs = options.timeoutMs ?? AUTO_PREVIEW_START_OBSERVE_TIMEOUT_MS
+    let preview = options.initialPreview
+
+    const describeFailure = (currentPreview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>): {
+        error: string
+        rawMessage: string
+    } => {
+        const rawMessage = currentPreview.error?.trim()
+            || (currentPreview.status === 'stopped'
+                ? 'Preview stopped before reporting ready'
+                : 'Preview failed before reporting ready')
+        return {
+            error: rawMessage,
+            rawMessage
+        }
+    }
+
+    if (preview.status === 'ready') {
+        return { kind: 'ready', preview }
+    }
+    if (preview.status === 'error' || preview.status === 'stopped') {
+        const failure = describeFailure(preview)
+        return {
+            kind: 'failed',
+            preview,
+            status: resolvePreviewErrorStatus(failure.rawMessage),
+            error: failure.error,
+            rawMessage: failure.rawMessage
+        }
+    }
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+        await waitWithUnrefTimer(250)
+        const statusResult = await getPreviewStatusWithFallback({
+            engine: options.engine,
+            resolved: options.resolved
+        })
+        if (!statusResult.ok) {
+            return {
+                kind: 'failed',
+                preview: null,
+                status: statusResult.status,
+                error: statusResult.error,
+                rawMessage: statusResult.rawMessage
+            }
+        }
+
+        preview = statusResult.preview
+        if (preview.status === 'ready') {
+            return { kind: 'ready', preview }
+        }
+        if (preview.status === 'error' || preview.status === 'stopped') {
+            const failure = describeFailure(preview)
+            return {
+                kind: 'failed',
+                preview,
+                status: resolvePreviewErrorStatus(failure.rawMessage),
+                error: failure.error,
+                rawMessage: failure.rawMessage
+            }
+        }
+    }
+
+    return { kind: 'starting', preview }
+}
+
+type ObservedPreviewAttemptResult =
+    | {
+        ok: true
+        preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
+        previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+        observedKind: 'ready' | 'starting'
+    }
+    | {
+        ok: false
+        status: 500 | 503
+        error: string
+        rawMessage: string
+        preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> | null
+        previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+    }
+
+async function runObservedPreviewAttempt(options: {
+    engine: SyncEngine
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+    previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+    basePort?: number
+}): Promise<ObservedPreviewAttemptResult> {
+    const startAttempt = await startPreviewWithFallback({
+        engine: options.engine,
+        resolved: options.resolved,
+        previewPath: options.previewPath,
+        basePort: options.basePort
+    })
+    if (!startAttempt.ok) {
+        return {
+            ok: false,
+            status: startAttempt.status,
+            error: startAttempt.error,
+            rawMessage: startAttempt.rawMessage,
+            preview: null,
+            previewPath: options.previewPath
+        }
+    }
+
+    const observed = await observePreviewStart({
+        engine: options.engine,
+        resolved: options.resolved,
+        initialPreview: startAttempt.preview
+    })
+    if (observed.kind === 'failed') {
+        return {
+            ok: false,
+            status: observed.status,
+            error: observed.error,
+            rawMessage: observed.rawMessage,
+            preview: observed.preview,
+            previewPath: options.previewPath
+        }
+    }
+
+    return {
+        ok: true,
+        preview: observed.preview,
+        previewPath: options.previewPath,
+        observedKind: observed.kind
+    }
+}
+
+function buildIdlePreviewStatus(options: {
+    taskId: string
+    sessionId: string
+    previewPath?: { mode: 'local' | 'worktree'; rootPath: string } | null
+}): Awaited<ReturnType<SyncEngine['previewStatusForSession']>> {
+    return {
+        active: false,
+        status: 'idle',
+        taskId: options.taskId,
+        sessionId: options.sessionId,
+        mode: options.previewPath?.mode,
+        rootPath: options.previewPath?.rootPath,
+        updatedAt: Date.now(),
+        logTail: []
+    }
+}
+
+type PreviewStartFlowResult = {
+    status: number
+    body: Record<string, unknown>
+    task: StoredTaskWithPreviewRuntime
+}
+
+async function runPreviewStartFlow(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    resolved: Extract<ReturnType<typeof resolveTaskPreviewAccess>, { ok: true }>
+    task: StoredTaskWithPreviewRuntime
+    previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+    basePort?: number
+    requestedAt?: number
+}): Promise<PreviewStartFlowResult> {
+    const previousRuntime = options.task.previewRuntime ?? null
+    const requestStartedAt = Date.now()
+    let previewTask = updateTaskPreviewRuntime({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task: options.task,
+        status: isPreviewRetryAttempt(options.task) ? 'retrying' : 'running',
+        sessionId: options.resolved.session.id,
+        requestedAt: options.requestedAt,
+        startedAt: requestStartedAt,
+        completedAt: null,
+        retryCount: previousRuntime?.retryCount ?? 0,
+        failureFingerprint: previousRuntime?.failureFingerprint ?? null,
+        blockedReason: null,
+        latestNote: buildPreviewRunningNote()
+    }) ?? options.task
+
+    const appendPreviewResult = (text: string): void => {
+        appendAssistantTextMessage({
+            store: options.store,
+            engine: options.engine,
+            sessionId: options.resolved.session.id,
+            localId: `${AUTO_PREVIEW_RESULT_LOCAL_ID_PREFIX}${options.resolved.task.id}:${Date.now()}:${randomUUID()}`,
+            text
+        })
+    }
+
+    const appendPreviewStateResult = (messageOptions: {
+        status: 'success' | 'failure'
+        preview?: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> | null
+        previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+        error?: string | null
+        fallbackNote?: string | null
+    }): void => {
+        appendPreviewResult(buildPreviewStartResultMessage({
+            status: messageOptions.status,
+            mode: messageOptions.preview?.mode ?? messageOptions.previewPath.mode,
+            rootPath: messageOptions.preview?.rootPath ?? messageOptions.previewPath.rootPath,
+            command: messageOptions.preview?.command ?? null,
+            url: messageOptions.preview?.url ?? null,
+            previewStatus: messageOptions.preview?.status ?? null,
+            error: messageOptions.error ?? messageOptions.preview?.error ?? null,
+            logTail: messageOptions.preview?.logTail,
+            fallbackNote: messageOptions.fallbackNote ?? null
+        }))
+    }
+
+    let attemptedPreviewPath: Extract<TaskPreviewPathResult, { ok: true }> = options.previewPath
+    let attemptResult = await runObservedPreviewAttempt({
+        engine: options.engine,
+        resolved: options.resolved,
+        previewPath: options.previewPath,
+        basePort: options.basePort
+    })
+    let fallbackNote: string | null = null
+
+    if (!attemptResult.ok && isMissingPreviewCommandError(attemptResult.rawMessage)) {
+        const fallbackPath = resolveTaskPreviewFallbackPath({
+            session: options.resolved.session,
+            primary: options.previewPath
+        })
+        if (fallbackPath) {
+            const fallbackAttempt = await runObservedPreviewAttempt({
+                engine: options.engine,
+                resolved: options.resolved,
+                previewPath: fallbackPath,
+                basePort: options.basePort
+            })
+            if (fallbackAttempt.ok) {
+                appendPreviewStateResult({
+                    status: 'success',
+                    preview: fallbackAttempt.preview,
+                    previewPath: fallbackPath,
+                    fallbackNote: `Fallback succeeded after ${options.previewPath.mode} preview root reported no runnable command.`
+                })
+                previewTask = syncPreviewRuntimeFromLivePreview({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task: previewTask,
+                    preview: fallbackAttempt.preview
+                })
+                schedulePreviewSelfHealMonitor({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    taskId: options.resolved.task.id,
+                    sessionId: options.resolved.session.id,
+                    previewPath: fallbackPath,
+                    basePort: options.basePort
+                })
+                return {
+                    status: 200,
+                    body: buildTaskPreviewResponse({
+                        task: previewTask,
+                        preview: fallbackAttempt.preview
+                    }),
+                    task: previewTask
+                }
+            }
+
+            attemptResult = fallbackAttempt
+            attemptedPreviewPath = fallbackPath
+            fallbackNote = isMissingPreviewCommandError(fallbackAttempt.rawMessage)
+                ? `Fallback from ${options.previewPath.mode} preview root still needs setup.`
+                : `Fallback from ${options.previewPath.mode} preview root also failed after launch.`
+        }
+    }
+
+    if (attemptResult.ok) {
+        appendPreviewStateResult({
+            status: 'success',
+            preview: attemptResult.preview,
+            previewPath: attemptResult.previewPath
+        })
+        previewTask = syncPreviewRuntimeFromLivePreview({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: previewTask,
+            preview: attemptResult.preview
+        })
+        schedulePreviewSelfHealMonitor({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            taskId: options.resolved.task.id,
+            sessionId: options.resolved.session.id,
+            previewPath: attemptResult.previewPath,
+            basePort: options.basePort
+        })
+        return {
+            status: 200,
+            body: buildTaskPreviewResponse({
+                task: previewTask,
+                preview: attemptResult.preview
+            }),
+            task: previewTask
+        }
+    }
+
+    appendPreviewStateResult({
+        status: 'failure',
+        preview: attemptResult.preview,
+        previewPath: attemptedPreviewPath,
+        error: attemptResult.error,
+        fallbackNote
+    })
+
+    if (attemptResult.status === 503) {
+        const failureFingerprint = buildPreviewFailureFingerprint({
+            reason: 'preview_start_failed',
+            blockedReason: attemptResult.error,
+            previewPath: attemptedPreviewPath,
+            preview: attemptResult.preview
+                ? {
+                    status: attemptResult.preview.status,
+                    command: attemptResult.preview.command ?? null,
+                    error: attemptResult.preview.error ?? null,
+                    logTail: attemptResult.preview.logTail
+                }
+                : null
+        })
+        previewTask = blockPreviewRuntime({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: previewTask,
+            sessionId: options.resolved.session.id,
+            blockedReason: attemptResult.error,
+            failureFingerprint,
+            note: buildPreviewBlockedNote(attemptResult.error, PREVIEW_SESSION_MANUAL_STEP),
+            manualStep: PREVIEW_SESSION_MANUAL_STEP,
+            retryCount: previewTask.previewRuntime?.retryCount
+        })
+        return {
+            status: attemptResult.status,
+            body: {
+                error: attemptResult.error,
+                previewRuntime: previewTask.previewRuntime
+            },
+            task: previewTask
+        }
+    }
+
+    const repairFlag = isMissingPreviewCommandError(attemptResult.rawMessage)
+        ? 'autoSetupAttempted'
+        : 'autoRepairAttempted'
+    const directFailureFingerprint = buildPreviewFailureFingerprint({
+        reason: 'preview_start_failed',
+        blockedReason: attemptResult.rawMessage,
+        previewPath: attemptedPreviewPath,
+        preview: attemptResult.preview
+            ? {
+                status: attemptResult.preview.status,
+                command: attemptResult.preview.command ?? null,
+                error: attemptResult.preview.error ?? null,
+                logTail: attemptResult.preview.logTail
+            }
+            : null
+    })
+    if (previousRuntime?.failureFingerprint === directFailureFingerprint) {
+        previewTask = blockPreviewRuntime({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: {
+                ...previewTask,
+                previewRuntime: previewTask.previewRuntime
+                    ? {
+                        ...previewTask.previewRuntime,
+                        failureFingerprint: previousRuntime.failureFingerprint
+                    }
+                    : previousRuntime
+            },
+            sessionId: options.resolved.session.id,
+            blockedReason: attemptResult.error,
+            failureFingerprint: directFailureFingerprint,
+            note: buildPreviewBlockedNote(attemptResult.error, PREVIEW_REPAIR_MANUAL_STEP),
+            manualStep: PREVIEW_REPAIR_MANUAL_STEP,
+            retryCount: previousRuntime.retryCount
+        })
+        return {
+            status: attemptResult.status,
+            body: {
+                error: attemptResult.error,
+                previewRuntime: previewTask.previewRuntime
+            },
+            task: previewTask
+        }
+    }
+
+    const retryCount = getNextPreviewRepairAttemptRetryCount(previewTask)
+    previewTask = updateTaskPreviewRuntime({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task: previewTask,
+        status: 'retrying',
+        sessionId: options.resolved.session.id,
+        retryCount,
+        failureFingerprint: directFailureFingerprint,
+        blockedReason: null,
+        latestNote: buildPreviewRetryingNote(),
+        completedAt: null
+    }) ?? previewTask
+
+    const repairAttempt = isMissingPreviewCommandError(attemptResult.rawMessage)
+        ? await tryAutoSetupPreviewScript({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            sessionId: options.resolved.session.id,
+            task: {
+                id: options.resolved.task.id,
+                title: options.resolved.task.title
+            },
+            mode: attemptedPreviewPath.mode,
+            rootPath: attemptedPreviewPath.rootPath,
+            basePort: options.basePort,
+            failureMessage: attemptResult.rawMessage
+        })
+        : await tryAutoRepairPreviewFailure({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            sessionId: options.resolved.session.id,
+            task: {
+                id: options.resolved.task.id,
+                title: options.resolved.task.title
+            },
+            mode: attemptedPreviewPath.mode,
+            rootPath: attemptedPreviewPath.rootPath,
+            basePort: options.basePort,
+            failureMessage: attemptResult.rawMessage,
+            command: attemptResult.preview?.command ?? null,
+            logTail: attemptResult.preview?.logTail
+        })
+    if (!repairAttempt.ok) {
+        appendPreviewStateResult({
+            status: 'failure',
+            preview: attemptResult.preview,
+            previewPath: attemptedPreviewPath,
+            error: repairAttempt.error,
+            fallbackNote: 'Automatic preview repair prompt did not complete successfully.'
+        })
+        const manualStep = repairAttempt.status === 503 ? PREVIEW_SESSION_MANUAL_STEP : PREVIEW_REPAIR_MANUAL_STEP
+        const failureFingerprint = buildPreviewFailureFingerprint({
+            reason: 'repair_prompt_failed',
+            blockedReason: repairAttempt.error,
+            previewPath: attemptedPreviewPath
+        })
+        previewTask = blockPreviewRuntime({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: previewTask,
+            sessionId: options.resolved.session.id,
+            blockedReason: repairAttempt.error,
+            failureFingerprint,
+            note: buildPreviewBlockedNote(repairAttempt.error, manualStep),
+            manualStep,
+            retryCount
+        })
+        const body: Record<string, unknown> = {
+            error: repairAttempt.error,
+            previewRuntime: previewTask.previewRuntime
+        }
+        body[repairFlag] = true
+        return {
+            status: repairAttempt.status,
+            body,
+            task: previewTask
+        }
+    }
+
+    const retryAttempt = await runObservedPreviewAttempt({
+        engine: options.engine,
+        resolved: options.resolved,
+        previewPath: attemptedPreviewPath,
+        basePort: options.basePort
+    })
+    if (retryAttempt.ok) {
+        appendPreviewStateResult({
+            status: 'success',
+            preview: retryAttempt.preview,
+            previewPath: retryAttempt.previewPath,
+            fallbackNote: 'Preview auto-repair completed and direct retry now works.'
+        })
+        previewTask = syncPreviewRuntimeFromLivePreview({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            task: previewTask,
+            preview: retryAttempt.preview
+        })
+        schedulePreviewSelfHealMonitor({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            taskId: options.resolved.task.id,
+            sessionId: options.resolved.session.id,
+            previewPath: retryAttempt.previewPath,
+            basePort: options.basePort
+        })
+        const body: Record<string, unknown> = {
+            preview: retryAttempt.preview,
+            previewRuntime: previewTask.previewRuntime
+        }
+        body[repairFlag] = true
+        return {
+            status: 200,
+            body,
+            task: previewTask
+        }
+    }
+
+    appendPreviewStateResult({
+        status: 'failure',
+        preview: retryAttempt.preview,
+        previewPath: attemptedPreviewPath,
+        error: retryAttempt.error,
+        fallbackNote: 'Preview still failed after the automatic repair prompt.'
+    })
+    const retryFailureFingerprint = buildPreviewFailureFingerprint({
+        reason: 'preview_start_failed',
+        blockedReason: retryAttempt.rawMessage,
+        previewPath: attemptedPreviewPath,
+        preview: retryAttempt.preview
+            ? {
+                status: retryAttempt.preview.status,
+                command: retryAttempt.preview.command ?? null,
+                error: retryAttempt.preview.error ?? null,
+                logTail: retryAttempt.preview.logTail
+            }
+            : null
+    })
+    previewTask = blockPreviewRuntime({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task: previewTask,
+        sessionId: options.resolved.session.id,
+        blockedReason: retryAttempt.error,
+        failureFingerprint: retryFailureFingerprint,
+        note: buildPreviewBlockedNote(retryAttempt.error, PREVIEW_REPAIR_MANUAL_STEP),
+        manualStep: PREVIEW_REPAIR_MANUAL_STEP,
+        retryCount
+    })
+    const body: Record<string, unknown> = {
+        error: retryAttempt.error,
+        previewRuntime: previewTask.previewRuntime
+    }
+    body[repairFlag] = true
+    return {
+        status: retryAttempt.status,
+        body,
+        task: previewTask
+    }
+}
+
+function scheduleDeferredPreviewStart(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+    requestedMode: 'auto' | 'local' | 'worktree'
+    basePort?: number
+}): void {
+    const key = buildPreviewMonitorKey(options.namespace, options.taskId)
+    const existing = inFlightPreviewDeferredStartControllers.get(key)
+    if (existing) {
+        existing.canceled = true
+    }
+
+    const controller = { canceled: false }
+    inFlightPreviewDeferredStartControllers.set(key, controller)
+
+    void (async () => {
+        try {
+            const startedAt = Date.now()
+
+            while (!controller.canceled && Date.now() - startedAt < AUTO_PREVIEW_DEFERRED_START_TIMEOUT_MS) {
+                const resolved = resolveTaskPreviewAccess({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    taskId: options.taskId
+                })
+                if (!resolved.ok) {
+                    return
+                }
+
+                let previewTask = withTaskPreviewRuntime(resolved.task)
+                if (!previewTask) {
+                    return
+                }
+                if (previewTask.previewRuntime?.status === 'canceled' || previewTask.previewRuntime?.status === 'stopped') {
+                    return
+                }
+                if (!resolved.session.active) {
+                    blockPreviewRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        sessionId: previewTask.previewRuntime?.sessionId ?? resolved.session.id,
+                        blockedReason: PREVIEW_SESSION_INACTIVE_BLOCKED_REASON,
+                        failureFingerprint: buildPreviewFailureFingerprint({
+                            reason: 'session_inactive',
+                            blockedReason: PREVIEW_SESSION_INACTIVE_BLOCKED_REASON
+                        }),
+                        note: buildPreviewBlockedNote(PREVIEW_SESSION_INACTIVE_BLOCKED_REASON, PREVIEW_SESSION_MANUAL_STEP),
+                        manualStep: PREVIEW_SESSION_MANUAL_STEP,
+                        retryCount: previewTask.previewRuntime?.retryCount
+                    })
+                    return
+                }
+
+                const hasPendingRequests = sessionHasPendingRequests(resolved.session)
+                if (resolved.session.thinking || hasPendingRequests) {
+                    await waitWithUnrefTimer(AUTO_PREVIEW_MONITOR_POLL_INTERVAL_MS)
+                    continue
+                }
+
+                const previewPath = resolveTaskPreviewPath(resolved.session, options.requestedMode)
+                if (!previewPath.ok) {
+                    blockPreviewRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        sessionId: previewTask.previewRuntime?.sessionId ?? resolved.session.id,
+                        blockedReason: previewPath.error,
+                        failureFingerprint: buildPreviewFailureFingerprint({
+                            reason: 'preview_path_unavailable',
+                            blockedReason: previewPath.error
+                        }),
+                        note: buildPreviewBlockedNote(previewPath.error, PREVIEW_SESSION_MANUAL_STEP),
+                        manualStep: PREVIEW_SESSION_MANUAL_STEP,
+                        retryCount: previewTask.previewRuntime?.retryCount
+                    })
+                    return
+                }
+
+                await runPreviewStartFlow({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    resolved,
+                    task: previewTask,
+                    previewPath,
+                    basePort: options.basePort
+                })
+                return
+            }
+
+            if (controller.canceled) {
+                return
+            }
+
+            const resolved = resolveTaskPreviewAccess({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                taskId: options.taskId
+            })
+            if (!resolved.ok) {
+                return
+            }
+            const previewTask = withTaskPreviewRuntime(resolved.task)
+            if (!previewTask || previewTask.previewRuntime?.status === 'canceled' || previewTask.previewRuntime?.status === 'stopped') {
+                return
+            }
+
+            blockPreviewRuntime({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                task: previewTask,
+                sessionId: previewTask.previewRuntime?.sessionId ?? resolved.session.id,
+                blockedReason: PREVIEW_WAIT_TIMEOUT_BLOCKED_REASON,
+                failureFingerprint: buildPreviewFailureFingerprint({
+                    reason: 'session_busy_timeout',
+                    blockedReason: PREVIEW_WAIT_TIMEOUT_BLOCKED_REASON
+                }),
+                note: buildPreviewBlockedNote(PREVIEW_WAIT_TIMEOUT_BLOCKED_REASON, PREVIEW_WAIT_MANUAL_STEP),
+                manualStep: PREVIEW_WAIT_MANUAL_STEP,
+                retryCount: previewTask.previewRuntime?.retryCount
+            })
+        } finally {
+            if (inFlightPreviewDeferredStartControllers.get(key) === controller) {
+                inFlightPreviewDeferredStartControllers.delete(key)
+            }
+        }
+    })()
+}
+
+function schedulePreviewSelfHealMonitor(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+    sessionId: string
+    previewPath: Extract<TaskPreviewPathResult, { ok: true }>
+    basePort?: number
+}): void {
+    const key = buildPreviewMonitorKey(options.namespace, options.taskId)
+    const existing = inFlightPreviewMonitorControllers.get(key)
+    if (existing) {
+        existing.canceled = true
+    }
+
+    const controller = { canceled: false }
+    inFlightPreviewMonitorControllers.set(key, controller)
+
+    void (async () => {
+        try {
+            const startedAt = Date.now()
+
+            while (!controller.canceled && Date.now() - startedAt < AUTO_PREVIEW_MONITOR_TIMEOUT_MS) {
+                await waitWithUnrefTimer(AUTO_PREVIEW_MONITOR_POLL_INTERVAL_MS)
+                if (controller.canceled) {
+                    return
+                }
+
+                const resolved = resolveTaskPreviewAccess({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    taskId: options.taskId
+                })
+                if (!resolved.ok) {
+                    return
+                }
+                if (resolved.session.id !== options.sessionId) {
+                    return
+                }
+
+                let previewTask = withTaskPreviewRuntime(resolved.task)
+                if (!previewTask || previewTask.previewRuntime?.status === 'canceled') {
+                    return
+                }
+
+                const statusResult = await getPreviewStatusWithFallback({
+                    engine: options.engine,
+                    resolved
+                })
+                if (!statusResult.ok) {
+                    return
+                }
+
+                const preview = statusResult.preview
+                if (preview.taskId && preview.taskId !== options.taskId) {
+                    return
+                }
+                if (preview.status === 'ready' || preview.status === 'starting') {
+                    previewTask = syncPreviewRuntimeFromLivePreview({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        preview
+                    })
+                    continue
+                }
+                if (preview.status === 'idle') {
+                    return
+                }
+                if (preview.status !== 'error' && preview.status !== 'stopped') {
+                    continue
+                }
+
+                const appendPreviewMonitorResult = (messageOptions: {
+                    status: 'success' | 'failure'
+                    preview?: Awaited<ReturnType<SyncEngine['previewStatusForSession']>> | null
+                    error?: string | null
+                    fallbackNote?: string | null
+                }): void => {
+                    appendAssistantTextMessage({
+                        store: options.store,
+                        engine: options.engine,
+                        sessionId: resolved.session.id,
+                        localId: `${AUTO_PREVIEW_RESULT_LOCAL_ID_PREFIX}${options.taskId}:${Date.now()}:${randomUUID()}`,
+                        text: buildPreviewStartResultMessage({
+                            status: messageOptions.status,
+                            mode: messageOptions.preview?.mode ?? options.previewPath.mode,
+                            rootPath: messageOptions.preview?.rootPath ?? options.previewPath.rootPath,
+                            command: messageOptions.preview?.command ?? null,
+                            url: messageOptions.preview?.url ?? null,
+                            previewStatus: messageOptions.preview?.status ?? null,
+                            error: messageOptions.error ?? messageOptions.preview?.error ?? null,
+                            logTail: messageOptions.preview?.logTail,
+                            fallbackNote: messageOptions.fallbackNote ?? null
+                        })
+                    })
+                }
+
+                const failureReason = preview.error ?? 'Preview crashed after earlier startup success'
+                const failureFingerprint = buildPreviewFailureFingerprint({
+                    reason: 'preview_start_failed',
+                    blockedReason: failureReason,
+                    previewPath: options.previewPath,
+                    preview: {
+                        status: preview.status,
+                        command: preview.command ?? null,
+                        error: preview.error ?? null,
+                        logTail: preview.logTail
+                    }
+                })
+
+                appendPreviewMonitorResult({
+                    status: 'failure',
+                    preview,
+                    error: failureReason,
+                    fallbackNote: 'Preview crashed after earlier startup success. HOPI is starting an automatic repair attempt.'
+                })
+
+                if (
+                    previewTask.previewRuntime?.failureFingerprint === failureFingerprint
+                    || (previewTask.previewRuntime?.retryCount ?? 0) >= AUTO_PREVIEW_MAX_REPAIR_ATTEMPTS
+                ) {
+                    const blockedReason = (previewTask.previewRuntime?.retryCount ?? 0) >= AUTO_PREVIEW_MAX_REPAIR_ATTEMPTS
+                        ? preview.error ?? 'Preview crashed again after automatic repair attempts were exhausted.'
+                        : failureReason
+                    previewTask = blockPreviewRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        sessionId: resolved.session.id,
+                        blockedReason,
+                        failureFingerprint,
+                        note: buildPreviewBlockedNote(blockedReason, PREVIEW_REPAIR_MANUAL_STEP),
+                        manualStep: PREVIEW_REPAIR_MANUAL_STEP,
+                        retryCount: previewTask.previewRuntime?.retryCount
+                    })
+                    return
+                }
+
+                const retryCount = getNextPreviewRepairAttemptRetryCount(previewTask)
+                previewTask = updateTaskPreviewRuntime({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task: previewTask,
+                    status: 'retrying',
+                    sessionId: resolved.session.id,
+                    retryCount,
+                    failureFingerprint,
+                    blockedReason: null,
+                    latestNote: buildPreviewRetryingNote(),
+                    completedAt: null
+                }) ?? previewTask
+
+                const repairAttempt = await tryAutoRepairPreviewFailure({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    sessionId: resolved.session.id,
+                    task: {
+                        id: options.taskId,
+                        title: resolved.task.title
+                    },
+                    mode: options.previewPath.mode,
+                    rootPath: options.previewPath.rootPath,
+                    basePort: options.basePort,
+                    failureMessage: failureReason,
+                    command: preview.command ?? null,
+                    logTail: preview.logTail
+                })
+                if (!repairAttempt.ok) {
+                    appendPreviewMonitorResult({
+                        status: 'failure',
+                        preview,
+                        error: repairAttempt.error,
+                        fallbackNote: 'Automatic preview repair prompt did not complete successfully.'
+                    })
+                    const manualStep = repairAttempt.status === 503 ? PREVIEW_SESSION_MANUAL_STEP : PREVIEW_REPAIR_MANUAL_STEP
+                    previewTask = blockPreviewRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        sessionId: resolved.session.id,
+                        blockedReason: repairAttempt.error,
+                        failureFingerprint: buildPreviewFailureFingerprint({
+                            reason: 'repair_prompt_failed',
+                            blockedReason: repairAttempt.error,
+                            previewPath: options.previewPath
+                        }),
+                        note: buildPreviewBlockedNote(repairAttempt.error, manualStep),
+                        manualStep,
+                        retryCount
+                    })
+                    return
+                }
+
+                const retryAttempt = await runObservedPreviewAttempt({
+                    engine: options.engine,
+                    resolved,
+                    previewPath: options.previewPath,
+                    basePort: options.basePort
+                })
+                if (!retryAttempt.ok) {
+                    appendPreviewMonitorResult({
+                        status: 'failure',
+                        preview: retryAttempt.preview,
+                        error: retryAttempt.error,
+                        fallbackNote: 'Preview still failed after the automatic repair prompt.'
+                    })
+                    previewTask = blockPreviewRuntime({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: previewTask,
+                        sessionId: resolved.session.id,
+                        blockedReason: retryAttempt.error,
+                        failureFingerprint: buildPreviewFailureFingerprint({
+                            reason: 'preview_start_failed',
+                            blockedReason: retryAttempt.rawMessage,
+                            previewPath: options.previewPath,
+                            preview: retryAttempt.preview
+                                ? {
+                                    status: retryAttempt.preview.status,
+                                    command: retryAttempt.preview.command ?? null,
+                                    error: retryAttempt.preview.error ?? null,
+                                    logTail: retryAttempt.preview.logTail
+                                }
+                                : null
+                        }),
+                        note: buildPreviewBlockedNote(retryAttempt.error, PREVIEW_REPAIR_MANUAL_STEP),
+                        manualStep: PREVIEW_REPAIR_MANUAL_STEP,
+                        retryCount
+                    })
+                    return
+                }
+
+                appendPreviewMonitorResult({
+                    status: 'success',
+                    preview: retryAttempt.preview,
+                    fallbackNote: 'Preview background auto-repair completed and direct retry now works.'
+                })
+                previewTask = syncPreviewRuntimeFromLivePreview({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task: previewTask,
+                    preview: retryAttempt.preview
+                })
+            }
+        } finally {
+            if (inFlightPreviewMonitorControllers.get(key) === controller) {
+                inFlightPreviewMonitorControllers.delete(key)
+            }
+        }
+    })()
 }
 
 function sumAttachmentBytes(attachments: Array<z.infer<typeof taskAttachmentSchema>>): number {
@@ -2155,7 +4252,12 @@ export function createTasksRoutes(options: {
             return c.json({ error: result.error }, status)
         }
 
-        return c.json({ task: result.task, sessionId: result.sessionId })
+        return c.json({
+            task: result.task,
+            sessionId: result.sessionId,
+            initRecoveryAttempted: result.initRecoveryAttempted,
+            initRecoveryError: result.initRecoveryError
+        })
     })
 
     app.post('/tasks/:taskId/preview/start', async (c) => {
@@ -2182,85 +4284,92 @@ export function createTasksRoutes(options: {
             return c.json({ error: resolved.error }, resolved.status)
         }
 
-        const previewPath = resolveTaskPreviewPath(resolved.session, parsed.data.mode ?? 'auto')
+        let previewTask = withTaskPreviewRuntime(resolved.task)
+        if (!previewTask) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
+        const requestedMode = parsed.data.mode ?? 'auto'
+        const previewPath = resolveTaskPreviewPath(resolved.session, requestedMode)
         if (!previewPath.ok) {
             return c.json({ error: previewPath.error }, previewPath.status)
         }
 
-        let attemptedPreviewPath: Extract<TaskPreviewPathResult, { ok: true }> = previewPath
-        let startAttempt = await startPreviewWithFallback({
-            engine,
-            resolved,
-            previewPath: attemptedPreviewPath,
-            basePort: parsed.data.basePort
-        })
-        if (startAttempt.ok) {
-            return c.json({ preview: startAttempt.preview })
-        }
+        cancelPreviewDeferredStart(namespace, taskId)
+        cancelPreviewSelfHealMonitor(namespace, taskId)
 
-        if (isMissingPreviewCommandError(startAttempt.rawMessage)) {
-            const fallbackPath = resolveTaskPreviewFallbackPath({
-                session: resolved.session,
-                primary: previewPath
+        if (!resolved.session.active) {
+            const blockedReason = PREVIEW_SESSION_INACTIVE_BLOCKED_REASON
+            previewTask = blockPreviewRuntime({
+                store: options.store,
+                engine,
+                namespace,
+                task: previewTask,
+                sessionId: previewTask.previewRuntime?.sessionId ?? resolved.session.id,
+                blockedReason,
+                failureFingerprint: buildPreviewFailureFingerprint({
+                    reason: 'session_inactive',
+                    blockedReason
+                }),
+                note: buildPreviewBlockedNote(blockedReason, PREVIEW_SESSION_MANUAL_STEP),
+                manualStep: PREVIEW_SESSION_MANUAL_STEP,
+                retryCount: previewTask.previewRuntime?.retryCount
             })
-            if (fallbackPath) {
-                const fallbackAttempt = await startPreviewWithFallback({
-                    engine,
-                    resolved,
-                    previewPath: fallbackPath,
-                    basePort: parsed.data.basePort
-                })
-                if (fallbackAttempt.ok) {
-                    return c.json({ preview: fallbackAttempt.preview })
-                }
-
-                startAttempt = fallbackAttempt
-                attemptedPreviewPath = fallbackPath
-            }
+            return c.json({
+                error: blockedReason,
+                previewRuntime: previewTask.previewRuntime
+            }, 503)
         }
 
-        if (!isMissingPreviewCommandError(startAttempt.rawMessage)) {
-            return c.json({ error: startAttempt.error }, startAttempt.status)
+        const requestStartedAt = Date.now()
+        const runnableState = getSessionRunnableState(resolved.session)
+        if (runnableState === 'queued' || runnableState === 'approval_pending') {
+            const skippedReason: TaskPreviewKickoffSkippedReason = runnableState
+            previewTask = updateTaskPreviewRuntime({
+                store: options.store,
+                engine,
+                namespace,
+                task: previewTask,
+                status: skippedReason,
+                sessionId: resolved.session.id,
+                requestedAt: requestStartedAt,
+                startedAt: null,
+                completedAt: null,
+                blockedReason: null,
+                latestNote: skippedReason === 'approval_pending' ? buildPreviewApprovalPendingNote() : buildPreviewQueuedNote()
+            }) ?? previewTask
+
+            scheduleDeferredPreviewStart({
+                store: options.store,
+                engine,
+                namespace,
+                taskId: resolved.task.id,
+                requestedMode,
+                basePort: parsed.data.basePort
+            })
+
+            return c.json(buildTaskPreviewResponse({
+                task: previewTask,
+                preview: buildIdlePreviewStatus({
+                    taskId: resolved.task.id,
+                    sessionId: resolved.session.id,
+                    previewPath
+                }),
+                skippedReason
+            }))
         }
 
-        const autoSetup = await tryAutoSetupPreviewScript({
+        const result = await runPreviewStartFlow({
             store: options.store,
             engine,
             namespace,
-            sessionId: resolved.session.id,
-            task: {
-                id: resolved.task.id,
-                title: resolved.task.title
-            },
-            mode: attemptedPreviewPath.mode,
-            rootPath: attemptedPreviewPath.rootPath,
-            basePort: parsed.data.basePort,
-            failureMessage: startAttempt.rawMessage
-        })
-        if (!autoSetup.ok) {
-            return c.json({
-                error: autoSetup.error,
-                autoSetupAttempted: true
-            }, autoSetup.status)
-        }
-
-        const retryAttempt = await startPreviewWithFallback({
-            engine,
             resolved,
-            previewPath: attemptedPreviewPath,
-            basePort: parsed.data.basePort
+            task: previewTask,
+            previewPath,
+            basePort: parsed.data.basePort,
+            requestedAt: requestStartedAt
         })
-        if (retryAttempt.ok) {
-            return c.json({
-                preview: retryAttempt.preview,
-                autoSetupAttempted: true
-            })
-        }
-
-        return c.json({
-            error: retryAttempt.error,
-            autoSetupAttempted: true
-        }, retryAttempt.status)
+        return c.json(result.body, result.status as 200 | 500 | 503 | 504)
     })
 
     app.get('/tasks/:taskId/preview', async (c) => {
@@ -2282,6 +4391,11 @@ export function createTasksRoutes(options: {
             return c.json({ error: resolved.error }, resolved.status)
         }
 
+        let previewTask = withTaskPreviewRuntime(resolved.task)
+        if (!previewTask) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
         const normalizePreview = (preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>) => {
             if (preview.taskId && preview.taskId !== resolved.task.id) {
                 return {
@@ -2295,8 +4409,18 @@ export function createTasksRoutes(options: {
         }
 
         try {
-            const preview = await engine.previewStatusForSession(resolved.session.id)
-            return c.json({ preview: normalizePreview(preview) })
+            const preview = normalizePreview(await engine.previewStatusForSession(resolved.session.id))
+            previewTask = syncPreviewRuntimeFromLivePreview({
+                store: options.store,
+                engine,
+                namespace,
+                task: previewTask,
+                preview
+            })
+            return c.json(buildTaskPreviewResponse({
+                task: previewTask,
+                preview
+            }))
         } catch (sessionError) {
             const sessionMessage = formatErrorMessage(sessionError, 'Preview status failed')
             if (!isPreviewRpcUnavailable(sessionMessage)) {
@@ -2310,8 +4434,18 @@ export function createTasksRoutes(options: {
             }
 
             try {
-                const preview = await engine.previewStatus(resolved.machineId)
-                return c.json({ preview: normalizePreview(preview) })
+                const preview = normalizePreview(await engine.previewStatus(resolved.machineId))
+                previewTask = syncPreviewRuntimeFromLivePreview({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: previewTask,
+                    preview
+                })
+                return c.json(buildTaskPreviewResponse({
+                    task: previewTask,
+                    preview
+                }))
             } catch (machineError) {
                 const machineMessage = formatErrorMessage(machineError, 'Preview status failed')
                 const combinedMessage = isPreviewRpcUnavailable(machineMessage)
@@ -2341,32 +4475,80 @@ export function createTasksRoutes(options: {
             return c.json({ error: resolved.error }, resolved.status)
         }
 
-        try {
-            const preview = await engine.previewStopForSession(resolved.session.id, { taskId: resolved.task.id })
-            return c.json({ preview })
-        } catch (sessionError) {
-            const sessionMessage = formatErrorMessage(sessionError, 'Preview stop failed')
-            if (!isPreviewRpcUnavailable(sessionMessage)) {
-                return c.json({ error: sessionMessage }, resolvePreviewErrorStatus(sessionMessage))
-            }
-
-            if (!resolved.machineId) {
-                return c.json({
-                    error: `${sessionMessage}. Please restart the task session to load preview RPC handlers.`
-                }, 503)
-            }
-
-            try {
-                const preview = await engine.previewStop(resolved.machineId, { taskId: resolved.task.id })
-                return c.json({ preview })
-            } catch (machineError) {
-                const machineMessage = formatErrorMessage(machineError, 'Preview stop failed')
-                const combinedMessage = isPreviewRpcUnavailable(machineMessage)
-                    ? `${machineMessage}. Please restart runner/session on this machine to load preview RPC handlers.`
-                    : machineMessage
-                return c.json({ error: combinedMessage }, resolvePreviewErrorStatus(machineMessage))
-            }
+        let previewTask = withTaskPreviewRuntime(resolved.task)
+        if (!previewTask) {
+            return c.json({ error: 'Task not found' }, 404)
         }
+
+        cancelPreviewDeferredStart(namespace, taskId)
+        cancelPreviewSelfHealMonitor(namespace, taskId)
+
+        const currentRuntimeStatus = previewTask.previewRuntime?.status ?? null
+        const previewStatusResult = await getPreviewStatusWithFallback({
+            engine,
+            resolved
+        })
+        const livePreview = previewStatusResult.ok ? previewStatusResult.preview : null
+        const shouldCancelBeforeReady = (isPendingPreviewRuntimeStatus(currentRuntimeStatus) || livePreview?.status === 'starting')
+            && livePreview?.status !== 'ready'
+
+        if (shouldCancelBeforeReady) {
+            let preview = livePreview ?? buildIdlePreviewStatus({
+                taskId: resolved.task.id,
+                sessionId: resolved.session.id
+            })
+
+            if (livePreview && livePreview.status !== 'idle' && livePreview.status !== 'error' && livePreview.status !== 'stopped') {
+                const stopResult = await stopPreviewWithFallback({
+                    engine,
+                    resolved
+                })
+                if (stopResult.ok) {
+                    preview = stopResult.preview
+                }
+            }
+
+            previewTask = updateTaskPreviewRuntime({
+                store: options.store,
+                engine,
+                namespace,
+                task: previewTask,
+                status: 'canceled',
+                sessionId: resolved.session.id,
+                latestNote: buildPreviewCanceledNote(),
+                failureFingerprint: null,
+                blockedReason: null,
+                completedAt: Date.now()
+            }) ?? previewTask
+            return c.json({
+                preview,
+                previewRuntime: previewTask.previewRuntime
+            })
+        }
+
+        const stopResult = await stopPreviewWithFallback({
+            engine,
+            resolved
+        })
+        if (!stopResult.ok) {
+            return c.json({ error: stopResult.error }, stopResult.status)
+        }
+
+        previewTask = updateTaskPreviewRuntime({
+            store: options.store,
+            engine,
+            namespace,
+            task: previewTask,
+            status: 'stopped',
+            sessionId: resolved.session.id,
+            latestNote: buildPreviewStoppedNote(),
+            failureFingerprint: null,
+            blockedReason: null
+        }) ?? previewTask
+        return c.json({
+            preview: stopResult.preview,
+            previewRuntime: previewTask.previewRuntime
+        })
     })
 
     app.get('/tasks/:taskId/worktree/merge-state', async (c) => {
@@ -2456,7 +4638,7 @@ export function createTasksRoutes(options: {
             } satisfies TaskWorktreeMergeState)
         }
 
-        const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+        const hasPendingRequests = sessionHasPendingRequests(session)
         if (hasPendingRequests) {
             return c.json({
                 ...stateWithSession,
@@ -2590,6 +4772,8 @@ export function createTasksRoutes(options: {
             }
 
             const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
+            const retryCount = getNextMergeAttemptRetryCount(resolvedTask)
+            const runningRuntimeStatus = isMergeRetryAttempt(resolvedTask) ? 'retrying' : 'running'
             const mergeState = await computeMergeGitState({
                 engine,
                 sessionId,
@@ -2600,6 +4784,17 @@ export function createTasksRoutes(options: {
             if (!mergeState.canMerge) {
                 if (mergeState.reason === 'merge_check_failed') {
                     const message = mergeState.error ?? 'Merge state check failed'
+                    const blockedState = buildMergeBlockedRuntimeState({
+                        task: resolvedTask,
+                        note: buildMergeStateCheckBlockedNote(message),
+                        blockedReason: message,
+                        failureFingerprint: buildMergeFailureFingerprint({
+                            reason: 'merge_check_failed',
+                            blockedReason: message,
+                            mergeState
+                        }),
+                        manualStep: MERGE_STATE_CHECK_MANUAL_STEP
+                    })
                     updateTaskMergeRuntime({
                         store: options.store,
                         engine,
@@ -2607,8 +4802,10 @@ export function createTasksRoutes(options: {
                         task: resolvedTask,
                         status: 'blocked',
                         sessionId,
-                        latestNote: message,
-                        blockedReason: message
+                        retryCount,
+                        failureFingerprint: blockedState.failureFingerprint,
+                        latestNote: blockedState.latestNote,
+                        blockedReason: blockedState.blockedReason
                     })
                     return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
                 }
@@ -2632,23 +4829,215 @@ export function createTasksRoutes(options: {
                 }))
             }
 
-            const rootPath = (() => {
-                const metadataPath = typeof session.metadata?.path === 'string' ? session.metadata.path.trim() : ''
-                const basePath = typeof session.metadata?.worktree?.basePath === 'string' ? session.metadata.worktree.basePath.trim() : ''
-                return metadataPath || basePath || null
-            })()
+            const rootPath = resolveSessionMergeRootPath(session)
+            const mergeHandoffNote = buildMergeHandoffNote({
+                autoStarted,
+                resumed,
+                relinked
+            })
+            const runnableState = getSessionRunnableState(session)
+            const shouldDeferMergeKickoff = runnableState === 'queued' || runnableState === 'approval_pending'
+
+            if (shouldDeferMergeKickoff) {
+                const runtimeStatus: MergeKickoffRuntimeStatus = runnableState
+                const runtimeNote = runtimeStatus === 'approval_pending'
+                    ? buildApprovalPendingActionRuntimeNote({
+                        actionLabel: 'Merge',
+                        continuation: `HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` first`
+                    })
+                    : buildQueuedActionRuntimeNote({
+                        actionLabel: 'Merge',
+                        continuation: `HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` first`
+                    })
+                const runtimeTask = updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: resolvedTask,
+                    status: runtimeStatus,
+                    sessionId,
+                    retryCount,
+                    latestNote: runtimeNote,
+                    startedAt: null,
+                    completedAt: null
+                }) ?? resolvedTask
+
+                scheduleConversationMergeMonitor({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    taskId: runtimeTask.id,
+                    sessionId,
+                    targetBranch,
+                    deferredDirectMerge: {
+                        conflictStrategy,
+                        handoffNote: mergeHandoffNote
+                    },
+                    preferredLocale
+                })
+
+                return c.json(buildMergeKickoffResponse({
+                    task: runtimeTask,
+                    skippedReason: runtimeStatus
+                }))
+            }
+
+            const verificationSnapshotResult = await captureMergeVerificationSnapshot({
+                engine,
+                sessionId,
+                targetBranch
+            })
+            if (!verificationSnapshotResult.ok) {
+                const message = verificationSnapshotResult.error
+                const blockedState = buildMergeBlockedRuntimeState({
+                    task: resolvedTask,
+                    note: buildMergeVerificationCaptureBlockedNote(message),
+                    blockedReason: message,
+                    failureFingerprint: buildMergeFailureFingerprint({
+                        reason: 'snapshot_capture_failed',
+                        blockedReason: message
+                    }),
+                    manualStep: 'Inspect repo state in the linked session, then retry merge.'
+                })
+                updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: resolvedTask,
+                    status: 'blocked',
+                    sessionId,
+                    retryCount,
+                    failureFingerprint: blockedState.failureFingerprint,
+                    latestNote: blockedState.latestNote,
+                    blockedReason: blockedState.blockedReason
+                })
+                return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+            }
+
+            if (rootPath) {
+                const directRuntimeTask = updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: resolvedTask,
+                    status: runningRuntimeStatus,
+                    sessionId,
+                    retryCount,
+                    latestNote: `Running \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked session.`,
+                    startedAt: Date.now(),
+                    completedAt: null
+                }) ?? resolvedTask
+
+                const directAttempt = await runDirectMergeScriptAttempt({
+                    engine,
+                    sessionId,
+                    task: directRuntimeTask,
+                    projectId: directRuntimeTask.projectId,
+                    rootPath,
+                    worktreeBasePath: session.metadata?.worktree?.basePath,
+                    worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
+                    targetBranch,
+                    sourceBranch,
+                    conflictStrategy,
+                    handoffNote: mergeHandoffNote,
+                    taskMergedAt: directRuntimeTask.worktreeMergedAt ?? null,
+                    verificationSnapshot: verificationSnapshotResult.snapshot
+                })
+
+                appendAssistantTextMessage({
+                    store: options.store,
+                    engine,
+                    sessionId,
+                    localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${directRuntimeTask.id}:${Date.now()}`,
+                    text: directAttempt.transcriptText
+                })
+
+                if (directAttempt.kind === 'success') {
+                    const mergedTask = await persistSuccessfulTaskMerge({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        task: directRuntimeTask,
+                        sessionId,
+                        sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
+                        mergeResult: {
+                            success: true,
+                            commitHash: directAttempt.targetHead ?? undefined
+                        },
+                        markFinishedOnMerge: directRuntimeTask.status === 'in_review',
+                        preferredLocale
+                    }) ?? directRuntimeTask
+
+                    return c.json(buildMergeKickoffResponse({
+                        task: mergedTask,
+                        skippedReason: null
+                    }))
+                }
+
+                const promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${resolvedTask.id}:${Date.now()}`
+                try {
+                    await engine.sendMessage(sessionId, {
+                        text: directAttempt.promptText,
+                        localId: promptLocalId,
+                        sentFrom: 'webapp'
+                    })
+                } catch (error) {
+                    const message = formatErrorMessage(error, 'Failed to send merge request')
+                    updateTaskMergeRuntime({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        task: directRuntimeTask,
+                        status: 'blocked',
+                        sessionId,
+                        latestNote: `Direct merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
+                        blockedReason: message
+                    })
+                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+                }
+
+                const runtimeTask = updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: directRuntimeTask,
+                    status: isMergeRetryAttempt(directRuntimeTask) ? 'retrying' : 'running',
+                    sessionId,
+                    failureFingerprint: directAttempt.failureFingerprint,
+                    latestNote: 'Direct merge tool call ran first. Follow the transcript for CLI output, repairs, and retries.',
+                    startedAt: directRuntimeTask.mergeRuntime?.startedAt ?? Date.now(),
+                    completedAt: null
+                }) ?? directRuntimeTask
+
+                scheduleConversationMergeMonitor({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    taskId: runtimeTask.id,
+                    sessionId,
+                    promptLocalId,
+                    targetBranch,
+                    verificationSnapshot: verificationSnapshotResult.snapshot,
+                    preferredLocale
+                })
+
+                return c.json(buildMergeKickoffResponse({
+                    task: runtimeTask,
+                    skippedReason: 'running'
+                }))
+            }
+
             const promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${resolvedTask.id}:${Date.now()}`
             const prompt = buildConversationMergePrompt({
                 task: resolvedTask,
+                projectId: resolvedTask.projectId,
                 targetBranch,
                 sourceBranch,
                 rootPath,
+                worktreeBasePath: session.metadata?.worktree?.basePath,
+                worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
                 conflictStrategy,
-                handoffNote: buildMergeHandoffNote({
-                    autoStarted,
-                    resumed,
-                    relinked
-                })
+                handoffNote: mergeHandoffNote
             })
 
             try {
@@ -2662,26 +5051,16 @@ export function createTasksRoutes(options: {
                 return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
             }
 
-            const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
-            const runtimeStatus: MergeKickoffRuntimeStatus = hasPendingRequests
-                ? 'approval_pending'
-                : session.thinking
-                    ? 'queued'
-                    : 'running'
-            const runtimeNote = hasPendingRequests
-                ? 'Merge queued until the current approval request is resolved.'
-                : session.thinking
-                    ? 'Merge queued behind the current session turn.'
-                    : 'Merge requested in the linked session.'
             const runtimeTask = updateTaskMergeRuntime({
                 store: options.store,
                 engine,
                 namespace,
                 task: resolvedTask,
-                status: runtimeStatus,
+                status: runningRuntimeStatus,
                 sessionId,
-                latestNote: runtimeNote,
-                startedAt: runtimeStatus === 'running' ? Date.now() : null,
+                retryCount,
+                latestNote: 'Merge requested in the linked session. Follow the transcript for tool output and retries.',
+                startedAt: Date.now(),
                 completedAt: null
             }) ?? resolvedTask
 
@@ -2693,12 +5072,13 @@ export function createTasksRoutes(options: {
                 sessionId,
                 promptLocalId,
                 targetBranch,
+                verificationSnapshot: verificationSnapshotResult.snapshot,
                 preferredLocale
             })
 
             return c.json(buildMergeKickoffResponse({
                 task: runtimeTask,
-                skippedReason: runtimeStatus
+                skippedReason: 'running'
             }))
         } catch (error) {
             const message = formatErrorMessage(error, 'Merge failed unexpectedly')

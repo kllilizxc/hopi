@@ -1,4 +1,5 @@
 import { execFile, type ExecFileOptions } from 'child_process'
+import { rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'util'
@@ -90,6 +91,45 @@ interface GitMergeWorktreeStateResponse {
     error?: string
 }
 
+interface GitCaptureWorktreeMergeSnapshotRequest {
+    targetBranch: string
+    timeout?: number
+}
+
+interface GitCaptureWorktreeMergeSnapshotResponse {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+interface GitVerifyWorktreeMergeRequest {
+    targetBranch: string
+    mergeBase: string
+    snapshotRef: string
+    timeout?: number
+}
+
+interface GitVerifyWorktreeMergeResponse {
+    success: boolean
+    verified?: boolean
+    targetBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    targetHead?: string
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 function countNumstatChangedFiles(output: string): number {
@@ -124,12 +164,14 @@ function validateFilePath(filePath: string, workingDirectory: string): string | 
 async function runGitCommand(
     args: string[],
     cwd: string,
-    timeout?: number
+    timeout?: number,
+    env?: NodeJS.ProcessEnv
 ): Promise<GitCommandResponse> {
     try {
         const options: ExecFileOptions = {
             cwd,
-            timeout: timeout ?? 10_000
+            timeout: timeout ?? 10_000,
+            env: env ? { ...process.env, ...env } : undefined
         }
         const { stdout, stderr } = await execFileAsync('git', args, options)
         return {
@@ -280,6 +322,43 @@ function parseGitWorktreeEntries(raw: string): Array<{ path: string; branch: str
     return entries
 }
 
+async function createIsolatedTargetWorktreeContext(
+    basePath: string,
+    targetBranch: string,
+    timeout: number,
+    options?: {
+        detached?: boolean
+    }
+): Promise<
+    | {
+        ok: true
+        path: string
+        cleanup: () => Promise<void>
+    }
+    | {
+        ok: false
+        error: GitCommandResponse
+    }
+> {
+    const safeBranch = targetBranch.replace(/[^a-zA-Z0-9._-]/g, '-')
+    const tempPath = join(tmpdir(), `${PRODUCT_SLUG}-merge-target-${safeBranch}-${Date.now()}`)
+    const addArgs = options?.detached === true
+        ? ['worktree', 'add', '--detach', tempPath, targetBranch]
+        : ['worktree', 'add', tempPath, targetBranch]
+    const addWorktree = await runGitCommand(addArgs, basePath, timeout)
+    if (!addWorktree.success) {
+        return { ok: false, error: addWorktree }
+    }
+
+    return {
+        ok: true,
+        path: tempPath,
+        cleanup: async () => {
+            await runGitCommand(['worktree', 'remove', '--force', tempPath], basePath, timeout)
+        }
+    }
+}
+
 async function resolveMergeTargetContext(
     basePath: string,
     targetBranch: string,
@@ -312,19 +391,275 @@ async function resolveMergeTargetContext(
         }
     }
 
-    const safeBranch = targetBranch.replace(/[^a-zA-Z0-9._-]/g, '-')
-    const tempPath = join(tmpdir(), `${PRODUCT_SLUG}-merge-target-${safeBranch}-${Date.now()}`)
-    const addWorktree = await runGitCommand(['worktree', 'add', tempPath, targetBranch], basePath, timeout)
-    if (!addWorktree.success) {
-        return { ok: false, error: addWorktree }
+    return await createIsolatedTargetWorktreeContext(basePath, targetBranch, timeout)
+}
+
+async function ensureBranchExists(basePath: string, branch: string, timeout: number): Promise<GitCommandResponse> {
+    return await runGitCommand(['show-ref', '--verify', `refs/heads/${branch}`], basePath, timeout)
+}
+
+async function resolveMergeBase(basePath: string, targetBranch: string, sourceRef: string, timeout: number): Promise<
+    | { ok: true; mergeBase: string }
+    | { ok: false; error: GitCommandResponse }
+> {
+    const mergeBaseResult = await runGitCommand(['merge-base', targetBranch, sourceRef], basePath, timeout)
+    if (!mergeBaseResult.success) {
+        return {
+            ok: false,
+            error: rpcError(`Failed to resolve merge base between '${targetBranch}' and '${sourceRef}'`, {
+                stdout: mergeBaseResult.stdout,
+                stderr: mergeBaseResult.stderr,
+                exitCode: mergeBaseResult.exitCode
+            })
+        }
+    }
+
+    const mergeBase = (mergeBaseResult.stdout ?? '').trim()
+    if (!mergeBase) {
+        return {
+            ok: false,
+            error: rpcError(`Failed to resolve merge base between '${targetBranch}' and '${sourceRef}'`)
+        }
+    }
+
+    return { ok: true, mergeBase }
+}
+
+async function createWorktreeVerificationSnapshotRef(worktreePath: string, timeout: number): Promise<
+    | { ok: true; snapshotRef: string }
+    | { ok: false; error: GitCommandResponse }
+> {
+    const tempIndexPath = join(tmpdir(), `${PRODUCT_SLUG}-merge-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}.index`)
+    const tempEnv = { GIT_INDEX_FILE: tempIndexPath }
+
+    try {
+        const readTree = await runGitCommand(['read-tree', 'HEAD'], worktreePath, timeout, tempEnv)
+        if (!readTree.success) {
+            return { ok: false, error: readTree }
+        }
+
+        const addResult = await runGitCommand(['add', '-A'], worktreePath, timeout, tempEnv)
+        if (!addResult.success) {
+            return { ok: false, error: addResult }
+        }
+
+        const writeTreeResult = await runGitCommand(['write-tree'], worktreePath, timeout, tempEnv)
+        if (!writeTreeResult.success) {
+            return { ok: false, error: writeTreeResult }
+        }
+
+        const treeRef = (writeTreeResult.stdout ?? '').trim()
+        if (!treeRef) {
+            return { ok: false, error: rpcError('Failed to create merge verification tree') }
+        }
+
+        const snapshotResult = await runGitCommand(
+            ['commit-tree', treeRef, '-p', 'HEAD', '-m', 'HOPI merge verification snapshot'],
+            worktreePath,
+            timeout,
+            tempEnv
+        )
+        if (!snapshotResult.success) {
+            return { ok: false, error: snapshotResult }
+        }
+
+        const snapshotRef = (snapshotResult.stdout ?? '').trim()
+        if (!snapshotRef) {
+            return { ok: false, error: rpcError('Failed to create merge verification snapshot') }
+        }
+
+        return { ok: true, snapshotRef }
+    } finally {
+        await rm(tempIndexPath, { force: true }).catch(() => undefined)
+    }
+}
+
+async function countDiffChangedFiles(basePath: string, fromRef: string, toRef: string, timeout: number): Promise<
+    | { ok: true; changedCount: number }
+    | { ok: false; error: GitCommandResponse }
+> {
+    const diffResult = await runGitCommand(['diff', '--numstat', `${fromRef}..${toRef}`], basePath, timeout)
+    if (!diffResult.success) {
+        return { ok: false, error: diffResult }
     }
 
     return {
         ok: true,
-        path: tempPath,
-        cleanup: async () => {
-            await runGitCommand(['worktree', 'remove', '--force', tempPath], basePath, timeout)
+        changedCount: countNumstatChangedFiles(diffResult.stdout ?? '')
+    }
+}
+
+async function captureWorktreeMergeSnapshot(options: {
+    basePath: string
+    worktreePath: string
+    sourceBranch: string
+    targetBranch: string
+    timeout: number
+}): Promise<GitCaptureWorktreeMergeSnapshotResponse> {
+    const targetExists = await ensureBranchExists(options.basePath, options.targetBranch, options.timeout)
+    if (!targetExists.success) {
+        return rpcError(`Target branch '${options.targetBranch}' not found`, {
+            stdout: targetExists.stdout,
+            stderr: targetExists.stderr,
+            exitCode: targetExists.exitCode
+        })
+    }
+
+    const sourceExists = await ensureBranchExists(options.basePath, options.sourceBranch, options.timeout)
+    if (!sourceExists.success) {
+        return rpcError(`Worktree branch '${options.sourceBranch}' not found`, {
+            stdout: sourceExists.stdout,
+            stderr: sourceExists.stderr,
+            exitCode: sourceExists.exitCode
+        })
+    }
+
+    const mergeBaseResult = await resolveMergeBase(options.basePath, options.targetBranch, options.sourceBranch, options.timeout)
+    if (!mergeBaseResult.ok) {
+        return mergeBaseResult.error
+    }
+
+    const snapshotResult = await createWorktreeVerificationSnapshotRef(options.worktreePath, options.timeout)
+    if (!snapshotResult.ok) {
+        return snapshotResult.error
+    }
+
+    const changedCountResult = await countDiffChangedFiles(
+        options.basePath,
+        mergeBaseResult.mergeBase,
+        snapshotResult.snapshotRef,
+        options.timeout
+    )
+    if (!changedCountResult.ok) {
+        return changedCountResult.error
+    }
+
+    return {
+        success: true,
+        targetBranch: options.targetBranch,
+        sourceBranch: options.sourceBranch,
+        mergeBase: mergeBaseResult.mergeBase,
+        snapshotRef: snapshotResult.snapshotRef,
+        expectedChangeCount: changedCountResult.changedCount
+    }
+}
+
+async function verifyWorktreeMergeSnapshot(options: {
+    basePath: string
+    targetBranch: string
+    mergeBase: string
+    snapshotRef: string
+    timeout: number
+}): Promise<GitVerifyWorktreeMergeResponse> {
+    const targetExists = await ensureBranchExists(options.basePath, options.targetBranch, options.timeout)
+    if (!targetExists.success) {
+        return rpcError(`Target branch '${options.targetBranch}' not found`, {
+            stdout: targetExists.stdout,
+            stderr: targetExists.stderr,
+            exitCode: targetExists.exitCode
+        })
+    }
+
+    const mergeBaseExists = await runGitCommand(['rev-parse', '--verify', options.mergeBase], options.basePath, options.timeout)
+    if (!mergeBaseExists.success) {
+        return rpcError(`Merge verification base '${options.mergeBase}' not found`, {
+            stdout: mergeBaseExists.stdout,
+            stderr: mergeBaseExists.stderr,
+            exitCode: mergeBaseExists.exitCode
+        })
+    }
+
+    const snapshotExists = await runGitCommand(['rev-parse', '--verify', options.snapshotRef], options.basePath, options.timeout)
+    if (!snapshotExists.success) {
+        return rpcError(`Merge verification snapshot '${options.snapshotRef}' not found`, {
+            stdout: snapshotExists.stdout,
+            stderr: snapshotExists.stderr,
+            exitCode: snapshotExists.exitCode
+        })
+    }
+
+    const changedCountResult = await countDiffChangedFiles(
+        options.basePath,
+        options.mergeBase,
+        options.snapshotRef,
+        options.timeout
+    )
+    if (!changedCountResult.ok) {
+        return changedCountResult.error
+    }
+
+    const targetContext = await createIsolatedTargetWorktreeContext(options.basePath, options.targetBranch, options.timeout, {
+        detached: true
+    })
+    if (!targetContext.ok) {
+        return targetContext.error
+    }
+
+    const patchPath = join(tmpdir(), `${PRODUCT_SLUG}-merge-verify-${Date.now()}-${Math.random().toString(16).slice(2)}.patch`)
+
+    try {
+        const targetStatus = await runGitCommand(['status', '--porcelain'], targetContext.path, options.timeout)
+        if (!targetStatus.success) {
+            return targetStatus
         }
+        if ((targetStatus.stdout ?? '').trim().length > 0) {
+            return rpcError('Base repository has uncommitted changes; commit/stash first', {
+                stdout: targetStatus.stdout,
+                stderr: targetStatus.stderr,
+                exitCode: targetStatus.exitCode
+            })
+        }
+
+        const targetHeadResult = await runGitCommand(['rev-parse', 'HEAD'], targetContext.path, options.timeout)
+        const targetHead = targetHeadResult.success ? (targetHeadResult.stdout ?? '').trim() : undefined
+
+        if (changedCountResult.changedCount === 0) {
+            return {
+                success: true,
+                verified: true,
+                targetBranch: options.targetBranch,
+                mergeBase: options.mergeBase,
+                snapshotRef: options.snapshotRef,
+                expectedChangeCount: 0,
+                targetHead
+            }
+        }
+
+        const patchResult = await runGitCommand(['diff', '--binary', `${options.mergeBase}..${options.snapshotRef}`], options.basePath, options.timeout)
+        if (!patchResult.success) {
+            return patchResult
+        }
+
+        await writeFile(patchPath, patchResult.stdout ?? '', 'utf8')
+        const reverseCheck = await runGitCommand(['apply', '--reverse', '--check', patchPath], targetContext.path, options.timeout)
+        if (!reverseCheck.success) {
+            return {
+                success: true,
+                verified: false,
+                targetBranch: options.targetBranch,
+                mergeBase: options.mergeBase,
+                snapshotRef: options.snapshotRef,
+                expectedChangeCount: changedCountResult.changedCount,
+                targetHead,
+                stdout: reverseCheck.stdout,
+                stderr: reverseCheck.stderr,
+                exitCode: reverseCheck.exitCode,
+                error: 'Target branch does not contain the expected worktree changes'
+            }
+        }
+
+        return {
+            success: true,
+            verified: true,
+            targetBranch: options.targetBranch,
+            mergeBase: options.mergeBase,
+            snapshotRef: options.snapshotRef,
+            expectedChangeCount: changedCountResult.changedCount,
+            targetHead
+        }
+    } finally {
+        await rm(patchPath, { force: true }).catch(() => undefined)
+        await targetContext.cleanup()
     }
 }
 
@@ -452,6 +787,58 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             committedChangedCount,
             mergeable
         }
+    })
+
+    rpcHandlerManager.registerHandler<GitCaptureWorktreeMergeSnapshotRequest, GitCaptureWorktreeMergeSnapshotResponse>('git-capture-worktree-merge-snapshot', async (data) => {
+        const worktree = readWorktreeEnv()
+        if (!worktree) {
+            return rpcError('Not a worktree session')
+        }
+
+        const targetBranch = typeof data.targetBranch === 'string' ? data.targetBranch.trim() : ''
+        if (!targetBranch) {
+            return rpcError('Target branch required')
+        }
+
+        const timeout = data.timeout ?? 60_000
+        return await captureWorktreeMergeSnapshot({
+            basePath: worktree.basePath,
+            worktreePath: worktree.worktreePath,
+            sourceBranch: worktree.branch,
+            targetBranch,
+            timeout
+        })
+    })
+
+    rpcHandlerManager.registerHandler<GitVerifyWorktreeMergeRequest, GitVerifyWorktreeMergeResponse>('git-verify-worktree-merge', async (data) => {
+        const worktree = readWorktreeEnv()
+        if (!worktree) {
+            return rpcError('Not a worktree session')
+        }
+
+        const targetBranch = typeof data.targetBranch === 'string' ? data.targetBranch.trim() : ''
+        if (!targetBranch) {
+            return rpcError('Target branch required')
+        }
+
+        const mergeBase = normalizeBaseRef(data.mergeBase)
+        if (!mergeBase) {
+            return rpcError('Merge base required')
+        }
+
+        const snapshotRef = normalizeBaseRef(data.snapshotRef)
+        if (!snapshotRef) {
+            return rpcError('Snapshot reference required')
+        }
+
+        const timeout = data.timeout ?? 60_000
+        return await verifyWorktreeMergeSnapshot({
+            basePath: worktree.basePath,
+            targetBranch,
+            mergeBase,
+            snapshotRef,
+            timeout
+        })
     })
 
     rpcHandlerManager.registerHandler<GitMergeWorktreeRequest, GitMergeWorktreeResponse>('git-merge-worktree', async (data) => {

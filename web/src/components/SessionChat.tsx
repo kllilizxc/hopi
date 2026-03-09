@@ -2,17 +2,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session, TaskPreviewStatus } from '@/types/api'
+import type { AttachmentMetadata, DecryptedMessage, ModelMode, PermissionMode, Session, Task, TaskPreviewStatus } from '@/types/api'
 import type { AgentEvent, ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { useMergeTaskWorktree } from '@/hooks/mutations/useMergeTaskWorktree'
+import { useTaskPreview } from '@/hooks/mutations/useTaskPreview'
 import { useTask } from '@/hooks/queries/useTask'
+import { useTaskPreviewState } from '@/hooks/queries/useTaskPreviewState'
 import { useTaskWorktreeMergeState } from '@/hooks/queries/useTaskWorktreeMergeState'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
+import {
+    buildInitStatusSummary,
+    buildMergeRuntimeSummary,
+    buildPreviewStatusSummary,
+    buildRecoveredBlockedMergeSummary,
+    isActiveMergeRuntimeStatus,
+    isActivePreviewRuntimeStatus,
+    isRetryableMergeRuntimeStatus,
+    isRetryablePreviewRuntimeStatus,
+    shouldShowMergeActionButton,
+    shouldTreatBlockedMergeAsRecoveredSuccess,
+    shouldShowInitRuntimeInSession,
+    type TaskActionPreviewStatusSummary as PreviewStatusSummary,
+    type TaskActionStatusSummary
+} from '@/lib/task-action-runtime'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
@@ -100,70 +117,11 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
 
 const CONTINUE_PROMPT_TEXT = '继续'
 
-type MergeThreadEvent = {
-    id: string
-    text: string
-    tone?: 'info' | 'success' | 'error'
-}
-
-type PreviewThreadEvent = {
-    id: string
-    text: string
-    tone?: 'info' | 'success' | 'error'
-}
-
-function formatMergeSkippedReason(reason: string): string {
-    if (reason === 'already_merged') {
-        return '已经合并过了'
-    }
-    if (reason === 'no_changes') {
-        return '没有可合并的变更'
-    }
-    if (reason === 'auto_retry_scheduled') {
-        return '已安排后台自动重试合并'
-    }
-    return reason
-}
-
 function toErrorMessage(error: unknown): string {
     if (error instanceof Error && error.message.trim().length > 0) {
         return error.message
     }
     return String(error)
-}
-
-function isPreviewActive(preview: TaskPreviewStatus | null): boolean {
-    if (!preview?.active) {
-        return false
-    }
-    return preview.status === 'starting' || preview.status === 'ready'
-}
-
-function wait(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms)
-    })
-}
-
-async function waitForTaskMerged(api: ApiClient, taskId: string): Promise<boolean> {
-    const maxChecks = 6
-    const checkDelayMs = 2_000
-
-    for (let attempt = 0; attempt < maxChecks; attempt += 1) {
-        try {
-            const latest = await api.getTask(taskId)
-            if (latest.task.worktreeMergedAt) {
-                return true
-            }
-        } catch {
-        }
-
-        if (attempt < maxChecks - 1) {
-            await wait(checkDelayMs)
-        }
-    }
-
-    return false
 }
 
 function isInterruptedEvent(event: AgentEvent): boolean {
@@ -223,15 +181,8 @@ export function SessionChat(props: {
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const [ignoreRunningFallback, setIgnoreRunningFallback] = useState(false)
-    const [isMergeFinalizing, setIsMergeFinalizing] = useState(false)
-    const [mergeActionHidden, setMergeActionHidden] = useState(false)
-    const [mergeEvents, setMergeEvents] = useState<MergeThreadEvent[]>([])
-    const mergeEventSeqRef = useRef(0)
-    const [previewStatus, setPreviewStatus] = useState<TaskPreviewStatus | null>(null)
-    const [previewBusy, setPreviewBusy] = useState(false)
-    const [previewEvents, setPreviewEvents] = useState<PreviewThreadEvent[]>([])
-    const previewEventSeqRef = useRef(0)
-    const previewStatusRef = useRef<TaskPreviewStatus | null>(null)
+    const [mergeActionError, setMergeActionError] = useState<string | null>(null)
+    const [previewActionError, setPreviewActionError] = useState<string | null>(null)
     const agentFlavor = props.session.metadata?.flavor ?? null
     const hasPendingRequests = Boolean(props.session.agentState?.requests && Object.keys(props.session.agentState.requests).length > 0)
 
@@ -249,228 +200,194 @@ export function SessionChat(props: {
         ? `task:${taskLink.projectId}:${taskLink.taskId}`
         : `session:${props.session.id}`
     const { task } = useTask(props.api, taskId)
-    const { mergeTaskWorktree, isPending: isMergePending } = useMergeTaskWorktree(props.api)
-    const shouldQueryMergeState = Boolean(taskId && !hasPendingRequests)
-    const { state: mergeState, isLoading: isMergeStateLoading } = useTaskWorktreeMergeState(
+    const shouldShowInitStatus = Boolean(
+        task
+        && !task.archivedAt
+        && !task.finishedAt
+        && shouldShowInitRuntimeInSession(task, props.session.id)
+    )
+    const initStatusSummary = useMemo(() => {
+        if (!shouldShowInitStatus) {
+            return null
+        }
+        return buildInitStatusSummary(task)
+    }, [shouldShowInitStatus, task])
+    const mergeRuntime = task?.mergeRuntime ?? null
+    const mergeRuntimeStatus = mergeRuntime?.status
+    const hasActiveMergeRuntime = isActiveMergeRuntimeStatus(mergeRuntimeStatus)
+    const {
+        mergeTaskWorktree,
+        cancelTaskWorktreeMerge,
+        isMerging,
+        isCanceling
+    } = useMergeTaskWorktree(props.api)
+    const {
+        startTaskPreview,
+        stopTaskPreview,
+        isStartingPreview,
+        isStoppingPreview,
+        isUpdatingPreview,
+    } = useTaskPreview(props.api)
+    const shouldShowPreviewRuntime = Boolean(
+        taskId
+        && task
+        && task.activeSessionId === props.session.id
+        && !task.archivedAt
+        && !task.finishedAt
+    )
+    const shouldQueryPreviewState = shouldShowPreviewRuntime && !sessionInactive
+    const {
+        preview: previewState,
+        previewRuntime,
+    } = useTaskPreviewState(props.api, task, {
+        enabled: shouldQueryPreviewState,
+        sessionId: props.session.id,
+        sessionActive: !sessionInactive
+    })
+    const shouldQueryMergeState = Boolean(
+        taskId
+        && task
+        && task.status === 'in_review'
+        && !task.archivedAt
+        && !task.finishedAt
+        && !task.worktreeMergedAt
+        && !hasActiveMergeRuntime
+    )
+    const {
+        state: mergeState,
+        isLoading: isMergeStateLoading,
+        refetch: refetchMergeState
+    } = useTaskWorktreeMergeState(
         props.api,
         taskId,
         { enabled: shouldQueryMergeState }
     )
-    const isMergeBusy = isMergePending || isMergeFinalizing
-
-    const appendMergeEvent = useCallback((text: string, tone: MergeThreadEvent['tone'] = 'info') => {
-        mergeEventSeqRef.current += 1
-        const id = `merge-event-${mergeEventSeqRef.current}`
-        setMergeEvents((prev) => [...prev, { id, text, tone }])
-        return id
-    }, [])
-
-    const replaceMergeEvent = useCallback((id: string, text: string, tone: MergeThreadEvent['tone'] = 'info') => {
-        setMergeEvents((prev) => prev.map((event) => (
-            event.id === id
-                ? { ...event, text, tone }
-                : event
-        )))
-    }, [])
+    const isMergeBusy = isMerging || isCanceling
 
     useEffect(() => {
-        mergeEventSeqRef.current = 0
-        setMergeEvents([])
-        setMergeActionHidden(false)
+        setMergeActionError(null)
+        setPreviewActionError(null)
     }, [props.session.id, taskId])
 
     useEffect(() => {
-        if (task?.status === 'in_review' && !task.worktreeMergedAt) {
-            setMergeActionHidden(false)
+        if (mergeRuntime?.updatedAt || task?.worktreeMergedAt) {
+            setMergeActionError(null)
         }
-    }, [task?.status, task?.worktreeMergedAt])
+    }, [mergeRuntime?.updatedAt, task?.worktreeMergedAt])
+
+    useEffect(() => {
+        if (previewRuntime?.updatedAt || previewState?.updatedAt) {
+            setPreviewActionError(null)
+        }
+    }, [previewRuntime?.updatedAt, previewState?.updatedAt])
+
+    useEffect(() => {
+        if (!shouldQueryMergeState) {
+            return
+        }
+        void refetchMergeState()
+    }, [
+        hasPendingRequests,
+        props.session.id,
+        props.session.thinking,
+        refetchMergeState,
+        shouldQueryMergeState,
+        task?.activeSessionId,
+        task?.worktreeMergedAt
+    ])
 
     const handleMergeAction = useCallback(async () => {
         if (!taskId || isMergeBusy) {
             return
         }
 
-        const mergeEventId = appendMergeEvent('正在 Merge 到目标分支...', 'info')
-        const finalizeMergeEvent = (text: string, tone: MergeThreadEvent['tone']) => {
-            replaceMergeEvent(mergeEventId, text, tone)
-        }
+        setMergeActionError(null)
 
-        try {
-            const res = await mergeTaskWorktree({ taskId })
-            if (res.skippedReason) {
-                finalizeMergeEvent(`Merge 跳过：${formatMergeSkippedReason(res.skippedReason)}`, 'info')
-                if (res.mergedAt || res.skippedReason === 'already_merged') {
-                    setMergeActionHidden(true)
-                }
-                return
-            }
-
-            const commitSuffix = res.commitHash ? ` (${res.commitHash})` : ''
-            if (res.autoResolved) {
-                finalizeMergeEvent(`Merge 成功（已自动解决冲突）${commitSuffix}`, 'success')
-                setMergeActionHidden(true)
-                if (taskProjectId) {
-                    void navigate({ to: '/projects/$projectId', params: { projectId: taskProjectId } })
-                }
-                return
-            }
-
-            finalizeMergeEvent(`Merge 成功${commitSuffix}`, 'success')
-            setMergeActionHidden(true)
-        } catch (error) {
-            setIsMergeFinalizing(true)
-            let mergedAfterFailure = false
+        if (hasActiveMergeRuntime) {
             try {
-                mergedAfterFailure = await waitForTaskMerged(props.api, taskId)
-            } finally {
-                setIsMergeFinalizing(false)
+                await cancelTaskWorktreeMerge(taskId)
+            } catch (error) {
+                setMergeActionError(`取消 Merge 失败：${toErrorMessage(error)}`)
             }
-
-            if (mergedAfterFailure) {
-                finalizeMergeEvent('Merge 成功（接口报错，但任务状态已更新）', 'success')
-                setMergeActionHidden(true)
-                return
-            }
-
-            finalizeMergeEvent(`Merge 失败：${toErrorMessage(error)}`, 'error')
-        }
-    }, [appendMergeEvent, isMergeBusy, mergeTaskWorktree, navigate, props.api, replaceMergeEvent, taskId, taskProjectId])
-
-    const previewActive = isPreviewActive(previewStatus)
-    const shouldTrackPreviewStatus = Boolean(
-        taskId
-        && task
-        && task.activeSessionId === props.session.id
-        && !task.archivedAt
-        && !task.finishedAt
-        && !sessionInactive
-    )
-    const shouldShowPreviewAction = shouldTrackPreviewStatus && !hasPendingRequests
-    const previewActionLabel = previewBusy
-        ? (previewActive ? 'Stopping Preview...' : 'Starting Preview...')
-        : (previewActive ? 'Stop Preview' : 'Preview')
-
-    const appendPreviewEvent = useCallback((text: string, tone: PreviewThreadEvent['tone'] = 'info') => {
-        previewEventSeqRef.current += 1
-        const id = `preview-event-${previewEventSeqRef.current}`
-        setPreviewEvents((prev) => [...prev, { id, text, tone }])
-        return id
-    }, [])
-
-    const replacePreviewEvent = useCallback((id: string, text: string, tone: PreviewThreadEvent['tone'] = 'info') => {
-        setPreviewEvents((prev) => prev.map((event) => (
-            event.id === id
-                ? { ...event, text, tone }
-                : event
-        )))
-    }, [])
-
-    useEffect(() => {
-        previewEventSeqRef.current = 0
-        previewStatusRef.current = null
-        setPreviewStatus(null)
-        setPreviewBusy(false)
-        setPreviewEvents([])
-    }, [props.session.id, taskId])
-
-    const loadPreviewStatus = useCallback(async () => {
-        if (!taskId) {
-            setPreviewStatus(null)
-            previewStatusRef.current = null
             return
         }
+
+        if (!mergeState?.canMerge) {
+            return
+        }
+
         try {
-            const response = await props.api.getTaskPreview(taskId)
-            setPreviewStatus(response.preview)
-        } catch {
+            await mergeTaskWorktree({ taskId })
+        } catch (error) {
+            setMergeActionError(`发起 Merge 失败：${toErrorMessage(error)}`)
         }
-    }, [props.api, taskId])
+    }, [cancelTaskWorktreeMerge, hasActiveMergeRuntime, isMergeBusy, mergeState?.canMerge, mergeTaskWorktree, taskId])
 
-    useEffect(() => {
-        if (!shouldTrackPreviewStatus) {
-            setPreviewStatus(null)
-            previewStatusRef.current = null
-            return
+    const previewRuntimeStatus = previewRuntime?.status ?? null
+    const hasReadyPreview = previewRuntimeStatus === 'ready' || previewState?.status === 'ready'
+    const hasCancelablePreview = hasReadyPreview
+        || isActivePreviewRuntimeStatus(previewRuntimeStatus)
+        || previewState?.status === 'starting'
+    const shouldShowPreviewAction = shouldShowPreviewRuntime && !sessionInactive
+    const previewActionLabel = isStartingPreview
+        ? (isRetryablePreviewRuntimeStatus(previewRuntimeStatus) ? 'Retrying Preview...' : 'Starting Preview...')
+        : isStoppingPreview
+            ? (hasReadyPreview ? 'Stopping Preview...' : 'Canceling Preview...')
+            : hasReadyPreview
+                ? 'Stop Preview'
+                : hasCancelablePreview
+                    ? 'Cancel Preview'
+                    : isRetryablePreviewRuntimeStatus(previewRuntimeStatus)
+                        ? 'Retry Preview'
+                        : 'Preview'
+    const previewActionDisabled = !shouldShowPreviewAction || isUpdatingPreview
+    const previewStatusSummary = useMemo<PreviewStatusSummary | null>(() => {
+        const runtimeSummary = buildPreviewStatusSummary(previewRuntime, previewState)
+        if (!previewActionError) {
+            return runtimeSummary
         }
-        void loadPreviewStatus()
-    }, [loadPreviewStatus, shouldTrackPreviewStatus])
-
-    useEffect(() => {
-        if (!shouldTrackPreviewStatus || !previewStatus?.active) {
-            return
-        }
-
-        const timer = setInterval(() => {
-            void loadPreviewStatus()
-        }, 2_000)
-        return () => clearInterval(timer)
-    }, [loadPreviewStatus, previewStatus?.active, shouldTrackPreviewStatus])
-
-    useEffect(() => {
-        const prev = previewStatusRef.current
-        const next = previewStatus
-        previewStatusRef.current = next
-        if (!next) {
-            return
-        }
-
-        if (next.status === 'ready' && next.url && prev?.status === 'starting' && prev.url !== next.url) {
-            appendPreviewEvent(`Preview 已就绪：${next.url}`, 'success')
-            return
+        if (!runtimeSummary) {
+            return {
+                title: 'Preview 请求失败',
+                detail: previewActionError,
+                tone: 'error'
+            }
         }
 
-        if (next.status === 'error' && next.error && prev?.status === 'starting' && prev.error !== next.error) {
-            appendPreviewEvent(`Preview 失败：${next.error}`, 'error')
+        return {
+            ...runtimeSummary,
+            tone: 'error',
+            detail: [runtimeSummary.detail, previewActionError].filter(Boolean).join(' ')
         }
-    }, [appendPreviewEvent, previewStatus])
+    }, [previewActionError, previewRuntime, previewState])
+    const showPreviewLogs = Boolean(
+        shouldQueryPreviewState
+        && (
+            (previewState?.logTail?.length ?? 0) > 0
+            || (previewState?.command && (previewStatusSummary?.busy || previewStatusSummary?.tone === 'error'))
+        )
+    )
 
     const handlePreviewAction = useCallback(async () => {
-        if (!taskId || previewBusy || !shouldShowPreviewAction) {
+        if (!taskId || previewActionDisabled) {
             return
         }
 
-        setPreviewBusy(true)
-        if (previewActive) {
-            const eventId = appendPreviewEvent('正在停止 Preview...', 'info')
-            const finalizePreviewEvent = (text: string, tone: PreviewThreadEvent['tone']) => {
-                replacePreviewEvent(eventId, text, tone)
-            }
-
-            try {
-                const response = await props.api.stopTaskPreview(taskId)
-                setPreviewStatus(response.preview)
-                finalizePreviewEvent('Preview 已停止', 'info')
-            } catch (error) {
-                finalizePreviewEvent(`停止 Preview 失败：${toErrorMessage(error)}`, 'error')
-            } finally {
-                setPreviewBusy(false)
-            }
-            return
-        }
-
-        const eventId = appendPreviewEvent('正在启动 Preview...', 'info')
-        const finalizePreviewEvent = (text: string, tone: PreviewThreadEvent['tone']) => {
-            replacePreviewEvent(eventId, text, tone)
-        }
-
+        setPreviewActionError(null)
         try {
-            const response = await props.api.startTaskPreview(taskId, { mode: 'auto' })
-            setPreviewStatus(response.preview)
-            if (response.preview.status === 'ready' && response.preview.url) {
-                finalizePreviewEvent(`Preview 已就绪：${response.preview.url}`, 'success')
-            } else if (response.preview.status === 'starting') {
-                finalizePreviewEvent('Preview 启动中，等待服务就绪...', 'info')
-            } else if (response.preview.error) {
-                finalizePreviewEvent(`Preview 失败：${response.preview.error}`, 'error')
-            } else {
-                finalizePreviewEvent(`Preview 状态：${response.preview.status}`, 'info')
+            if (hasCancelablePreview) {
+                await stopTaskPreview(taskId)
+                return
             }
+
+            await startTaskPreview({
+                taskId,
+                payload: { mode: 'auto' }
+            })
         } catch (error) {
-            finalizePreviewEvent(`启动 Preview 失败：${toErrorMessage(error)}`, 'error')
-        } finally {
-            setPreviewBusy(false)
+            setPreviewActionError(toErrorMessage(error))
         }
-    }, [appendPreviewEvent, previewActive, previewBusy, props.api, replacePreviewEvent, shouldShowPreviewAction, taskId])
+    }, [hasCancelablePreview, previewActionDisabled, startTaskPreview, stopTaskPreview, taskId])
 
     const handleMergeActionClick = useCallback(() => {
         void handleMergeAction()
@@ -665,13 +582,6 @@ export function SessionChat(props: {
         return false
     }, [normalizedMessages])
 
-    const shouldShowMergeAction = Boolean(
-        shouldQueryMergeState
-        && !isMergeStateLoading
-        && mergeState?.canMerge
-        && !mergeActionHidden
-        && !hasPendingRequests
-    )
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -775,6 +685,48 @@ export function SessionChat(props: {
         && !hasPendingRequests
         && !effectiveIsRunning
     )
+    const canStartMerge = Boolean(
+        shouldQueryMergeState
+        && !isMergeStateLoading
+        && mergeState?.canMerge
+        && !hasPendingRequests
+    )
+    const hasRecoveredBlockedMerge = shouldTreatBlockedMergeAsRecoveredSuccess(mergeRuntime, mergeState)
+    const shouldShowMergeAction = !hasRecoveredBlockedMerge && shouldShowMergeActionButton({
+        task,
+        hasActiveMergeRuntime,
+        mergeRuntimeStatus,
+        canStartMerge
+    })
+    const mergeActionLabel = hasActiveMergeRuntime
+        ? (isCanceling ? 'Stopping Merge...' : 'Cancel Merge')
+        : isRetryableMergeRuntimeStatus(mergeRuntimeStatus)
+            ? (isMerging ? 'Retrying Merge...' : 'Retry Merge')
+            : (isMerging ? 'Starting Merge...' : 'Merge')
+    const mergeActionDisabled = hasActiveMergeRuntime
+        ? isMergeBusy
+        : effectiveIsRunning || isMergeBusy || hasPendingRequests || !canStartMerge
+    const mergeStatus = useMemo<TaskActionStatusSummary | null>(() => {
+        const runtimeSummary = hasRecoveredBlockedMerge
+            ? buildRecoveredBlockedMergeSummary(mergeRuntime, mergeState)
+            : buildMergeRuntimeSummary(task, mergeRuntime)
+        if (!mergeActionError) {
+            return runtimeSummary
+        }
+        if (!runtimeSummary) {
+            return {
+                title: 'Merge 请求失败',
+                detail: mergeActionError,
+                tone: 'error'
+            }
+        }
+
+        return {
+            ...runtimeSummary,
+            tone: 'error',
+            detail: [runtimeSummary.detail, mergeActionError].filter(Boolean).join(' ')
+        }
+    }, [hasRecoveredBlockedMerge, mergeActionError, mergeRuntime, mergeState, task])
 
     const runtime = useHappyRuntime({
         session: props.session,
@@ -794,7 +746,8 @@ export function SessionChat(props: {
         subscription: {
             all: false,
             sessionId: props.session.id,
-            include: ['messages', 'sessions']
+            projectId: taskProjectId ?? undefined,
+            include: taskProjectId ? ['messages', 'sessions', 'tasks'] : ['messages', 'sessions']
         },
         onConnect: undefined,
         onDisconnect: undefined,
@@ -850,19 +803,20 @@ export function SessionChat(props: {
                         showContinueAction={showContinueAction}
                         continueActionDisabled={props.isSending || effectiveIsRunning || hasPendingRequests}
                         onContinueAction={handleContinue}
+                        initStatus={initStatusSummary}
                         showMergeAction={shouldShowMergeAction}
-                        mergeActionDisabled={effectiveIsRunning || isMergeBusy || hasPendingRequests}
-                        mergeActionLabel={isMergeBusy ? 'Merging...' : 'Merge'}
+                        mergeActionDisabled={mergeActionDisabled}
+                        mergeActionLabel={mergeActionLabel}
                         onMergeAction={handleMergeActionClick}
-                        mergeEvents={mergeEvents}
+                        mergeStatus={mergeStatus}
                         showPreviewAction={shouldShowPreviewAction}
-                        previewActionDisabled={effectiveIsRunning || previewBusy || hasPendingRequests}
+                        previewActionDisabled={previewActionDisabled}
                         previewActionLabel={previewActionLabel}
                         onPreviewAction={handlePreviewActionClick}
-                        previewEvents={previewEvents}
-                        showPreviewLogs={shouldTrackPreviewStatus}
-                        previewLogTail={previewStatus?.logTail ?? []}
-                        previewCommand={previewStatus?.command ?? null}
+                        previewStatus={previewStatusSummary}
+                        showPreviewLogs={showPreviewLogs}
+                        previewLogTail={previewState?.logTail ?? []}
+                        previewCommand={previewState?.command ?? null}
                     />
 
                     <HappyComposer
