@@ -397,7 +397,8 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     }`}
                 style={{
                     background: cardBackground,
-                    '--app-card-hover-tint': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)'
+                    '--app-card-hover-tint-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
+                    '--app-card-hover-tint-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)'
                 } as CSSProperties}
             >
                 <div className="flex items-start justify-between gap-2">
