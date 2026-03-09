@@ -10,6 +10,7 @@ import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
+import { Spinner } from '@/components/Spinner'
 import { PageHeader } from '@/components/PageHeader'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
@@ -39,6 +40,7 @@ import { TaskSessionFiles } from '@/routes/projects/task-session-files'
 import { SessionTerminal } from '@/routes/sessions/terminal'
 import { CopyIcon } from '@/assets/icons'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
+import { buildInitStatusSummary, type InitStatusSummary } from '@/lib/task-init-runtime'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 
@@ -670,6 +672,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     workflowPhase: string
     workflowPhaseOptions: Array<{ value: string; label: string }>
     sessionId: string | null
+    initStatus: InitStatusSummary | null
     overLimit: boolean
     isUpdatingTask: boolean
     isArchiving: boolean
@@ -817,6 +820,30 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                     </div>
                 )}
 
+                {props.initStatus ? (
+                    <div
+                        className={`rounded-md px-3 py-2 text-xs ${
+                            props.initStatus.tone === 'success'
+                                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                : props.initStatus.tone === 'error'
+                                    ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                                    : 'bg-[var(--app-secondary-bg)] text-[var(--app-hint)]'
+                        }`}
+                    >
+                        <div className="flex items-center gap-2 font-medium">
+                            {props.initStatus.busy ? (
+                                <Spinner size="sm" label={null} className="text-current" />
+                            ) : null}
+                            <span>{props.initStatus.title}</span>
+                        </div>
+                        {props.initStatus.detail ? (
+                            <div className="mt-1 opacity-80">
+                                {props.initStatus.detail}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
+
                 {props.overLimit ? (
                     <div className="text-xs text-[var(--app-hint)]">
                         {t('projects.task.attachments.mustFix')}
@@ -878,6 +905,7 @@ function TaskDetailsPanel(props: {
     const [attachOpen, setAttachOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const sessionId = props.task.activeSessionId ?? null
+    const initStatus = useMemo(() => buildInitStatusSummary(props.task), [props.task])
 
     useEffect(() => {
         setTitle(props.task.title)
@@ -1299,6 +1327,7 @@ function TaskDetailsPanel(props: {
                             workflowPhase={workflowPhase}
                             workflowPhaseOptions={workflowPhaseOptions}
                             sessionId={sessionId}
+                            initStatus={initStatus}
                             overLimit={overLimit}
                             isUpdatingTask={isUpdatingTask}
                             isArchiving={isArchiving}

@@ -22,8 +22,10 @@ import {
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
     type RpcGitAutocommitWorktreeResponse,
+    type RpcGitCaptureWorktreeMergeSnapshotResponse,
     type RpcGitMergeWorktreeResponse,
     type RpcGitMergeWorktreeStateResponse,
+    type RpcGitVerifyWorktreeMergeResponse,
     type RpcListDirectoryResponse,
     type RpcPathExistsResponse,
     type RpcPreviewStatus,
@@ -40,8 +42,10 @@ export type {
     RpcCommandResponse,
     RpcDeleteUploadResponse,
     RpcGitAutocommitWorktreeResponse,
+    RpcGitCaptureWorktreeMergeSnapshotResponse,
     RpcGitMergeWorktreeResponse,
     RpcGitMergeWorktreeStateResponse,
+    RpcGitVerifyWorktreeMergeResponse,
     RpcListDirectoryResponse,
     RpcPathExistsResponse,
     RpcPreviewStatus,
@@ -696,6 +700,18 @@ export class SyncEngine {
 
     async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {
         return await this.rpcGateway.gitMergeWorktreeState(sessionId, options)
+    }
+
+    async gitCaptureWorktreeMergeSnapshot(sessionId: string, options: { targetBranch: string }): Promise<RpcGitCaptureWorktreeMergeSnapshotResponse> {
+        return await this.rpcGateway.gitCaptureWorktreeMergeSnapshot(sessionId, options)
+    }
+
+    async gitVerifyWorktreeMerge(sessionId: string, options: {
+        targetBranch: string
+        mergeBase: string
+        snapshotRef: string
+    }): Promise<RpcGitVerifyWorktreeMergeResponse> {
+        return await this.rpcGateway.gitVerifyWorktreeMerge(sessionId, options)
     }
 
     async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {

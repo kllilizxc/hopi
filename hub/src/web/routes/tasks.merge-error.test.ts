@@ -4,6 +4,48 @@ import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { createTasksRoutes } from './tasks'
 
+
+const MERGE_BASE = '1111111111111111111111111111111111111111'
+const SNAPSHOT_REF = '2222222222222222222222222222222222222222'
+const TARGET_HEAD = '3333333333333333333333333333333333333333'
+
+function createMergeVerificationSnapshot(): {
+    success: boolean
+    targetBranch: string
+    sourceBranch: string
+    mergeBase: string
+    snapshotRef: string
+    expectedChangeCount: number
+} {
+    return {
+        success: true,
+        targetBranch: 'main',
+        sourceBranch: 'task-branch',
+        mergeBase: MERGE_BASE,
+        snapshotRef: SNAPSHOT_REF,
+        expectedChangeCount: 1
+    }
+}
+
+function createMergeVerificationResult(): {
+    success: boolean
+    verified: boolean
+    targetBranch: string
+    mergeBase: string
+    snapshotRef: string
+    expectedChangeCount: number
+    targetHead: string
+} {
+    return {
+        success: true,
+        verified: true,
+        targetBranch: 'main',
+        mergeBase: MERGE_BASE,
+        snapshotRef: SNAPSHOT_REF,
+        expectedChangeCount: 1,
+        targetHead: TARGET_HEAD
+    }
+}
 function seedProject(store: Store, options: { namespace: string; projectId: string }): void {
     store.projects.createProject({
         id: options.projectId,
@@ -421,6 +463,12 @@ describe('tasks merge route runtime behavior', () => {
                     committedChangedCount: 1
                 }
             },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
             async sendMessage(sessionId: string, payload: { text: string; localId?: string }) {
                 sendMessageCalls += 1
                 store.messages.addMessage(sessionId, {
@@ -441,11 +489,12 @@ describe('tasks merge route runtime behavior', () => {
         expect(response.status).toBe(200)
         const body = await response.json() as { skippedReason?: string | null }
         expect(body.skippedReason).toBe('queued')
-        expect(sendMessageCalls).toBe(1)
+        expect(sendMessageCalls).toBe(0)
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.mergeRuntime?.status).toBe('queued')
         expect(updatedTask?.mergeRuntime?.latestNote).toContain('queued behind')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('auto-run')
     })
 
     it('marks merge approval-pending when the linked session is waiting for permission', async () => {
@@ -467,6 +516,7 @@ describe('tasks merge route runtime behavior', () => {
         })
 
         const requests = { req1: { id: 'req1' } }
+        let sendMessageCalls = 0
         const engine = {
             resolveSessionAccess(sessionId: string) {
                 return {
@@ -518,7 +568,14 @@ describe('tasks merge route runtime behavior', () => {
                     committedChangedCount: 1
                 }
             },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
             async sendMessage(sessionId: string, payload: { text: string; localId?: string }) {
+                sendMessageCalls += 1
                 store.messages.addMessage(sessionId, {
                     role: 'user',
                     content: { type: 'text', text: payload.text }
@@ -537,9 +594,11 @@ describe('tasks merge route runtime behavior', () => {
         expect(response.status).toBe(200)
         const body = await response.json() as { skippedReason?: string | null }
         expect(body.skippedReason).toBe('approval_pending')
+        expect(sendMessageCalls).toBe(0)
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.mergeRuntime?.status).toBe('approval_pending')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('auto-run')
     })
 
     it('cancels queued merge runtime and aborts the linked session', async () => {

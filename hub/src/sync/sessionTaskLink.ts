@@ -1,6 +1,7 @@
-import type { Session, TaskMergeRuntime } from '@hopi/protocol/types'
+import type { Session } from '@hopi/protocol/types'
 
 import type { StoredSession, StoredTask, Store } from '../store'
+import { syncTaskActionRuntimeSession } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
 
 export type SessionTaskLinkMetadata = {
@@ -42,18 +43,6 @@ export type ResolveBestUsableTaskSessionResult =
 
 function trimString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
-}
-
-function normalizeRuntimeSessionId(runtime: TaskMergeRuntime | null | undefined, sessionId: string | null): TaskMergeRuntime | null | undefined {
-    if (runtime === undefined || runtime === null) {
-        return runtime
-    }
-
-    return {
-        ...runtime,
-        sessionId,
-        updatedAt: Date.now()
-    }
 }
 
 function isSessionActive(session: Session | null | undefined): boolean {
@@ -172,10 +161,6 @@ export function setSessionTaskLink(options: {
     return syncTaskSessionLink(options)
 }
 
-export function syncTaskMergeRuntimeSession(task: StoredTask, sessionId: string | null): TaskMergeRuntime | null | undefined {
-    return normalizeRuntimeSessionId(task.mergeRuntime, sessionId)
-}
-
 export function relinkTaskToSession(options: {
     store: Store
     engine: LinkRealtimeEngine
@@ -186,7 +171,9 @@ export function relinkTaskToSession(options: {
 }): StoredTask | null {
     const nextTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         activeSessionId: options.sessionId,
-        mergeRuntime: syncTaskMergeRuntimeSession(options.task, options.sessionId),
+        mergeRuntime: syncTaskActionRuntimeSession(options.task.mergeRuntime, options.sessionId),
+        previewRuntime: syncTaskActionRuntimeSession(options.task.previewRuntime, options.sessionId),
+        initRuntime: syncTaskActionRuntimeSession(options.task.initRuntime, options.sessionId),
         preserveMergeResultOnSessionChange: options.preserveMergeResultOnSessionChange
     })
     if (!nextTask) {

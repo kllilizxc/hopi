@@ -1,65 +1,64 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: planning
-stopped_at: Phase 1 plan 02 completed
-last_updated: "2026-03-07T09:46:47.000Z"
-last_activity: 2026-03-07 — Completed 01-02 conversation-native merge kickoff runtime
+milestone: v1.1
+milestone_name: shared action runtime parity
+status: completed
+stopped_at: Phase 6 executed; milestone complete
+last_updated: "2026-03-09T02:08:35+08:00"
+last_activity: 2026-03-09 — Phase 6 executed; Merge, Preview, and Init now share runtime helpers, shared status/cache adapters, and full validation coverage
 progress:
   total_phases: 3
-  completed_phases: 0
-  total_plans: 3
-  completed_plans: 2
-  percent: 67
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-07)
+See: .planning/PROJECT.md (updated 2026-03-08)
 
 **Core value:** Project actions should feel as flexible and self-correcting as normal agent work: agent sees tool output, adapts, fixes, retries.
-**Current focus:** Phase 1 — Merge Action Runtime (Plan 03 next)
+**Current focus:** Milestone complete — shared action runtime consolidation shipped
 
 ## Current Position
 
-Phase: 1 of 3 (Merge Action Runtime)
-Plan: 2 of 3 in current phase
-Status: Plan 02 complete — Plan 03 queued
-Last activity: 2026-03-07 — Completed 01-02 conversation-native merge kickoff runtime
+Phase: 6 of 6 complete (Shared Action Runtime Consolidation)
+Plan: Phase 6 executed; validation + summaries complete
+Status: Milestone complete
+Last activity: 2026-03-09 — Phase 6 executed; Merge, Preview, and Init now share runtime helpers, shared status/cache adapters, and full validation coverage
 
-Progress: [███████░░░] 67%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 41 min
-- Total execution time: 1.4 hours
+- Previous milestone completed: phases 1-3, 9/9 plans
+- Validation baseline: `bun run typecheck:hub`, `bun run typecheck:web`, `bun run typecheck:cli`, `bun run test:hub`, and `bun run test:web` passing at v1.0 closeout
+- Delivery trend: Stable
 
-**By Phase:**
+**This Milestone:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| Phase 1 P01 | 42 min | 3 tasks | 9 files |
-| Phase 1 P02 | 39 min | 3 tasks | 6 files |
-
-**Recent Trend:**
-- Last 5 plans: 01-01 (42 min), 01-02 (39 min)
-- Trend: Stable
+| Phase | Plans | Status | Notes |
+|-------|-------|--------|-------|
+| Phase 4 | 3/3 | Completed | Preview now has durable runtime UI parity, cache/SSE-backed controls, and focused web rehydration coverage |
+| Phase 5 | 3/3 | Completed | Init now matches the same durable runtime, transcript-first repair loop, and task/chat status story |
+| Phase 6 | 3/3 | Completed | Shared runtime envelope, shared flow/copy helpers, shared web status/cache adapters, and green full-suite validation |
 
 ## Accumulated Context
 
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+Recent decisions affecting next work:
 
-- Initialization: Start with Merge first rather than solving init/preview parity together
-- Initialization: Keep all automatic execution and recovery inside the workspace sandbox
-- Initialization: Use normal agent tool-call flow as the runtime for project actions
+- Keep Merge as the proven reference implementation for action-runtime behavior; Preview and Init should copy its product feel instead of inventing new flows.
+- Start with Preview parity before Init because Preview already has more direct-run and repair hooks to build on.
+- Land durable runtime contracts before retry and UI work so later plans share one stable source of truth.
+- Keep Init on the same task-backed runtime contract and compact status-card UI used by Merge/Preview.
+- Keep generic custom actions deferred until Merge, Preview, and Init share one stable runtime contract.
 
 ### Pending Todos
 
@@ -67,11 +66,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- Preview/init parity intentionally deferred until merge-first loop is trusted
-- Current repo still contains split merge/preview behavior that roadmap phases need to unify carefully
+- A real browser refresh/reconnect smoke pass still matters for Init product feel even though web coverage now locks durable cache rehydrate behavior.
+- Phase 6 landed shared runtime code without reintroducing a rigid fixed workflow; future custom actions can build on the new helper seams.
+- Manual browser feel-check still recommended for action labels and queue timing, but automated validation now locks the consolidated runtime contract and control surfaces.
 
 ## Session Continuity
 
-Last session: 2026-03-07T07:52:22.246Z
-Stopped at: Phase 1 plan 02 completed
-Resume file: .planning/phases/01-merge-action-runtime/01-CONTEXT.md
+Last session: 2026-03-08T23:30:00+08:00
+Stopped at: Phase 6 executed; milestone complete
+Resume file: .planning/ROADMAP.md

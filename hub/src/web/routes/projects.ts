@@ -1,5 +1,6 @@
 import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import {
+    PRODUCT_ENV,
     PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
     PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
     PRODUCT_PREVIEW_READY_MARKER,
@@ -88,9 +89,14 @@ function buildProjectInitTaskDescription(options: {
     targetBranch: string | null
 }): string {
     const mergeRequirement = options.sessionType === 'worktree'
-        ? options.targetBranch
-            ? `- This project uses worktree mode. Merge script must merge task branches into target branch \`${options.targetBranch}\`.`
-            : '- This project uses worktree mode. Merge script must detect/require configured target branch before running merge.'
+        ? [
+            options.targetBranch
+                ? `- This project uses worktree mode. Merge script must merge task branches into target branch \`${options.targetBranch}\`.`
+                : '- This project uses worktree mode. Merge script must detect/require configured target branch before running merge.',
+            '- Merge action runs from the task worktree. Do not blindly `git checkout` the target branch inside that worktree; the branch may already be checked out in another worktree.',
+            `- Prefer a worktree-safe strategy that uses \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` for target-branch operations, or another git flow that updates the target branch without checked-out-branch conflicts.`,
+            `- Merge script can rely on \`${PRODUCT_ENV.MERGE_TARGET_BRANCH}\`, \`${PRODUCT_ENV.MERGE_SOURCE_BRANCH}\`, \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\`, and \`${PRODUCT_ENV.WORKTREE_PATH}\` when available.`
+        ].join('\n')
         : '- This project currently uses simple mode. Merge script should still exist and fail with a clear message when no worktree context is available.'
 
     return [

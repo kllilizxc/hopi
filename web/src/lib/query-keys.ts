@@ -9,6 +9,7 @@ export const queryKeys = {
     workspaces: (projectId: string) => ['workspaces', projectId] as const,
     tasks: (projectId: string) => ['tasks', projectId] as const,
     task: (taskId: string) => ['task', taskId] as const,
+    taskPreview: (taskId: string) => ['task-preview', taskId] as const,
     taskMergeState: (taskId: string) => ['task-merge-state', taskId] as const,
     gitStatus: (sessionId: string) => ['git-status', sessionId] as const,
     gitCommittedDiff: (sessionId: string, baseRef: string) => ['git-committed-diff', sessionId, baseRef] as const,

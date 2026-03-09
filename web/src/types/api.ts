@@ -21,6 +21,8 @@ export type {
     SessionSummary,
     SessionSummaryMetadata,
     Task,
+    TaskActionRuntimeCoreStatus,
+    TaskActionRuntimeEnvelope,
     TaskAttachment,
     TaskPriority,
     TaskWorkflowPhase,
@@ -86,14 +88,34 @@ export type WorkflowStrategyDescriptor = {
     phaseOptions: TaskWorkflowPhase[]
 }
 export type WorkflowStrategiesResponse = { strategies: WorkflowStrategyDescriptor[] }
-export type TaskStartSessionResponse = { task: Task; sessionId: string }
+export type TaskStartSessionResponse = {
+    task: Task
+    sessionId: string
+    initRecoveryAttempted?: boolean
+    initRecoveryError?: string
+}
+export type TaskWorktreeMergeSkippedReason =
+    | 'already_merged'
+    | 'no_changes'
+    | 'queued'
+    | 'waiting'
+    | 'approval_pending'
+    | 'running'
+    | 'retrying'
+
 export type TaskWorktreeMergeResponse = {
     ok: true
     commitHash: string | null
-    skippedReason: string | null
+    skippedReason: TaskWorktreeMergeSkippedReason | null
     mergedAt: number | null
     autoResolved?: boolean | null
     autoRetryScheduled?: boolean | null
+}
+
+export type TaskWorktreeMergeCancelResponse = {
+    ok: true
+    canceled: boolean
+    mergeRuntime: Task['mergeRuntime'] | null | undefined
 }
 
 export type TaskWorktreeMergeStateResponse = {
@@ -137,7 +159,21 @@ export type TaskPreviewStatus = {
     error?: string
     logTail: string[]
 }
-export type TaskPreviewResponse = { preview: TaskPreviewStatus }
+export type TaskPreviewRuntime = NonNullable<Task['previewRuntime']>
+export type TaskPreviewKickoffSkippedReason =
+    | 'queued'
+    | 'waiting'
+    | 'approval_pending'
+    | 'running'
+    | 'retrying'
+
+export type TaskPreviewResponse = {
+    preview: TaskPreviewStatus
+    previewRuntime: TaskPreviewRuntime | null | undefined
+    skippedReason?: TaskPreviewKickoffSkippedReason | null
+    autoRepairAttempted?: boolean
+    autoSetupAttempted?: boolean
+}
 export type MessagesResponse = {
     messages: DecryptedMessage[]
     page: {

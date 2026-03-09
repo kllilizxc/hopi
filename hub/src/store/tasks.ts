@@ -1,10 +1,16 @@
 import type { Database } from 'bun:sqlite'
-import { TaskMergeRuntimeSchema, type TaskMergeRuntime } from '@hopi/protocol/schemas'
+import type { TaskInitRuntime, TaskMergeRuntime, TaskPreviewRuntime } from '@hopi/protocol/schemas'
 
+import {
+    normalizeTaskInitRuntime,
+    normalizeTaskMergeRuntime,
+    normalizeTaskPreviewRuntime,
+    parseTaskInitRuntime,
+    parseTaskMergeRuntime,
+    parseTaskPreviewRuntime
+} from '../utils/taskActionRuntime'
 import { safeJsonParse } from './json'
 import type { StoredTask } from './types'
-
-const TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH = 280
 
 type DbTaskRow = {
     id: string
@@ -31,72 +37,54 @@ type DbTaskRow = {
     worktree_merge_commit: string | null
     merged_diff_snapshot: string | null
     merge_runtime: string | null
+    preview_runtime: string | null
+    init_runtime: string | null
     created_at: number
     updated_at: number
     finished_at: number | null
     archived_at: number | null
 }
 
-function parseTaskMergeRuntime(value: unknown): TaskMergeRuntime | null {
-    const parsed = TaskMergeRuntimeSchema.safeParse(value)
-    return parsed.success ? parsed.data : null
+type TaskRuntimeWithSession = {
+    sessionId?: string | null
 }
 
-function normalizeTaskMergeRuntime(
-    value: TaskMergeRuntime | null | undefined,
+type TaskRuntimeNormalizer<Runtime extends TaskRuntimeWithSession> = (
+    value: Runtime | null | undefined,
     updatedAt: number
-): TaskMergeRuntime | null | undefined {
-    if (value === undefined) {
-        return undefined
+) => Runtime | null | undefined
+
+function prepareTaskRuntime<Runtime extends TaskRuntimeWithSession>(
+    value: Runtime | null | undefined,
+    activeSessionId: string | null | undefined,
+    updatedAt: number,
+    normalize: TaskRuntimeNormalizer<Runtime>
+): Runtime | null | undefined {
+    if (value === undefined || value === null) {
+        return value
     }
 
-    if (value === null) {
-        return null
-    }
-
-    const normalizedLatestNote = typeof value.latestNote === 'string'
-        ? value.latestNote.trim().replace(/\s+/g, ' ').slice(0, TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH)
-        : value.latestNote
-    const normalizedBlockedReason = typeof value.blockedReason === 'string'
-        ? value.blockedReason.trim().replace(/\s+/g, ' ').slice(0, TASK_MERGE_RUNTIME_LATEST_NOTE_MAX_LENGTH)
-        : value.blockedReason
-    const normalizedSessionId = typeof value.sessionId === 'string'
-        ? value.sessionId.trim()
-        : value.sessionId
-
-    const normalized: TaskMergeRuntime = {
+    return normalize({
         ...value,
-        sessionId: normalizedSessionId && normalizedSessionId.length > 0
-            ? normalizedSessionId
-            : normalizedSessionId === null
-                ? null
-                : undefined,
-        updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : updatedAt,
-        retryCount: typeof value.retryCount === 'number' && Number.isFinite(value.retryCount)
-            ? Math.max(0, Math.floor(value.retryCount))
-            : undefined,
-        requestedAt: typeof value.requestedAt === 'number' && Number.isFinite(value.requestedAt)
-            ? value.requestedAt
-            : undefined,
-        startedAt: value.startedAt === null || (typeof value.startedAt === 'number' && Number.isFinite(value.startedAt))
-            ? value.startedAt
-            : undefined,
-        completedAt: value.completedAt === null || (typeof value.completedAt === 'number' && Number.isFinite(value.completedAt))
-            ? value.completedAt
-            : undefined,
-        latestNote: normalizedLatestNote && normalizedLatestNote.length > 0
-            ? normalizedLatestNote
-            : normalizedLatestNote === null
-                ? null
-                : undefined,
-        blockedReason: normalizedBlockedReason && normalizedBlockedReason.length > 0
-            ? normalizedBlockedReason
-            : normalizedBlockedReason === null
-                ? null
-                : undefined
+        sessionId: value.sessionId ?? activeSessionId ?? null
+    }, updatedAt)
+}
+
+function syncTaskRuntimeForSessionChange<Runtime extends TaskRuntimeWithSession>(
+    current: Runtime | null | undefined,
+    nextSessionId: string | null,
+    updatedAt: number,
+    normalize: TaskRuntimeNormalizer<Runtime>
+): Runtime | null | undefined {
+    if (!current) {
+        return current
     }
 
-    return parseTaskMergeRuntime(normalized)
+    return normalize({
+        ...current,
+        sessionId: nextSessionId,
+        updatedAt
+    }, updatedAt)
 }
 
 function toStoredTask(row: DbTaskRow): StoredTask {
@@ -125,6 +113,8 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         worktreeMergeCommit: row.worktree_merge_commit,
         mergedDiffSnapshot: safeJsonParse(row.merged_diff_snapshot),
         mergeRuntime: parseTaskMergeRuntime(safeJsonParse(row.merge_runtime)),
+        previewRuntime: parseTaskPreviewRuntime(safeJsonParse(row.preview_runtime)),
+        initRuntime: parseTaskInitRuntime(safeJsonParse(row.init_runtime)),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         finishedAt: row.finished_at,
@@ -239,29 +229,26 @@ export function createTask(
         worktreeMergedAt?: number | null
         worktreeMergeCommit?: string | null
         mergeRuntime?: TaskMergeRuntime | null
+        previewRuntime?: TaskPreviewRuntime | null
+        initRuntime?: TaskInitRuntime | null
     }
 ): StoredTask {
     const now = Date.now()
-    const mergeRuntime = task.mergeRuntime === undefined
-        ? undefined
-        : task.mergeRuntime === null
-            ? null
-            : normalizeTaskMergeRuntime({
-                ...task.mergeRuntime,
-                sessionId: task.mergeRuntime.sessionId ?? task.activeSessionId ?? null
-            }, now)
+    const mergeRuntime = prepareTaskRuntime(task.mergeRuntime, task.activeSessionId, now, normalizeTaskMergeRuntime)
+    const previewRuntime = prepareTaskRuntime(task.previewRuntime, task.activeSessionId, now, normalizeTaskPreviewRuntime)
+    const initRuntime = prepareTaskRuntime(task.initRuntime, task.activeSessionId, now, normalizeTaskInitRuntime)
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
-            permission_mode, model, model_mode, merge_runtime,
+            permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
-            @permission_mode, @model, @model_mode, @merge_runtime,
+            @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
@@ -288,6 +275,8 @@ export function createTask(
         worktree_merged_at: task.worktreeMergedAt ?? null,
         worktree_merge_commit: task.worktreeMergeCommit ?? null,
         merge_runtime: mergeRuntime !== undefined && mergeRuntime !== null ? JSON.stringify(mergeRuntime) : null,
+        preview_runtime: previewRuntime !== undefined && previewRuntime !== null ? JSON.stringify(previewRuntime) : null,
+        init_runtime: initRuntime !== undefined && initRuntime !== null ? JSON.stringify(initRuntime) : null,
         created_at: now,
         updated_at: now
     })
@@ -326,6 +315,8 @@ export function updateTaskByNamespace(
         worktreeMergeCommit?: string | null
         mergedDiffSnapshot?: unknown
         mergeRuntime?: TaskMergeRuntime | null
+        previewRuntime?: TaskPreviewRuntime | null
+        initRuntime?: TaskInitRuntime | null
         finishedAt?: number | null
         archivedAt?: number | null
     }
@@ -362,19 +353,20 @@ export function updateTaskByNamespace(
             ? patch.subTasksUpdatedAt
             : (patch.subTasks !== undefined ? now : current.subTasksUpdatedAt),
         mergeRuntime: patch.mergeRuntime !== undefined
-            ? patch.mergeRuntime === null
-                ? null
-                : normalizeTaskMergeRuntime({
-                    ...patch.mergeRuntime,
-                    sessionId: patch.mergeRuntime.sessionId ?? nextActiveSessionId ?? null
-                }, now)
-            : activeSessionChanged && current.mergeRuntime
-                ? normalizeTaskMergeRuntime({
-                    ...current.mergeRuntime,
-                    sessionId: nextActiveSessionId ?? null,
-                    updatedAt: now
-                }, now)
+            ? prepareTaskRuntime(patch.mergeRuntime, nextActiveSessionId, now, normalizeTaskMergeRuntime)
+            : activeSessionChanged
+                ? syncTaskRuntimeForSessionChange(current.mergeRuntime, nextActiveSessionId, now, normalizeTaskMergeRuntime)
                 : current.mergeRuntime,
+        previewRuntime: patch.previewRuntime !== undefined
+            ? prepareTaskRuntime(patch.previewRuntime, nextActiveSessionId, now, normalizeTaskPreviewRuntime)
+            : activeSessionChanged
+                ? syncTaskRuntimeForSessionChange(current.previewRuntime, nextActiveSessionId, now, normalizeTaskPreviewRuntime)
+                : current.previewRuntime,
+        initRuntime: patch.initRuntime !== undefined
+            ? prepareTaskRuntime(patch.initRuntime, nextActiveSessionId, now, normalizeTaskInitRuntime)
+            : activeSessionChanged
+                ? syncTaskRuntimeForSessionChange(current.initRuntime, nextActiveSessionId, now, normalizeTaskInitRuntime)
+                : current.initRuntime,
         worktreeMergedAt: activeSessionChanged
             ? (preserveMergeResultOnSessionChange ? current.worktreeMergedAt : null)
             : patch.worktreeMergedAt !== undefined
@@ -414,6 +406,8 @@ export function updateTaskByNamespace(
             sub_tasks = @sub_tasks,
             sub_tasks_updated_at = @sub_tasks_updated_at,
             merge_runtime = @merge_runtime,
+            preview_runtime = @preview_runtime,
+            init_runtime = @init_runtime,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
             merged_diff_snapshot = @merged_diff_snapshot,
@@ -442,6 +436,8 @@ export function updateTaskByNamespace(
         sub_tasks: next.subTasks !== undefined && next.subTasks !== null ? JSON.stringify(next.subTasks) : null,
         sub_tasks_updated_at: next.subTasksUpdatedAt,
         merge_runtime: next.mergeRuntime !== undefined && next.mergeRuntime !== null ? JSON.stringify(next.mergeRuntime) : null,
+        preview_runtime: next.previewRuntime !== undefined && next.previewRuntime !== null ? JSON.stringify(next.previewRuntime) : null,
+        init_runtime: next.initRuntime !== undefined && next.initRuntime !== null ? JSON.stringify(next.initRuntime) : null,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
         merged_diff_snapshot: next.mergedDiffSnapshot !== undefined && next.mergedDiffSnapshot !== null ? JSON.stringify(next.mergedDiffSnapshot) : null,

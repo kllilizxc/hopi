@@ -146,7 +146,9 @@ export class AutoRunScheduler {
                 })
 
                 if (result.ok) {
-                    started += 1
+                    if (result.task.initRuntime?.status !== 'blocked') {
+                        started += 1
+                    }
                     continue
                 }
 

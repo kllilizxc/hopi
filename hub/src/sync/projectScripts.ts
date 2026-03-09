@@ -16,6 +16,7 @@ type ScriptExecutionSuccess = {
 
 type ScriptExecutionFailure = {
     ok: false
+    executed: boolean
     error: string
     stdout: string
     stderr: string
@@ -23,7 +24,7 @@ type ScriptExecutionFailure = {
 
 export type ScriptExecutionResult = ScriptExecutionSuccess | ScriptExecutionFailure
 
-function quoteForShell(value: string): string {
+export function quoteForShell(value: string): string {
     return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
@@ -35,6 +36,42 @@ function buildEnvPrefix(env: Record<string, string | undefined>): string {
         return ''
     }
     return `${entries.join(' ')} `
+}
+
+function buildScriptExecutionCommand(options: {
+    scriptRelativePath: string
+    env: Record<string, string | undefined>
+}): string {
+    const envPrefix = buildEnvPrefix(options.env)
+    const scriptPath = quoteForShell(options.scriptRelativePath)
+    return `chmod +x ${scriptPath} && ${envPrefix}bash ${scriptPath}`
+}
+
+function wrapWithScriptPresenceCheck(options: {
+    scriptRelativePath: string
+    command: string
+    missingCommand: string
+}): string {
+    const scriptPath = quoteForShell(options.scriptRelativePath)
+    return `if [ -f ${scriptPath} ]; then ${options.command}; else ${options.missingCommand}; fi`
+}
+
+function buildScriptToolCallCommand(options: {
+    rootPath: string
+    scriptRelativePath: string
+    env: Record<string, string | undefined>
+    missingMessage: string
+}): string {
+    const executionCommand = buildScriptExecutionCommand({
+        scriptRelativePath: options.scriptRelativePath,
+        env: options.env
+    })
+    const guardedCommand = wrapWithScriptPresenceCheck({
+        scriptRelativePath: options.scriptRelativePath,
+        command: executionCommand,
+        missingCommand: `printf '%s\\n' ${quoteForShell(options.missingMessage)}`
+    })
+    return `cd ${quoteForShell(options.rootPath)} && ${guardedCommand}`
 }
 
 function pickScriptErrorMessage(result: {
@@ -108,10 +145,14 @@ async function runScriptIfPresent(options: {
     }
 
     const marker = `${MISSING_SCRIPT_MARKER_PREFIX}${options.scriptRelativePath}:${Date.now()}`
-    const envPrefix = buildEnvPrefix(options.env)
-    const scriptPath = quoteForShell(options.scriptRelativePath)
-    const markerToken = quoteForShell(marker)
-    const command = `if [ -f ${scriptPath} ]; then chmod +x ${scriptPath} && ${envPrefix}bash ${scriptPath}; else echo ${markerToken}; fi`
+    const command = wrapWithScriptPresenceCheck({
+        scriptRelativePath: options.scriptRelativePath,
+        command: buildScriptExecutionCommand({
+            scriptRelativePath: options.scriptRelativePath,
+            env: options.env
+        }),
+        missingCommand: `echo ${quoteForShell(marker)}`
+    })
 
     let result: {
         success: boolean
@@ -146,6 +187,7 @@ async function runScriptIfPresent(options: {
         }
         return {
             ok: false,
+            executed: false,
             error: message,
             stdout: '',
             stderr: ''
@@ -167,6 +209,7 @@ async function runScriptIfPresent(options: {
         }
         return {
             ok: false,
+            executed: true,
             error: errorMessage,
             stdout,
             stderr
@@ -174,10 +217,16 @@ async function runScriptIfPresent(options: {
     }
 
     if (stdout.includes(marker)) {
+        const sanitizedStdout = stdout
+            .split('\n')
+            .filter((line) => line.trim() !== marker)
+            .join('\n')
+            .trim()
+
         return {
             ok: true,
             executed: false,
-            stdout,
+            stdout: sanitizedStdout,
             stderr
         }
     }
@@ -188,6 +237,54 @@ async function runScriptIfPresent(options: {
         stdout,
         stderr
     }
+}
+
+export function buildMergeScriptCommand(options: {
+    rootPath: string
+    taskId: string
+    projectId: string
+    targetBranch: string
+    sourceBranch: string | null
+    worktreeBasePath?: string | null
+    worktreePath?: string | null
+    worktreeBranch?: string | null
+    missingMessage?: string
+}): string {
+    return buildScriptToolCallCommand({
+        rootPath: options.rootPath,
+        scriptRelativePath: PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
+        env: {
+            [PRODUCT_ENV.PROJECT_ROOT]: options.rootPath,
+            [PRODUCT_ENV.TASK_ID]: options.taskId,
+            [PRODUCT_ENV.TASK_PROJECT_ID]: options.projectId,
+            [PRODUCT_ENV.MERGE_TARGET_BRANCH]: options.targetBranch,
+            [PRODUCT_ENV.MERGE_SOURCE_BRANCH]: options.sourceBranch ?? '',
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: options.worktreeBasePath ?? undefined,
+            [PRODUCT_ENV.WORKTREE_PATH]: options.worktreePath ?? options.rootPath,
+            [PRODUCT_ENV.WORKTREE_BRANCH]: options.worktreeBranch ?? options.sourceBranch ?? ''
+        },
+        missingMessage: options.missingMessage
+            ?? `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} not found`
+    })
+}
+
+export function buildInitScriptCommand(options: {
+    rootPath: string
+    taskId: string
+    projectId: string
+    missingMessage?: string
+}): string {
+    return buildScriptToolCallCommand({
+        rootPath: options.rootPath,
+        scriptRelativePath: PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
+        env: {
+            [PRODUCT_ENV.PROJECT_ROOT]: options.rootPath,
+            [PRODUCT_ENV.TASK_ID]: options.taskId,
+            [PRODUCT_ENV.TASK_PROJECT_ID]: options.projectId
+        },
+        missingMessage: options.missingMessage
+            ?? `${PRODUCT_INIT_SCRIPT_RELATIVE_PATH} not found`
+    })
 }
 
 export async function runInitScriptIfPresent(options: {
@@ -220,6 +317,9 @@ export async function runMergeScriptIfPresent(options: {
     projectId: string
     targetBranch: string
     sourceBranch: string | null
+    worktreeBasePath?: string | null
+    worktreePath?: string | null
+    worktreeBranch?: string | null
     timeoutMs?: number
 }): Promise<ScriptExecutionResult> {
     return await runScriptIfPresent({
@@ -233,7 +333,10 @@ export async function runMergeScriptIfPresent(options: {
             [PRODUCT_ENV.TASK_ID]: options.taskId,
             [PRODUCT_ENV.TASK_PROJECT_ID]: options.projectId,
             [PRODUCT_ENV.MERGE_TARGET_BRANCH]: options.targetBranch,
-            [PRODUCT_ENV.MERGE_SOURCE_BRANCH]: options.sourceBranch ?? ''
+            [PRODUCT_ENV.MERGE_SOURCE_BRANCH]: options.sourceBranch ?? '',
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: options.worktreeBasePath ?? undefined,
+            [PRODUCT_ENV.WORKTREE_PATH]: options.worktreePath ?? options.cwd,
+            [PRODUCT_ENV.WORKTREE_BRANCH]: options.worktreeBranch ?? options.sourceBranch ?? ''
         }
     })
 }

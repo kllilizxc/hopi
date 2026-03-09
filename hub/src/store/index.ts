@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 9
+const SCHEMA_VERSION: number = 11
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -406,6 +406,8 @@ export class Store {
                 worktree_merge_commit TEXT,
                 merged_diff_snapshot TEXT,
                 merge_runtime TEXT,
+                preview_runtime TEXT,
+                init_runtime TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 finished_at INTEGER,
@@ -530,6 +532,12 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 9) {
             this.migrateFromV8ToV9()
+        }
+        if (SCHEMA_VERSION >= 10) {
+            this.migrateFromV9ToV10()
+        }
+        if (SCHEMA_VERSION >= 11) {
+            this.migrateFromV10ToV11()
         }
     }
 
@@ -656,6 +664,26 @@ export class Store {
             this.db.exec('ALTER TABLE tasks ADD COLUMN merge_runtime TEXT')
         }
         this.db.exec('UPDATE tasks SET model = COALESCE(model, model_mode) WHERE model IS NULL AND model_mode IS NOT NULL')
+    }
+
+    private migrateFromV9ToV10(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v9 to v10 migration.')
+        }
+        if (!taskColumns.has('preview_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN preview_runtime TEXT')
+        }
+    }
+
+    private migrateFromV10ToV11(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v10 to v11 migration.')
+        }
+        if (!taskColumns.has('init_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN init_runtime TEXT')
+        }
     }
 
     private getMachineColumnNames(): Set<string> {

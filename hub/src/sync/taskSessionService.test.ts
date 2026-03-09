@@ -57,6 +57,9 @@ describe('startSessionFromTask', () => {
                 return {
                     id: spawned.id,
                     namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
                     metadata: { path: '/tmp/workspace', host: 'localhost' }
                 }
             },
@@ -91,6 +94,12 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         expect(sequence).toEqual(['init', 'kickoff'])
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.activeSessionId).toBe(spawned.id)
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
+        expect(updatedTask?.initRuntime?.sessionId).toBe(spawned.id)
+        expect(updatedTask?.initRuntime?.latestNote ?? null).toBeNull()
+        expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
     })
 
     it('calls getSessionByNamespace with engine context when resolving init script cwd', async () => {
@@ -269,7 +278,8 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         expect(runBashCwds).toEqual([runtimePath, workspacePath])
-        expect(kickoffText).toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+        expect(kickoffText).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+        expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
     })
 
     it('skips init when shell reports init script not found', async () => {
@@ -508,6 +518,9 @@ describe('startSessionFromTask', () => {
                 return {
                     id: spawned.id,
                     namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
                     metadata: { path: '/tmp/workspace', host: 'localhost' }
                 }
             },
@@ -542,13 +555,364 @@ describe('startSessionFromTask', () => {
             taskId
         })
 
-        expect(result.ok).toBe(false)
+        expect(result.ok).toBe(true)
         if (!result.ok) {
-            expect(result.error).toContain('.hopi/init.sh')
-            expect(result.error).toContain('init failed')
+            return
         }
-        expect(archiveCalled).toBe(true)
-        expect(sendMessageCalled).toBe(false)
+        expect(result.initRecoveryAttempted).toBe(true)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id,
+            blockedReason: 'init failed',
+            retryCount: 1
+        })
+        expect(result.task.initRuntime?.latestNote).toContain('Same blocker repeated')
+        expect(result.task.initRuntime?.latestNote).toContain('retry task start')
+        expect(archiveCalled).toBe(false)
+        expect(sendMessageCalled).toBe(true)
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.activeSessionId).toBe(spawned.id)
+        expect(updatedTask?.status).toBe('in_progress')
+        expect(updatedTask?.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id,
+            blockedReason: 'init failed',
+            retryCount: 1
+        })
+    })
+
+
+    it('keeps the started session linked when init retries and then blocks', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-handoff'
+        const taskId = 'task-init-handoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-handoff',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let archiveCalled = false
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                return { success: false, error: 'init failed', stdout: 'checking deps', stderr: 'init failed' }
+            },
+            async archiveSession() {
+                archiveCalled = true
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(result.sessionId).toBe(spawned.id)
+        expect(result.initRecoveryAttempted).toBe(true)
+        expect(result.task.activeSessionId).toBe(spawned.id)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id,
+            blockedReason: 'init failed',
+            retryCount: 1
+        })
+        expect(archiveCalled).toBe(false)
+    })
+
+
+    it('retries init inside the same session and sends kickoff only after retry succeeds', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-retry-success'
+        const taskId = 'task-init-retry-success'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            description: 'Finish the task after init is fixed.',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-retry-success',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let runCount = 0
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                runCount += 1
+                return runCount === 1
+                    ? { success: false, error: 'missing deps', stdout: 'checking deps', stderr: 'missing deps' }
+                    : { success: true, stdout: 'deps fixed', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(sessionId: string, payload: { text?: string; localId?: string }) {
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text ?? '' }
+                }, payload.localId)
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(result.initRecoveryAttempted).toBe(true)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'succeeded',
+            sessionId: spawned.id,
+            retryCount: 1
+        })
+
+        const messageLocalIds = store.messages.getMessages(spawned.id, 10)
+            .map((message) => message.localId ?? '')
+        const directFailureIndex = messageLocalIds.findIndex((localId) => localId.includes(':direct-result:'))
+        const repairPromptIndex = messageLocalIds.findIndex((localId) => localId.startsWith('auto:init_setup:') && !localId.includes(':direct-result:') && !localId.includes(':retry-result:') && !localId.includes(':prompt-error:'))
+        const retrySuccessIndex = messageLocalIds.findIndex((localId) => localId.includes(':retry-result:'))
+        const kickoffIndex = messageLocalIds.findIndex((localId) => localId.startsWith('auto:kickoff:'))
+        expect(directFailureIndex).toBeGreaterThanOrEqual(0)
+        expect(repairPromptIndex).toBeGreaterThan(directFailureIndex)
+        expect(retrySuccessIndex).toBeGreaterThan(repairPromptIndex)
+        expect(kickoffIndex).toBeGreaterThan(retrySuccessIndex)
+    })
+
+    it('waits for approval requests to clear before retrying init in the same session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-approval-wait'
+        const taskId = 'task-init-approval-wait'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            description: 'Wait for approval, then finish init retry.',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-init-approval-wait',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let runCount = 0
+        let approvalPolls = 0
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                const waitingForApproval = runCount === 1 && approvalPolls < 2
+                if (waitingForApproval) {
+                    approvalPolls += 1
+                }
+
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: waitingForApproval
+                        ? {
+                            requests: {
+                                'req-1': {
+                                    tool: 'bash',
+                                    arguments: {},
+                                    createdAt: Date.now()
+                                }
+                            }
+                        }
+                        : null,
+                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async runBash() {
+                runCount += 1
+                return runCount === 1
+                    ? { success: false, error: 'missing deps', stdout: 'checking deps', stderr: 'missing deps' }
+                    : { success: true, stdout: 'deps fixed', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(sessionId: string, payload: { text?: string; localId?: string }) {
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text ?? '' }
+                }, payload.localId)
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+
+        expect(approvalPolls).toBeGreaterThanOrEqual(2)
+        expect(runCount).toBe(2)
+        expect(result.initRecoveryAttempted).toBe(true)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'succeeded',
+            sessionId: spawned.id,
+            retryCount: 1
+        })
     })
 
     it('emits task-updated before waiting for kickoff message delivery', async () => {

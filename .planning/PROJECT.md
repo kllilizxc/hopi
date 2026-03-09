@@ -2,7 +2,7 @@
 
 ## What This Is
 
-HOPI is a local-first platform for running coding agents on your own machine and controlling them remotely through web, PWA, and related surfaces. This brownfield iteration focuses on making project actions feel like normal agent work inside the conversation flow instead of brittle, fixed backend workflows.
+HOPI is a local-first platform for running coding agents on your own machine and controlling them remotely through web, PWA, and related surfaces. The next milestone extends the now-proven merge action runtime so Preview and Init feel like the same normal agent conversation flow instead of special-case automation.
 
 ## Core Value
 
@@ -12,49 +12,50 @@ Project actions should feel as flexible and self-correcting as normal agent work
 
 ### Validated
 
-- ✓ Local agent sessions can be started on the machine and controlled remotely through hub + web surfaces — existing
-- ✓ Projects, tasks, workspaces, and task-linked sessions already exist as the main work-management model — existing
-- ✓ Worktree-aware task flows already support explicit Merge and Preview actions in the product — existing
-- ✓ Project-scoped automation scripts under `.hopi/` already exist as a product concept for init / merge / preview — existing
+- ✓ Merge action can run inside the linked task conversation instead of a detached backend workflow — v1.0
+- ✓ Merge now tries the repo-owned `.hopi/merge.sh` path first inside the workspace sandbox — v1.0
+- ✓ Merge failures feed transcript-visible CLI output back into the same agent session for repair and retry — v1.0
+- ✓ Merge completion is guarded by repo-truth verification instead of trusting script exit alone — v1.0
+- ✓ Merge runtime state persists across refresh/reconnect with durable running/blocked/succeeded/canceled status — v1.0
 
 ### Active
 
-- [ ] Merge action becomes conversation-native: clicking Merge should trigger a normal agent-driven action flow instead of a brittle detached workflow
-- [ ] First action attempt should be running the project's merge script/tool path inside the workspace sandbox using normal tool-call semantics
-- [ ] Agent must observe success/failure directly from tool-call output and decide follow-up steps without special-cased hidden backend logic
-- [ ] On failure, agent should stay in the loop: inspect git state, resolve conflicts, fix `.hopi/merge.sh` or related workspace files, and retry until merge succeeds or a real blocker is reached
-- [ ] The design must preserve project-level flexibility; no single fixed init / merge / preview workflow can be assumed across repos
+- [ ] Preview action should use the same direct-run-first, conversation-native repair loop as Merge
+- [ ] Preview should expose durable running/retrying/blocked/ready state plus cancel or retry controls across task and thread surfaces
+- [ ] Init should become a first-class action runtime inside the started task session instead of a special pre-kickoff bootstrap path
+- [ ] Init failures should keep the session alive, show transcript-visible CLI output, and let the agent repair or retry before continuing task work
+- [ ] Merge, Preview, and Init should share one compact action-state contract so future repo-defined actions can reuse the same envelope
 
 ### Out of Scope
 
-- Full parity for Preview in this first slice — defer until merge-first loop proves out
-- Full parity for Init in this first slice — defer until merge-first loop proves out
-- A generic action framework for every future project action on day one — likely direction, but not committed for merge-first v1
+- Generic custom action framework beyond Merge, Preview, and Init — defer until parity proves the shared runtime shape
+- Script manifests, health checks, or drift self-tests — useful later, but not needed to prove Preview or Init parity
+- New hosted preview or deployment infrastructure — this milestone is about action-runtime parity, not new preview backends
 
 ## Context
 
-HOPI already has most building blocks for this direction, but in fragmented form. The hub creates an "Initialize project scripts" bootstrap task that asks the agent to create `.hopi/init.sh`, `.hopi/merge.sh`, and `.hopi/preview.sh`. Starting a task session will attempt to run `.hopi/init.sh` if present before sending the kickoff prompt. Merge and Preview are currently exposed as explicit UI actions, and both have partial automation: Preview can ask the agent to create/fix `.hopi/preview.sh` when no runnable command is found, and Merge can ask the agent to run/fix `.hopi/merge.sh` before falling back to built-in merge behavior.
+The merge-first milestone is now complete: clicking Merge can run the repo-owned script directly in the linked session, append CLI-style results into the thread, hand off to the agent only when needed, verify repo truth before success, and stop repeated identical blockers with a clear manual next step. Preview already has partial direct-start and repair behavior, and Init already keeps failed starts alive in-session, but both still feel more special-cased than Merge. The next milestone should remove that product inconsistency by reusing the same runtime model, visible transcript style, retry semantics, and durable state vocabulary across Preview and Init.
 
-The problem is product feel and reliability. Today these scripts often fail, the recovery loop is inconsistent, and failures are not handled like ordinary agent work. The desired direction is that action execution should happen in the same observable conversation/tool-call loop as any normal agent task, so the agent naturally reacts to stdout/stderr, edits scripts when needed, and retries.
-
-This is a brownfield Bun-workspaces monorepo with shared protocol types, a Hub server coordinating sessions and actions, a CLI/runner hosting agents and preview processes, and a Web UI exposing task actions. Existing code already contains workflow profiles, worktree task flows, and partial project-script automation that can be evolved instead of replaced.
+This remains a brownfield Bun-workspaces monorepo with shared protocol types, a Hub server coordinating sessions and actions, a CLI/runner hosting agents and preview processes, and a Web UI exposing task actions. The best path is to reuse the action-runtime patterns already proven in Merge instead of inventing a second orchestration model.
 
 ## Constraints
 
 - **Sandbox**: All automatic fixes and retries must stay inside the workspace sandbox — no outside-workspace magic
 - **Product fit**: Must support highly customized project workflows; fixed universal script semantics will break on real repos
-- **UX**: Action execution should look like normal agent flow with normal tool calls and visible reasoning from outputs
-- **Brownfield**: Must integrate with existing projects/tasks/worktrees/session model instead of replacing the current architecture
-- **Reliability**: System should stop only on real blockers that require human judgment or work outside the sandbox
+- **UX**: Action execution should look like normal agent flow with normal tool calls and transcript-visible outputs
+- **Brownfield**: Must integrate with existing projects/tasks/worktrees/session model instead of replacing current architecture
+- **Continuity**: Preview and Init work must reuse the merge-first runtime patterns without regressing the shipped Merge behavior
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Start with Merge first | Highest pain point and clearest closed loop for proving the conversation-native action model | — Pending |
-| Keep execution inside workspace sandbox | Preserves safety boundary and matches how users already trust normal agent work | — Pending |
-| Use normal tool-call flow as the action runtime | Agent should react to real command output instead of backend-only status transitions | — Pending |
-| Let agent repair scripts and retry | Project automation is too customized for a fixed workflow to succeed broadly | — Pending |
+| Start with Merge first | Highest pain point and clearest closed loop for proving the conversation-native action model | ✓ Good |
+| Keep execution inside workspace sandbox | Preserves safety boundary and matches how users already trust normal agent work | ✓ Good |
+| Use normal tool-call flow as the action runtime | Agent should react to real command output instead of backend-only status transitions | ✓ Good |
+| Let agent repair scripts and retry | Project automation is too customized for a fixed workflow to succeed broadly | ✓ Good |
+| Do Preview parity before Init parity | Preview already has partial runtime hooks and should be the fastest path to visible product consistency | — Pending |
+| Keep generic custom actions deferred until Preview and Init parity ship | Avoid overbuilding the framework before the three core actions share one proven contract | — Pending |
 
 ---
-*Last updated: 2026-03-07 after initialization*
+*Last updated: 2026-03-08 after v1.1 milestone kickoff*

@@ -32,7 +32,7 @@ function createSession(store: Store, options: {
 }
 
 describe('relinkTaskToSession', () => {
-    it('keeps task, session metadata, and merge runtime session in sync', () => {
+    it('keeps task, session metadata, and runtime sessions in sync', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -65,6 +65,18 @@ describe('relinkTaskToSession', () => {
                 sessionId: oldSession.id,
                 updatedAt: Date.now(),
                 latestNote: 'merge running'
+            },
+            previewRuntime: {
+                status: 'running',
+                sessionId: oldSession.id,
+                updatedAt: Date.now(),
+                latestNote: 'preview running'
+            },
+            initRuntime: {
+                status: 'running',
+                sessionId: oldSession.id,
+                updatedAt: Date.now(),
+                latestNote: 'init running'
             }
         })
 
@@ -85,6 +97,8 @@ describe('relinkTaskToSession', () => {
 
         expect(updated?.activeSessionId).toBe(newSession.id)
         expect(updated?.mergeRuntime?.sessionId).toBe(newSession.id)
+        expect(updated?.previewRuntime?.sessionId).toBe(newSession.id)
+        expect(updated?.initRuntime?.sessionId).toBe(newSession.id)
         const linkedSession = store.sessions.getSessionByNamespace(newSession.id, namespace)
         expect(linkedSession?.metadata).toMatchObject({ projectId, taskId: 'task-1' })
         expect(events.some((event) => {
@@ -137,6 +151,18 @@ describe('resolveBestUsableTaskSession', () => {
                 status: 'queued',
                 updatedAt: Date.now() - 1_000,
                 latestNote: 'queued'
+            },
+            previewRuntime: {
+                status: 'waiting',
+                sessionId: 'session-stale',
+                updatedAt: Date.now() - 500,
+                latestNote: 'waiting for preview'
+            },
+            initRuntime: {
+                status: 'waiting',
+                sessionId: 'session-stale',
+                updatedAt: Date.now() - 250,
+                latestNote: 'waiting for init repair'
             }
         })
 
@@ -177,6 +203,8 @@ describe('resolveBestUsableTaskSession', () => {
         expect(resolved.sessionId).toBe(bestSession.id)
         expect(resolved.task.activeSessionId).toBe(bestSession.id)
         expect(resolved.task.mergeRuntime?.sessionId).toBe(bestSession.id)
+        expect(resolved.task.previewRuntime?.sessionId).toBe(bestSession.id)
+        expect(resolved.task.initRuntime?.sessionId).toBe(bestSession.id)
         expect(resolved.relinked).toBe(true)
     })
 })

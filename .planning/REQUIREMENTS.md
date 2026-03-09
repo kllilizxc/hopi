@@ -1,91 +1,70 @@
 # Requirements: HOPI
 
-**Defined:** 2026-03-07
+**Defined:** 2026-03-08
 **Core Value:** Project actions should feel as flexible and self-correcting as normal agent work: agent sees tool output, adapts, fixes, retries.
 
-## v1 Requirements
+## v1.1 Requirements
 
-Requirements for the merge-first iteration. Each maps to roadmap phases.
+Requirements for the Preview/Init parity milestone. Each maps to roadmap phases 4-6.
 
-### Merge Flow
+### Preview
 
-- [ ] **MERGE-01**: User can trigger Merge for a task and keep execution in the linked task conversation/session
-- [ ] **MERGE-02**: First merge attempt runs the project's repo-owned merge workflow from `.hopi/merge.sh` inside the workspace sandbox
-- [ ] **MERGE-03**: Merge execution uses normal agent tool-call semantics rather than a hidden backend-only workflow
-- [ ] **MERGE-04**: Agent can inspect current git/worktree state after a failed merge attempt before deciding next steps
-- [ ] **MERGE-05**: Agent can retry merge within the same session after applying fixes inside the workspace
+- [ ] **PREVIEW-01**: User can click Preview and have HOPI auto-run the repo-local preview start path directly in the linked task session before any agent repair prompt
+- [ ] **PREVIEW-02**: When direct preview start fails or the preview crashes shortly after start, the agent receives transcript-visible CLI output and can repair or retry in the same session
+- [ ] **PREVIEW-03**: Preview action exposes durable running, retrying, blocked, ready, and stopped state across task and thread surfaces
+- [ ] **PREVIEW-04**: Preview recovery stops on repeated identical blockers or real out-of-sandbox needs and shows the exact manual next step
 
-### Repair Loop
+### Init
 
-- [ ] **REPAIR-01**: Agent receives merge tool-call success/failure from real stdout/stderr or equivalent tool output visible in normal agent flow
-- [ ] **REPAIR-02**: Agent can edit `.hopi/merge.sh` when script issues are the cause of merge failure
-- [ ] **REPAIR-03**: Agent can edit other workspace files when resolving merge blockers requires repo-local fixes
-- [ ] **REPAIR-04**: System prevents blind retry loops by distinguishing new progress from repeated identical failure states
-- [ ] **REPAIR-05**: System stops automatic recovery only when a real blocker requires human judgment or work outside the workspace sandbox
+- [ ] **INIT-01**: Task init runs through the same conversation-native action runtime instead of a special hidden pre-kickoff path
+- [ ] **INIT-02**: Init failures keep the started session alive, append CLI-style transcript output into the thread, and let the agent repair or retry before continuing task work
+- [ ] **INIT-03**: Init action exposes durable running, retrying, blocked, and succeeded state consistent with Merge and Preview
 
-### Action State
+### Action Runtime
 
-- [ ] **ACTION-01**: Merge action status persists across reloads/reconnects and remains visible across HOPI remote surfaces
-- [ ] **ACTION-02**: User can see concise in-product status for merge attempts, retries, success, and blocked states
-- [ ] **ACTION-03**: Merge action stays attached to the task/session context instead of creating a detached opaque workflow
-
-### Verification
-
-- [ ] **VERIFY-01**: System verifies actual git merge outcome before marking the task/worktree as merged
-- [ ] **VERIFY-02**: System does not report success only because a script exited with code 0
-- [ ] **VERIFY-03**: When merge cannot complete automatically, user receives a clear blocker summary and required manual next step
+- [ ] **ACTION-04**: Merge, Preview, and Init share one durable action-state contract for direct-run, retry, cancel, blocker, and success summaries
+- [ ] **ACTION-05**: Action-triggered tool results appear in the session thread in a consistent CLI-style transcript format across Merge, Preview, and Init
+- [ ] **ACTION-06**: Busy linked sessions defer the first direct action run until the session is idle, then auto-run without forcing the user through an extra manual chat step
 
 ## v2 Requirements
 
-Deferred until merge-first flow is trusted.
+Deferred until action parity is trusted.
 
-### Additional Actions
+### Custom Actions
 
-- **PREVIEW-01**: Preview action uses the same conversation-native repair/retry runtime as Merge
-- **INIT-01**: Init action uses the same conversation-native runtime instead of a special pre-kickoff path
-- **ACTION-04**: Project can define additional custom actions beyond init/merge/preview on the same runtime envelope
-
-### Script Contract
-
+- **ACTION-07**: Project can define additional custom actions beyond Init, Merge, and Preview on the same runtime envelope
 - **SCRIPT-01**: Project scripts can declare optional metadata or health checks to reduce drift and speed recovery
-- **SCRIPT-02**: System can surface script drift/self-test guidance before a user-triggered action fails
+- **SCRIPT-02**: System can surface script drift or self-test guidance before a user-triggered action fails
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Preview parity in merge-first v1 | Keep first slice focused on proving the merge loop end-to-end |
-| Init parity in merge-first v1 | Defer until the core action runtime is trusted |
-| Universal built-in merge workflow replacing repo scripts | Repos are too customized; project policy should stay in-repo |
-| Fully generic action framework on day one | Overbuild risk before merge-first reliability is proven |
-| Hidden backend retries invisible to the agent | Conflicts with the core product direction and reduces trust |
+| Generic action manifest framework | Defer until the three built-in actions share one stable contract |
+| Repo script health-check protocol | Useful follow-on work, but not required to prove parity |
+| New preview hosting or deployment flows | Not part of the action-runtime consistency problem |
+| Non-workspace automation or hidden backend retries | Conflicts with the product direction and trust model |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MERGE-01 | Phase 1 | Pending |
-| MERGE-02 | Phase 2 | Pending |
-| MERGE-03 | Phase 1 | Pending |
-| MERGE-04 | Phase 2 | Pending |
-| MERGE-05 | Phase 2 | Pending |
-| REPAIR-01 | Phase 2 | Pending |
-| REPAIR-02 | Phase 2 | Pending |
-| REPAIR-03 | Phase 2 | Pending |
-| REPAIR-04 | Phase 3 | Pending |
-| REPAIR-05 | Phase 2 | Pending |
-| ACTION-01 | Phase 1 | Pending |
-| ACTION-02 | Phase 1 | Pending |
-| ACTION-03 | Phase 1 | Pending |
-| VERIFY-01 | Phase 3 | Pending |
-| VERIFY-02 | Phase 3 | Pending |
-| VERIFY-03 | Phase 3 | Pending |
+| PREVIEW-01 | Phase 4 | Pending |
+| PREVIEW-02 | Phase 4 | Pending |
+| PREVIEW-03 | Phase 4 | Pending |
+| PREVIEW-04 | Phase 4 | Pending |
+| INIT-01 | Phase 5 | Pending |
+| INIT-02 | Phase 5 | Pending |
+| INIT-03 | Phase 5 | Pending |
+| ACTION-04 | Phase 6 | Pending |
+| ACTION-05 | Phase 6 | Pending |
+| ACTION-06 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 16 total
-- Mapped to phases: 16
+- v1.1 requirements: 10 total
+- Mapped to phases: 10
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-03-07*
-*Last updated: 2026-03-07 after roadmap draft*
+*Requirements defined: 2026-03-08*
+*Last updated: 2026-03-08 after v1.1 milestone kickoff*
