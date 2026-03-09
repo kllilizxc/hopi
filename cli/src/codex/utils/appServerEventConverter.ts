@@ -24,13 +24,45 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function pickString(record: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = asString(record[key]);
+        if (value) {
+            return value;
+        }
+    }
+    return null;
+}
+
 function extractItemId(params: Record<string, unknown>): string | null {
-    const direct = asString(params.itemId ?? params.item_id ?? params.id);
-    if (direct) return direct;
+    const callIdKeys = [
+        'codex_call_id',
+        'codexCallId',
+        'codex_mcp_tool_call_id',
+        'codexMcpToolCallId',
+        'mcp_tool_call_id',
+        'mcpToolCallId',
+        'tool_call_id',
+        'toolCallId',
+        'call_id',
+        'callId'
+    ];
+    const itemIdKeys = ['itemId', 'item_id', 'id'];
+
+    const directCallId = pickString(params, callIdKeys);
+    if (directCallId) return directCallId;
 
     const item = asRecord(params.item);
     if (item) {
-        return asString(item.id ?? item.itemId ?? item.item_id);
+        const nestedCallId = pickString(item, callIdKeys);
+        if (nestedCallId) return nestedCallId;
+    }
+
+    const directItemId = pickString(params, itemIdKeys);
+    if (directItemId) return directItemId;
+
+    if (item) {
+        return pickString(item, itemIdKeys);
     }
 
     return null;
