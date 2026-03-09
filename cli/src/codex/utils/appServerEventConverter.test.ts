@@ -212,6 +212,56 @@ describe('AppServerEventConverter', () => {
         }]);
     });
 
+    it('prefers stable mcp call id over transient item id', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            itemId: 'item-ephemeral-start',
+            item: {
+                id: 'item-ephemeral-start',
+                call_id: 'call-stable-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            }
+        });
+
+        const completed = converter.handleNotification('item/completed', {
+            itemId: 'item-ephemeral-end',
+            item: {
+                id: 'item-ephemeral-end',
+                call_id: 'call-stable-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] },
+                result: { ok: true }
+            }
+        });
+
+        expect(started).toEqual([{
+            type: 'mcp_tool_call_begin',
+            call_id: 'call-stable-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            }
+        }]);
+
+        expect(completed).toEqual([{
+            type: 'mcp_tool_call_end',
+            call_id: 'call-stable-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            },
+            result: { ok: true }
+        }]);
+    });
+
     it('maps reasoning deltas', () => {
         const converter = new AppServerEventConverter();
 
