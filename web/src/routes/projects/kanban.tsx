@@ -381,9 +381,9 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     event.preventDefault()
                     setIsMoveMenuOpen(true)
                 }}
-                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ring-1 ring-inset cursor-pointer ${useArchiveStyle
-                    ? 'ring-[var(--app-kanban-archive-border)]'
-                    : 'ring-[var(--app-divider)]'
+                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm cursor-pointer ${useArchiveStyle
+                    ? ''
+                    : 'ring-1 ring-inset ring-[var(--app-divider)]'
                     } ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
                     } ${props.isDragging ? 'opacity-60' : ''
                     }`}
