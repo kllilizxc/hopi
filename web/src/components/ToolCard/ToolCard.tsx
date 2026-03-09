@@ -291,6 +291,8 @@ function ToolCardInner(props: ToolCardProps) {
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
     const isRequestUserInput = isRequestUserInputToolName(toolName)
     const isQuestionTool = isAskUserQuestion || isRequestUserInput
+    const showDialogResult = !isQuestionTool || !permission?.answers || Object.keys(permission.answers).length === 0
+    const showSeparateDialogResult = showDialogResult && toolName !== 'TodoWrite'
     const showsPermissionFooter = Boolean(permission && (
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
@@ -353,15 +355,11 @@ function ToolCardInner(props: ToolCardProps) {
                             <DialogTitle>{toolTitle}</DialogTitle>
                         </DialogHeader>
                         {(() => {
-                            const isQuestionToolWithAnswers = isQuestionTool
-                                && permission?.answers
-                                && Object.keys(permission.answers).length > 0
-
                             return (
                                 <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
                                     <div>
                                         <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
-                                            {isQuestionToolWithAnswers ? t('tool.questionsAnswers') : t('tool.input')}
+                                            {!showDialogResult && isQuestionTool ? t('tool.questionsAnswers') : t('tool.input')}
                                         </div>
                                         {FullToolView ? (
                                             <FullToolView block={props.block} metadata={props.metadata} />
@@ -369,7 +367,7 @@ function ToolCardInner(props: ToolCardProps) {
                                             renderToolInput(props.block)
                                         )}
                                     </div>
-                                    {!isQuestionToolWithAnswers && (
+                                    {showSeparateDialogResult && (
                                         <div>
                                             <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">{t('tool.result')}</div>
                                             <ResultToolView block={props.block} metadata={props.metadata} />

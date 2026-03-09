@@ -35,6 +35,7 @@ export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
     Edit: EditView,
     MultiEdit: MultiEditFullView,
     Write: WriteView,
+    TodoWrite: TodoWriteView,
     CodexDiff: CodexDiffFullView,
     CodexPatch: CodexPatchView,
     AskUserQuestion: AskUserQuestionView,
