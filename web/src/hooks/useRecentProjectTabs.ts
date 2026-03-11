@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 type ProjectLike = {
     id: string
@@ -92,8 +92,8 @@ export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
 }): TProject[] {
     const orderRef = useRef<string[]>([])
 
-    return useMemo(() => {
-        const result = buildRecentProjectTabs({
+    const result = useMemo(() => {
+        return buildRecentProjectTabs({
             projects: input.projects,
             currentProjectId: input.currentProjectId,
             currentProject: input.currentProject,
@@ -101,8 +101,6 @@ export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
             maxTabs: input.maxTabs ?? 5,
             previousOrderIds: orderRef.current
         })
-        orderRef.current = result.orderIds
-        return result.projects
     }, [
         input.projects,
         input.currentProjectId,
@@ -110,4 +108,10 @@ export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
         input.recentProjectIds,
         input.maxTabs
     ])
+
+    useEffect(() => {
+        orderRef.current = result.orderIds
+    }, [result.orderIds])
+
+    return result.projects
 }
