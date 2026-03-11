@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 
 type ProjectLike = {
     id: string
@@ -13,7 +13,8 @@ function buildRecentProjectTabs<TProject extends ProjectLike>(input: {
     currentProject: TProject | null
     recentProjectIds: string[]
     maxTabs: number
-}): TProject[] {
+    previousOrderIds: string[]
+}): { projects: TProject[]; orderIds: string[] } {
     const projectById = new Map<string, TProject>()
     for (const project of input.projects) {
         projectById.set(project.id, project)
@@ -22,35 +23,64 @@ function buildRecentProjectTabs<TProject extends ProjectLike>(input: {
         projectById.set(input.currentProject.id, input.currentProject)
     }
 
-    const result: TProject[] = []
+    const desiredIds: string[] = []
+    const desiredIdSet = new Set<string>()
 
     const current = projectById.get(input.currentProjectId) ?? null
     if (current) {
-        result.push(current)
+        desiredIds.push(current.id)
+        desiredIdSet.add(current.id)
     }
 
     for (const projectId of input.recentProjectIds) {
-        if (result.length >= input.maxTabs) break
+        if (desiredIds.length >= input.maxTabs) break
         if (projectId === input.currentProjectId) continue
         const project = projectById.get(projectId)
         if (!project) continue
         if (project.archivedAt) continue
-        result.push(project)
+        if (desiredIdSet.has(project.id)) continue
+        desiredIds.push(project.id)
+        desiredIdSet.add(project.id)
     }
 
-    if (result.length < Math.min(input.maxTabs, projectById.size)) {
+    if (desiredIds.length < Math.min(input.maxTabs, projectById.size)) {
         const byUpdatedAt = [...projectById.values()]
             .filter((project) => !project.archivedAt && project.id !== input.currentProjectId)
             .sort((a, b) => b.updatedAt - a.updatedAt)
 
         for (const project of byUpdatedAt) {
-            if (result.length >= input.maxTabs) break
-            if (result.some((existing) => existing.id === project.id)) continue
-            result.push(project)
+            if (desiredIds.length >= input.maxTabs) break
+            if (desiredIdSet.has(project.id)) continue
+            desiredIds.push(project.id)
+            desiredIdSet.add(project.id)
         }
     }
 
-    return result
+    const desiredIdSetFinal = new Set(desiredIds)
+    const stableIds: string[] = []
+    const stableIdSet = new Set<string>()
+
+    for (const id of input.previousOrderIds) {
+        if (!desiredIdSetFinal.has(id)) continue
+        if (stableIdSet.has(id)) continue
+        stableIds.push(id)
+        stableIdSet.add(id)
+    }
+
+    for (const id of desiredIds) {
+        if (stableIdSet.has(id)) continue
+        stableIds.push(id)
+        stableIdSet.add(id)
+    }
+
+    const stableProjects: TProject[] = []
+    for (const id of stableIds) {
+        const project = projectById.get(id)
+        if (!project) continue
+        stableProjects.push(project)
+    }
+
+    return { projects: stableProjects, orderIds: stableIds }
 }
 
 export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
@@ -60,14 +90,19 @@ export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
     recentProjectIds: string[]
     maxTabs?: number
 }): TProject[] {
+    const orderRef = useRef<string[]>([])
+
     return useMemo(() => {
-        return buildRecentProjectTabs({
+        const result = buildRecentProjectTabs({
             projects: input.projects,
             currentProjectId: input.currentProjectId,
             currentProject: input.currentProject,
             recentProjectIds: input.recentProjectIds,
             maxTabs: input.maxTabs ?? 5,
+            previousOrderIds: orderRef.current
         })
+        orderRef.current = result.orderIds
+        return result.projects
     }, [
         input.projects,
         input.currentProjectId,
@@ -76,4 +111,3 @@ export function useRecentProjectTabs<TProject extends ProjectLike>(input: {
         input.maxTabs
     ])
 }
-
