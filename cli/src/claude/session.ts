@@ -6,6 +6,7 @@ import type { SessionModelMode } from '@/api/types';
 import type { EnhancedMode } from './loop';
 import type { PermissionMode } from './loop';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import type { PermissionHandler } from './utils/permissionHandler';
 
 type LocalLaunchFailure = {
     message: string;
@@ -21,6 +22,7 @@ export class Session extends AgentSessionBase<EnhancedMode> {
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
+    private permissionHandler: PermissionHandler | null = null;
 
     constructor(opts: {
         api: ApiClient;
@@ -71,8 +73,19 @@ export class Session extends AgentSessionBase<EnhancedMode> {
         this.modelMode = opts.modelMode;
     }
 
+    setPermissionHandler(handler: PermissionHandler | null): void {
+        this.permissionHandler = handler;
+        if (this.permissionMode) {
+            this.permissionHandler?.handleSessionModeChange(this.permissionMode);
+        }
+    }
+
     setPermissionMode = (mode: PermissionMode): void => {
+        if (this.permissionMode === mode) {
+            return;
+        }
         this.permissionMode = mode;
+        this.permissionHandler?.handleSessionModeChange(mode);
     };
 
     setModelMode = (mode: SessionModelMode): void => {
