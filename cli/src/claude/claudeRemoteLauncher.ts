@@ -164,6 +164,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         });
 
         const permissionHandler = new PermissionHandler(session);
+        session.setPermissionHandler(permissionHandler);
         this.permissionHandler = permissionHandler;
 
         const messageQueue = new OutgoingMessageQueue(
