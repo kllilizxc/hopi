@@ -1,3 +1,4 @@
+import { ListDirectoryQuerySchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -16,10 +17,6 @@ const spawnBodySchema = z.object({
 
 const pathsExistsSchema = z.object({
     paths: z.array(z.string().min(1)).max(1000)
-})
-
-const directoryQuerySchema = z.object({
-    path: z.string().optional()
 })
 
 export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
@@ -111,7 +108,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return machine
         }
 
-        const parsed = directoryQuerySchema.safeParse(c.req.query())
+        const parsed = ListDirectoryQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query' }, 400)
         }

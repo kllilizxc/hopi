@@ -1,4 +1,6 @@
+import { ListDirectoryResponseSchema } from '@hopi/protocol/schemas'
 import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
+import type { DirectoryEntry as SharedDirectoryEntry, ListDirectoryResponse as SharedListDirectoryResponse } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 
@@ -30,19 +32,8 @@ export type RpcDeleteUploadResponse = {
     error?: string
 }
 
-export type RpcDirectoryEntry = {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-export type RpcListDirectoryResponse = {
-    success: boolean
-    path?: string
-    entries?: RpcDirectoryEntry[]
-    error?: string
-}
+export type RpcDirectoryEntry = SharedDirectoryEntry
+export type RpcListDirectoryResponse = SharedListDirectoryResponse
 
 export type RpcPathExistsResponse = {
     exists: Record<string, boolean>
@@ -372,11 +363,11 @@ export class RpcGateway {
     }
 
     async listDirectory(sessionId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
-        return await this.sessionRpc(sessionId, 'listDirectory', { path, cwd }) as RpcListDirectoryResponse
+        return parseListDirectoryResponse(await this.sessionRpc(sessionId, 'listDirectory', { path, cwd }))
     }
 
     async listDirectoryOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
-        return await this.machineRpc(machineId, 'listDirectory', { path, cwd }) as RpcListDirectoryResponse
+        return parseListDirectoryResponse(await this.machineRpc(machineId, 'listDirectory', { path, cwd }))
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
@@ -468,4 +459,12 @@ export class RpcGateway {
             return response
         }
     }
+}
+
+function parseListDirectoryResponse(result: unknown): RpcListDirectoryResponse {
+    const parsed = ListDirectoryResponseSchema.safeParse(result)
+    if (!parsed.success) {
+        throw new Error('Invalid listDirectory response')
+    }
+    return parsed.data
 }

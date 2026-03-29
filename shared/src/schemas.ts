@@ -14,6 +14,45 @@ export type SessionType = z.infer<typeof SessionTypeSchema>
 export const WorktreeAutoCommitModeSchema = z.enum(['off', 'per_conversation'])
 export type WorktreeAutoCommitMode = z.infer<typeof WorktreeAutoCommitModeSchema>
 
+export const DirectoryEntryTypeSchema = z.enum(['file', 'directory', 'other'])
+export type DirectoryEntryType = z.infer<typeof DirectoryEntryTypeSchema>
+
+export const DirectoryEntrySchema = z.object({
+    name: z.string(),
+    type: DirectoryEntryTypeSchema,
+    size: z.number().nonnegative().optional(),
+    modified: z.number().int().nonnegative().optional()
+})
+
+export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>
+
+export const ListDirectoryQuerySchema = z.object({
+    path: z.string().optional()
+})
+
+export type ListDirectoryQuery = z.infer<typeof ListDirectoryQuerySchema>
+
+export const ListDirectoryRequestSchema = z.object({
+    path: z.string(),
+    cwd: z.string().optional()
+})
+
+export type ListDirectoryRequest = z.infer<typeof ListDirectoryRequestSchema>
+
+export const ListDirectoryResponseSchema = z.discriminatedUnion('success', [
+    z.object({
+        success: z.literal(true),
+        path: z.string(),
+        entries: z.array(DirectoryEntrySchema)
+    }),
+    z.object({
+        success: z.literal(false),
+        error: z.string()
+    })
+])
+
+export type ListDirectoryResponse = z.infer<typeof ListDirectoryResponseSchema>
+
 const MetadataSummarySchema = z.object({
     text: z.string(),
     updatedAt: z.number()

@@ -1,28 +1,11 @@
+import { ListDirectoryRequestSchema } from '@hopi/protocol/schemas'
+import type { DirectoryEntry, ListDirectoryRequest, ListDirectoryResponse } from '@hopi/protocol/types'
 import { logger } from '@/ui/logger'
 import { readdir, stat } from 'fs/promises'
 import { basename, join, resolve } from 'path'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
-
-interface ListDirectoryRequest {
-    path: string
-    cwd?: string
-}
-
-interface DirectoryEntry {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-interface ListDirectoryResponse {
-    success: boolean
-    path?: string
-    entries?: DirectoryEntry[]
-    error?: string
-}
 
 interface GetDirectoryTreeRequest {
     path: string
@@ -47,9 +30,14 @@ interface GetDirectoryTreeResponse {
 
 export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<ListDirectoryRequest, ListDirectoryResponse>('listDirectory', async (data) => {
-        logger.debug('List directory request:', data.path)
+        const parsedRequest = ListDirectoryRequestSchema.safeParse(data)
+        if (!parsedRequest.success) {
+            return rpcError('Invalid directory request')
+        }
 
-        const requestedCwd = typeof data.cwd === 'string' ? data.cwd : undefined
+        logger.debug('List directory request:', parsedRequest.data.path)
+
+        const requestedCwd = parsedRequest.data.cwd
         let scopedWorkingDirectory = workingDirectory
         if (requestedCwd) {
             const cwdValidation = validatePath(requestedCwd, workingDirectory)
@@ -59,7 +47,7 @@ export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, 
             scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
         }
 
-        const targetPath = data.path || '.'
+        const targetPath = parsedRequest.data.path || '.'
 
         const validation = validatePath(targetPath, scopedWorkingDirectory)
         if (!validation.valid) {
