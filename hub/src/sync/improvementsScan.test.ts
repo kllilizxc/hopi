@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import type { Session } from '@hopi/protocol/types'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { Store } from '../store'
 import { runImprovementsScan } from './improvementsScan'
@@ -289,6 +292,9 @@ describe('runImprovementsScan', () => {
         expect(capturedPrompt).toContain('"priority":"high|medium|low"')
         expect(capturedPrompt).toContain('"category":"feature|architecture"')
         expect(capturedPrompt).toContain('split close to 50/50')
+        expect(capturedPrompt).toContain('Architecture/code-quality review checklist:')
+        expect(capturedPrompt).toContain('route handlers; keep reusable business logic in sync/store/service modules')
+        expect(capturedPrompt).toContain('If you cannot find a concrete architecture/code-quality follow-up')
         expect(capturedPrompt).toContain('Include a "priority" for each item using ONLY')
         expect(capturedPrompt).toContain('Include a "category" for each item using ONLY')
     })
@@ -362,6 +368,99 @@ describe('runImprovementsScan', () => {
         expect(result.ok).toBe(true)
         expect(capturedPrompt).toContain('system language for this session (zh-CN)')
         expect(capturedPrompt).not.toContain('system language for this session (en-US)')
+    })
+
+    it('inlines workspace improvements-scan guidance when present', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-guidance'
+        let capturedPrompt = ''
+
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-improvements-guidance-'))
+        mkdirSync(join(workspacePath, '.hopi'), { recursive: true })
+        writeFileSync(
+            join(workspacePath, '.hopi', 'improvements-scan.md'),
+            [
+                '# Repo guidance',
+                '- Prefer thin route handlers.',
+                '- Flag missing regression tests for stale update races.'
+            ].join('\n')
+        )
+
+        try {
+            store.projects.createProject({
+                id: projectId,
+                namespace,
+                machineId: 'machine-1',
+                name: 'HOPI'
+            })
+            store.workspaces.createWorkspace({
+                id: 'workspace-guidance',
+                projectId,
+                label: 'Main',
+                path: workspacePath
+            })
+
+            const finishedTask = store.tasks.createTask({
+                id: 'task-finished-guidance',
+                projectId,
+                title: 'Tighten task automation',
+                status: 'finished',
+                workflowProfile: 'default',
+                sortKey: 1
+            })
+
+            const { sessionId, session } = createActiveProjectSession(store, {
+                namespace,
+                projectId,
+                locale: 'en-US'
+            })
+
+            const engine = {
+                async sendMessage(sid: string, payload: { text: string; localId?: string | null }) {
+                    capturedPrompt = payload.text
+                    store.messages.addMessage(sid, {
+                        role: 'agent',
+                        content: {
+                            type: 'codex',
+                            data: {
+                                type: 'message',
+                                message: '[]'
+                            }
+                        }
+                    })
+                },
+                getSessionByNamespace(sid: string, ns: string) {
+                    return sid === sessionId && ns === namespace ? session : undefined
+                },
+                getSessionsByNamespace(ns: string) {
+                    return ns === namespace ? [session] : []
+                },
+                handleRealtimeEvent() {}
+            } as unknown as SyncEngine
+
+            const result = await runImprovementsScan({
+                store,
+                engine,
+                namespace,
+                project: {
+                    id: projectId,
+                    name: 'HOPI',
+                    improvementsMaxPendingTasks: 5
+                },
+                finishedTask,
+                targetSessionId: sessionId,
+                maxToCreate: 5
+            })
+
+            expect(result.ok).toBe(true)
+            expect(capturedPrompt).toContain('Project-specific best-practice guidance')
+            expect(capturedPrompt).toContain(`${workspacePath}/.hopi/improvements-scan.md`)
+            expect(capturedPrompt).toContain('Prefer thin route handlers.')
+            expect(capturedPrompt).toContain('Flag missing regression tests for stale update races.')
+        } finally {
+            rmSync(workspacePath, { recursive: true, force: true })
+        }
     })
 
     it('keeps generated tasks mixed across feature and architecture categories', async () => {
@@ -452,6 +551,81 @@ describe('runImprovementsScan', () => {
         const titles = created.map((task) => task.title)
         expect(titles).toContain('Add board filtering presets')
         expect(titles).toContain('Refactor task query service boundaries')
+    })
+
+    it('infers architecture category from code-quality language when category is omitted', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-heuristics'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'HOPI'
+        })
+
+        const finishedTask = store.tasks.createTask({
+            id: 'task-finished-heuristics',
+            projectId,
+            title: 'Ship task automation polish',
+            status: 'finished',
+            workflowProfile: 'default',
+            sortKey: 1
+        })
+
+        const { sessionId, session } = createActiveProjectSession(store, { namespace, projectId })
+
+        const engine = {
+            async sendMessage(sid: string, _payload: { text: string; localId?: string | null }) {
+                store.messages.addMessage(sid, {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'message',
+                            message: JSON.stringify([
+                                { title: 'Improve task detail empty screen' },
+                                { title: 'Add regression tests for stale session update race' },
+                                { title: 'Consolidate retry timeout handling in task automation' },
+                                { title: 'Expose task quick actions in board cards' }
+                            ])
+                        }
+                    }
+                })
+            },
+            getSessionByNamespace(sid: string, ns: string) {
+                return sid === sessionId && ns === namespace ? session : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? [session] : []
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const result = await runImprovementsScan({
+            store,
+            engine,
+            namespace,
+            project: {
+                id: projectId,
+                name: 'HOPI',
+                improvementsMaxPendingTasks: 5
+            },
+            finishedTask,
+            targetSessionId: sessionId,
+            maxToCreate: 5
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+
+        const titles = store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            .filter((task) => task.source === 'improvements_scan')
+            .map((task) => task.title)
+
+        expect(titles).toContain('Add regression tests for stale session update race')
+        expect(titles).toContain('Consolidate retry timeout handling in task automation')
     })
 
     it('caps created tasks to 3 even when the scan asks for more', async () => {
