@@ -541,6 +541,7 @@ Improvements scan (instead of periodic heartbeat):
     - Prefer reusing the task’s linked session (`task.activeSessionId`) right before archiving
     - Fallback: reuse latest active session in project
     - Send a prompt that includes the finished task title/notes and asks for up to N improvement tasks (structured output)
+    - If workspace root contains `.hopi/improvements-scan.md`, inline it into the prompt as repo-specific best-practice guidance
     - Parse output and auto-create tasks in `planned` (pending approval)
 - Limits:
     - Max pending auto-generated tasks in `planned` (default 5; configurable)
@@ -568,6 +569,7 @@ Implementation notes (simple v1):
     - tag via `localId` prefix, e.g. `auto:improvements:...`
 - Improvements prompt should request strict JSON; if parse fails, create 0 tasks and show the raw suggestions for manual copy
 - Improvements prompt must explicitly forbid code changes / tool use; “suggest tasks only”
+- Improvements prompt should include an architecture/code-quality checklist so the model does not default to product polish only
 
 ## Future (nice-to-have)
 

@@ -4,6 +4,11 @@ import type { DecryptedMessage, Session } from '@hopi/protocol/types'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredTask, StoredWorkspace } from '../store'
+import {
+    DEFAULT_IMPROVEMENTS_SCAN_REVIEW_CHECKLIST,
+    loadImprovementsScanProjectGuidance,
+    type ImprovementsScanGuidanceEntry
+} from './improvementsScanBestPractices'
 import type { SyncEngine } from './syncEngine'
 import { getDefaultWorkflowPhase } from './workflowStrategy'
 
@@ -187,7 +192,7 @@ function normalizeSuggestionCategory(raw: string | undefined): ImprovementCatego
 function inferSuggestionCategoryFromText(title: string, description?: string): ImprovementCategory {
     const text = `${title} ${description ?? ''}`.toLowerCase()
 
-    if (/\b(refactor|restructure|cleanup|abstraction|modular|architecture|maintainability|technical debt|coupling|decoupl|infra|infrastructure|schema)\b/.test(text)) {
+    if (/\b(refactor|restructure|cleanup|abstraction|modular|architecture|maintainability|technical debt|coupling|decoupl|infra|infrastructure|schema|validation|contract|state transition|state machine|state sync|queue|retry|timeout|concurr|race|dedup|duplicate|regression|test|coverage|observability|logging|metric|instrument|cache|performance|hot path|boundary|ownership)\b/.test(text)) {
         return 'architecture'
     }
 
@@ -231,6 +236,7 @@ function buildImprovementsPrompt(options: {
     workspaces: StoredWorkspace[]
     maxSuggestions: number
     locale: string
+    projectGuidance: ImprovementsScanGuidanceEntry[]
 }): string {
     const workspaceLines = options.workspaces.length > 0
         ? options.workspaces.map((ws) => {
@@ -238,6 +244,22 @@ function buildImprovementsPrompt(options: {
             return `- ${label}${ws.path}`
         }).join('\n')
         : '- (none)'
+    const checklistLines = DEFAULT_IMPROVEMENTS_SCAN_REVIEW_CHECKLIST
+        .map((item) => `- ${item}`)
+        .join('\n')
+    const projectGuidanceBlock = options.projectGuidance.length > 0
+        ? [
+            '',
+            'Project-specific best-practice guidance (higher priority when more specific):',
+            ...options.projectGuidance.flatMap((entry) => {
+                const sourceLabel = entry.workspaceLabel ? `${entry.workspaceLabel}: ` : ''
+                return [
+                    `- Source: ${sourceLabel}${entry.workspacePath}/${entry.relativePath}`,
+                    ...entry.content.split('\n').map((line) => `  ${line}`)
+                ]
+            })
+        ].join('\n')
+        : ''
 
     const taskDescription = (options.finishedTask.description ?? '').trim()
 
@@ -255,10 +277,14 @@ function buildImprovementsPrompt(options: {
         '',
         `Task: Suggest up to ${options.maxSuggestions} follow-up improvement tasks.`,
         `- Use the system language for this session (${options.locale}) in task titles/descriptions.`,
-        '- Keep the output split close to 50/50: feature optimizations vs code architecture optimizations.',
+        '- Keep the output split close to 50/50: feature optimizations vs code architecture / code quality optimizations.',
         '- Do NOT run tools, commands, or code edits.',
         '- Do NOT include markdown fences.',
         '- Output STRICT JSON ONLY: a JSON array of objects.',
+        '',
+        'Architecture/code-quality review checklist:',
+        checklistLines,
+        projectGuidanceBlock,
         '',
         'JSON schema:',
         '[{"title":"string","description":"string?","priority":"high|medium|low","category":"feature|architecture","workspacePath":"string?","workspaceLabel":"string?"}]',
@@ -266,7 +292,11 @@ function buildImprovementsPrompt(options: {
         'Rules:',
         '- Return an empty array [] if no good suggestions.',
         '- Focus on necessary, high-impact follow-ups only; fewer is better.',
+        '- Review against the checklist above before answering.',
         '- Keep titles short and actionable.',
+        '- Treat code quality, maintainability, tests, reliability, performance, and architecture as valid first-class improvements.',
+        '- If you cannot find a concrete architecture/code-quality follow-up, return fewer items instead of filler feature ideas.',
+        '- Architecture items should usually point to a concrete hotspot, boundary, duplication, validation gap, state-management risk, or missing regression guardrail.',
         '- Include a "priority" for each item using ONLY: "high", "medium", or "low".',
         '- Include a "category" for each item using ONLY: "feature" or "architecture".',
         '- If the total count is odd, keep category difference at most 1.',
@@ -547,6 +577,7 @@ export async function runImprovementsScan(options: {
         preferredLocale: options.preferredLocale
     })
     const workspaces = options.store.workspaces.listWorkspacesByProject(options.project.id)
+    const projectGuidance = await loadImprovementsScanProjectGuidance(workspaces)
     const prompt = buildImprovementsPrompt({
         projectName: options.project.name,
         finishedTask: {
@@ -555,7 +586,8 @@ export async function runImprovementsScan(options: {
         },
         workspaces,
         maxSuggestions,
-        locale
+        locale,
+        projectGuidance
     })
 
     const latest = options.store.messages.getMessages(options.targetSessionId, 1)

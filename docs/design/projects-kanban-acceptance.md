@@ -223,6 +223,8 @@ Concept:
 - [x] Prompt contract
     - Accept: prompt requests strict JSON array of tasks (title + optional notes + workspace hint)
     - Accept: prompt forbids tool use / code edits (“suggest tasks only”)
+    - Accept: if workspace has `.hopi/improvements-scan.md`, prompt inlines it as repo-specific best-practice guidance
+    - Accept: prompt includes architecture/code-quality checklist guidance, not only feature polish framing
 - [x] Parse + create tasks
     - Accept: valid JSON creates tasks in Planned with `source=improvements_scan` + `sourceTaskId`
     - Accept: parse failure creates 0 tasks + surfaces raw text in UI (manual copy)
