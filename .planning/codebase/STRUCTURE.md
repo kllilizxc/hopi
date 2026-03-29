@@ -1,172 +1,194 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-03-07
+**Analysis Date:** 2026-03-29
 
 ## Directory Layout
 
-```
+```text
 hopi/
-├── cli/                    # CLI entrypoint + agent wrappers + runner daemon
-├── hub/                    # Hub server (HTTP API + SSE + Socket.IO + SQLite + Telegram/push)
-├── web/                    # React PWA / Telegram Mini App UI
-├── shared/                 # Shared protocol package (@hopi/protocol)
-├── docs/                   # VitePress documentation site
-├── website/                # Marketing site (Vite + server bundle)
-├── scripts/                # Repo-level scripts (brand sync/check, maintenance)
-├── .planning/              # Planning artifacts (codebase maps, todos)
-├── README.md               # Project overview + quickstart
-├── package.json            # Bun workspaces + root scripts
-├── tsconfig.base.json      # Shared TS config
-├── bun.lock                # Bun lockfile
-└── TODO.md                 # Project task notes
+├── cli/             # CLI binary, agent wrappers, runner daemon, runtime assets
+├── hub/             # HTTP API, Socket.IO, SSE, Telegram bot, SQLite store
+├── web/             # React PWA / Mini App client
+├── shared/          # Shared protocol, schemas, types, brand constants
+├── docs/            # VitePress documentation site
+├── website/         # Marketing site and public web server
+├── scripts/         # Repo-level automation scripts
+├── .planning/       # Roadmap, state, and codebase maps
+├── .github/         # CI, prompts, and repository metadata
+├── package.json     # Workspace scripts and root orchestration
+└── bun.lock         # Workspace dependency lockfile
 ```
 
 ## Directory Purposes
 
 **cli/**
-- Purpose: local terminal entrypoint; spawns agents; syncs to hub; runner for remote spawn/resume
-- Contains: Bun TS source, npm bin wrapper, build/release scripts, vitest tests
-- Key files: `cli/src/index.ts`, `cli/src/commands/runCli.ts`, `cli/src/commands/registry.ts`, `cli/src/api/api.ts`, `cli/src/runner/run.ts`, `cli/bin/hopi.cjs`
-- Subdirectories:
-  - `cli/src/commands/` command definitions + dispatch
-  - `cli/src/api/` hub REST + Socket.IO client utilities
-  - `cli/src/api/rpc/` RPC handler registration/dispatch (`cli/src/api/rpc/RpcHandlerManager.ts`)
-  - `cli/src/claude/`, `cli/src/codex/`, `cli/src/agent/`, `cli/src/opencode/` agent adapters/runners
-  - `cli/src/runner/` background runner (spawn sessions, worktrees, previews)
-  - `cli/src/modules/` tool impls (ripgrep/difftastic/git/etc)
-  - `cli/src/runtime/` embedded/runtime assets unpack (`cli/src/runtime/assets.ts`)
+- Purpose: terminal entrypoint for agent sessions and runner management.
+- Contains: Bun/TypeScript sources, packaging entrypoints, executable wrapper, and CLI tests.
+- Key files: `cli/src/index.ts`, `cli/src/commands/runCli.ts`, `cli/src/runner/run.ts`, `cli/package.json`.
+- Subdirectories: `src/commands/`, `src/runner/`, `src/api/`, `src/codex/`, `src/claude/`, `src/gemini/`, `src/opencode/`, `src/ui/`.
 
 **hub/**
-- Purpose: hub backend; auth; sessions/messages/machines/tasks/projects; realtime fanout; notifications; optional relay tunnel
-- Contains: Bun TS server, Hono routes, Socket.IO handlers, SSE manager, SQLite store, Telegram bot, push, tunnel tools
-- Key files: `hub/src/index.ts`, `hub/src/web/server.ts`, `hub/src/sync/syncEngine.ts`, `hub/src/store/index.ts`
-- Subdirectories:
-  - `hub/src/web/` HTTP server + routes + static/embedded asset serving
-  - `hub/src/socket/` Socket.IO server + handler modules
-  - `hub/src/sse/` Server-Sent Events manager
-  - `hub/src/sync/` caches + message service + rpc gateway + task automation
-  - `hub/src/store/` SQLite stores + schema migrations
-  - `hub/src/telegram/` Telegram bot + callbacks
-  - `hub/src/push/` Web Push support (VAPID)
-  - `hub/src/tunnel/` relay tunnel manager + TLS gate
-  - `hub/tools/` runtime binaries (example `hub/tools/tunwg/*`)
-  - `hub/scripts/` maintenance + build helpers (example `hub/scripts/generate-embedded-web-assets.ts`)
+- Purpose: central backend for sessions, messaging, projects, tasks, notifications, and auth.
+- Contains: web route handlers, Socket.IO server, sync engine, SQLite stores, Telegram integration, tunnel support.
+- Key files: `hub/src/index.ts`, `hub/src/web/server.ts`, `hub/src/socket/server.ts`, `hub/src/sync/syncEngine.ts`, `hub/package.json`.
+- Subdirectories: `src/web/routes/`, `src/socket/`, `src/sync/`, `src/store/`, `src/telegram/`, `src/config/`, `src/tunnel/`.
 
 **web/**
-- Purpose: UI for remote monitoring/control; PWA install; Telegram Mini App mode
-- Contains: React app, routes, components, hooks, service worker, build output
-- Key files: `web/src/main.tsx`, `web/src/router.tsx`, `web/src/hooks/useSSE.ts`, `web/src/api/client.ts`, `web/src/sw.ts`, `web/vite.config.ts`
-- Subdirectories:
-  - `web/src/routes/` page-level routes (sessions, projects, settings)
-  - `web/src/components/` reusable UI + chat/terminal components
-  - `web/src/hooks/` auth, SSE, query/mutation hooks
-  - `web/src/realtime/` realtime helpers (SSE/socket adapters)
-  - `web/dist/` build output served by hub in direct-connect mode
+- Purpose: React PWA used for remote control and session inspection.
+- Contains: router, route components, reusable UI, hooks, realtime helpers, tests, and assets.
+- Key files: `web/src/main.tsx`, `web/src/router.tsx`, `web/src/api/client.ts`, `web/package.json`.
+- Subdirectories: `src/routes/`, `src/routes/projects/`, `src/routes/sessions/`, `src/components/`, `src/hooks/`, `src/lib/`, `src/realtime/`, `src/test/`.
 
 **shared/**
-- Purpose: shared protocol contracts for CLI/hub/web
-- Contains: TS modules exporting types, schemas, helpers
-- Key files: `shared/src/index.ts`, `shared/src/types.ts`, `shared/src/socket.ts`, `shared/src/schemas.ts`, `shared/src/brand.ts`
+- Purpose: workspace-wide contract layer.
+- Contains: runtime schemas, product constants, message/task types, voice helpers, and protocol exports.
+- Key files: `shared/src/index.ts`, `shared/src/schemas.ts`, `shared/src/actions.ts`, `shared/src/types.ts`, `shared/package.json`.
+- Subdirectories: flat `src/` modules only.
 
 **docs/**
-- Purpose: user/developer docs site (VitePress)
-- Contains: guides + design notes
-- Key files: `docs/index.md`, `docs/guide/how-it-works.md`, `docs/package.json`
+- Purpose: VitePress documentation and guides.
+- Contains: guide pages, design notes, internal docs, and VitePress config/assets.
+- Key files: `docs/package.json`, `docs/guide/`, `docs/internal/`, `docs/.vitepress/`.
 
 **website/**
-- Purpose: marketing site (static + server bundle)
-- Contains: Vite app + `express` server build
-- Key files: `website/package.json`, `website/src/server/index.ts`, `website/vite.config.ts`
+- Purpose: marketing site and public-facing landing pages.
+- Contains: frontend app, public assets, and a bundled Node server entry.
+- Key files: `website/package.json`, `website/src/`, `website/src/server/index.ts`, `website/vite.config.ts`.
 
 **scripts/**
-- Purpose: repo-level automation helpers
-- Key files: `scripts/brand-sync.ts`, `scripts/brand-check.ts`
+- Purpose: repository-level automation used by root package scripts.
+- Contains: brand sync/check, build helpers, and maintenance tasks.
+- Key files: referenced from root `package.json`.
 
 **.planning/**
-- Purpose: planning + meta docs produced by agent workflows
-- Key dirs: `.planning/codebase/` (this map), `.planning/todos/`
-- Note: not runtime code; repo-local process artifacts
+- Purpose: project state, roadmap, codebase map, and todo/backlog artifacts.
+- Contains: `PROJECT.md`, `STATE.md`, `ROADMAP.md`, phase folders, codebase docs, and todo lists.
+- Key files: `.planning/STATE.md`, `.planning/codebase/*.md`.
+
+**.github/**
+- Purpose: repo metadata, issue prompts, and CI workflows.
+- Contains: GitHub Actions and repo-scoped templates.
+- Key files: `.github/workflows/`, `.github/prompts/`, `.github/ISSUE_TEMPLATE/`.
 
 ## Key File Locations
 
 **Entry Points:**
-- `cli/src/index.ts` - CLI main (Bun) → dispatch to `cli/src/commands/runCli.ts`
-- `cli/bin/hopi.cjs` - npm `hopi` bin wrapper selecting platform binary package
-- `hub/src/index.ts` - hub server main (HTTP/SSE/Socket.IO + optional tunnel/bot)
-- `web/src/main.tsx` - web bootstrap (React Query + router + PWA SW)
-- `shared/src/index.ts` - shared exports for `@hopi/protocol`
+- `cli/src/index.ts` - CLI runtime entry.
+- `hub/src/index.ts` - Hub server bootstrap.
+- `web/src/main.tsx` - Web app entry.
+- `website/src/server/index.ts` - Marketing site server entry.
 
 **Configuration:**
-- `package.json` - workspaces + root scripts (`build:single-exe`, `dev`, `typecheck`, `test`)
-- `tsconfig.base.json` - shared TS compiler settings
-- `cli/src/configuration.ts` - CLI env/settings loading
-- `hub/src/configuration.ts` - hub env/settings loading (token, db path, CORS, Telegram, relay)
-- `web/vite.config.ts` - web build config + PWA integration
+- `package.json` - Root workspace scripts and orchestration.
+- `cli/package.json`, `hub/package.json`, `web/package.json`, `shared/package.json`, `docs/package.json`, `website/package.json` - package-level scripts and dependencies.
+- `cli/tsconfig.json`, `hub/tsconfig.json`, `web/tsconfig.json`, `shared/tsconfig.json`, `website/tsconfig.json` - TypeScript per package.
+- `web/vite.config.ts`, `web/tailwind.config.ts`, `web/vitest.config.ts`, `website/vite.config.ts` - frontend build/test config.
 
 **Core Logic:**
-- `hub/src/sync/syncEngine.ts` - session/message orchestration + event publishing + RPC entrypoints
-- `hub/src/store/index.ts` - SQLite schema + stores (sessions/messages/machines/projects/workspaces/tasks)
-- `hub/src/web/server.ts` - Hono app + routes + static/embedded web serving
-- `cli/src/api/api.ts` - CLI REST client for `/cli/*` endpoints
-- `cli/src/api/rpc/RpcHandlerManager.ts` - CLI RPC registration/execution
-- `cli/src/runner/run.ts` - runner daemon (spawn sessions, manage worktrees, previews)
+- `cli/src/commands/` - command dispatch and subcommand handlers.
+- `cli/src/runner/` - background runner, control server, worktree logic, preview manager.
+- `hub/src/web/routes/` - REST endpoints.
+- `hub/src/socket/handlers/` - Socket.IO event handling.
+- `hub/src/sync/` - session/message/task orchestration.
+- `hub/src/store/` - persistence and table-specific stores.
+- `web/src/routes/` - routed UI pages.
+- `web/src/routes/projects/` - project/task workbench UI.
+- `shared/src/schemas.ts` and `shared/src/actions.ts` - protocol validation and project action contracts.
 
 **Testing:**
-- CLI: `cli/src/**/*.test.ts` (Vitest via `cli/vitest.config.ts`)
-- Hub: `hub/src/**/*.test.ts` (Bun test; see `hub/package.json`)
-- Web: `web/src/**/*.test.ts` (Vitest via `web/vitest.config.ts`)
+- `cli/src/**/*.test.ts` - CLI unit and integration-style tests.
+- `hub/src/**/*.test.ts` - hub tests around store, sync, routes, and automation.
+- `web/src/**/*.test.tsx` and `web/src/test/` - React component and helper tests.
+- `shared/src/**/*.test.ts` - shared protocol tests where present.
 
 **Documentation:**
-- Root overview: `README.md`
-- Hub/CLI/Web guides: `cli/README.md`, `hub/README.md`, `web/README.md`
-- Long-form docs: `docs/guide/*`
+- `README.md` - repo overview and getting started.
+- `cli/README.md`, `hub/README.md`, `web/README.md` - package docs.
+- `docs/guide/` - user-facing guides.
+- `cli/src/runner/README.md` - runner lifecycle and control-flow notes.
 
 ## Naming Conventions
 
 **Files:**
-- `*.ts` / `*.tsx` for TypeScript source
-- `*.test.ts` for tests (examples: `hub/src/sse/sseManager.test.ts`, `cli/src/api/versionedUpdate.test.ts`)
-- React components generally `PascalCase.tsx` (examples: `web/src/components/SessionChat.tsx`, `web/src/components/SessionList.tsx`)
+- `*.ts` for TypeScript modules.
+- `*.tsx` for React components and route views.
+- `*.test.ts` and `*.test.tsx` for colocated tests.
+- `README.md` for package-level overviews and operational notes.
 
 **Directories:**
-- lower-case feature buckets (`cli/src/api/`, `hub/src/sync/`, `web/src/hooks/`)
-- “collection” dirs pluralized (`hub/src/web/routes/`, `web/src/components/`)
+- `src/` for package source roots.
+- `routes/` for routed UI or HTTP endpoint groups.
+- `components/` for reusable UI pieces.
+- `hooks/` for React hooks.
+- `store/`, `sync/`, `socket/`, `web/` for hub server concerns.
+
+**Special Patterns:**
+- `index.ts` for package or directory exports and bootstrap modules.
+- `__tests__` for isolated test suites when colocated tests are not enough.
+- `*.generated.*` for generated artifacts such as embedded asset maps.
 
 ## Where to Add New Code
 
 **New CLI command:**
-- Definition: `cli/src/commands/<name>.ts`
-- Register: `cli/src/commands/registry.ts`
-- Tests: `cli/src/**/<name>.test.ts` (if unit-testable)
+- Primary code: `cli/src/commands/`
+- Runtime wiring: `cli/src/commands/registry.ts` and `cli/src/index.ts`
+- Tests: colocated `*.test.ts` files under `cli/src/`
 
-**New Hub API endpoint:**
-- Route file: `hub/src/web/routes/<domain>.ts`
-- Register route: `hub/src/web/server.ts` (add `app.route('/api', createXRoutes(...))`)
-- Tests: `hub/src/web/routes/**/*.test.ts`
+**New hub API route or realtime event:**
+- HTTP handlers: `hub/src/web/routes/`
+- Socket handlers: `hub/src/socket/handlers/`
+- Shared event types: `shared/src/socket.ts` or the relevant shared schema module
+- Tests: colocated `hub/src/**/*.test.ts`
 
-**New Socket.IO event / RPC surface:**
-- Shared typing: `shared/src/socket.ts`
-- Hub handler: `hub/src/socket/handlers/**`
-- CLI client/handler: `cli/src/api/**` and/or `cli/src/api/rpc/**`
+**New web page or component:**
+- Route file: `web/src/routes/`
+- Shared UI: `web/src/components/`
+- Data hooks: `web/src/hooks/queries/` or `web/src/hooks/mutations/`
+- Tests: `web/src/**/*.test.tsx`
 
-**New Web page / view:**
-- Route: `web/src/routes/**`
-- Wire into router: `web/src/router.tsx`
-- Data hooks: `web/src/hooks/queries/**`, `web/src/hooks/mutations/**`
+**New project/task automation behavior:**
+- Hub orchestration: `hub/src/sync/`
+- Persistence: `hub/src/store/projects.ts`, `hub/src/store/workspaces.ts`, `hub/src/store/tasks.ts`
+- API layer: `hub/src/web/routes/projects.ts`, `hub/src/web/routes/tasks.ts`, `hub/src/web/routes/workspaces.ts`
+- UI: `web/src/routes/projects/`
+- Contract/schema changes: `shared/src/actions.ts`, `shared/src/schemas.ts`, `shared/src/index.ts`
 
-**New shared type/schema:**
-- Types: `shared/src/types.ts`
-- Runtime validation: `shared/src/schemas.ts`
+**Shared protocol or schema:**
+- Definitions: `shared/src/`
+- Exports: `shared/src/index.ts`
+- Consumer updates: every package that imports the affected contract
+
+**Docs or public content:**
+- User docs: `docs/guide/`
+- Internal documentation: `docs/internal/`
+- Marketing content: `website/src/` and `website/public/`
 
 ## Special Directories
 
-**Build outputs (generated):**
-- `web/dist/` - built web assets served by hub in direct-connect mode (`hub/src/web/server.ts`)
-- `hub/dist/` - hub build output (`hub/package.json` build script)
+**web/dist/**
+- Purpose: built PWA output served by the hub or static hosting.
+- Source: `web/src/` build via `web/package.json`.
+- Committed: generated output.
 
-**Generated source (committed):**
-- `hub/src/web/embeddedAssets.generated.ts` - generated by `hub/scripts/generate-embedded-web-assets.ts` for single-exe embedding
+**docs/.vitepress/dist/**
+- Purpose: built docs site.
+- Source: `docs/.vitepress/` and `docs/guide/`.
+- Committed: generated output.
 
-**Workspace installs (generated):**
-- `node_modules/` - dependency installs (not source of truth)
+**website/dist/**
+- Purpose: built marketing site assets and server bundle.
+- Source: `website/src/` and `website/public/`.
+- Committed: generated output.
 
+**hub/.tmp/**
+- Purpose: temporary runtime artifacts.
+- Source: hub runtime and scripts.
+- Committed: no; runtime-only workspace.
+
+**.planning/codebase/**
+- Purpose: current codebase map for planning and execution.
+- Source: manually maintained refreshes.
+- Committed: yes.
+
+*Structure analysis: 2026-03-29*
+*Update when directory structure changes*

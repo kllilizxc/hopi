@@ -1,116 +1,134 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-03-07
+**Analysis Date:** 2026-03-29
 
-Multi-package repo; test tooling differs per package. Match the local package’s runner + style.
+Testing is split by package. Match the local runner and test style for the package you are editing.
 
 ## Test Framework
 
-**Hub (`hub/`):**
-- Runner: Bun test (`hub/package.json` -> `"test": "bun test"`)
-- API: import from `bun:test` (no globals): `hub/src/store/tasks.test.ts`, `hub/src/socket/handlers/terminal.test.ts`
-- Optional SQLite tooling in tests: `bun:sqlite` used directly: `hub/src/store/schemaMigration.test.ts`
+**Runner:**
+- `hub/` uses Bun test via `hub/package.json` (`"test": "bun test"`)
+- `cli/` uses Vitest via `cli/package.json` (`"test": "bun run tools:unpack && vitest run"`)
+- `web/` uses Vitest via `web/package.json` (`"test": "vitest run"`)
 
-**CLI (`cli/`):**
-- Runner: Vitest (`cli/package.json` -> `"test": "bun run tools:unpack && vitest run"`)
-- Config: `cli/vitest.config.ts` (node env, coverage enabled, `@` alias)
-- API: import from `vitest` (`describe/it/expect/beforeEach/afterEach/vi`), e.g. `cli/src/modules/common/handlers/git.test.ts`
+**Assertion Library:**
+- Bun tests use `expect` from `bun:test`
+- Vitest tests use `expect` from `vitest`
+- Web UI tests also rely on `@testing-library/jest-dom` matchers from `web/src/test/setup.ts`
 
-**Web (`web/`):**
-- Runner: Vitest (`web/package.json` -> `"test": "vitest run"`)
-- Config: `web/vitest.config.ts` (jsdom env, `setupFiles`, include `src/**/*.test.{ts,tsx}`)
-- UI assertions: Testing Library + jest-dom matchers (`web/src/test/setup.ts`)
-
-**Run commands (repo root):**
+**Run Commands:**
 ```bash
 bun run test          # all packages
-bun run test:cli      # cli only (vitest run + tools unpack)
-bun run test:hub      # hub only (bun test)
-bun run test:web      # web only (vitest run)
+bun run test:cli      # cli only
+bun run test:hub      # hub only
+bun run test:web      # web only
 ```
 
 ## Test File Organization
 
-**Collocation:**
-- Predominant pattern: `*.test.ts` next to code:
-  - `hub/src/store/tasks.test.ts`
-  - `hub/src/notifications/eventParsing.test.ts`
-  - `cli/src/modules/ripgrep/index.test.ts`
-  - `web/src/lib/taskMerge.test.ts`
+**Location:**
+- Default pattern is colocated `*.test.ts` / `*.test.tsx` next to source files
+- Examples: `cli/src/modules/common/handlers/files.test.ts`, `hub/src/sync/taskAutomation.test.ts`, `web/src/hooks/mutations/useStartTaskSession.test.tsx`
 
-**Shared test utilities (web):**
-- Test helpers live under `web/src/test/`:
-  - Setup: `web/src/test/setup.ts`
-  - Render helpers: `web/src/test/renderWithProviders.tsx`
+**Naming:**
+- File name generally mirrors the module under test
+- Most tests are simple unit-style files; there is no separate `tests/` tree
 
-**Notable exception:**
-- `__tests__/` subfolder exists (CLI Codex): `cli/src/codex/__tests__/emitReadyIfIdle.test.ts`
+**Structure:**
+```
+cli/src/
+  modules/
+    ripgrep/
+      index.ts
+      index.test.ts
+hub/src/
+  store/
+    schemaMigration.test.ts
+web/src/
+  test/
+    setup.ts
+    renderWithProviders.tsx
+```
 
 ## Test Structure
 
-**Common suite style:**
-- `describe('unit/feature', () => { it('behavior', () => { ... }) })`
-- English behavior strings; focused expectations; minimal AAA comments (pattern across `hub/src/store/tasks.test.ts`, `web/src/lib/taskMerge.test.ts`)
+**Suite Organization:**
+- `describe('module', () => { it('behavior', () => { ... }) })` is the common shape
+- Test names are behavior-oriented and usually written as plain English sentences
+- Web tests often use small harness components or probe components to validate hooks/providers
 
-**Setup/teardown patterns:**
-- Hub: lightweight state + explicit cleanup in `afterEach` when files/DB created:
-  - Temp file removal in `hub/src/store/schemaMigration.test.ts`
-- CLI: async `beforeEach`/`afterEach` for temp dirs + env var restore:
-  - `cli/src/modules/common/handlers/git.test.ts` (real git repo, worktrees, `process.env` stash/restore)
-- Web: global RTL cleanup after each test:
-  - `web/src/test/setup.ts` (`afterEach(cleanup)`)
-  - per-suite resets often in `beforeEach` (`localStorage.clear()`, DOM state): `web/src/test/renderWithProviders.test.tsx`
+**Patterns:**
+- `beforeEach` is common for temp state, mocks, and DOM reset
+- `afterEach` is used for cleanup when files, DBs, or global DOM state are involved
+- Tests are usually explicit arrange/act/assert, even when comments are omitted
 
 ## Mocking
 
-**Hub (Bun tests):**
-- Minimal mocking libs; prefers handwritten fakes/harness objects:
-  - `hub/src/socket/handlers/terminal.test.ts` (`FakeSocket`, `FakeServer`, `createHarness`)
+**Framework:**
+- Vitest uses `vi.fn()`, `vi.mock()`, `vi.spyOn()`, and fake timers where needed
+- Bun tests in `hub/` often prefer small handwritten fakes over heavy mocking
 
-**CLI (Vitest):**
-- Uses `vi` for module mocks/spies/timers:
-  - Module mocking + hoisted harness: `cli/src/codex/codexRemoteLauncher.test.ts` (`vi.hoisted`, `vi.mock`)
-  - Spies/timers exist elsewhere: `cli/src/ui/ink/useSwitchControls.test.ts` (fake timers + spies)
+**Patterns:**
+- Web component/hook tests stub API methods with `vi.fn()` and render via shared helpers
+- CLI tests sometimes use real temporary directories or real subprocess-adjacent behavior instead of mocking everything
+- Hub store tests often use `new Store(':memory:')` or temp SQLite files to exercise real persistence code
 
-**Web (Vitest + RTL):**
-- Prefer rendering + DOM assertions; use `vi.fn()` for small stubs:
-  - `web/src/test/renderWithProviders.test.tsx` (stub translation function)
+**What to Mock:**
+- External services, network calls, and unstable platform APIs
+- Environment variables and process state when the test is boundary-focused
+- Time, filesystem, and subprocesses when the test would otherwise be non-deterministic
 
 ## Fixtures and Factories
 
-**Hub:**
-- In-memory DB for store-level unit tests: `new Store(':memory:')` in `hub/src/store/tasks.test.ts`
-- File-based DB + schema/migration fixtures when needed:
-  - Creates legacy schema via raw SQL: `hub/src/store/schemaMigration.test.ts`
+**Test Data:**
+- Inline factory helpers are common for complex objects: `createTask(...)` in `web/src/hooks/mutations/useStartTaskSession.test.tsx`
+- SQLite fixtures are built with raw SQL in `hub/src/store/schemaMigration.test.ts`
+- Temp directories are used for filesystem and git behavior in CLI tests
 
-**CLI:**
-- Realistic integration-ish fixtures via temp dirs + git:
-  - `cli/src/modules/common/handlers/git.test.ts` (`os.tmpdir()`, `git init`, `git worktree add`)
-
-**Web:**
-- Reusable render helper providing i18n/query/router wrappers:
-  - `web/src/test/renderWithProviders.tsx`
-- Small probe components for context validation:
-  - `web/src/test/renderWithProviders.test.tsx` (`I18nProbe`)
+**Location:**
+- Shared test utilities live in `web/src/test/`
+- There is no repo-wide shared fixture directory
 
 ## Coverage
 
-- CLI: enabled via Vitest config:
-  - `cli/vitest.config.ts` -> provider `v8`, reporters `text/json/html`, exclude patterns
-- Web: no explicit coverage config in `web/vitest.config.ts`
-- Hub: Bun test runner; no explicit coverage config found
+**Requirements:**
+- No explicit coverage threshold is configured in the repo root
+- `cli/vitest.config.ts` enables V8 coverage reporting with text/json/html reporters
+- `web/vitest.config.ts` does not define a coverage block
+- `hub/` has no explicit coverage config because it uses `bun test`
 
-## Test Types Present
+**View Coverage:**
+```bash
+bun run test:cli -- --coverage
+```
 
-- Unit tests (pure functions / small modules):
-  - `web/src/lib/taskMerge.test.ts`
-- Integration-ish tests (real FS/DB/git interactions, still in unit runner):
-  - `hub/src/store/schemaMigration.test.ts` (SQLite schema + migration)
-  - `cli/src/modules/common/handlers/git.test.ts` (real git worktrees)
-- E2E: no Playwright/Cypress suite found in repo
+## Test Types
+
+**Unit Tests:**
+- Most tests are unit or small integration-style checks around one module
+- Common examples: `hub/src/utils/accessToken.test.ts`, `cli/src/modules/ripgrep/index.test.ts`, `web/src/lib/taskMerge.test.ts`
+
+**Integration Tests:**
+- Hub store tests exercise actual SQLite migration and persistence behavior
+- CLI tests sometimes exercise real filesystem or git behavior
+- Web tests use real DOM rendering plus Testing Library
+
+**E2E Tests:**
+- No Playwright/Cypress-style end-to-end suite was found
 
 ## Common Patterns
 
-- Async tests: `async` + `await` over callbacks (`cli/src/modules/common/handlers/git.test.ts`)
-- DOM/UI tests: Testing Library `screen` + jest-dom matchers (`web/src/test/renderWithProviders.test.tsx`)
+**Async Testing:**
+- `async`/`await` is preferred over callback-style tests
+- `waitFor` and `act` appear in web hook tests where React state updates are involved
 
+**Error Testing:**
+- Rejection and failure paths are asserted explicitly
+- Web tests commonly check both DOM state and hook side effects after a failing action
+
+**Setup Helpers:**
+- `web/src/test/setup.ts` installs jest-dom matchers and cleans up after each test
+- `web/src/test/renderWithProviders.tsx` centralizes providers for i18n, query client, and router
+
+*Testing analysis: 2026-03-29*
+*Update when test patterns change*
