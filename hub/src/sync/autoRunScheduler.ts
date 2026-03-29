@@ -39,6 +39,7 @@ export class AutoRunScheduler {
     private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
     private readonly tickTimers: Map<ProjectKey, NodeJS.Timeout> = new Map()
     private readonly runningTicks: Set<ProjectKey> = new Set()
+    private readonly pendingTicks: Set<ProjectKey> = new Set()
 
     constructor(
         private readonly store: Store,
@@ -49,6 +50,11 @@ export class AutoRunScheduler {
     requestTick(namespace: string, projectId: string, options?: { delayMs?: number }): void {
         const delayMs = options?.delayMs ?? 250
         const key = toProjectKey(namespace, projectId)
+
+        if (this.runningTicks.has(key)) {
+            this.pendingTicks.add(key)
+            return
+        }
 
         if (this.tickTimers.has(key)) {
             return
@@ -192,6 +198,10 @@ export class AutoRunScheduler {
             }
         } finally {
             this.runningTicks.delete(key)
+            if (this.pendingTicks.has(key)) {
+                this.pendingTicks.delete(key)
+                this.requestTick(namespace, projectId, { delayMs: 0 })
+            }
         }
     }
 }
