@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { TaskInitRuntime } from '@hopi/protocol/types'
+import type { TaskInitRuntime, TaskSessionStartFailure } from '@hopi/protocol/types'
 import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
@@ -147,6 +147,7 @@ describe('tasks start-session route', () => {
         expect(body.task?.initRuntime?.status).toBe('succeeded')
         expect(body.task?.initRuntime?.sessionId).toBe(spawned.id)
         expect(body.task?.initRuntime?.latestNote ?? null).toBeNull()
+        expect(body.task?.initRuntime?.failure ?? null).toBeNull()
         expect(body.initRecoveryAttempted).toBe(false)
         expect(sentPrompt.localId?.startsWith('auto:kickoff:')).toBe(true)
         expect(sentPrompt.text).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
@@ -250,7 +251,7 @@ describe('tasks start-session route', () => {
             sessionId?: string
             task?: { initRuntime?: TaskInitRuntime | null }
             initRecoveryAttempted?: boolean
-            initRecoveryError?: string
+            initRecoveryError?: TaskSessionStartFailure
         }
         expect(body.sessionId).toBe(spawned.id)
         expect(body.task?.initRuntime).toMatchObject({
@@ -258,6 +259,15 @@ describe('tasks start-session route', () => {
             sessionId: spawned.id,
             blockedReason: 'init failed',
             retryCount: 1
+        })
+        expect(body.task?.initRuntime?.failure).toMatchObject({
+            code: 'init_script_failed',
+            blockedReason: 'init failed',
+            retry: {
+                count: 1,
+                action: 'manual_fix_then_retry_start',
+                available: true
+            }
         })
         expect(body.task?.initRuntime?.latestNote).toContain('Same blocker repeated')
         expect(body.initRecoveryAttempted).toBe(true)
@@ -277,6 +287,7 @@ describe('tasks start-session route', () => {
             blockedReason: 'init failed',
             retryCount: 1
         })
+        expect(updatedTask?.initRuntime?.failure?.code).toBe('init_script_failed')
 
         const transcript = JSON.stringify(store.messages.getMessages(spawned.id, 10).map((message) => message.content))
         expect(transcript).toContain('auto-ran `.hopi/init.sh`')
@@ -320,8 +331,16 @@ describe('tasks start-session route', () => {
         })
 
         expect(response.status).toBe(500)
-        const body = await response.json() as { error?: string }
-        expect(body.error).toBe('RPC socket disconnected: spawn failed')
+        const body = await response.json() as { error?: TaskSessionStartFailure }
+        expect(body.error).toMatchObject({
+            code: 'unexpected_error',
+            message: 'RPC socket disconnected: spawn failed',
+            retry: {
+                count: 0,
+                action: 'retry_start',
+                available: true
+            }
+        })
 
         const task = store.tasks.getTaskByNamespace(taskId, 'default')
         expect(task?.status).toBe('planned')

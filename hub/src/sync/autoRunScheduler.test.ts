@@ -180,6 +180,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(task?.status).toBe('blocked')
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+        const toastEvent = realtimeEvents.find((event) => event.type === 'toast')
+        expect(toastEvent?.type === 'toast' ? toastEvent.data.taskStartFailure?.code : null).toBe('unexpected_error')
     })
 
     it('auto-run retries planned tasks with an inactive previous session link', async () => {

@@ -3,6 +3,7 @@ import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normaliz
 import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
+import type { TaskSessionStartFailure, TaskSessionStartFailureCode, TaskSessionStartRetryAction } from '@hopi/protocol/task-session-start'
 import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import {
@@ -54,6 +55,32 @@ function formatErrorMessage(error: unknown, fallback: string): string {
 
 function normalizeText(value: string): string {
     return value.replace(/\r\n/g, '\n').trim()
+}
+
+function createTaskSessionStartFailure(options: {
+    code: TaskSessionStartFailureCode
+    message: string
+    blockedReason?: string | null
+    retryCount?: number
+    retryAction?: TaskSessionStartRetryAction
+    retryAvailable?: boolean
+}): TaskSessionStartFailure {
+    const message = normalizeText(options.message).slice(0, 280)
+    const blockedReason = options.blockedReason === null
+        ? null
+        : normalizeText(options.blockedReason ?? '').slice(0, 280) || null
+    const retryAvailable = options.retryAvailable ?? true
+
+    return {
+        code: options.code,
+        message: message || blockedReason || 'Task session start failed',
+        blockedReason,
+        retry: {
+            count: Math.max(0, options.retryCount ?? 0),
+            action: retryAvailable ? (options.retryAction ?? 'retry_start') : 'none',
+            available: retryAvailable
+        }
+    }
 }
 
 function isLikelyMissingInitScriptFailure(result: ScriptExecutionResult): boolean {
@@ -508,29 +535,30 @@ function buildRepeatedInitFailureNote(options: {
     return buildRepeatedTaskActionFailureNote(options)
 }
 
-function buildBlockedInitRuntimeState(options: {
+function buildBlockedInitFailure(options: {
     task: Pick<StoredTask, 'initRuntime'>
-    note: string
+    code: TaskSessionStartFailureCode
+    message: string
     blockedReason: string
     failureFingerprint: string
     manualStep: string
-}): {
-    latestNote: string
-    blockedReason: string
-    failureFingerprint: string
-} {
+    retryAction: TaskSessionStartRetryAction
+}): TaskSessionStartFailure {
     const repeated = options.task.initRuntime?.failureFingerprint === options.failureFingerprint
 
-    return {
-        latestNote: repeated
+    return createTaskSessionStartFailure({
+        code: options.code,
+        message: repeated
             ? buildRepeatedInitFailureNote({
                 blockedReason: options.blockedReason,
                 manualStep: options.manualStep
             })
-            : options.note,
+            : options.message,
         blockedReason: options.blockedReason,
-        failureFingerprint: options.failureFingerprint
-    }
+        retryCount: options.task.initRuntime?.retryCount ?? 0,
+        retryAction: options.retryAction,
+        retryAvailable: true
+    })
 }
 
 function getNextInitRepairAttemptRetryCount(task: Pick<StoredTask, 'initRuntime'>): number {
@@ -571,6 +599,7 @@ function buildTaskInitRuntime(options: {
     failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
+    failure?: TaskSessionStartFailure | null
     startedAt?: number | null
     completedAt?: number | null
 }): NonNullable<StoredTask['initRuntime']> {
@@ -583,6 +612,7 @@ function buildTaskInitRuntime(options: {
         failureFingerprint: options.failureFingerprint,
         latestNote: options.latestNote,
         blockedReason: options.blockedReason,
+        failure: options.failure,
         startedAt: options.startedAt,
         completedAt: options.completedAt
     })
@@ -594,9 +624,9 @@ export type StartTaskSessionResult =
         task: StoredTask
         sessionId: string
         initRecoveryAttempted?: boolean
-        initRecoveryError?: string
+        initRecoveryError?: TaskSessionStartFailure
     }
-    | { ok: false; error: string }
+    | { ok: false; error: TaskSessionStartFailure }
 
 
 async function startSessionFromTaskInternal(options: {
@@ -612,13 +642,27 @@ async function startSessionFromTaskInternal(options: {
 
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!task) {
-        return { ok: false, error: 'Task not found' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'task_not_found',
+                message: 'Task not found',
+                retryAvailable: false
+            })
+        }
     }
     const previousSessionId = task.activeSessionId
 
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
     if (!project) {
-        return { ok: false, error: 'Project not found' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'project_not_found',
+                message: 'Project not found',
+                retryAvailable: false
+            })
+        }
     }
     const projectWorkspaces = options.store.workspaces.listWorkspacesByProject(project.id)
 
@@ -627,12 +671,26 @@ async function startSessionFromTaskInternal(options: {
         ?? project.defaultWorkspaceId
 
     if (!resolvedWorkspaceId) {
-        return { ok: false, error: 'No workspace selected' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'workspace_required',
+                message: 'No workspace selected',
+                retryAction: 'manual_fix_then_retry_start'
+            })
+        }
     }
 
     const workspace = options.store.workspaces.getWorkspace(resolvedWorkspaceId)
     if (!workspace || workspace.projectId !== project.id) {
-        return { ok: false, error: 'Workspace not found' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'workspace_not_found',
+                message: 'Workspace not found',
+                retryAvailable: false
+            })
+        }
     }
 
     const agent = overrides.agent
@@ -686,7 +744,14 @@ async function startSessionFromTaskInternal(options: {
 
     const machine = options.engine.getMachineByNamespace(project.machineId, options.namespace)
     if (!machine) {
-        return { ok: false, error: 'Machine not found' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'machine_not_found',
+                message: 'Machine not found',
+                retryAvailable: false
+            })
+        }
     }
 
     const runnerSeemsOnline = machine.active || (() => {
@@ -700,7 +765,11 @@ async function startSessionFromTaskInternal(options: {
     if (!runnerSeemsOnline) {
         return {
             ok: false,
-            error: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
+            error: createTaskSessionStartFailure({
+                code: 'runner_offline',
+                message: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start',
+                retryAction: 'manual_fix_then_retry_start'
+            })
         }
     }
 
@@ -716,12 +785,24 @@ async function startSessionFromTaskInternal(options: {
         worktreeWorkspacePaths
     )
     if (spawn.type !== 'success') {
-        return { ok: false, error: spawn.message }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'spawn_failed',
+                message: spawn.message
+            })
+        }
     }
 
     const becameActive = await options.engine.waitForSessionActive(spawn.sessionId, 20_000)
     if (!becameActive) {
-        return { ok: false, error: 'Session failed to become active' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'session_activation_timeout',
+                message: 'Session failed to become active'
+            })
+        }
     }
     setSessionTaskLink({
         store: options.store,
@@ -848,33 +929,22 @@ async function startSessionFromTaskInternal(options: {
     }
 
     const applyBlockedInitState = (options: {
-        blockedReason: string
-        note: string
-        manualStep: string
+        failure: TaskSessionStartFailure
         failureFingerprint: string
     }): StoredTask | null => {
-        const blockedState = buildBlockedInitRuntimeState({
-            task: runtimeTask,
-            note: options.note,
-            blockedReason: options.blockedReason,
-            failureFingerprint: options.failureFingerprint,
-            manualStep: options.manualStep
-        })
         return updateStartedTask({
             initRuntime: buildTaskInitRuntime({
                 task: runtimeTask,
                 status: 'blocked',
                 sessionId: spawn.sessionId,
-                retryCount: runtimeTask.initRuntime?.retryCount,
-                failureFingerprint: blockedState.failureFingerprint,
-                latestNote: blockedState.latestNote,
-                blockedReason: blockedState.blockedReason
+                failureFingerprint: options.failureFingerprint,
+                failure: options.failure
             })
         })
     }
 
     let initRecoveryAttempted = false
-    let initRecoveryError: string | undefined
+    let initRecoveryError: TaskSessionStartFailure | undefined
 
     let directAttempt = await runInitAttempt()
     let initScript = directAttempt.initScript
@@ -916,14 +986,25 @@ async function startSessionFromTaskInternal(options: {
                 task: runtimeTask,
                 status: 'retrying',
                 sessionId: spawn.sessionId,
-                retryCount: getNextInitRepairAttemptRetryCount(runtimeTask),
                 failureFingerprint: directFailureFingerprint,
-                latestNote: 'Direct init failed; queued one in-session repair attempt.',
-                blockedReason: initScript.error
+                failure: createTaskSessionStartFailure({
+                    code: 'init_script_failed',
+                    message: 'Direct init failed; queued one in-session repair attempt.',
+                    blockedReason: initScript.error,
+                    retryCount: getNextInitRepairAttemptRetryCount(runtimeTask),
+                    retryAction: 'manual_fix_then_retry_start'
+                })
             })
         })
         if (!retryingTask) {
-            return { ok: false, error: 'Task not found' }
+            return {
+                ok: false,
+                error: createTaskSessionStartFailure({
+                    code: 'task_not_found',
+                    message: 'Task not found',
+                    retryAvailable: false
+                })
+            }
         }
         emitStartedTaskUpdate(retryingTask)
 
@@ -943,7 +1024,22 @@ async function startSessionFromTaskInternal(options: {
             initRecoveryAttempted = true
         } catch (error) {
             const recoveryError = formatErrorMessage(error, 'Failed to send init recovery prompt')
-            initRecoveryError = recoveryError
+            const recoveryFailureFingerprint = buildTaskInitFailureFingerprint({
+                reason: 'repair_prompt_failed',
+                blockedReason: recoveryError,
+                initScriptCwd,
+                initScript
+            })
+            const recoveryFailure = buildBlockedInitFailure({
+                task: runtimeTask,
+                code: 'init_repair_prompt_failed',
+                message: `Init repair prompt could not be delivered. ${INIT_REPAIR_MANUAL_STEP}`,
+                blockedReason: recoveryError,
+                manualStep: INIT_REPAIR_MANUAL_STEP,
+                failureFingerprint: recoveryFailureFingerprint,
+                retryAction: 'manual_fix_then_retry_start'
+            })
+            initRecoveryError = recoveryFailure
             appendAssistantTextMessage({
                 store: options.store,
                 engine: options.engine,
@@ -953,18 +1049,18 @@ async function startSessionFromTaskInternal(options: {
             })
 
             const blockedTask = applyBlockedInitState({
-                blockedReason: recoveryError,
-                note: `Init repair prompt could not be delivered. ${INIT_REPAIR_MANUAL_STEP}`,
-                manualStep: INIT_REPAIR_MANUAL_STEP,
-                failureFingerprint: buildTaskInitFailureFingerprint({
-                    reason: 'repair_prompt_failed',
-                    blockedReason: recoveryError,
-                    initScriptCwd,
-                    initScript
-                })
+                failureFingerprint: recoveryFailureFingerprint,
+                failure: recoveryFailure
             })
             if (!blockedTask) {
-                return { ok: false, error: 'Task not found' }
+                return {
+                    ok: false,
+                    error: createTaskSessionStartFailure({
+                        code: 'task_not_found',
+                        message: 'Task not found',
+                        retryAvailable: false
+                    })
+                }
             }
             emitStartedTaskUpdate(blockedTask)
             return {
@@ -989,17 +1085,38 @@ async function startSessionFromTaskInternal(options: {
             const manualStep = runnableResult === 'session_inactive'
                 ? INIT_SESSION_MANUAL_STEP
                 : INIT_WAIT_MANUAL_STEP
+            const retryAction = runnableResult === 'session_inactive'
+                ? 'relink_session_then_retry_start'
+                : 'wait_then_retry_start'
             const blockedTask = applyBlockedInitState({
-                blockedReason,
-                note: `${blockedReason} ${manualStep}`,
-                manualStep,
                 failureFingerprint: buildTaskInitFailureFingerprint({
                     reason: runnableResult,
                     blockedReason
+                }),
+                failure: buildBlockedInitFailure({
+                    task: runtimeTask,
+                    code: runnableResult === 'session_inactive'
+                        ? 'init_retry_session_inactive'
+                        : 'init_retry_wait_timeout',
+                    message: `${blockedReason} ${manualStep}`,
+                    blockedReason,
+                    manualStep,
+                    failureFingerprint: buildTaskInitFailureFingerprint({
+                        reason: runnableResult,
+                        blockedReason
+                    }),
+                    retryAction
                 })
             })
             if (!blockedTask) {
-                return { ok: false, error: 'Task not found' }
+                return {
+                    ok: false,
+                    error: createTaskSessionStartFailure({
+                        code: 'task_not_found',
+                        message: 'Task not found',
+                        retryAvailable: false
+                    })
+                }
             }
             emitStartedTaskUpdate(blockedTask)
             return {
@@ -1042,18 +1159,36 @@ async function startSessionFromTaskInternal(options: {
 
         if (!initScript.ok) {
             const blockedTask = applyBlockedInitState({
-                blockedReason: initScript.error,
-                note: `Init still failed after one in-session repair attempt. ${INIT_REPAIR_MANUAL_STEP}`,
-                manualStep: INIT_REPAIR_MANUAL_STEP,
                 failureFingerprint: buildTaskInitFailureFingerprint({
                     reason: 'script_failure',
                     blockedReason: initScript.error,
                     initScriptCwd,
                     initScript
+                }),
+                failure: buildBlockedInitFailure({
+                    task: runtimeTask,
+                    code: 'init_script_failed',
+                    message: `Init still failed after one in-session repair attempt. ${INIT_REPAIR_MANUAL_STEP}`,
+                    blockedReason: initScript.error,
+                    manualStep: INIT_REPAIR_MANUAL_STEP,
+                    failureFingerprint: buildTaskInitFailureFingerprint({
+                        reason: 'script_failure',
+                        blockedReason: initScript.error,
+                        initScriptCwd,
+                        initScript
+                    }),
+                    retryAction: 'manual_fix_then_retry_start'
                 })
             })
             if (!blockedTask) {
-                return { ok: false, error: 'Task not found' }
+                return {
+                    ok: false,
+                    error: createTaskSessionStartFailure({
+                        code: 'task_not_found',
+                        message: 'Task not found',
+                        retryAvailable: false
+                    })
+                }
             }
             emitStartedTaskUpdate(blockedTask)
             return {
@@ -1078,7 +1213,14 @@ async function startSessionFromTaskInternal(options: {
         })
     })
     if (!updatedTask) {
-        return { ok: false, error: 'Task not found' }
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'task_not_found',
+                message: 'Task not found',
+                retryAvailable: false
+            })
+        }
     }
 
     emitStartedTaskUpdate(updatedTask)
@@ -1210,7 +1352,10 @@ export async function startSessionFromTask(options: {
     } catch (error) {
         return {
             ok: false,
-            error: formatErrorMessage(error, 'Failed to start task session')
+            error: createTaskSessionStartFailure({
+                code: 'unexpected_error',
+                message: formatErrorMessage(error, 'Failed to start task session')
+            })
         }
     }
 }

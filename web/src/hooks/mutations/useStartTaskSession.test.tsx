@@ -2,6 +2,7 @@ import { act, waitFor } from '@testing-library/react'
 import { useEffect } from 'react'
 import { QueryClient } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api/client'
 import type { ApiClient } from '@/api/client'
 import type { Task, TaskStartSessionResponse } from '@/types/api'
 import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
@@ -40,7 +41,17 @@ function createStartResponse(overrides: Partial<TaskStartSessionResponse> = {}):
                 retryCount: 1,
                 failureFingerprint: 'init:abc123',
                 latestNote: 'Same blocker repeated with no repo progress: npm install failed. User must fix the dependency manually before retry.',
-                blockedReason: 'npm install failed'
+                blockedReason: 'npm install failed',
+                failure: {
+                    code: 'init_script_failed',
+                    message: 'Same blocker repeated with no repo progress: npm install failed. User must fix the dependency manually before retry.',
+                    blockedReason: 'npm install failed',
+                    retry: {
+                        count: 1,
+                        action: 'manual_fix_then_retry_start',
+                        available: true
+                    }
+                }
             }
         }),
         ...overrides,
@@ -157,5 +168,65 @@ describe('useStartTaskSession', () => {
             [{ queryKey: queryKeys.session('session-2') }],
             [{ queryKey: queryKeys.messages('session-2') }],
         ]))
+    })
+
+    it('exposes structured start failures from API errors', async () => {
+        const queryClient = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false },
+                mutations: { retry: false },
+            },
+        })
+        const api = {
+            startTaskSession: vi.fn(async () => {
+                throw new ApiError(
+                    'HTTP 503 Service Unavailable: Runner offline',
+                    503,
+                    'runner_offline',
+                    undefined,
+                    {
+                        error: {
+                            code: 'runner_offline',
+                            message: 'Runner offline',
+                            blockedReason: 'Runner offline',
+                            retry: {
+                                count: 0,
+                                action: 'manual_fix_then_retry_start',
+                                available: true
+                            }
+                        }
+                    }
+                )
+            })
+        } as unknown as ApiClient
+
+        let controls: StartControls | null = null
+        renderWithProviders(
+            <MutationHarness api={api} onReady={(next) => {
+                controls = next
+            }} />,
+            { queryClient }
+        )
+
+        await waitFor(() => {
+            expect(controls).not.toBeNull()
+        })
+
+        await expect(controls!.startTaskSession({
+            taskId: 'task-1',
+            projectId: 'project-1'
+        })).rejects.toThrow('Runner offline')
+
+        await waitFor(() => {
+            expect(controls?.error).toMatchObject({
+                code: 'runner_offline',
+                message: 'Runner offline',
+                retry: {
+                    count: 0,
+                    action: 'manual_fix_then_retry_start',
+                    available: true
+                }
+            })
+        })
     })
 })

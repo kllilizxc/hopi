@@ -48,6 +48,12 @@ type ErrorPayload = {
     error?: unknown
 }
 
+type ParsedErrorPayload = {
+    payload?: ErrorPayload
+    code?: string
+    message?: string
+}
+
 function getStoredLocale(): string | null {
     const storage = typeof globalThis === 'object' ? globalThis.localStorage : undefined
     if (!storage) {
@@ -63,12 +69,27 @@ function getStoredLocale(): string | null {
     }
 }
 
-function parseErrorCode(bodyText: string): string | undefined {
+function parseErrorPayload(bodyText: string): ParsedErrorPayload {
     try {
         const parsed = JSON.parse(bodyText) as ErrorPayload
-        return typeof parsed.error === 'string' ? parsed.error : undefined
+        if (typeof parsed.error === 'string') {
+            return {
+                payload: parsed,
+                code: parsed.error,
+                message: parsed.error
+            }
+        }
+        if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
+            const error = parsed.error as Record<string, unknown>
+            return {
+                payload: parsed,
+                code: typeof error.code === 'string' ? error.code : undefined,
+                message: typeof error.message === 'string' ? error.message : undefined
+            }
+        }
+        return { payload: parsed }
     } catch {
-        return undefined
+        return {}
     }
 }
 
@@ -76,13 +97,15 @@ export class ApiError extends Error {
     status: number
     code?: string
     body?: string
+    payload?: ErrorPayload
 
-    constructor(message: string, status: number, code?: string, body?: string) {
+    constructor(message: string, status: number, code?: string, body?: string, payload?: ErrorPayload) {
         super(message)
         this.name = 'ApiError'
         this.status = status
         this.code = code
         this.body = body
+        this.payload = payload
     }
 }
 
@@ -152,13 +175,21 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
-            const detail = code
-                ? `: ${code}`
+            const parsedError = parseErrorPayload(body)
+            const detail = parsedError.message
+                ? `: ${parsedError.message}`
+                : parsedError.code
+                    ? `: ${parsedError.code}`
                 : body
                     ? `: ${body}`
                     : ''
-            throw new ApiError(`HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new ApiError(
+                `HTTP ${res.status} ${res.statusText}${detail}`,
+                res.status,
+                parsedError.code,
+                body || undefined,
+                parsedError.payload
+            )
         }
 
         return await res.json() as T
@@ -173,9 +204,9 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
+            const parsedError = parseErrorPayload(body)
             const detail = body ? `: ${body}` : ''
-            throw new ApiError(`Auth failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new ApiError(`Auth failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, parsedError.code, body || undefined, parsedError.payload)
         }
 
         return await res.json() as AuthResponse
@@ -190,9 +221,9 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
+            const parsedError = parseErrorPayload(body)
             const detail = body ? `: ${body}` : ''
-            throw new ApiError(`Bind failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new ApiError(`Bind failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, parsedError.code, body || undefined, parsedError.payload)
         }
 
         return await res.json() as AuthResponse

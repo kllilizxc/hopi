@@ -32,6 +32,13 @@ export type {
 } from './schemas'
 
 export type { SessionSummary, SessionSummaryMetadata } from './sessionSummary'
+export type {
+    TaskSessionStartErrorResponse,
+    TaskSessionStartFailure,
+    TaskSessionStartFailureCode,
+    TaskSessionStartRetry,
+    TaskSessionStartRetryAction
+} from './task-session-start'
 
 export type {
     AgentFlavor,

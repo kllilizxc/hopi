@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MODEL_MODES, PERMISSION_MODES } from './modes'
+import { TaskSessionStartFailureSchema } from './task-session-start'
 import { TASK_STATUS_ORDER } from './tasks'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
@@ -325,7 +326,8 @@ export const TaskActionRuntimeEnvelopeSchema = z.object({
     retryCount: z.number().int().min(0).optional(),
     failureFingerprint: z.string().trim().min(1).max(64).nullable().optional(),
     latestNote: z.string().trim().min(1).max(280).nullable().optional(),
-    blockedReason: z.string().trim().min(1).max(280).nullable().optional()
+    blockedReason: z.string().trim().min(1).max(280).nullable().optional(),
+    failure: TaskSessionStartFailureSchema.nullable().optional()
 })
 
 export type TaskActionRuntimeEnvelope = z.infer<typeof TaskActionRuntimeEnvelopeSchema>
@@ -428,7 +430,8 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             title: z.string(),
             body: z.string(),
             sessionId: z.string(),
-            url: z.string()
+            url: z.string(),
+            taskStartFailure: TaskSessionStartFailureSchema.optional()
         })
     }),
     SessionEventBaseSchema.extend({

@@ -9,6 +9,7 @@ import {
     PRODUCT_PREVIEW_READY_MARKER,
     PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
 } from '@hopi/protocol/brand'
+import { getTaskSessionStartFailureHttpStatus } from '@hopi/protocol/task-session-start'
 import { Hono } from 'hono'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -1490,16 +1491,8 @@ async function waitForReadyEventForLocalId(options: {
     return 'timeout'
 }
 
-function resolveTaskSessionStartErrorStatus(error: string): 400 | 404 | 500 | 503 {
-    return error === 'Task not found'
-        ? 404
-        : error === 'Project not found' || error === 'Workspace not found' || error === 'Machine not found'
-            ? 404
-            : error === 'No workspace selected'
-                ? 400
-                : error.startsWith('Runner offline')
-                    ? 503
-                    : 500
+function resolveTaskSessionStartErrorStatus(error: Parameters<typeof getTaskSessionStartFailureHttpStatus>[0]): 400 | 404 | 500 | 503 {
+    return getTaskSessionStartFailureHttpStatus(error)
 }
 
 function buildMergeMonitorKey(namespace: string, taskId: string): string {
@@ -4195,7 +4188,18 @@ export function createTasksRoutes(options: {
 
         const engine = options.getSyncEngine()
         if (!engine) {
-            return c.json({ error: 'Not connected' }, 503)
+            return c.json({
+                error: {
+                    code: 'not_connected',
+                    message: 'Not connected',
+                    blockedReason: 'Not connected',
+                    retry: {
+                        count: 0,
+                        action: 'retry_start',
+                        available: true
+                    }
+                }
+            }, 503)
         }
 
         const access = engine.resolveSessionAccess(parsed.data.sessionId, namespace)
@@ -4223,7 +4227,18 @@ export function createTasksRoutes(options: {
         const json = await c.req.json().catch(() => null)
         const parsed = startSessionSchema.safeParse(json ?? {})
         if (!parsed.success) {
-            return c.json({ error: 'Invalid body' }, 400)
+            return c.json({
+                error: {
+                    code: 'invalid_request',
+                    message: 'Invalid body',
+                    blockedReason: 'Invalid body',
+                    retry: {
+                        count: 0,
+                        action: 'manual_fix_then_retry_start',
+                        available: true
+                    }
+                }
+            }, 400)
         }
 
         const engine = options.getSyncEngine()
@@ -4240,16 +4255,7 @@ export function createTasksRoutes(options: {
         })
 
         if (!result.ok) {
-            const status = result.error === 'Task not found'
-                ? 404
-                : result.error === 'Project not found' || result.error === 'Workspace not found' || result.error === 'Machine not found'
-                    ? 404
-                    : result.error === 'No workspace selected'
-                        ? 400
-                        : result.error.startsWith('Runner offline')
-                            ? 503
-                            : 500
-            return c.json({ error: result.error }, status)
+            return c.json({ error: result.error }, getTaskSessionStartFailureHttpStatus(result.error))
         }
 
         return c.json({
