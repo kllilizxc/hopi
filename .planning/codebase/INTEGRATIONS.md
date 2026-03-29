@@ -1,105 +1,111 @@
 # External Integrations
 
-**Analysis Date:** 2026-03-07
+**Analysis Date:** 2026-03-29
 
 ## APIs & External Services
 
-**AI Coding Agents (spawned local CLIs):**
-- Claude Code (Anthropic) - spawned as `claude` (`cli/src/claude/claudeLocal.ts`, `cli/src/commands/claude.ts`)
-  - Auth injection (runner): `CLAUDE_CODE_OAUTH_TOKEN` (`cli/src/runner/README.md`)
-  - Install dependency: `claude` executable on PATH (`cli/src/commands/claude.ts`)
-- Codex CLI (OpenAI) - spawned as `codex` (`cli/src/codex/codexLocal.ts`)
-  - Auth injection (runner): temp `CODEX_HOME` with `auth.json` (`cli/src/runner/README.md`)
-- Gemini CLI (Google) - spawned as `gemini` (`cli/src/gemini/geminiLocal.ts`)
-  - Env wiring: `GEMINI_PROJECT_DIR`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH` (`cli/src/gemini/geminiLocal.ts`)
-  - Secrets commonly present (filtered from remote terminals): `GEMINI_API_KEY`, `GOOGLE_API_KEY` (`cli/src/terminal/TerminalManager.ts`)
-- OpenCode - spawned and configured with MCP hooks (`cli/src/opencode/opencodeLocalLauncher.ts`, `cli/src/opencode/utils/opencodeConfig.ts`)
+**AI Coding Agents:**
+- Claude Code (Anthropic) - spawned locally as `claude` and driven through the CLI runner (`cli/src/claude/`, `cli/src/commands/claude.ts`)
+  - Auth: `CLAUDE_CODE_OAUTH_TOKEN` injected by the runner when available (`cli/src/runner/README.md`)
+  - Transport: local process + Socket.IO bridge to the hub
+- Codex CLI (OpenAI) - spawned locally as `codex` (`cli/src/codex/`, `cli/src/codex/codexLocal.ts`)
+  - Auth: temporary `CODEX_HOME` with `auth.json` created by the runner (`cli/src/runner/README.md`)
+  - Transport: local process + hub RPC bridge
+- Gemini CLI (Google) - spawned locally as `gemini` (`cli/src/gemini/`, `cli/src/gemini/geminiLocal.ts`)
+  - Env wiring: `GEMINI_PROJECT_DIR`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, plus optional `GEMINI_API_KEY` / `GOOGLE_API_KEY` passthroughs (`cli/src/gemini/utils/config.ts`, `cli/src/terminal/TerminalManager.ts`)
+- OpenCode - spawned locally with MCP hooks and configured via the runner (`cli/src/opencode/`, `cli/src/opencode/opencodeLocalLauncher.ts`)
 
 **Voice Assistant:**
-- ElevenLabs ConvAI API - agent auto-create + conversation tokens (`hub/src/web/routes/voice.ts`, `shared/src/voice.ts`)
-  - Base URL: `https://api.elevenlabs.io/v1` (`shared/src/voice.ts`)
-  - Auth: `ELEVENLABS_API_KEY` (optional `ELEVENLABS_AGENT_ID`) (`hub/src/web/routes/voice.ts`)
-  - Endpoints used: agents list/create + conversation token (`hub/src/web/routes/voice.ts`)
-  - Web client SDK: `@elevenlabs/react` (`web/package.json`, `web/src/realtime/RealtimeVoiceSession.tsx`)
+- ElevenLabs ConvAI API - agent lookup/create + conversation token flow (`hub/src/web/routes/voice.ts`, `shared/src/voice.ts`)
+  - SDK/client: `@elevenlabs/react` in the web app (`web/package.json`, `web/src/realtime/RealtimeVoiceSession.tsx`)
+  - Auth: `ELEVENLABS_API_KEY` and optional `ELEVENLABS_AGENT_ID` (`hub/src/configuration.ts`, `hub/src/web/routes/voice.ts`)
 
 **Messaging / Notifications:**
-- Telegram Bot API - notifications + Mini App entrypoint (`hub/package.json` `grammy`, `hub/src/telegram/bot.ts`)
+- Telegram Bot API - bot notifications and Mini App entrypoint (`hub/package.json`, `hub/src/telegram/bot.ts`)
   - Auth: `TELEGRAM_BOT_TOKEN` (`hub/src/configuration.ts`)
-  - Callback actions: `callback_query:data` routing (`hub/src/telegram/bot.ts`, `hub/src/telegram/callbacks.ts`)
-- Web Push (browser push services) - push notifications to browser endpoints (`hub/package.json` `web-push`)
-  - VAPID keys: generated/persisted under data dir (`hub/src/config/vapidKeys.ts`, `hub/src/config/settings.ts`)
-  - Subscription + send flow: `hub/src/push/pushService.ts`, API routes `hub/src/web/routes/push.ts`
+  - Callbacks: inline keyboard callback queries in `hub/src/telegram/callbacks.ts`
+- Web Push - browser push notifications to subscribed endpoints (`hub/package.json`, `hub/src/push/pushService.ts`)
+  - Keys: VAPID keypair generated and persisted under the hub data directory (`hub/src/config/vapidKeys.ts`, `hub/src/config/settings.ts`)
+  - API routes: `hub/src/web/routes/push.ts`
 
 **Relay / Tunneling:**
-- `tunwg` subprocess + relay API - public access tunnel (`hub/src/tunnel/tunnelManager.ts`, `hub/src/index.ts`)
-  - Default relay API domain: `relay.hopi.run` (`shared/src/brand.ts`)
-  - Env knobs: `HOPI_RELAY_API`, `HOPI_RELAY_AUTH`, `HOPI_RELAY_FORCE_TCP` (`hub/src/configuration.ts`, `hub/src/index.ts`)
-  - `tunwg` env: `TUNWG_API`, `TUNWG_AUTH`, `TUNWG_RELAY`, `TUNWG_PATH` (`hub/src/tunnel/tunnelManager.ts`)
-  - TLS readiness gate: certificate validation polling (`hub/src/tunnel/tlsGate.ts`)
-  - Binary acquisition: GitHub Releases download script (`hub/scripts/download-tunwg.ts`)
+- `tunwg` + relay API - public access tunnel and encrypted relay mode (`hub/src/tunnel/tunnelManager.ts`, `hub/src/index.ts`)
+  - Default relay domain: `relay.hopi.run` via `shared/src/brand.ts`
+  - Env knobs: `HOPI_RELAY_API`, `HOPI_RELAY_AUTH`, `HOPI_RELAY_FORCE_TCP` (`hub/src/configuration.ts`)
+  - TLS readiness gate: `hub/src/tunnel/tlsGate.ts`
+  - Binary acquisition: `hub/scripts/download-tunwg.ts`
 
 ## Data Storage
 
 **Databases:**
-- Local SQLite - hub primary persistence (`hub/src/store/index.ts`, `hub/src/configuration.ts`)
-  - Client: `bun:sqlite` (`hub/src/store/index.ts`)
-  - Default path: `${HOPI_HOME}/hopi.db` via `PRODUCT_DB_FILENAME` (`shared/src/brand.ts`, `hub/src/configuration.ts`)
-  - Migration/validation tests: `hub/src/store/schemaMigration.test.ts`
+- Local SQLite - primary hub persistence (`hub/src/store/index.ts`)
+  - Client: `bun:sqlite`
+  - Default location: `~/.hopi/hopi.db` unless `DB_PATH` overrides it (`hub/src/configuration.ts`, `shared/src/brand.ts`)
+  - Schema coverage: sessions, machines, messages, users, push subscriptions, projects, workspaces, tasks (`hub/src/store/index.ts`)
 
-**File Storage (local):**
-- Hub settings file: `settings.json` under product home (`hub/src/config/settings.ts`)
-- CLI runner state + locks under product home (`cli/src/runner/run.ts`, `shared/src/brand.ts`)
+**File Storage:**
+- Hub settings and secrets under `~/.hopi` / `HOPI_HOME` (`hub/src/config/settings.ts`, `hub/src/configuration.ts`)
+  - `settings.json` - persisted server config
+  - `access.key` / runner state files - CLI runner persistence (`cli/src/persistence.ts`)
+  - `runner.state.json`, logs, and lockfiles - runner lifecycle state (`cli/src/persistence.ts`)
+- Embedded or build-time web assets in `web/dist` or bundled into the single executable (`hub/src/web/server.ts`)
 
 ## Authentication & Identity
 
-**Hub auth (web + API clients):**
-- JWT - signing/verification via `jose` (`hub/package.json`, `hub/src/web/middleware/auth.ts`)
-  - Secret generation/persistence: `hub/src/config/jwtSecret.ts`, `hub/src/config/settings.ts`
+**Hub auth:**
+- JWT access tokens - issued and verified with `jose` (`hub/package.json`, `hub/src/web/middleware/auth.ts`)
+  - Secret lifecycle: generated/persisted in `hub/src/config/jwtSecret.ts`
+- CLI shared secret: `CLI_API_TOKEN` (`hub/src/configuration.ts`, `hub/src/config/cliApiToken.ts`)
+  - Browser and CLI clients can use `CLI_API_TOKEN[:namespace]`; namespace suffix is parsed server-side
 
-**CLI ↔ hub trust:**
-- Shared token: `CLI_API_TOKEN` (`hub/src/configuration.ts`, `hub/src/config/cliApiToken.ts`)
+**Telegram identity:**
+- Telegram initData verification for auth and binding (`hub/src/web/routes/auth.ts`, `hub/src/web/routes/bind.ts`)
+  - Namespace binding uses `CLI_API_TOKEN:<namespace>` semantics
 
 ## Monitoring & Observability
 
-- Logging: stdout/stderr; Hono request logger middleware (`hub/src/web/server.ts`)
-- No dedicated error tracking/metrics SDK observed (none in root `package.json` / `hub/package.json` / `web/package.json`)
+- Logging is stdout/stderr only in the hub and CLI (`hub/src/web/server.ts`, `cli/src/ui/logger.ts`)
+- No dedicated error-tracking or analytics SaaS is wired in the current packages
 
 ## CI/CD & Deployment
 
 **CI Pipeline:**
-- GitHub Actions - install/typecheck/test (`.github/workflows/test.yml`)
-  - Tooling: `oven-sh/setup-bun@v2` (`.github/workflows/test.yml`)
+- GitHub Actions - test/typecheck/build flows (`.github/workflows/test.yml`, `.github/workflows/release.yml`, `.github/workflows/webapp.yml`)
 
-**Hosting / Deployment:**
-- Web app → GitHub Pages, custom domain `app.hopi.run` (`.github/workflows/webapp.yml`, `shared/src/brand.ts`)
-- Releases → GitHub Releases assets (`.github/workflows/release.yml`)
-- Homebrew formula update (best-effort) (`.github/workflows/release.yml`, `cli/scripts/update-homebrew-formula.ts`)
+**Hosting:**
+- GitHub Pages - public web app deployment (`.github/workflows/webapp.yml`, `shared/src/brand.ts`)
+- GitHub Releases - binary distribution artifacts (`.github/workflows/release.yml`)
+- Homebrew formula update path - release automation step (`cli/scripts/update-homebrew-formula.ts`)
 
 ## Environment Configuration
 
-**Hub (direct connect):**
-- Core: `HOPI_HOME`, `DB_PATH`, `HOPI_LISTEN_HOST`, `HOPI_LISTEN_PORT`, `HOPI_PUBLIC_URL`, `CORS_ORIGINS` (`hub/src/configuration.ts`)
-- Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFICATION` (`hub/src/configuration.ts`)
-- Voice: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` (`hub/src/web/routes/voice.ts`)
-- Relay: `HOPI_RELAY_API`, `HOPI_RELAY_AUTH`, `HOPI_RELAY_FORCE_TCP` (`hub/src/configuration.ts`)
-- Push: `VAPID_SUBJECT` (+ persisted VAPID keys) (`hub/src/configuration.ts`, `hub/src/config/vapidKeys.ts`)
+**Hub:**
+- `HOPI_HOME`, `DB_PATH`, `HOPI_LISTEN_HOST`, `HOPI_LISTEN_PORT`, `HOPI_PUBLIC_URL`, `CORS_ORIGINS` (`hub/src/configuration.ts`)
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_NOTIFICATION` (`hub/src/configuration.ts`)
+- `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` (`hub/src/web/routes/voice.ts`)
+- `HOPI_RELAY_API`, `HOPI_RELAY_AUTH`, `HOPI_RELAY_FORCE_TCP` (`hub/src/configuration.ts`)
+- `VAPID_SUBJECT` (`hub/src/index.ts`, `hub/src/configuration.ts`)
 
 **CLI / Runner:**
-- Hub URL: `HOPI_API_URL` (`.github/workflows/test.yml`, `shared/src/brand.ts`)
-- Token: `CLI_API_TOKEN` (`.github/workflows/test.yml`)
+- `HOPI_API_URL` - hub base URL for direct connect (`cli/src/configuration.ts`)
+- `CLI_API_TOKEN` - shared secret for hub auth and runner RPC (`cli/src/configuration.ts`, `cli/src/api/auth.ts`)
+- `HOPI_HOME` - local config/data root (`cli/src/configuration.ts`, `cli/src/persistence.ts`)
+- Runner env: `HOPI_RUNNER_HEARTBEAT_INTERVAL`, `HOPI_RUNNER_HTTP_TIMEOUT`, `HOPI_WORKTREE_*`, `HOPI_CLAUDE_PATH`, `HOPI_HTTP_MCP_URL` (`cli/src/configuration.ts`, `cli/src/runner/README.md`)
+
+**Web:**
+- `HOPI_HUB_URL`, `HOPI_LISTEN_PORT`, `HOPI_WEB_PORT`, `VITE_BASE_URL` drive local dev/proxy behavior (`web/vite.config.ts`)
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- Telegram callback queries (InlineKeyboard buttons) (`hub/src/telegram/bot.ts`, `hub/src/telegram/callbacks.ts`)
-- Runner local webhook: session self-report POST `/session-started` (control server) (`cli/src/runner/README.md`, `cli/src/runner/run.ts`)
+- Telegram callback queries from inline buttons (`hub/src/telegram/bot.ts`, `hub/src/telegram/callbacks.ts`)
+- Runner session webhook `POST /session-started` to the local control server (`cli/src/runner/README.md`, `cli/src/runner/run.ts`)
 
 **Outgoing:**
-- ElevenLabs REST calls (agent discovery/create + token) (`hub/src/web/routes/voice.ts`)
-- Web Push sends to subscription endpoints (vendor-managed) (`hub/src/push/pushService.ts`)
+- ElevenLabs REST calls for agent discovery/create/token issuance (`hub/src/web/routes/voice.ts`)
+- Web Push notifications to browser endpoints managed by push subscription APIs (`hub/src/push/pushService.ts`, `hub/src/web/routes/push.ts`)
 
 ---
 
-*Integration audit: 2026-03-07*
+*Integration audit: 2026-03-29*
 *Update when adding/removing external services*
-

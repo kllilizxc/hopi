@@ -1,95 +1,91 @@
 # Technology Stack
 
-**Analysis Date:** 2026-03-07
+**Analysis Date:** 2026-03-29
 
 ## Languages
 
 **Primary:**
-- TypeScript (strict) - all core packages (`tsconfig.base.json`, `cli/src/`, `hub/src/`, `web/src/`, `shared/src/`)
+- TypeScript 5.x - application code across `cli/src/`, `hub/src/`, `web/src/`, `shared/src/` with strict settings from `tsconfig.base.json`
 
 **Secondary:**
-- TSX/JSX - React render layers (CLI TUI + web PWA) (`web/src/**/*.tsx`, `cli/src/**/*.tsx`)
-- HTML - web entry + hub static serving (`web/index.html`, `hub/src/web/server.ts`)
-- CSS - Tailwind-based UI styling (`web/tailwind.config.ts`, `web/src/`)
-- Markdown - docs + guides (`README.md`, `docs/guide/`, `cli/src/runner/README.md`)
+- TSX/JSX - React UI layers in `web/src/**/*.tsx` and Ink screens in `cli/src/ui/**/*.tsx`
+- HTML/CSS/JSON/Markdown - web entrypoints, styling, package metadata, and docs (`web/index.html`, `web/src/styles/`, `README.md`, `docs/guide/`)
+- JavaScript/ESM - build and runtime glue in package scripts and config files (`website/package.json`, `docs/package.json`)
 
 ## Runtime
 
 **Environment:**
-- Bun (primary) - hub + CLI execution (`cli/src/index.ts`, `hub/package.json`)
-- Bun PTY requirement: >= 1.3.5 for terminal streaming (`cli/src/terminal/TerminalManager.ts`)
-- Browser (modern) - PWA runtime (`web/src/main.tsx`, `web/vite.config.ts`)
-- Node.js (secondary) - website server build/start + misc scripts (`website/package.json`, `cli/package.json` `postinstall`)
+- Bun 1.3.5 - primary runtime for the CLI, hub, and workspace scripts (`package.json`, `cli/package.json`, `hub/package.json`)
+- Browser - runtime for the React PWA served from `web/dist` or embedded in the single executable (`web/vite.config.ts`, `hub/src/web/server.ts`)
+- Node.js - used for the marketing site and docs site build/start flows (`website/package.json`, `docs/package.json`)
 
 **Package Manager:**
-- Bun workspaces - monorepo (`package.json`, `bun.lock`)
+- Bun workspaces - monorepo package layout (`package.json`)
 - Lockfile: `bun.lock`
 
 ## Frameworks
 
 **Core:**
-- Hub HTTP: Hono ^4.11.x (`hub/package.json`, `hub/src/web/server.ts`)
-- Hub realtime: Socket.IO ^4.8.x + `@socket.io/bun-engine` (`hub/package.json`, `hub/src/socket/server.ts`)
-- Hub persistence: SQLite via `bun:sqlite` (`hub/src/store/index.ts`)
-- CLI UI: Ink ^6.6.x + React ^19 (`cli/package.json`, `cli/src/ui/`)
-- Web UI: React ^19 + TanStack Router/Query (`web/package.json`, `web/src/router.tsx`, `web/src/hooks/`)
-- Runner control API: Fastify ^5.6.x + `fastify-type-provider-zod` (`cli/package.json`, `cli/src/runner/run.ts`)
+- Hono - hub HTTP server and route composition (`hub/src/web/server.ts`)
+- Socket.IO + `@socket.io/bun-engine` - realtime CLI, terminal, and web transport (`hub/src/socket/server.ts`)
+- `bun:sqlite` - local SQLite persistence layer (`hub/src/store/index.ts`)
+- React 19 + TanStack Router/Query - web app routing and data fetching (`web/src/router.tsx`, `web/package.json`)
+- Ink + React - terminal UI for CLI commands and diagnostics (`cli/package.json`, `cli/src/ui/`)
 
 **Testing:**
-- Vitest ^4.x - CLI + web (`cli/package.json`, `web/vitest.config.ts`)
-- Bun test - hub (`hub/package.json`, `hub/src/**/*.test.ts`)
-- Typecheck: `tsc --noEmit` (`package.json`, `tsconfig.base.json`)
+- Vitest 4.x - CLI and web test suites (`cli/vitest.config.ts`, `web/vitest.config.ts`)
+- Bun test - hub tests (`hub/package.json`, `hub/src/**/*.test.ts`)
 
 **Build/Dev:**
-- Vite ^7.x - web + website (`web/vite.config.ts`, `website/package.json`)
-- Bun build - hub build output (`hub/package.json`)
-- Workbox ^7.x - PWA caching + SW plumbing (`web/package.json`)
-- VitePress - docs site (`docs/package.json`)
+- Vite 7.x + `vite-plugin-pwa` - web app bundling and service worker generation (`web/vite.config.ts`)
+- Bun build - hub executable and CLI packaging (`hub/package.json`, `cli/scripts/build-executable.ts`)
+- VitePress - documentation site (`docs/package.json`)
+- esbuild - marketing site server bundle (`website/package.json`)
 
 ## Key Dependencies
 
 **Critical:**
-- `@hopi/protocol` (workspace) - shared types/schemas/brand/env keys (`shared/package.json`, `shared/src/brand.ts`)
-- `zod` ^4.2.1 - runtime schemas/validation (`shared/src/schemas.ts`, `cli/package.json`, `hub/package.json`, `web/package.json`)
-- `socket.io` / `socket.io-client` ^4.8.x - realtime transport CLI↔hub↔web (`hub/package.json`, `cli/package.json`, `web/package.json`)
-- `grammy` ^1.38.x - Telegram bot (`hub/package.json`, `hub/src/telegram/bot.ts`)
-- `web-push` ^3.6.x - Web Push (VAPID) notifications (`hub/package.json`, `hub/src/push/pushService.ts`)
-- `@modelcontextprotocol/sdk` ^1.25.x - MCP server/bridge (`cli/src/claude/utils/startHappyServer.ts`, `cli/src/codex/happyMcpStdioBridge.ts`)
-- `@assistant-ui/react` ^0.11.x - chat UI components (`web/package.json`, `web/src/routes/`)
-- `@xterm/xterm` ^6.x - web terminal view (`web/package.json`)
-- `shiki` ^3.20.x - syntax highlighting (`web/package.json`)
+- `@hopi/protocol` - shared brand constants, env keys, schemas, and domain types (`shared/src/index.ts`, `shared/src/brand.ts`, `shared/src/schemas.ts`)
+- `zod` - runtime validation in shared schemas and HTTP route validation (`shared/src/schemas.ts`)
+- `socket.io` / `socket.io-client` - realtime synchronization between CLI, hub, and web (`hub/package.json`, `cli/package.json`, `web/package.json`)
+- `grammy` - Telegram bot runtime (`hub/package.json`, `hub/src/telegram/bot.ts`)
+- `web-push` - browser push notifications with VAPID support (`hub/package.json`, `hub/src/push/`)
+- `@modelcontextprotocol/sdk` - MCP bridge and stdio integration for external tools (`cli/package.json`, `cli/src/codex/happyMcpStdioBridge.ts`)
+- `@assistant-ui/react` - assistant/chat UI composition (`web/package.json`, `web/src/components/AssistantChat/`)
+- `@xterm/xterm` - terminal display in the web app (`web/package.json`)
+- `shiki` - code highlighting in the web file views (`web/package.json`)
+- `fastify` + `fastify-type-provider-zod` - runner control server for local session management (`cli/package.json`, `cli/src/runner/run.ts`)
 
-**Infrastructure / Bundled Tools:**
-- ripgrep binary wrapper - packaged search tooling (`cli/src/modules/ripgrep/`, `cli/src/runtime/embeddedAssets.bun.ts`)
-- difftastic binary wrapper - packaged diff tooling (`cli/src/modules/difftastic/`, `cli/src/runtime/embeddedAssets.bun.ts`)
+**Infrastructure:**
+- `cross-spawn`, `ps-list`, `chalk`, `axios` - process orchestration and CLI plumbing in the runner and command layers (`cli/package.json`)
 
 ## Configuration
 
 **Environment:**
-- Hub config priority: env > `settings.json` > defaults; auto-persist env into file (`hub/src/configuration.ts`, `hub/src/config/settings.ts`)
-- Product env keys + defaults: `HOPI_*` (`shared/src/brand.ts`)
-- Web build env example: `VITE_REQUIRE_HUB_URL` (GH Pages deploy) (`.github/workflows/webapp.yml`)
+- Env-first configuration with persisted fallback in the hub (`hub/src/configuration.ts`, `hub/src/config/serverSettings.ts`)
+- Product env family: `HOPI_*` from `shared/src/brand.ts`
+- Key knobs: `CLI_API_TOKEN`, `HOPI_API_URL`, `HOPI_HOME`, `HOPI_LISTEN_PORT`, `HOPI_PUBLIC_URL`, `CORS_ORIGINS`, `HOPI_RELAY_API`, `TELEGRAM_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `VAPID_SUBJECT`
+- CLI local config and runner state live under `~/.hopi` unless `HOPI_HOME` overrides it (`cli/src/configuration.ts`, `cli/src/persistence.ts`)
 
 **Build:**
-- Base TS config: `tsconfig.base.json`
-- Per-package TS config: `cli/tsconfig.json`, `hub/tsconfig.json`, `web/tsconfig.json`
-- CLI Bun path aliases: `cli/bunfig.toml`
-- Web tooling: `web/vite.config.ts`, `web/postcss.config.cjs`, `web/tailwind.config.ts`
+- Root workspace scripts in `package.json`
+- Per-package TypeScript configs: `cli/tsconfig.json`, `hub/tsconfig.json`, `web/tsconfig.json`, `shared/tsconfig.json`
+- Web build/dev config: `web/vite.config.ts`, `web/vitest.config.ts`
+- Website build config: `website/package.json`
 
 ## Platform Requirements
 
 **Development:**
-- Bun installed; root scripts assume `bun` (`package.json`)
-- Full feature set needs external agent CLIs installed: `claude`, `codex`, `gemini`, `opencode` (`cli/src/claude/`, `cli/src/codex/`, `cli/src/gemini/`, `cli/src/opencode/`)
+- Bun installed and on PATH for the main workspace commands
+- External agent CLIs required for full feature coverage: `claude`, `codex`, `gemini`, `opencode` (`cli/src/claude/`, `cli/src/codex/`, `cli/src/gemini/`, `cli/src/opencode/`)
 
 **Production:**
-- Install options:
-  - npm bin wrapper (`cli/package.json` `bin/hopi.cjs`)
-  - prebuilt single-exe bundles (multi-platform) (`.github/workflows/release.yml`, `cli/scripts/build-executable.ts`)
-- Optional relay mode needs `tunwg` binaries (download + bundled) (`hub/scripts/download-tunwg.ts`, `hub/src/tunnel/tunnelManager.ts`)
+- CLI ships as an npm bin and as packaged executables (`cli/package.json`, `cli/scripts/build-executable.ts`)
+- Hub can run as a Bun binary or single executable with embedded web assets (`hub/package.json`, `hub/src/web/server.ts`)
+- Web app is deployed as static assets or embedded output (`web/dist`, `hub/src/web/server.ts`)
+- Relay mode depends on `tunwg` binaries and the relay API infrastructure (`hub/src/tunnel/`, `hub/scripts/download-tunwg.ts`)
 
 ---
 
-*Stack analysis: 2026-03-07*
+*Stack analysis: 2026-03-29*
 *Update after major dependency changes*
-
