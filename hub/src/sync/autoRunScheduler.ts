@@ -17,10 +17,18 @@ function isTaskAutoRunnable(task: {
     source: string | null
     workflowPhase: string | null
     workflowProfile: string
+}, options: {
+    namespace: string
+    engine: Pick<SyncEngine, 'getSessionByNamespace'>
 }): boolean {
     if (task.status !== 'planned') return false
     if (task.archivedAt) return false
-    if (task.activeSessionId) return false
+    if (task.activeSessionId) {
+        const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
+        if (linkedSession?.active) {
+            return false
+        }
+    }
     if (task.source === 'improvements_scan') return false
     const strategy = getWorkflowStrategy(task)
     return strategy.canAutoRunTask(task)
@@ -28,8 +36,10 @@ function isTaskAutoRunnable(task: {
 
 export class AutoRunScheduler {
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
+    private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
     private readonly tickTimers: Map<ProjectKey, NodeJS.Timeout> = new Map()
     private readonly runningTicks: Set<ProjectKey> = new Set()
+    private readonly pendingTicks: Set<ProjectKey> = new Set()
 
     constructor(
         private readonly store: Store,
@@ -40,6 +50,11 @@ export class AutoRunScheduler {
     requestTick(namespace: string, projectId: string, options?: { delayMs?: number }): void {
         const delayMs = options?.delayMs ?? 250
         const key = toProjectKey(namespace, projectId)
+
+        if (this.runningTicks.has(key)) {
+            this.pendingTicks.add(key)
+            return
+        }
 
         if (this.tickTimers.has(key)) {
             return
@@ -58,12 +73,14 @@ export class AutoRunScheduler {
             const session = this.engine.getSession(event.sessionId)
             if (session) {
                 this.lastThinkingBySessionId.set(event.sessionId, Boolean(session.thinking))
+                this.lastActiveBySessionId.set(event.sessionId, session.active !== false)
             }
             return
         }
 
         if (event.type === 'session-removed' && event.sessionId) {
             this.lastThinkingBySessionId.delete(event.sessionId)
+            this.lastActiveBySessionId.delete(event.sessionId)
             return
         }
 
@@ -76,8 +93,11 @@ export class AutoRunScheduler {
             const previous = this.lastThinkingBySessionId.get(event.sessionId)
             const current = Boolean(session.thinking)
             this.lastThinkingBySessionId.set(event.sessionId, current)
+            const previousActive = this.lastActiveBySessionId.get(event.sessionId)
+            const currentActive = session.active !== false
+            this.lastActiveBySessionId.set(event.sessionId, currentActive)
 
-            if (previous === true && current === false) {
+            if ((previous === true && current === false) || (previousActive === true && currentActive === false)) {
                 const projectId = session.metadata?.projectId
                 if (projectId && session.namespace) {
                     this.requestTick(session.namespace, projectId, { delayMs: 500 })
@@ -93,7 +113,7 @@ export class AutoRunScheduler {
 
         if ((event.type === 'task-added' || event.type === 'task-updated') && event.projectId && event.taskId && event.namespace) {
             const task = this.store.tasks.getTaskByNamespace(event.taskId, event.namespace)
-            if (task && isTaskAutoRunnable(task)) {
+            if (task && isTaskAutoRunnable(task, { namespace: event.namespace, engine: this.engine })) {
                 this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
             }
         }
@@ -136,7 +156,7 @@ export class AutoRunScheduler {
                 if (started >= capacity) {
                     break
                 }
-                if (!isTaskAutoRunnable(task)) continue
+                if (!isTaskAutoRunnable(task, { namespace, engine: this.engine })) continue
 
                 const result = await startSessionFromTask({
                     store: this.store,
@@ -178,6 +198,10 @@ export class AutoRunScheduler {
             }
         } finally {
             this.runningTicks.delete(key)
+            if (this.pendingTicks.has(key)) {
+                this.pendingTicks.delete(key)
+                this.requestTick(namespace, projectId, { delayMs: 0 })
+            }
         }
     }
 }

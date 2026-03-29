@@ -503,7 +503,6 @@ export function listPlannedTasksByProjectAndNamespace(
             AND t.status = 'planned'
             AND (t.source IS NULL OR t.source != 'improvements_scan')
             AND t.archived_at IS NULL
-            AND t.active_session_id IS NULL
         ORDER BY
             (t.sort_key IS NULL) ASC,
             t.sort_key ASC,

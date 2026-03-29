@@ -467,4 +467,27 @@ describe('Task store worktree merge fields', () => {
         const planned = store.tasks.listPlannedTasksByProjectAndNamespace('project-1', 'default')
         expect(planned.map((task) => task.id)).toEqual(['task-manual'])
     })
+
+    it('keeps re-queued planned tasks in the auto-run queue even with a previous session link', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-1',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-requeued',
+            projectId: 'project-1',
+            title: 'Requeued task',
+            status: 'planned',
+            workflowProfile: 'default',
+            source: 'manual',
+            activeSessionId: 'session-old'
+        })
+
+        const planned = store.tasks.listPlannedTasksByProjectAndNamespace('project-1', 'default')
+        expect(planned.map((task) => task.id)).toEqual(['task-requeued'])
+    })
 })
