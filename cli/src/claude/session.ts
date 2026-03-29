@@ -13,7 +13,7 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class Session extends AgentSessionBase<EnhancedMode> {
+export class Session extends AgentSessionBase<EnhancedMode, PermissionMode> {
     readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];
     readonly mcpServers: Record<string, any>;

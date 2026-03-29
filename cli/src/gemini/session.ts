@@ -9,7 +9,7 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class GeminiSession extends AgentSessionBase<GeminiMode> {
+export class GeminiSession extends AgentSessionBase<GeminiMode, PermissionMode> {
     transcriptPath: string | null = null;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';

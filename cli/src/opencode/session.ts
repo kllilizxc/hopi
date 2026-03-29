@@ -9,7 +9,7 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class OpencodeSession extends AgentSessionBase<OpencodeMode> {
+export class OpencodeSession extends AgentSessionBase<OpencodeMode, PermissionMode> {
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;

@@ -3,15 +3,17 @@ import type { CSSProperties, HTMLAttributes, MutableRefObject, Ref } from 'react
 import { cn } from '@/lib/utils'
 
 type ScrollShadowStyle = CSSProperties & {
+    '--scroll-shadow-bg'?: string
     '--scroll-shadow-size'?: string
     '--scroll-shadow-offset'?: string
 }
 
-export type ScrollShadowProps = HTMLAttributes<HTMLDivElement> & {
+export type ScrollShadowProps = Omit<HTMLAttributes<HTMLDivElement>, 'style'> & {
     size?: number
     offset?: number
     orientation?: 'vertical' | 'horizontal'
     hideScrollBar?: boolean
+    style?: ScrollShadowStyle
     viewportClassName?: string
     viewportStyle?: CSSProperties
 }
@@ -151,6 +153,11 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
         ...style
     }
 
+    const topShadowVisibility = shadowState.top ? 'visible' : 'hidden'
+    const bottomShadowVisibility = shadowState.bottom ? 'visible' : 'hidden'
+    const leftShadowVisibility = shadowState.left ? 'visible' : 'hidden'
+    const rightShadowVisibility = shadowState.right ? 'visible' : 'hidden'
+
     return (
         <div
             className={cn(
@@ -159,10 +166,10 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
             )}
             style={mergedStyle}
             data-orientation={orientation}
-            data-top-shadow={shadowState.top ? 'visible' : 'hidden'}
-            data-bottom-shadow={shadowState.bottom ? 'visible' : 'hidden'}
-            data-left-shadow={shadowState.left ? 'visible' : 'hidden'}
-            data-right-shadow={shadowState.right ? 'visible' : 'hidden'}
+            data-top-shadow={topShadowVisibility}
+            data-bottom-shadow={bottomShadowVisibility}
+            data-left-shadow={leftShadowVisibility}
+            data-right-shadow={rightShadowVisibility}
         >
             <div
                 ref={setViewportRef}
@@ -177,6 +184,37 @@ export const ScrollShadow = forwardRef<HTMLDivElement, ScrollShadowProps>(functi
             >
                 {children}
             </div>
+            {orientation === 'vertical' ? (
+                <>
+                    <div
+                        aria-hidden="true"
+                        className="scroll-shadow-mask scroll-shadow-mask-top"
+                        data-side="top"
+                        data-visible={topShadowVisibility}
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="scroll-shadow-mask scroll-shadow-mask-bottom"
+                        data-side="bottom"
+                        data-visible={bottomShadowVisibility}
+                    />
+                </>
+            ) : (
+                <>
+                    <div
+                        aria-hidden="true"
+                        className="scroll-shadow-mask scroll-shadow-mask-left"
+                        data-side="left"
+                        data-visible={leftShadowVisibility}
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="scroll-shadow-mask scroll-shadow-mask-right"
+                        data-side="right"
+                        data-visible={rightShadowVisibility}
+                    />
+                </>
+            )}
         </div>
     )
 })

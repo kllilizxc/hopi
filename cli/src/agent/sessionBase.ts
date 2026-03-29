@@ -3,7 +3,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { Metadata, SessionModelMode, SessionPermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 
-export type AgentSessionBaseOptions<Mode> = {
+export type AgentSessionBaseOptions<Mode, TPermissionMode extends SessionPermissionMode = SessionPermissionMode> = {
     api: ApiClient;
     client: ApiSessionClient;
     path: string;
@@ -15,11 +15,11 @@ export type AgentSessionBaseOptions<Mode> = {
     sessionLabel: string;
     sessionIdLabel: string;
     applySessionIdToMetadata: (metadata: Metadata, sessionId: string) => Metadata;
-    permissionMode?: SessionPermissionMode;
+    permissionMode?: TPermissionMode;
     modelMode?: SessionModelMode;
 };
 
-export class AgentSessionBase<Mode> {
+export class AgentSessionBase<Mode, TPermissionMode extends SessionPermissionMode = SessionPermissionMode> {
     readonly path: string;
     readonly logPath: string;
     readonly api: ApiClient;
@@ -36,10 +36,10 @@ export class AgentSessionBase<Mode> {
     private readonly sessionLabel: string;
     private readonly sessionIdLabel: string;
     private keepAliveInterval: NodeJS.Timeout | null = null;
-    protected permissionMode?: SessionPermissionMode;
+    protected permissionMode?: TPermissionMode;
     protected modelMode?: SessionModelMode;
 
-    constructor(opts: AgentSessionBaseOptions<Mode>) {
+    constructor(opts: AgentSessionBaseOptions<Mode, TPermissionMode>) {
         this.path = opts.path;
         this.api = opts.api;
         this.client = opts.client;
@@ -114,7 +114,7 @@ export class AgentSessionBase<Mode> {
         };
     }
 
-    getPermissionMode(): SessionPermissionMode | undefined {
+    getPermissionMode(): TPermissionMode | undefined {
         return this.permissionMode;
     }
 
