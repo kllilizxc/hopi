@@ -84,9 +84,6 @@
     --app-scrollbar-track: transparent;
     --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
     --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
-    /* Scroll shadow tint used by `.scroll-shadow` gradients */
-    --app-scroll-shadow: rgba(0, 0, 0, 0.12);
-
     /* Viewport + motion tokens (mobile + Telegram-friendly) */
     --app-viewport-h: var(--tg-viewport-height, 100dvh);
     --app-viewport-stable-h: var(--tg-viewport-stable-height, 100dvh);
@@ -178,9 +175,6 @@
     --app-kanban-archive-border: rgba(156, 163, 175, 0.28);
     --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
     --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
-    /* Scroll shadow tint used by `.scroll-shadow` gradients */
-    --app-scroll-shadow: rgba(255, 255, 255, 0.15);
-
     color-scheme: dark;
 }
 
@@ -280,11 +274,12 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     background: transparent;
 }
 
-/* Scroll Shadow - HeroUI inspired gradient-based shadows */
+/* Scroll Shadow - image-mask overlays pinned to viewport edges */
 .scroll-shadow {
     position: relative;
     min-width: 0;
     min-height: 0;
+    isolation: isolate;
 }
 
 .scroll-shadow-viewport {
@@ -313,85 +308,60 @@ html[data-theme="dark"][data-theme-preset="graphite"] body {
     display: none;
 }
 
-/* Gradient shadows using pseudo-elements */
-.scroll-shadow::before,
-.scroll-shadow::after {
-    content: '';
+/* Edge overlays fade into the container background via mask-image. */
+.scroll-shadow-mask {
     position: absolute;
-    left: 0;
-    right: 0;
-    height: var(--scroll-shadow-size, 40px);
     pointer-events: none;
     z-index: 10;
     opacity: 0;
     transition: opacity 0.2s ease-out;
+    background: var(--scroll-shadow-bg, var(--app-bg));
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
 }
 
-.scroll-shadow::before {
+.scroll-shadow-mask[data-visible="visible"] {
+    opacity: 1;
+}
+
+.scroll-shadow-mask-top,
+.scroll-shadow-mask-bottom {
+    left: 0;
+    right: 0;
+    height: var(--scroll-shadow-size, 40px);
+}
+
+.scroll-shadow-mask-top {
     top: var(--scroll-shadow-offset, 0px);
-    background: linear-gradient(
-        to bottom,
-        transparent 0%,
-        var(--app-scroll-shadow) 60%,
-        transparent 100%
-    );
+    -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to bottom, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
 }
 
-.scroll-shadow::after {
+.scroll-shadow-mask-bottom {
     bottom: var(--scroll-shadow-offset, 0px);
-    background: linear-gradient(
-        to top,
-        transparent 0%,
-        var(--app-scroll-shadow) 60%,
-        transparent 100%
-    );
+    -webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to top, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
 }
 
-.scroll-shadow[data-top-shadow="visible"]::before {
-    opacity: 1;
-}
-
-.scroll-shadow[data-bottom-shadow="visible"]::after {
-    opacity: 1;
-}
-
-/* Horizontal shadows */
-.scroll-shadow[data-orientation="horizontal"]::before,
-.scroll-shadow[data-orientation="horizontal"]::after {
+.scroll-shadow-mask-left,
+.scroll-shadow-mask-right {
     top: 0;
     bottom: 0;
     width: var(--scroll-shadow-size, 40px);
-    height: auto;
 }
 
-.scroll-shadow[data-orientation="horizontal"]::before {
+.scroll-shadow-mask-left {
     left: var(--scroll-shadow-offset, 0px);
-    right: auto;
-    background: linear-gradient(
-        to right,
-        transparent 0%,
-        var(--app-scroll-shadow) 60%,
-        transparent 100%
-    );
+    -webkit-mask-image: linear-gradient(to right, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to right, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
 }
 
-.scroll-shadow[data-orientation="horizontal"]::after {
+.scroll-shadow-mask-right {
     right: var(--scroll-shadow-offset, 0px);
-    left: auto;
-    background: linear-gradient(
-        to left,
-        transparent 0%,
-        var(--app-scroll-shadow) 60%,
-        transparent 100%
-    );
-}
-
-.scroll-shadow[data-orientation="horizontal"][data-left-shadow="visible"]::before {
-    opacity: 1;
-}
-
-.scroll-shadow[data-orientation="horizontal"][data-right-shadow="visible"]::after {
-    opacity: 1;
+    -webkit-mask-image: linear-gradient(to left, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to left, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
 }
 
 .app-interactive-card {
