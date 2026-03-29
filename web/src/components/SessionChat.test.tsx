@@ -258,6 +258,7 @@ describe('SessionChat runtime summaries', () => {
 
         const summary = buildInitStatusSummary(task)
 
+        expect(shouldShowInitRuntimeInSession(task, 'session-1')).toBe(false)
         expect(summary).toEqual({
             title: 'Init 已完成',
             detail: 'Init repair succeeded; kickoff resumed.',
