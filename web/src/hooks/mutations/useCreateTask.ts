@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { PermissionMode, Task } from '@/types/api'
+import type { ModelMode, PermissionMode, Task, TasksResponse } from '@/types/api'
+import { createOptimisticTaskId } from '@/lib/optimistic-task'
 import { queryKeys } from '@/lib/query-keys'
 
 type TaskAttachmentInput = {
@@ -29,12 +30,73 @@ type CreateTaskInput = {
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     permissionMode?: PermissionMode
     model?: string
-    modelMode?: string
+    modelMode?: ModelMode
     workflowProfile: string
     workflowPhase?: string | null
     sortKey?: number
     attachments?: TaskAttachmentInput[]
     subTasks?: TaskSubTaskInput[]
+}
+
+type CreateTaskMutationContext = {
+    projectId: string
+    temporaryTaskId: string
+}
+
+function upsertTask(tasks: Task[], task: Task): Task[] {
+    const existingIndex = tasks.findIndex((entry) => entry.id === task.id)
+    if (existingIndex === -1) {
+        return [task, ...tasks]
+    }
+
+    const next = [...tasks]
+    next[existingIndex] = task
+    return next
+}
+
+function removeTask(tasks: Task[], taskId: string): Task[] {
+    return tasks.filter((task) => task.id !== taskId)
+}
+
+function replaceTask(tasks: Task[], taskId: string, nextTask: Task): Task[] {
+    const withoutCurrent = removeTask(tasks, taskId)
+    return upsertTask(withoutCurrent, nextTask)
+}
+
+function buildOptimisticTask(input: CreateTaskInput, temporaryTaskId: string): Task {
+    const now = Date.now()
+    return {
+        id: temporaryTaskId,
+        projectId: input.projectId,
+        title: input.title,
+        description: input.description ?? null,
+        status: input.status ?? 'planned',
+        priority: input.priority ?? null,
+        sortKey: input.sortKey ?? now,
+        activeSessionId: null,
+        workspaceId: input.workspaceId ?? null,
+        agentFlavor: input.agentFlavor ?? null,
+        permissionMode: input.permissionMode ?? null,
+        model: input.model ?? null,
+        modelMode: input.modelMode ?? null,
+        attachments: input.attachments ?? null,
+        source: 'manual',
+        sourceTaskId: null,
+        workflowProfile: input.workflowProfile,
+        workflowPhase: input.workflowPhase ?? null,
+        subTasks: input.subTasks ?? null,
+        subTasksUpdatedAt: input.subTasks ? now : null,
+        worktreeMergedAt: null,
+        worktreeMergeCommit: null,
+        mergedDiffSnapshot: null,
+        mergeRuntime: null,
+        previewRuntime: null,
+        initRuntime: null,
+        createdAt: now,
+        updatedAt: now,
+        finishedAt: input.status === 'finished' ? now : null,
+        archivedAt: null,
+    }
 }
 
 export function useCreateTask(api: ApiClient | null): {
@@ -44,7 +106,7 @@ export function useCreateTask(api: ApiClient | null): {
 } {
     const queryClient = useQueryClient()
 
-    const mutation = useMutation({
+    const mutation = useMutation<Task, Error, CreateTaskInput, CreateTaskMutationContext>({
         mutationFn: async (input: CreateTaskInput) => {
             if (!api) {
                 throw new Error('API unavailable')
@@ -67,8 +129,53 @@ export function useCreateTask(api: ApiClient | null): {
             })
             return result.task
         },
-        onSuccess: (task) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(task.projectId) })
+        onMutate: async (input) => {
+            const temporaryTaskId = createOptimisticTaskId()
+            const optimisticTask = buildOptimisticTask(input, temporaryTaskId)
+
+            await queryClient.cancelQueries({ queryKey: queryKeys.tasks(input.projectId) })
+
+            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(input.projectId), (current) => ({
+                tasks: upsertTask(current?.tasks ?? [], optimisticTask)
+            }))
+
+            return {
+                projectId: input.projectId,
+                temporaryTaskId
+            }
+        },
+        onSuccess: (task, _input, context) => {
+            const projectId = context?.projectId ?? task.projectId
+            const temporaryTaskId = context?.temporaryTaskId ?? null
+
+            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(projectId), (current) => {
+                const tasks = current?.tasks ?? []
+                return {
+                    tasks: temporaryTaskId
+                        ? replaceTask(tasks, temporaryTaskId, task)
+                        : upsertTask(tasks, task)
+                }
+            })
+            queryClient.setQueryData(queryKeys.task(task.id), { task })
+            if (temporaryTaskId) {
+                void queryClient.removeQueries({ queryKey: queryKeys.task(temporaryTaskId), exact: true })
+            }
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(projectId) })
+        },
+        onError: (_error, input, context) => {
+            if (!context?.temporaryTaskId) {
+                return
+            }
+
+            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(input.projectId), (current) => {
+                if (!current?.tasks) {
+                    return current
+                }
+                return {
+                    ...current,
+                    tasks: removeTask(current.tasks, context.temporaryTaskId)
+                }
+            })
         }
     })
 

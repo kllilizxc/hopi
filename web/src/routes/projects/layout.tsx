@@ -647,7 +647,7 @@ export default function ProjectsPage() {
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
-    const { createTask, isPending: isCreatingTask } = useCreateTask(api)
+    const { createTask } = useCreateTask(api)
 
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskOpen, setNewTaskOpen] = useState(false)
@@ -687,7 +687,7 @@ export default function ProjectsPage() {
         }
     }, [createProject, addToast, t, navigate])
 
-    const handleCreateTask = useCallback(async (data: {
+    const handleCreateTask = useCallback((data: {
         title: string
         description: string | undefined
         priority: TaskPriority | ''
@@ -698,31 +698,31 @@ export default function ProjectsPage() {
     }) => {
         if (!selectedProjectId) return
 
-        try {
-            const model = normalizeModelName(data.model)
-            const created = await createTask({
-                projectId: selectedProjectId,
-                title: data.title,
-                description: data.description,
-                priority: data.priority || undefined,
-                status: 'planned',
-                agentFlavor: data.agent,
-                permissionMode: data.permissionMode,
-                model: model ?? undefined,
-                modelMode: data.agent === 'claude' ? resolveClaudeModelMode(model) ?? undefined : undefined,
-                workflowProfile: data.workflowProfile,
-                sortKey: Date.now()
-            })
+        const model = normalizeModelName(data.model)
+        setNewTaskOpen(false)
+
+        void createTask({
+            projectId: selectedProjectId,
+            title: data.title,
+            description: data.description,
+            priority: data.priority || undefined,
+            status: 'planned',
+            agentFlavor: data.agent,
+            permissionMode: data.permissionMode,
+            model: model ?? undefined,
+            modelMode: data.agent === 'claude' ? resolveClaudeModelMode(model) ?? undefined : undefined,
+            workflowProfile: data.workflowProfile,
+            sortKey: Date.now()
+        }).then((created) => {
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
-            setNewTaskOpen(false)
-        } catch (error) {
+        }).catch((error) => {
             addToast({
                 title: t('projects.tasks.createFailed'),
                 body: error instanceof Error ? error.message : 'Failed to create task',
                 sessionId: '',
                 url: ''
             })
-        }
+        })
     }, [selectedProjectId, createTask, addToast, t])
 
     const handleBackToProjects = useCallback(() => {
@@ -809,7 +809,7 @@ export default function ProjectsPage() {
                     defaultAgent={defaultTaskAgent}
                     defaultPermissionMode={projectDefaultPermissionMode}
                     workflowStrategies={workflowStrategies}
-                    isCreating={isCreatingTask}
+                    isCreating={false}
                     onCreate={handleCreateTask}
                 />
             ) : null}
