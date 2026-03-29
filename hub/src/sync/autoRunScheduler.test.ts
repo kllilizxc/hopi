@@ -121,6 +121,67 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
+    it('blocks planned tasks when session startup throws unexpectedly', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-start-throws'
+        const taskId = 'task-start-throws'
+        const workspaceId = 'workspace-start-throws'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workflowProfile: 'default'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                throw new Error('RPC socket disconnected: spawn failed')
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(task?.status).toBe('blocked')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
     it('auto-run retries planned tasks with an inactive previous session link', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

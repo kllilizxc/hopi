@@ -42,6 +42,12 @@ function stringifyUnknown(value: unknown): string {
 }
 
 function formatErrorMessage(error: unknown, fallback: string): string {
+    if (error instanceof Error) {
+        const normalized = normalizeText(error.message)
+        if (normalized) {
+            return normalized
+        }
+    }
     const message = normalizeText(stringifyUnknown(error))
     return message || fallback
 }
@@ -593,7 +599,7 @@ export type StartTaskSessionResult =
     | { ok: false; error: string }
 
 
-export async function startSessionFromTask(options: {
+async function startSessionFromTaskInternal(options: {
     store: Store
     engine: SyncEngine
     namespace: string
@@ -1191,3 +1197,20 @@ export async function startSessionFromTask(options: {
     }
 }
 
+export async function startSessionFromTask(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+    overrides?: StartSessionOverrides
+    kickoff?: StartSessionKickoffOptions
+}): Promise<StartTaskSessionResult> {
+    try {
+        return await startSessionFromTaskInternal(options)
+    } catch (error) {
+        return {
+            ok: false,
+            error: formatErrorMessage(error, 'Failed to start task session')
+        }
+    }
+}
