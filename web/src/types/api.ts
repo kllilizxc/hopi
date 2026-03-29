@@ -60,6 +60,7 @@ export type Machine = {
         platform: string
         happyCliVersion: string
         displayName?: string
+        homeDir?: string
     } | null
 }
 
@@ -221,6 +222,7 @@ export type DirectoryEntry = {
 
 export type ListDirectoryResponse = {
     success: boolean
+    path?: string
     entries?: DirectoryEntry[]
     error?: string
 }

@@ -3,6 +3,7 @@ export const queryKeys = {
     session: (sessionId: string) => ['session', sessionId] as const,
     messages: (sessionId: string) => ['messages', sessionId] as const,
     machines: ['machines'] as const,
+    machineDirectory: (machineId: string, path: string) => ['machine-directory', machineId, path] as const,
     projects: ['projects'] as const,
     workflowStrategies: ['workflow-strategies'] as const,
     project: (projectId: string) => ['project', projectId] as const,

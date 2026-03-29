@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, memo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
 import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
@@ -6,6 +6,7 @@ import { useAppContext } from '@/lib/app-context'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { useToast } from '@/lib/toast-context'
+import { CheckIcon, ChevronRightIcon, FolderIcon } from '@/assets/icons'
 import { LoadingState } from '@/components/LoadingState'
 import { BackIcon, ProjectIcon, SessionIcon } from '@/components/icons'
 import { Tag } from '@/components/ui/tag'
@@ -21,6 +22,7 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useMachineDirectory } from '@/hooks/queries/useMachineDirectory'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
@@ -51,6 +53,187 @@ function TopBar(props: {
                     {props.right}
                 </div>
             </div>
+        </div>
+    )
+}
+
+function joinDirectoryPath(basePath: string, name: string): string {
+    if (!basePath) return name
+    const separator = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/'
+
+    if (basePath === '/' || basePath.endsWith('/') || basePath.endsWith('\\')) {
+        return `${basePath}${name}`
+    }
+
+    return `${basePath}${separator}${name}`
+}
+
+function getPathLabel(path: string): string {
+    const parts = path.split(/[\\/]+/).filter(Boolean)
+    if (parts.length === 0) {
+        return path || '/'
+    }
+    return parts[parts.length - 1] ?? path
+}
+
+function DirectoryPickerSkeleton(props: { depth: number; rows?: number }) {
+    const rows = props.rows ?? 4
+    const indent = 12 + props.depth * 14
+
+    return (
+        <div className="animate-pulse">
+            {Array.from({ length: rows }).map((_, index) => (
+                <div
+                    key={`machine-dir-skel-${props.depth}-${index}`}
+                    className="flex items-center gap-3 px-3 py-2"
+                    style={{ paddingLeft: indent }}
+                >
+                    <div className="h-5 w-5 rounded bg-[var(--app-subtle-bg)]" />
+                    <div className="h-3 w-40 rounded bg-[var(--app-subtle-bg)]" />
+                </div>
+            ))}
+        </div>
+    )
+}
+
+function DirectoryPickerErrorRow(props: { depth: number; message: string }) {
+    const indent = 12 + props.depth * 14
+
+    return (
+        <div
+            className="bg-amber-500/10 px-3 py-2 text-xs text-[var(--app-hint)]"
+            style={{ paddingLeft: indent }}
+        >
+            {props.message}
+        </div>
+    )
+}
+
+const MachineDirectoryNode = memo(function MachineDirectoryNode(props: {
+    machineId: string
+    path: string
+    depth: number
+    selectedPath: string
+    onSelect: (path: string) => void
+    expandedState: Map<string, boolean>
+    defaultExpanded?: boolean
+}) {
+    const { api } = useAppContext()
+    const { t } = useTranslation()
+    const [isExpanded, setIsExpanded] = useState(() => (
+        props.expandedState.get(props.path) ?? props.defaultExpanded ?? false
+    ))
+    const { currentPath, entries, error, isLoading } = useMachineDirectory(api, props.machineId, props.path, {
+        enabled: isExpanded
+    })
+
+    const directories = useMemo(
+        () => entries.filter((entry) => entry.type === 'directory'),
+        [entries]
+    )
+
+    const resolvedPath = currentPath ?? props.path
+    const indent = 12 + props.depth * 14
+    const childDepth = props.depth + 1
+    const childIndent = 12 + childDepth * 14
+    const isSelected = Boolean(resolvedPath) && props.selectedPath === resolvedPath
+
+    const handleToggle = useCallback(() => {
+        setIsExpanded((previous) => {
+            const next = !previous
+            props.expandedState.set(props.path, next)
+            return next
+        })
+    }, [props.expandedState, props.path])
+
+    return (
+        <div>
+            <div
+                className={`flex items-center gap-1 px-2 py-1 ${isSelected ? 'bg-[var(--app-subtle-bg)]' : ''}`}
+                style={{ paddingLeft: indent }}
+            >
+                <button
+                    type="button"
+                    onClick={handleToggle}
+                    className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)]"
+                    aria-label={isExpanded ? t('projects.workspaces.picker.collapse') : t('projects.workspaces.picker.expand')}
+                >
+                    <ChevronRightIcon className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (resolvedPath) {
+                            props.onSelect(resolvedPath)
+                        }
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-[var(--app-subtle-bg)]"
+                >
+                    <FolderIcon className="shrink-0 text-[var(--app-link)]" />
+                    <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{getPathLabel(resolvedPath)}</div>
+                        <div className="truncate text-xs text-[var(--app-hint)]">{resolvedPath || t('misc.loading')}</div>
+                    </div>
+                    {isSelected ? <CheckIcon className="shrink-0 text-[var(--app-link)]" /> : null}
+                </button>
+            </div>
+
+            {isExpanded ? (
+                isLoading ? (
+                    <DirectoryPickerSkeleton depth={childDepth} />
+                ) : error ? (
+                    <DirectoryPickerErrorRow depth={childDepth} message={error} />
+                ) : directories.length > 0 ? (
+                    <div>
+                        {directories.map((entry) => {
+                            const childPath = resolvedPath
+                                ? joinDirectoryPath(resolvedPath, entry.name)
+                                : entry.name
+
+                            return (
+                                <MachineDirectoryNode
+                                    key={childPath}
+                                    machineId={props.machineId}
+                                    path={childPath}
+                                    depth={childDepth}
+                                    selectedPath={props.selectedPath}
+                                    onSelect={props.onSelect}
+                                    expandedState={props.expandedState}
+                                />
+                            )
+                        })}
+                    </div>
+                ) : (
+                    <div
+                        className="px-3 py-2 text-xs text-[var(--app-hint)]"
+                        style={{ paddingLeft: childIndent }}
+                    >
+                        {t('projects.workspaces.picker.emptyDirectory')}
+                    </div>
+                )
+            ) : null}
+        </div>
+    )
+})
+
+function MachineDirectoryPicker(props: {
+    machineId: string
+    selectedPath: string
+    onSelect: (path: string) => void
+}) {
+    const expandedStateRef = useRef<Map<string, boolean>>(new Map([['', true]]))
+
+    return (
+        <div className="overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]">
+            <MachineDirectoryNode
+                machineId={props.machineId}
+                path=""
+                depth={0}
+                selectedPath={props.selectedPath}
+                onSelect={props.onSelect}
+                expandedState={expandedStateRef.current}
+                defaultExpanded
+            />
         </div>
     )
 }
@@ -115,6 +298,11 @@ function CreateProjectDialog(props: {
         }
     }, [props.isOpen, props.machines, machineId])
 
+    useEffect(() => {
+        if (!props.isOpen) return
+        setWorkspacePath('')
+    }, [machineId, props.isOpen])
+
     const canSubmit = Boolean(machineId && name.trim() && workspaces.length > 0 && !props.isPending)
 
     const handleOpenChange = (open: boolean) => {
@@ -177,7 +365,7 @@ function CreateProjectDialog(props: {
 
     return (
         <Dialog open={props.isOpen} onOpenChange={handleOpenChange}>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{t('projects.create.title')}</DialogTitle>
                     <DialogDescription>{t('projects.create.description')}</DialogDescription>
@@ -228,13 +416,21 @@ function CreateProjectDialog(props: {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('projects.workspaces.fields.path')}
                         </label>
-                        <input
-                            type="text"
-                            value={workspacePath}
-                            onChange={(e) => setWorkspacePath(e.target.value)}
-                            disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                        />
+                        <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm text-[var(--app-fg)]">
+                            {workspacePath || t('projects.workspaces.picker.emptySelection')}
+                        </div>
+                        {machineId ? (
+                            <MachineDirectoryPicker
+                                key={machineId}
+                                machineId={machineId}
+                                selectedPath={workspacePath}
+                                onSelect={setWorkspacePath}
+                            />
+                        ) : (
+                            <div className="rounded-md border border-dashed border-[var(--app-border)] px-3 py-4 text-xs text-[var(--app-hint)]">
+                                {t('projects.workspaces.picker.selectMachine')}
+                            </div>
+                        )}
                     </div>
 
                     <div className="space-y-1.5">

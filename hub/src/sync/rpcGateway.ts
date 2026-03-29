@@ -39,6 +39,7 @@ export type RpcDirectoryEntry = {
 
 export type RpcListDirectoryResponse = {
     success: boolean
+    path?: string
     entries?: RpcDirectoryEntry[]
     error?: string
 }
