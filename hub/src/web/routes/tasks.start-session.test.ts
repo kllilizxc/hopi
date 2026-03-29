@@ -282,4 +282,49 @@ describe('tasks start-session route', () => {
         expect(transcript).toContain('auto-ran `.hopi/init.sh`')
         expect(transcript).toContain('init failed')
     })
+
+    it('returns a structured error when session startup throws unexpectedly', async () => {
+        const store = new Store(':memory:')
+        const machineId = 'machine-start-throws'
+        const projectId = 'project-start-throws'
+        const workspaceId = 'workspace-start-throws'
+        const taskId = 'task-start-throws'
+        seedStartTask(store, {
+            projectId,
+            taskId,
+            workspaceId,
+            machineId
+        })
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace: 'default',
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                throw new Error('RPC socket disconnected: spawn failed')
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/start-session`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(500)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toBe('RPC socket disconnected: spawn failed')
+
+        const task = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(task?.status).toBe('planned')
+        expect(task?.activeSessionId ?? null).toBeNull()
+    })
 })
