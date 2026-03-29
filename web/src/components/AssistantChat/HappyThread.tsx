@@ -168,6 +168,10 @@ export function HappyThread(props: {
     const autoScrollEnabledRef = useRef(autoScrollEnabled)
     const userIsScrollingRef = useRef(false)
     const scrollTimeoutRef = useRef<number | null>(null)
+    const setAutoScroll = useCallback((enabled: boolean) => {
+        autoScrollEnabledRef.current = enabled
+        setAutoScrollEnabled(enabled)
+    }, [])
 
     // Keep refs in sync with state
     useEffect(() => {
@@ -219,7 +223,7 @@ export function HappyThread(props: {
                 scrollTimeoutRef.current = null
 
                 if (isNearBottom() && !autoScrollEnabledRef.current) {
-                    setAutoScrollEnabled(true)
+                    setAutoScroll(true)
                 }
             }, 150)
 
@@ -232,10 +236,10 @@ export function HappyThread(props: {
                 // Don't re-enable auto-scroll while user is actively scrolling
                 if (nearBottom) {
                     if (!autoScrollEnabledRef.current && !userIsScrollingRef.current) {
-                        setAutoScrollEnabled(true)
+                        setAutoScroll(true)
                     }
                 } else if (autoScrollEnabledRef.current) {
-                    setAutoScrollEnabled(false)
+                    setAutoScroll(false)
                 }
 
                 if (nearBottom !== atBottomRef.current) {
@@ -266,21 +270,21 @@ export function HappyThread(props: {
         if (viewport) {
             viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
         }
-        setAutoScrollEnabled(true)
+        setAutoScroll(true)
         if (!atBottomRef.current) {
             atBottomRef.current = true
             onAtBottomChangeRef.current(true)
         }
         onFlushPendingRef.current()
-    }, [])
+    }, [setAutoScroll])
 
     // Reset state when session changes
     useEffect(() => {
-        setAutoScrollEnabled(true)
+        setAutoScroll(true)
         atBottomRef.current = true
         onAtBottomChangeRef.current(true)
         forceScrollTokenRef.current = props.forceScrollToken
-    }, [props.sessionId])
+    }, [props.sessionId, setAutoScroll])
 
     useEffect(() => {
         if (forceScrollTokenRef.current === props.forceScrollToken) {
