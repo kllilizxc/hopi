@@ -510,7 +510,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(12)
+        expect(userVersion.user_version).toBe(14)
 
         db.close()
     })
@@ -542,7 +542,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(12)
+        expect(userVersion.user_version).toBe(14)
 
         db.close()
     })

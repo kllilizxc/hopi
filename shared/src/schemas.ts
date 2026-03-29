@@ -397,6 +397,261 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>
 
+export const OmcBoardColumnSchema = z.enum(['Planning', 'Running', 'Review', 'Done'])
+export type OmcBoardColumn = z.infer<typeof OmcBoardColumnSchema>
+
+export const OmcLoopStatusSchema = z.enum(['idle', 'running', 'review', 'done', 'stopped'])
+export type OmcLoopStatus = z.infer<typeof OmcLoopStatusSchema>
+
+export const OmcAttemptStatusSchema = z.enum(['queued', 'running', 'progressed', 'blocked', 'completed', 'failed', 'canceled'])
+export type OmcAttemptStatus = z.infer<typeof OmcAttemptStatusSchema>
+
+export const OmcCheckResultSchema = z.enum(['passed', 'failed', 'warning', 'skipped'])
+export type OmcCheckResult = z.infer<typeof OmcCheckResultSchema>
+
+export const OmcEvidenceKindSchema = z.enum(['summary', 'check', 'diff', 'review', 'note'])
+export type OmcEvidenceKind = z.infer<typeof OmcEvidenceKindSchema>
+
+export const OmcEvidenceStatusSchema = z.enum(['info', 'passed', 'failed', 'warning'])
+export type OmcEvidenceStatus = z.infer<typeof OmcEvidenceStatusSchema>
+
+export const OmcAttemptCheckSchema = z.object({
+    label: z.string().trim().min(1),
+    result: OmcCheckResultSchema,
+    detail: z.string().nullable().optional()
+})
+export type OmcAttemptCheck = z.infer<typeof OmcAttemptCheckSchema>
+
+export const OmcContextPackSchema = z.object({
+    identity: z.object({
+        programId: z.string(),
+        planKey: z.string().trim().min(1),
+        attemptId: z.string(),
+        loopRunId: z.string(),
+        attemptNumber: z.number().int().min(1),
+        phaseKey: z.string().trim().min(1),
+        phaseLabel: z.string().trim().min(1),
+        planTitle: z.string().trim().min(1),
+        planPath: z.string().trim().min(1)
+    }),
+    workspace: z.object({
+        repoRoot: z.string().trim().min(1),
+        planningRoot: z.string().trim().min(1),
+        worktreePath: z.string().trim().min(1).nullable().optional(),
+        sessionId: z.string().nullable().optional(),
+        currentBranch: z.string().nullable().optional(),
+        targetBranch: z.string().nullable().optional()
+    }),
+    planningRefs: z.object({
+        projectPath: z.string().trim().min(1),
+        roadmapPath: z.string().trim().min(1),
+        planPath: z.string().trim().min(1),
+        contextPath: z.string().trim().min(1).optional(),
+        researchPath: z.string().trim().min(1).optional()
+    }),
+    currentObjective: z.object({
+        summary: z.string(),
+        smallestNextStep: z.string().nullable().optional(),
+        checklistDone: z.number().int().min(0),
+        checklistOpen: z.number().int().min(0)
+    }),
+    acceptanceAndChecks: z.object({
+        completionDefinition: z.string(),
+        requiredChecks: z.array(z.string())
+    }),
+    previousAttemptMemory: z.object({
+        attemptId: z.string(),
+        summary: z.string().nullable().optional(),
+        failureFingerprint: z.string().nullable().optional(),
+        changedFiles: z.array(z.string()),
+        checks: z.array(OmcAttemptCheckSchema)
+    }).nullable().optional(),
+    operatingRules: z.array(z.string()),
+    outputContract: z.object({
+        allowedStatuses: z.array(z.string().trim().min(1)),
+        requiredFields: z.array(z.string().trim().min(1))
+    }),
+    promptText: z.string().trim().min(1)
+})
+export type OmcContextPack = z.infer<typeof OmcContextPackSchema>
+
+export const OmcProgramSchema = z.object({
+    id: z.string(),
+    namespace: z.string(),
+    machineId: z.string().nullable().optional(),
+    name: z.string().trim().min(1),
+    repoRoot: z.string().trim().min(1),
+    planningRoot: z.string().trim().min(1),
+    primaryBranch: z.string().nullable().optional(),
+    targetBranch: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number()
+})
+export type OmcProgram = z.infer<typeof OmcProgramSchema>
+
+export const OmcPlanRuntimeSchema = z.object({
+    programId: z.string(),
+    planKey: z.string().trim().min(1),
+    planPath: z.string().trim().min(1),
+    phaseKey: z.string().trim().min(1),
+    phaseLabel: z.string().trim().min(1),
+    column: OmcBoardColumnSchema,
+    loopStatus: OmcLoopStatusSchema,
+    currentLoopRunId: z.string().nullable().optional(),
+    currentWorktreePath: z.string().nullable().optional(),
+    currentBranch: z.string().nullable().optional(),
+    targetBranch: z.string().nullable().optional(),
+    attemptCount: z.number().int().min(0),
+    consecutiveFailureCount: z.number().int().min(0),
+    lastFailureFingerprint: z.string().nullable().optional(),
+    reviewRequired: z.boolean(),
+    mergeApprovedAt: z.number().nullable().optional(),
+    doneAt: z.number().nullable().optional(),
+    latestEvidenceSummary: z.string().nullable().optional(),
+    lastAttemptAt: z.number().nullable().optional(),
+    updatedAt: z.number().nullable().optional()
+})
+export type OmcPlanRuntime = z.infer<typeof OmcPlanRuntimeSchema>
+
+export const OmcAttemptSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    planKey: z.string().trim().min(1),
+    planPath: z.string().trim().min(1),
+    loopRunId: z.string().nullable().optional(),
+    sessionId: z.string().nullable().optional(),
+    attemptNumber: z.number().int().min(1),
+    status: OmcAttemptStatusSchema,
+    summary: z.string().nullable().optional(),
+    failureFingerprint: z.string().nullable().optional(),
+    changedFiles: z.array(z.string()),
+    checks: z.array(OmcAttemptCheckSchema),
+    nextSuggestedStep: z.string().nullable().optional(),
+    contextPack: OmcContextPackSchema.nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    completedAt: z.number().nullable().optional()
+})
+export type OmcAttempt = z.infer<typeof OmcAttemptSchema>
+
+export const OmcEvidenceSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    planKey: z.string().trim().min(1),
+    attemptId: z.string().nullable().optional(),
+    kind: OmcEvidenceKindSchema,
+    label: z.string().trim().min(1),
+    status: OmcEvidenceStatusSchema,
+    summary: z.string().trim().min(1),
+    payload: z.record(z.string(), z.unknown()).nullable().optional(),
+    createdAt: z.number()
+})
+export type OmcEvidence = z.infer<typeof OmcEvidenceSchema>
+
+export const OmcProgramSummarySchema = OmcProgramSchema.extend({
+    counts: z.object({
+        Planning: z.number().int().min(0),
+        Running: z.number().int().min(0),
+        Review: z.number().int().min(0),
+        Done: z.number().int().min(0)
+    }),
+    lastActivityAt: z.number().nullable().optional()
+})
+export type OmcProgramSummary = z.infer<typeof OmcProgramSummarySchema>
+
+export const OmcPlanSummarySchema = z.object({
+    planKey: z.string().trim().min(1),
+    planPath: z.string().trim().min(1),
+    phaseKey: z.string().trim().min(1),
+    phaseLabel: z.string().trim().min(1),
+    planTitle: z.string().trim().min(1),
+    summary: z.string(),
+    checklistTotal: z.number().int().min(0),
+    checklistDone: z.number().int().min(0),
+    checklistOpen: z.number().int().min(0),
+    firstOpenItem: z.string().nullable().optional(),
+    lastModifiedAt: z.number()
+})
+export type OmcPlanSummary = z.infer<typeof OmcPlanSummarySchema>
+
+export const OmcPlanChecklistItemSchema = z.object({
+    text: z.string().trim().min(1),
+    checked: z.boolean()
+})
+export type OmcPlanChecklistItem = z.infer<typeof OmcPlanChecklistItemSchema>
+
+export const OmcPlanningPhaseSchema = z.object({
+    phaseKey: z.string().trim().min(1),
+    phaseLabel: z.string().trim().min(1),
+    plans: z.array(OmcPlanSummarySchema)
+})
+export type OmcPlanningPhase = z.infer<typeof OmcPlanningPhaseSchema>
+
+export const OmcPlanningIndexResponseSchema = z.object({
+    program: z.object({
+        id: z.string(),
+        name: z.string(),
+        repoRoot: z.string().trim().min(1)
+    }),
+    phases: z.array(OmcPlanningPhaseSchema)
+})
+export type OmcPlanningIndexResponse = z.infer<typeof OmcPlanningIndexResponseSchema>
+
+export const OmcPlanDetailResponseSchema = z.object({
+    programId: z.string(),
+    plan: z.object({
+        planKey: z.string().trim().min(1),
+        planPath: z.string().trim().min(1),
+        phaseKey: z.string().trim().min(1),
+        phaseLabel: z.string().trim().min(1),
+        planTitle: z.string().trim().min(1),
+        summary: z.string(),
+        checklist: z.array(OmcPlanChecklistItemSchema),
+        refs: z.object({
+            projectPath: z.string().trim().min(1),
+            roadmapPath: z.string().trim().min(1),
+            contextPath: z.string().trim().min(1).optional(),
+            researchPath: z.string().trim().min(1).optional()
+        }),
+        lastModifiedAt: z.number()
+    }),
+    runtime: OmcPlanRuntimeSchema,
+    attempts: z.array(OmcAttemptSchema),
+    evidence: z.array(OmcEvidenceSchema)
+})
+export type OmcPlanDetailResponse = z.infer<typeof OmcPlanDetailResponseSchema>
+
+export const OmcProgramListResponseSchema = z.object({
+    programs: z.array(OmcProgramSummarySchema)
+})
+export type OmcProgramListResponse = z.infer<typeof OmcProgramListResponseSchema>
+
+export const OmcProgramOverviewResponseSchema = z.object({
+    program: OmcProgramSummarySchema
+})
+export type OmcProgramOverviewResponse = z.infer<typeof OmcProgramOverviewResponseSchema>
+
+export const OmcPlanRuntimeListResponseSchema = z.object({
+    programId: z.string(),
+    runtimes: z.array(OmcPlanRuntimeSchema)
+})
+export type OmcPlanRuntimeListResponse = z.infer<typeof OmcPlanRuntimeListResponseSchema>
+
+export const OmcAttemptDetailResponseSchema = z.object({
+    attempt: OmcAttemptSchema,
+    evidence: z.array(OmcEvidenceSchema)
+})
+export type OmcAttemptDetailResponse = z.infer<typeof OmcAttemptDetailResponseSchema>
+
+export const OmcPlanStartResponseSchema = z.object({
+    programId: z.string(),
+    planKey: z.string().trim().min(1),
+    runtime: OmcPlanRuntimeSchema,
+    attempt: OmcAttemptSchema,
+    evidence: z.array(OmcEvidenceSchema)
+})
+export type OmcPlanStartResponse = z.infer<typeof OmcPlanStartResponseSchema>
+
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()
 })
@@ -494,6 +749,44 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         type: z.literal('task-removed'),
         taskId: z.string(),
         projectId: z.string()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-program-updated'),
+        programId: z.string(),
+        data: z.object({
+            programId: z.string(),
+            program: OmcProgramSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-plan-runtime-updated'),
+        programId: z.string(),
+        planKey: z.string(),
+        data: z.object({
+            planKey: z.string(),
+            runtime: OmcPlanRuntimeSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-attempt-added'),
+        programId: z.string(),
+        planKey: z.string(),
+        attemptId: z.string(),
+        data: z.object({
+            attemptId: z.string(),
+            attempt: OmcAttemptSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-evidence-added'),
+        programId: z.string(),
+        planKey: z.string(),
+        evidenceId: z.string(),
+        attemptId: z.string().nullable().optional(),
+        data: z.object({
+            evidenceId: z.string(),
+            evidence: OmcEvidenceSchema.optional()
+        }).optional()
     })
 ])
 

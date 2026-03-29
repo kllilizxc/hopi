@@ -1,4 +1,15 @@
-import type { TaskInitRuntime, TaskMergeRuntime, TaskPreviewRuntime } from '@hopi/protocol/types'
+import type {
+    OmcAttemptCheck,
+    OmcContextPack,
+    OmcAttemptStatus,
+    OmcBoardColumn,
+    OmcEvidenceKind,
+    OmcEvidenceStatus,
+    OmcLoopStatus,
+    TaskInitRuntime,
+    TaskMergeRuntime,
+    TaskPreviewRuntime
+} from '@hopi/protocol/types'
 
 export type StoredSession = {
     id: string
@@ -94,6 +105,78 @@ export type StoredWorkspace = {
     sort: number | null
     createdAt: number
     updatedAt: number
+}
+
+export type OmcProgramRow = {
+    id: string
+    namespace: string
+    machineId: string | null
+    name: string
+    repoRoot: string
+    planningRoot: string
+    primaryBranch: string | null
+    targetBranch: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type OmcPlanRuntimeRow = {
+    programId: string
+    namespace: string
+    planKey: string
+    planPath: string
+    phaseKey: string
+    phaseLabel: string
+    column: OmcBoardColumn
+    loopStatus: OmcLoopStatus
+    currentLoopRunId: string | null
+    currentWorktreePath: string | null
+    currentBranch: string | null
+    targetBranch: string | null
+    attemptCount: number
+    consecutiveFailureCount: number
+    lastFailureFingerprint: string | null
+    reviewRequired: boolean
+    mergeApprovedAt: number | null
+    doneAt: number | null
+    latestEvidenceSummary: string | null
+    lastAttemptAt: number | null
+    updatedAt: number
+}
+
+export type OmcAttemptRow = {
+    id: string
+    programId: string
+    namespace: string
+    planKey: string
+    planPath: string
+    loopRunId: string | null
+    sessionId: string | null
+    attemptNumber: number
+    status: OmcAttemptStatus
+    summary: string | null
+    failureFingerprint: string | null
+    changedFiles: string[]
+    checks: OmcAttemptCheck[]
+    nextSuggestedStep: string | null
+    contextPack: OmcContextPack | null
+    createdAt: number
+    updatedAt: number
+    completedAt: number | null
+}
+
+export type OmcEvidenceRow = {
+    id: string
+    programId: string
+    namespace: string
+    planKey: string
+    attemptId: string | null
+    kind: OmcEvidenceKind
+    label: string
+    status: OmcEvidenceStatus
+    summary: string
+    payload: Record<string, unknown> | null
+    createdAt: number
 }
 
 export type StoredTask = {

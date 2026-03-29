@@ -106,6 +106,9 @@ For v1, lock these choices:
 - planning source of truth = markdown files in `.planning/*`
 - planning editing in OMC-client = simplest possible editing only
 - OMC-client served by existing hub at `/omc`
+- repeated-failure policy = escalate to `Review` after `3` consecutive failed attempts
+- hard attempt cap = stop after `5` total attempts for the same loop run
+- review default = human-approved, agent-assisted
 
 High-level relation:
 
@@ -302,6 +305,84 @@ V1 execution grain:
 - attempt scope = one smallest next step within that plan
 - review gate happens after the plan is fully complete or explicitly blocked
 
+V1 retry / escalation policy:
+
+- keep retry policy intentionally simple
+- `3` consecutive failed attempts on the same plan => move card to `Review`
+- `5` total attempts on the same loop run => stop automatic retries
+- any explicit policy gate or permission block => move to `Review`
+- human can restart loop from `Review`
+
+### V1 context pack
+
+The quality of the Ralph loop depends heavily on the attempt input contract.
+
+V1 context pack should stay small, deterministic, and repeatable.
+
+Its job is to answer:
+
+- what plan is being executed
+- where execution should happen
+- what smallest step should be advanced now
+- how completion will be judged
+- what happened last attempt that should influence this one
+
+Recommended sections:
+
+- `identity`
+    - `programId`
+    - `planKey`
+    - `attemptId`
+    - `phase`
+    - `planTitle`
+    - `planPath`
+- `workspace`
+    - repo root
+    - worktree path
+    - current branch
+    - target branch when known
+- `planningRefs`
+    - `.planning/PROJECT.md`
+    - `.planning/ROADMAP.md`
+    - current `PLAN.md`
+    - optional phase-specific `CONTEXT.md` / `RESEARCH.md` when present
+- `currentObjective`
+    - plan goal summary
+    - current smallest next step
+    - explicit instruction to advance one smallest step only
+- `acceptanceAndChecks`
+    - completion criteria
+    - required validation commands
+    - repo-specific verification expectations
+- `previousAttemptMemory`
+    - previous attempt summary
+    - failure fingerprint
+    - changed files summary
+    - checks result summary
+- `operatingRules`
+    - stay within this plan
+    - do not rewrite roadmap unnecessarily
+    - keep work inside the current worktree
+    - report clear blocked reason when blocked
+- `outputContract`
+    - final status
+    - summary
+    - changed files
+    - checks run and results
+    - next suggested step
+
+V1 memory rule:
+
+- carry only summarized memory from the previous attempt
+- do not inject full prior logs or full conversation history into each new attempt
+
+This keeps attempts:
+
+- fresh
+- small
+- predictable
+- easier to debug
+
 ### Native GSD support
 
 GSD should not be a hidden prompt convention only.
@@ -342,6 +423,7 @@ Candidate implementation:
 - structured output capture
 - deterministic prompt bundle
 - attempts reuse the plan's existing worktree rather than creating a new worktree per attempt
+- each attempt receives the generated context pack as its primary execution input
 
 ### Interactive takeover mode
 
@@ -547,6 +629,49 @@ Must show:
 - stop reason
 - retry / fork / takeover actions
 
+### Review default
+
+V1 review policy:
+
+- review is human-approved by default
+- agent may prepare review summaries, evidence digests, and merge notes
+- agent does not auto-approve its own completion in v1
+- merge should happen only after human review approval unless explicitly overridden later
+
+### Merge approval default
+
+V1 merge policy:
+
+- merge is human-approved by default
+- autonomous execution may prepare a merge packet, but may not land automatically
+- merge happens only from `Review`
+- merge approval is a distinct action, not an implicit side-effect of loop completion
+
+Required merge packet contents:
+
+- phase
+- plan
+- target branch
+- source worktree / branch
+- attempt count
+- changed files summary
+- required checks summary
+- agent-produced completion summary
+- warnings or blocker notes
+
+Required merge preconditions:
+
+- no active attempt still running
+- plan is in `Review`
+- required checks are green
+- target branch is resolved
+- worktree merge state is clean enough to proceed
+- no unresolved human gate remains
+
+Non-goal for v1:
+
+- zero-click automatic merge after loop completion
+
 ## Data truth strategy
 
 This section defines which layer is authoritative when different representations disagree.
@@ -606,16 +731,49 @@ Keep this thin in v1.
 Allowed:
 
 - open relevant planning files
+- use existing file-oriented editing flows
 - make small direct markdown edits
-- create small patch-style updates
+- create small patch-style updates when obvious
 - trigger loop actions from parsed planning context
 
 Not in v1:
 
+- custom rich markdown editor
 - full structured planning editor
 - visual plan builder
 - reconciliation engine
 - semantic round-trip editing between DB and planning graph
+
+### GSD artifact authoring default
+
+V1 authoring model:
+
+- hybrid, but intentionally biased toward prompt/session-driven authoring
+
+OMC-client should primarily handle:
+
+- phase and plan discovery
+- parsed summaries
+- plan selection and loop control
+- lightweight markdown edits
+- opening relevant planning files
+
+Agent/session workflows should primarily handle:
+
+- writing `PROJECT.md`
+- writing `REQUIREMENTS.md`
+- writing `ROADMAP.md`
+- writing `PLAN.md`
+- large planning rewrites
+- checklist decomposition
+- fix-plan generation after failed review or verification
+
+Reason:
+
+- GSD already works naturally through markdown files
+- OMC-client should be an execution control plane first
+- avoiding a heavy planning editor keeps v1 small and shippable
+- large planning changes are better handled where the agent already has full repo context
 
 ### v1 consequence
 
@@ -652,6 +810,31 @@ Preferred strategy:
 2. reuse runtime infrastructure underneath
 3. optionally expose compatibility projections into old task/project views later
 
+## GSD workspace strategy
+
+OMC should start in a **fresh GSD workspace**, not by extending the current repository `.planning` milestone.
+
+Reason:
+
+- the current `.planning` already represents a completed action-runtime milestone
+- OMC is a new product direction, not the next incremental phase of that work
+- Phase numbering should restart from `1` for the OMC roadmap
+- OMC planning should not inherit old milestone state, summaries, or phase semantics
+
+Recommended workspace:
+
+- workspace name: `hopi-omc`
+- workspace shape:
+    - `WORKSPACE.md`
+    - `.planning/`
+    - `hopi/` worktree
+
+Implication:
+
+- current repo `.planning` stays as historical record for the completed milestone
+- new OMC work starts from a fresh `PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md`
+- first OMC phase is `Phase 1: OMC Foundation`
+
 ## Deployment stance
 
 V1 deployment:
@@ -666,24 +849,591 @@ Reason:
 
 ## Open questions
 
-- what is the exact retry / escalation policy for repeated failures?
-- how should merge approvals work for autonomous runs?
-- should review be agent-generated, human-generated, or dual-gated by default?
-- how much of GSD artifact authoring should happen in UI vs prompt-driven sessions?
+- none for the current v1 direction; next work should focus on implementation slicing
 
-## Proposed first implementation slice
+## V1 implementation slice
 
-Not final. Just a candidate order.
+This section describes the smallest version that feels like a real OMC product.
 
-1. create new orchestrator schemas
-2. create new hub APIs and events
-3. create Codex ephemeral attempt runner
-4. create context pack builder
-5. create minimal `OMC-client/` app shell
-6. ship read-only phase-grouped plan board + loop overview
-7. add start / stop / retry / takeover
-8. add attempt inspector
-9. add lightweight planning file actions
+### Core product promise for v1
+
+V1 should let a user:
+
+- open OMC for one repo-backed program
+- see plans from `.planning/*` grouped by phase
+- start a Ralph loop on one plan
+- watch attempts and evidence accumulate
+- see plans move through `Planning / Running / Review / Done`
+- review a completed or blocked plan
+- explicitly approve merge
+
+If v1 cannot do those things cleanly, it is still too early.
+
+### What a board card is in v1
+
+Card identity:
+
+- derived from `PLAN.md` file path
+
+Recommended stable key:
+
+- `programId + normalizedPlanPath`
+
+This means:
+
+- files define which cards exist
+- DB defines runtime state of those cards
+
+### Planning indexer contract for v1
+
+The planning indexer is a read-model builder, not a planner.
+
+Its job:
+
+- discover which plans should appear in OMC
+- extract small, stable card metadata
+- provide stable plan identity for runtime joins
+
+Its non-job:
+
+- rewrite planning
+- infer deep semantics from prose
+- build a full dependency solver
+- become the canonical planning engine
+
+### Planning files in scope
+
+Read in v1:
+
+- `.planning/PROJECT.md`
+- `.planning/ROADMAP.md`
+- `.planning/phases/**/*PLAN.md`
+- optional sibling `CONTEXT.md` and `RESEARCH.md` for detail views
+
+Ignore in v1:
+
+- `.planning/quick/**`
+- `.planning/milestones/**`
+- `.planning/debug/**`
+- `.planning/todos/**`
+- ad hoc notes not part of formal phase planning
+
+### Plan discovery rules
+
+V1 discovery rule:
+
+- every file matching `.planning/phases/**/*PLAN.md` becomes one plan card candidate
+
+Phase grouping rule:
+
+- phase grouping is derived from the parent phase directory
+
+Examples:
+
+- `.planning/phases/01-foundation/01-01-PLAN.md`
+- `.planning/phases/01-foundation/01-02-PLAN.md`
+
+Both are separate cards grouped under the same phase.
+
+### Plan key strategy
+
+Use two identifiers:
+
+- `planPath`
+    - canonical source identity
+- `planKey`
+    - stable API/runtime key
+
+Recommended v1 approach:
+
+- normalize relative path separators
+- keep `planPath` exactly as readable source identity
+- derive `planKey` from normalized path using a stable hash
+
+Reason:
+
+- readable source identity for debugging
+- stable route-safe key for APIs and DB joins
+- no need to embed full file paths in every URL
+
+### Parsed card fields from planning indexer
+
+Each discovered plan should return a small parsed summary.
+
+Recommended v1 fields:
+
+- `phaseKey`
+- `phaseLabel`
+- `planKey`
+- `planPath`
+- `planTitle`
+- `summary`
+- `checklistTotal`
+- `checklistDone`
+- `checklistOpen`
+- `firstOpenItem`
+- `lastModifiedAt`
+
+Extraction rules:
+
+- `planTitle`
+    - first markdown H1
+    - fallback: filename
+- `summary`
+    - first paragraph after title
+    - fallback: empty
+- `checklist*`
+    - derived from markdown task-list items
+- `firstOpenItem`
+    - first unchecked checklist item
+
+### Parsing approach
+
+Keep parsing intentionally lightweight in v1.
+
+Recommended parser style:
+
+- line-based scan
+- simple heading detection
+- simple markdown task-list detection
+- first-paragraph extraction
+
+Reason:
+
+- fast to implement
+- easy to debug
+- robust enough for board rendering
+
+Non-goal for v1:
+
+- full markdown AST semantics unless proven necessary later
+
+### How board columns are derived
+
+Board column is not derived from markdown alone.
+
+Recommended v1 precedence:
+
+1. `Running`
+    - active loop exists
+2. `Review`
+    - review required
+    - or plan is complete but awaiting merge/review decision
+3. `Done`
+    - merge completed
+    - or explicit done marker recorded in runtime
+4. `Planning`
+    - everything else
+
+This means:
+
+- files determine card existence and plan content
+- runtime DB determines operational column state
+
+### How planning badges are derived
+
+Recommended v1 badge sources:
+
+- `ready-to-run`
+    - derived from planning + runtime
+- `needs-spec`
+    - derived from missing planning structure
+- `blocked`
+    - runtime only
+- `attempts:n`
+    - runtime only
+- `last-failure`
+    - runtime only
+
+Important v1 rule:
+
+- do not infer `blocked` from arbitrary prose inside markdown
+
+### Ready-to-run heuristic
+
+Keep this conservative.
+
+Recommended v1 heuristic:
+
+- plan has a title
+- plan has at least one checklist item
+- plan is not `Running`
+- plan is not `Review`
+- plan is not `Done`
+
+If any of those are false:
+
+- omit `ready-to-run`
+
+### Needs-spec heuristic
+
+Recommended v1 heuristic:
+
+- missing title
+- or zero checklist items
+
+This is deliberately shallow.
+
+The goal is to surface obviously under-specified plans, not to judge plan quality deeply.
+
+### Minimal runtime data model for v1
+
+Do not model the whole planning universe in DB yet.
+
+Recommended DB entities:
+
+- `Program`
+- `PlanRuntime`
+- `LoopRun`
+- `Attempt`
+- `Evidence`
+- `ReviewDecision`
+- `MergeRecord`
+
+Recommended non-goal for v1:
+
+- separate DB tables for `Phase` and `Plan` as canonical planning entities
+
+Instead:
+
+- parse phases and plans from files
+- store runtime state keyed by stable plan key
+
+### PlanRuntime
+
+This is the missing bridge object for v1.
+
+Purpose:
+
+- attach runtime state to one markdown plan card
+
+Suggested fields:
+
+- `programId`
+- `planKey`
+- `planPath`
+- `phaseKey`
+- `column`
+- `currentLoopRunId`
+- `currentWorktreePath`
+- `currentBranch`
+- `attemptCount`
+- `consecutiveFailureCount`
+- `lastFailureFingerprint`
+- `reviewRequired`
+- `mergeApprovedAt`
+- `doneAt`
+- `updatedAt`
+
+### Pages for v1
+
+Recommended initial routes:
+
+- `/omc`
+- `/omc/programs/$programId`
+- `/omc/programs/$programId/plans/$planKey`
+- `/omc/programs/$programId/attempts/$attemptId`
+
+### `/omc`
+
+Purpose:
+
+- program picker
+- quick status across programs
+
+V1 content:
+
+- program list
+- machine / repo root
+- active running count
+- review queue count
+- last activity
+
+### `/omc/programs/$programId`
+
+Purpose:
+
+- main execution board
+
+V1 content:
+
+- phase-grouped board
+- columns: `Planning / Running / Review / Done`
+- card badges:
+    - `ready-to-run`
+    - `blocked`
+    - `attempts`
+    - `last failure`
+    - `needs review`
+- top summary:
+    - active loops
+    - review queue
+    - failed today
+    - merged today
+
+Primary actions:
+
+- start loop
+- stop loop
+- retry from review
+- open plan detail
+
+### `/omc/programs/$programId/plans/$planKey`
+
+Purpose:
+
+- plan detail + control pane
+
+V1 content:
+
+- plan title
+- phase label
+- source file path
+- parsed checklist summary
+- current runtime status
+- worktree / branch info
+- recent attempts list
+- evidence summary
+- lightweight file actions
+
+Primary actions:
+
+- open plan file
+- start loop
+- stop loop
+- reopen from review
+- approve review
+- approve merge
+- open takeover session
+
+### `/omc/programs/$programId/attempts/$attemptId`
+
+Purpose:
+
+- deep inspection for one attempt
+
+V1 content:
+
+- context pack
+- final prompt
+- timeline
+- logs / messages
+- changed files
+- evidence attached to this attempt
+- failure fingerprint
+- stop reason
+
+### Required backend capabilities for v1
+
+The backend only needs enough to support the pages above.
+
+Recommended capability groups:
+
+- program registry
+- planning indexer
+- runtime state store
+- loop executor
+- review + merge actions
+
+### Program registry APIs
+
+Suggested endpoints:
+
+- `GET /api/omc/programs`
+- `POST /api/omc/programs`
+- `GET /api/omc/programs/:programId`
+
+V1 program creation should capture:
+
+- machine id
+- repo root / default workspace
+- display name
+- default agent/model settings
+
+### Planning indexer APIs
+
+Suggested endpoints:
+
+- `GET /api/omc/programs/:programId/planning-index`
+- `GET /api/omc/programs/:programId/plans/:planKey`
+
+What they should do:
+
+- read `.planning/ROADMAP.md`
+- discover `.planning/phases/**/*PLAN.md`
+- parse phase and plan metadata
+- derive checklist counts
+- derive phase grouping
+- return stable plan keys
+
+### `planning-index` response shape
+
+Recommended v1 response:
+
+```ts
+type PlanningIndexResponse = {
+    program: {
+        id: string
+        name: string
+        repoRoot: string
+    }
+    phases: Array<{
+        phaseKey: string
+        phaseLabel: string
+        plans: Array<{
+            planKey: string
+            planPath: string
+            planTitle: string
+            summary: string
+            checklistTotal: number
+            checklistDone: number
+            checklistOpen: number
+            firstOpenItem: string | null
+            lastModifiedAt: number
+        }>
+    }>
+}
+```
+
+### `GET /plans/:planKey` response shape
+
+This endpoint should power the plan detail page.
+
+Recommended v1 response:
+
+```ts
+type PlanDetailResponse = {
+    programId: string
+    plan: {
+        planKey: string
+        planPath: string
+        phaseKey: string
+        phaseLabel: string
+        planTitle: string
+        summary: string
+        checklist: Array<{
+            text: string
+            checked: boolean
+        }>
+        refs: {
+            projectPath: string
+            roadmapPath: string
+            contextPath?: string
+            researchPath?: string
+        }
+        lastModifiedAt: number
+    }
+    runtime: {
+        column: 'Planning' | 'Running' | 'Review' | 'Done'
+        currentLoopRunId: string | null
+        currentWorktreePath: string | null
+        currentBranch: string | null
+        attemptCount: number
+        consecutiveFailureCount: number
+        lastFailureFingerprint: string | null
+        reviewRequired: boolean
+        mergeApprovedAt: number | null
+        doneAt: number | null
+        updatedAt: number | null
+    }
+}
+```
+
+Design note:
+
+- keep planning payload and runtime payload clearly separated
+- this makes file-truth vs runtime-truth explicit in the API
+
+### Runtime state APIs
+
+Suggested endpoints:
+
+- `GET /api/omc/programs/:programId/plan-runtimes`
+- `GET /api/omc/programs/:programId/plans/:planKey/runtime`
+- `GET /api/omc/programs/:programId/plans/:planKey/attempts`
+- `GET /api/omc/attempts/:attemptId`
+
+Purpose:
+
+- board hydration
+- detail page hydration
+- attempt inspector hydration
+
+### Loop control APIs
+
+Suggested endpoints:
+
+- `POST /api/omc/programs/:programId/plans/:planKey/start`
+- `POST /api/omc/programs/:programId/plans/:planKey/stop`
+- `POST /api/omc/programs/:programId/plans/:planKey/retry`
+- `POST /api/omc/programs/:programId/plans/:planKey/takeover`
+
+Behavior:
+
+- `start` creates or resumes the active loop run for that plan
+- `stop` pauses automatic attempts
+- `retry` re-enters `Running` from `Review`
+- `takeover` opens interactive Codex session on the same worktree
+
+### Review + merge APIs
+
+Suggested endpoints:
+
+- `POST /api/omc/programs/:programId/plans/:planKey/review/approve`
+- `POST /api/omc/programs/:programId/plans/:planKey/review/reopen`
+- `GET /api/omc/programs/:programId/plans/:planKey/merge-packet`
+- `POST /api/omc/programs/:programId/plans/:planKey/merge/approve`
+
+Behavior:
+
+- review approval marks plan eligible for merge
+- reopen sends card back to `Running` or `Planning` depending on action chosen
+- merge packet returns the human-review payload
+- merge approval performs the actual merge
+
+### SSE events for v1
+
+Suggested event families:
+
+- `omc-program-updated`
+- `omc-plan-runtime-updated`
+- `omc-loop-run-updated`
+- `omc-attempt-added`
+- `omc-attempt-updated`
+- `omc-evidence-added`
+- `omc-review-updated`
+- `omc-merge-updated`
+
+V1 principle:
+
+- small payloads
+- query invalidation friendly
+- avoid streaming huge attempt logs through SSE when existing session/message APIs can be reused
+
+### What to defer out of v1
+
+Do not let these expand scope:
+
+- visual blueprint graph editor
+- custom markdown editor
+- multi-repo program orchestration
+- plan checklist items as first-class cards
+- auto-merge by default
+- automatic PR creation / CI integration
+- advanced dependency graph UI
+- full planner UX inside OMC-client
+
+### Recommended build order
+
+1. add `Program` + `PlanRuntime` + `LoopRun` + `Attempt` + `Evidence` schemas
+2. add planning indexer over `.planning/*`
+3. add minimal OMC APIs for program list + planning index + plan runtime
+4. create `OMC-client/` app shell served at `/omc`
+5. ship read-only phase-grouped plan board
+6. add loop start / stop / retry
+7. add attempt inspector
+8. add review approval + merge packet
+9. add merge approval action
 
 ## Discussion notes
 

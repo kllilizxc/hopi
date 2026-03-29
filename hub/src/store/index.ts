@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { OmcRuntimeStore } from '../sync/omc/runtimeStore'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
@@ -12,6 +13,10 @@ import { UserStore } from './userStore'
 import { WorkspaceStore } from './workspaceStore'
 
 export type {
+    OmcAttemptRow,
+    OmcEvidenceRow,
+    OmcPlanRuntimeRow,
+    OmcProgramRow,
     StoredMachine,
     StoredMessage,
     StoredProject,
@@ -24,6 +29,7 @@ export type {
 } from './types'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
+export { OmcRuntimeStore }
 export { PushStore } from './pushStore'
 export { ProjectStore } from './projectStore'
 export { SessionStore } from './sessionStore'
@@ -31,7 +37,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 12
+const SCHEMA_VERSION: number = 14
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -40,7 +46,11 @@ const REQUIRED_TABLES = [
     'push_subscriptions',
     'projects',
     'workspaces',
-    'tasks'
+    'tasks',
+    'omc_programs',
+    'omc_plan_runtimes',
+    'omc_attempts',
+    'omc_evidence'
 ] as const
 
 export class Store {
@@ -53,6 +63,7 @@ export class Store {
     readonly projects: ProjectStore
     readonly workspaces: WorkspaceStore
     readonly tasks: TaskStore
+    readonly omcRuntime: OmcRuntimeStore
     readonly users: UserStore
     readonly push: PushStore
 
@@ -97,6 +108,7 @@ export class Store {
         this.projects = new ProjectStore(this.db)
         this.workspaces = new WorkspaceStore(this.db)
         this.tasks = new TaskStore(this.db)
+        this.omcRuntime = new OmcRuntimeStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
     }
@@ -423,6 +435,88 @@ export class Store {
             CREATE INDEX IF NOT EXISTS idx_tasks_project_archived ON tasks(project_id, archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, status, sort_key);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_source_status ON tasks(project_id, source, status);
+
+            CREATE TABLE IF NOT EXISTS omc_programs (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                planning_root TEXT NOT NULL,
+                primary_branch TEXT,
+                target_branch TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_programs_namespace ON omc_programs(namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_plan_runtimes (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                phase_key TEXT NOT NULL,
+                phase_label TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                loop_status TEXT NOT NULL,
+                current_loop_run_id TEXT,
+                current_worktree_path TEXT,
+                current_branch TEXT,
+                target_branch TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_fingerprint TEXT,
+                review_required INTEGER NOT NULL DEFAULT 0,
+                merge_approved_at INTEGER,
+                done_at INTEGER,
+                latest_evidence_summary TEXT,
+                last_attempt_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, plan_key),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_plan_runtimes_program ON omc_plan_runtimes(program_id, namespace, phase_key, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                loop_run_id TEXT,
+                session_id TEXT,
+                attempt_number INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                failure_fingerprint TEXT,
+                changed_files_json TEXT NOT NULL DEFAULT '[]',
+                checks_json TEXT NOT NULL DEFAULT '[]',
+                next_suggested_step TEXT,
+                context_pack_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_attempts_plan ON omc_attempts(program_id, namespace, plan_key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_evidence (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                attempt_id TEXT,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (attempt_id) REFERENCES omc_attempts(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_plan ON omc_evidence(program_id, namespace, plan_key, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_attempt ON omc_evidence(attempt_id, namespace, created_at ASC);
         `)
     }
 
@@ -544,6 +638,12 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 12) {
             this.migrateFromV11ToV12()
+        }
+        if (SCHEMA_VERSION >= 13) {
+            this.migrateFromV12ToV13()
+        }
+        if (SCHEMA_VERSION >= 14) {
+            this.migrateFromV13ToV14()
         }
     }
 
@@ -705,6 +805,105 @@ export class Store {
         }
         if (!projectColumns.has('automation_readiness_checked_at')) {
             this.db.exec('ALTER TABLE projects ADD COLUMN automation_readiness_checked_at INTEGER')
+        }
+    }
+
+    private migrateFromV12ToV13(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_programs (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                planning_root TEXT NOT NULL,
+                primary_branch TEXT,
+                target_branch TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_programs_namespace ON omc_programs(namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_plan_runtimes (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                phase_key TEXT NOT NULL,
+                phase_label TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                loop_status TEXT NOT NULL,
+                current_loop_run_id TEXT,
+                current_worktree_path TEXT,
+                current_branch TEXT,
+                target_branch TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_fingerprint TEXT,
+                review_required INTEGER NOT NULL DEFAULT 0,
+                merge_approved_at INTEGER,
+                done_at INTEGER,
+                latest_evidence_summary TEXT,
+                last_attempt_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, plan_key),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_plan_runtimes_program ON omc_plan_runtimes(program_id, namespace, phase_key, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                loop_run_id TEXT,
+                session_id TEXT,
+                attempt_number INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                failure_fingerprint TEXT,
+                changed_files_json TEXT NOT NULL DEFAULT '[]',
+                checks_json TEXT NOT NULL DEFAULT '[]',
+                next_suggested_step TEXT,
+                context_pack_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_attempts_plan ON omc_attempts(program_id, namespace, plan_key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_evidence (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                attempt_id TEXT,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (attempt_id) REFERENCES omc_attempts(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_plan ON omc_evidence(program_id, namespace, plan_key, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_attempt ON omc_evidence(attempt_id, namespace, created_at ASC);
+        `)
+    }
+
+    private migrateFromV13ToV14(): void {
+        const omcAttemptColumns = this.getColumnNames('omc_attempts')
+        if (omcAttemptColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_attempts table for v13 to v14 migration.')
+        }
+        if (!omcAttemptColumns.has('session_id')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN session_id TEXT')
+        }
+        if (!omcAttemptColumns.has('context_pack_json')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN context_pack_json TEXT')
         }
     }
 

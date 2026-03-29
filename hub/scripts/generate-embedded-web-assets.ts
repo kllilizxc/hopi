@@ -53,10 +53,36 @@ function resolveMimeType(filePath: string): string {
     return MIME_TYPES[ext] ?? 'application/octet-stream';
 }
 
+function addAssetGroup(options: {
+    imports: string[]
+    manifestLines: string[]
+    files: string[]
+    distDir: string
+    outputDir: string
+    pathPrefix?: string
+    importOffset: number
+}): number {
+    const pathPrefix = options.pathPrefix ?? ''
+
+    options.files.forEach((filePath, index) => {
+        const relativeToDist = toPosixPath(relative(options.distDir, filePath))
+        const requestPath = `${pathPrefix}/${relativeToDist}`.replace(/\/{2,}/g, '/')
+        const importPath = toPosixPath(relative(options.outputDir, filePath))
+        const importName = `asset${options.importOffset + index}`
+        const mimeType = resolveMimeType(filePath)
+
+        options.imports.push(`import ${importName} from '${importPath}' assert { type: 'file' };`)
+        options.manifestLines.push(`    { path: '${requestPath}', sourcePath: ${importName} as unknown as string, mimeType: '${mimeType}' },`)
+    })
+
+    return options.importOffset + options.files.length
+}
+
 function main(): void {
     const scriptDir = dirname(fileURLToPath(import.meta.url));
     const workspaceRoot = join(scriptDir, '..', '..');
     const webDistDir = join(workspaceRoot, 'web', 'dist');
+    const omcDistDir = join(workspaceRoot, 'OMC-client', 'dist');
     const outputPath = join(workspaceRoot, 'hub', 'src', 'web', 'embeddedAssets.generated.ts');
     const outputDir = dirname(outputPath);
 
@@ -69,23 +95,46 @@ function main(): void {
         throw new Error(`Missing web/dist/index.html. Run bun run build:web first.`);
     }
 
-    const files = listFiles(webDistDir).sort((a, b) => a.localeCompare(b));
-    if (files.length === 0) {
+    if (!existsSync(omcDistDir)) {
+        throw new Error(`Missing OMC-client/dist directory: ${omcDistDir}. Run bun run build:omc first.`);
+    }
+
+    const omcIndexHtmlPath = join(omcDistDir, 'index.html');
+    if (!existsSync(omcIndexHtmlPath)) {
+        throw new Error(`Missing OMC-client/dist/index.html. Run bun run build:omc first.`);
+    }
+
+    const webFiles = listFiles(webDistDir).sort((a, b) => a.localeCompare(b));
+    if (webFiles.length === 0) {
         throw new Error(`No files found in web/dist: ${webDistDir}.`);
+    }
+
+    const omcFiles = listFiles(omcDistDir).sort((a, b) => a.localeCompare(b));
+    if (omcFiles.length === 0) {
+        throw new Error(`No files found in OMC-client/dist: ${omcDistDir}.`);
     }
 
     const imports: string[] = [];
     const manifestLines: string[] = [];
+    let importOffset = 0;
 
-    files.forEach((filePath, index) => {
-        const relativeToDist = toPosixPath(relative(webDistDir, filePath));
-        const requestPath = `/${relativeToDist}`;
-        const importPath = toPosixPath(relative(outputDir, filePath));
-        const importName = `asset${index}`;
-        const mimeType = resolveMimeType(filePath);
+    importOffset = addAssetGroup({
+        imports,
+        manifestLines,
+        files: webFiles,
+        distDir: webDistDir,
+        outputDir,
+        importOffset
+    });
 
-        imports.push(`import ${importName} from '${importPath}' assert { type: 'file' };`);
-        manifestLines.push(`    { path: '${requestPath}', sourcePath: ${importName}, mimeType: '${mimeType}' },`);
+    importOffset = addAssetGroup({
+        imports,
+        manifestLines,
+        files: omcFiles,
+        distDir: omcDistDir,
+        outputDir,
+        pathPrefix: '/omc',
+        importOffset
     });
 
     const output = [
@@ -107,7 +156,7 @@ function main(): void {
     ].join('\n');
 
     writeFileSync(outputPath, output, 'utf-8');
-    console.log(`[embedded-assets] Wrote ${files.length} assets to ${outputPath}`);
+    console.log(`[embedded-assets] Wrote ${webFiles.length + omcFiles.length} assets to ${outputPath}`);
 }
 
 main();
