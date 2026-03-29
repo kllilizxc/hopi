@@ -4,6 +4,7 @@ import { access, mkdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { PRODUCT_SLUG } from '@hopi/protocol/brand';
+import { resolveGitExecutable } from '@/utils/resolveGitExecutable';
 
 const execFileAsync = promisify(execFile);
 
@@ -28,7 +29,8 @@ const MAX_ATTEMPTS = 5;
 
 async function runGit(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
   try {
-    const result = await execFileAsync('git', args, { cwd });
+    const gitCommand = resolveGitExecutable(process.env);
+    const result = await execFileAsync(gitCommand, args, { cwd });
     return {
       stdout: result.stdout ? result.stdout.toString() : '',
       stderr: result.stderr ? result.stderr.toString() : ''
@@ -56,8 +58,24 @@ export async function resolveGitRepoRoot(basePath: string): Promise<string> {
 }
 
 async function resolveHeadCommit(repoRoot: string): Promise<string | undefined> {
+    try {
+        const result = await runGit(['rev-parse', '--verify', 'HEAD'], repoRoot);
+        const commit = result.stdout.trim();
+        if (/^[0-9a-f]{40}$/i.test(commit)) {
+      return commit;
+    }
+  } catch {
+  }
+  return undefined;
+}
+
+async function resolveRefCommit(repoRoot: string, ref?: string): Promise<string | undefined> {
+  if (!ref) {
+    return await resolveHeadCommit(repoRoot);
+  }
+
   try {
-    const result = await runGit(['rev-parse', '--verify', 'HEAD'], repoRoot);
+    const result = await runGit(['rev-parse', '--verify', ref], repoRoot);
     const commit = result.stdout.trim();
     if (/^[0-9a-f]{40}$/i.test(commit)) {
       return commit;
@@ -120,8 +138,10 @@ export async function createWorktree(options: {
   basePath: string;
   nameHint?: string;
   worktreeRootDir?: string;
+  baseBranch?: string;
 }): Promise<WorktreeResult> {
   const { basePath, nameHint, worktreeRootDir } = options;
+  const baseBranch = options.baseBranch?.trim() || undefined;
   let repoRoot: string;
   let baseCommit: string | undefined;
 
@@ -135,7 +155,14 @@ export async function createWorktree(options: {
     };
   }
 
-  baseCommit = await resolveHeadCommit(repoRoot);
+  if (baseBranch && !(await branchExists(repoRoot, baseBranch))) {
+    return {
+      ok: false,
+      error: `Failed to create worktree: target branch '${baseBranch}' not found in repository`
+    };
+  }
+
+  baseCommit = await resolveRefCommit(repoRoot, baseBranch);
 
   const repoParent = dirname(repoRoot);
   const repoName = basename(repoRoot);
@@ -160,7 +187,11 @@ export async function createWorktree(options: {
     }
 
     try {
-      await runGit(['worktree', 'add', '-b', branch, worktreePath], repoRoot);
+      const addArgs = ['worktree', 'add', '-b', branch, worktreePath];
+      if (baseBranch) {
+        addArgs.push(baseBranch);
+      }
+      await runGit(addArgs, repoRoot);
       return {
         ok: true,
         info: {

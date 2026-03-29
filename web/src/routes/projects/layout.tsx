@@ -21,6 +21,7 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
@@ -648,6 +649,7 @@ export default function ProjectsPage() {
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
+    const { startTaskSession } = useStartTaskSession(api)
 
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskOpen, setNewTaskOpen] = useState(false)
@@ -715,6 +717,29 @@ export default function ProjectsPage() {
             })
             addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
             setNewTaskOpen(false)
+
+            const workflowProfile = (created.workflowProfile ?? data.workflowProfile).trim().toLowerCase()
+            if (workflowProfile === 'gsd') {
+                try {
+                    const started = await startTaskSession({
+                        taskId: created.id,
+                        projectId: selectedProjectId
+                    })
+                    addToast({ title: t('projects.sessions.started'), body: '', sessionId: started.sessionId, url: '' })
+                } catch (error) {
+                    addToast({
+                        title: t('projects.sessions.startFailed'),
+                        body: error instanceof Error ? error.message : 'Failed to start session',
+                        sessionId: '',
+                        url: ''
+                    })
+                }
+
+                void navigate({
+                    to: '/projects/$projectId/tasks/$taskId',
+                    params: { projectId: selectedProjectId, taskId: created.id }
+                })
+            }
         } catch (error) {
             addToast({
                 title: t('projects.tasks.createFailed'),
@@ -723,7 +748,7 @@ export default function ProjectsPage() {
                 url: ''
             })
         }
-    }, [selectedProjectId, createTask, addToast, t])
+    }, [selectedProjectId, createTask, addToast, navigate, startTaskSession, t])
 
     const handleBackToProjects = useCallback(() => {
         void navigate({ to: '/projects' })

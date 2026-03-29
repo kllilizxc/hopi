@@ -17,6 +17,41 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { useArchiveProject } from '@/hooks/mutations/useArchiveProject'
 import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
+import { useVerifyProjectAutomation } from '@/hooks/mutations/useVerifyProjectAutomation'
+
+type AutomationReadinessStatus = 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+
+function getAutomationReadinessVariant(status: AutomationReadinessStatus): 'default' | 'secondary' | 'success' | 'warning' | 'error' {
+    switch (status) {
+        case 'ready':
+            return 'success'
+        case 'degraded':
+            return 'warning'
+        case 'blocked':
+            return 'error'
+        case 'checking':
+            return 'secondary'
+        case 'unknown':
+        default:
+            return 'default'
+    }
+}
+
+function getAutomationReadinessLabelKey(status: AutomationReadinessStatus): string {
+    switch (status) {
+        case 'ready':
+            return 'projects.automation.readinessReady'
+        case 'degraded':
+            return 'projects.automation.readinessDegraded'
+        case 'blocked':
+            return 'projects.automation.readinessBlocked'
+        case 'checking':
+            return 'projects.automation.readinessChecking'
+        case 'unknown':
+        default:
+            return 'projects.automation.readinessUnknown'
+    }
+}
 
 function WorkspacesBadge(props: { ok: boolean; label: string }) {
     return (
@@ -70,10 +105,11 @@ export function ProjectSettingsPage() {
     const { api } = useAppContext()
     const { projectId } = useParams({ from: '/projects/$projectId/settings' })
 
-    const { project, isLoading: projectLoading, error: projectError } = useProject(api, projectId)
+    const { project, isLoading: projectLoading, error: projectError, refetch: refetchProject } = useProject(api, projectId)
     const { workspaces, isLoading: workspacesLoading, error: workspacesError } = useWorkspaces(api, projectId)
     const { updateProject, isPending: isSavingProject } = useUpdateProject(api)
     const { archiveProject, isPending: isArchivingProject } = useArchiveProject(api)
+    const { verifyProjectAutomation, isPending: isVerifyingAutomation } = useVerifyProjectAutomation(api)
 
     const isPending = isSavingProject || isArchivingProject
     const isWorktreeLocked = Boolean(project?.worktreeLocked)
@@ -93,6 +129,7 @@ export function ProjectSettingsPage() {
     const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
     const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+    const [automationVerifyError, setAutomationVerifyError] = useState<string | null>(null)
 
     const [pathExistence, setPathExistence] = useState<Record<string, boolean>>({})
 
@@ -220,6 +257,30 @@ export function ProjectSettingsPage() {
         void navigate({ to: '/projects' })
     }, [project, archiveProject, addToast, t, navigate])
 
+    const handleVerifyAutomation = useCallback(async () => {
+        if (!project) return
+        setAutomationVerifyError(null)
+        try {
+            const result = await verifyProjectAutomation(project.id)
+            await refetchProject()
+            addToast({
+                title: t('projects.automation.verifySuccess'),
+                body: t(getAutomationReadinessLabelKey(result.verification.status)),
+                sessionId: '',
+                url: ''
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : t('projects.automation.verifyFailed')
+            setAutomationVerifyError(message)
+            addToast({
+                title: t('projects.automation.verifyFailed'),
+                body: message,
+                sessionId: '',
+                url: ''
+            })
+        }
+    }, [project, verifyProjectAutomation, refetchProject, addToast, t])
+
     const header = (
         <PageHeader
             title={t('projects.settings.title')}
@@ -251,6 +312,12 @@ export function ProjectSettingsPage() {
             </div>
         )
     }
+
+    const automationReadinessStatus = (project.automationReadinessStatus ?? 'unknown') as AutomationReadinessStatus
+    const automationReadinessSummary = project.automationReadinessSummary?.trim() || t('projects.automation.readinessSummaryEmpty')
+    const automationReadinessCheckedAt = project.automationReadinessCheckedAt
+        ? new Date(project.automationReadinessCheckedAt).toLocaleString()
+        : t('projects.automation.readinessNotChecked')
 
     return (
         <div className="h-full flex flex-col">
@@ -332,6 +399,34 @@ export function ProjectSettingsPage() {
 
                         <div className="space-y-2">
                             <div className="text-sm font-semibold">{t('projects.automation.title')}</div>
+                            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 space-y-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="space-y-1">
+                                        <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.readiness')}</div>
+                                        <Tag variant={getAutomationReadinessVariant(automationReadinessStatus)}>
+                                            {t(getAutomationReadinessLabelKey(automationReadinessStatus))}
+                                        </Tag>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={handleVerifyAutomation}
+                                        disabled={isVerifyingAutomation}
+                                    >
+                                        {isVerifyingAutomation ? t('projects.automation.verifying') : t('projects.automation.verify')}
+                                    </Button>
+                                </div>
+                                <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.readinessHint')}</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    {t('projects.automation.lastChecked')}: {automationReadinessCheckedAt}
+                                </div>
+                                <div className="rounded-md bg-[var(--app-subtle-bg)] p-3 text-xs whitespace-pre-wrap break-words">
+                                    {automationReadinessSummary}
+                                </div>
+                                {automationVerifyError ? (
+                                    <div className="text-xs text-red-600">{automationVerifyError}</div>
+                                ) : null}
+                            </div>
 
                             <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                                 <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={isPending} />

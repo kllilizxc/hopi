@@ -16,16 +16,44 @@ describe('workflowStrategy', () => {
         expect(getDefaultWorkflowPhase({ workflowProfile: 'gsd' })).toBe('discuss')
     })
 
-    it('applies built-in gsd behavior', () => {
+    it('applies built-in gsd behavior without skipping discuss/plan', () => {
         const strategy = getWorkflowStrategy({ workflowProfile: 'gsd' })
         expect(strategy.canAutoRunTask({ workflowPhase: 'execute_ready' })).toBe(true)
         expect(strategy.canAutoRunTask({ workflowPhase: 'discuss' })).toBe(false)
+        expect(strategy.getTaskPatchForTransition('session_started', {
+            status: 'planned',
+            workflowPhase: 'discuss'
+        })).toEqual({
+            status: 'planned',
+            workflowPhase: 'discuss'
+        })
+        expect(strategy.getTaskPatchForTransition('task_prompted', {
+            status: 'planned',
+            workflowPhase: 'discuss'
+        })).toEqual({
+            status: 'planned',
+            workflowPhase: 'discuss'
+        })
+        expect(strategy.getTaskPatchForTransition('task_prompted', {
+            status: 'planned',
+            workflowPhase: 'execute_ready'
+        })).toEqual({
+            status: 'in_progress',
+            workflowPhase: 'execute'
+        })
         expect(strategy.getTaskPatchForTransition('assistant_ready', {
             status: 'in_progress',
             workflowPhase: 'execute'
         })).toEqual({
             status: 'in_review',
             workflowPhase: 'verify'
+        })
+        expect(strategy.getTaskPatchForTransition('assistant_ready', {
+            status: 'planned',
+            workflowPhase: 'plan'
+        })).toEqual({
+            status: 'planned',
+            workflowPhase: 'plan'
         })
     })
 

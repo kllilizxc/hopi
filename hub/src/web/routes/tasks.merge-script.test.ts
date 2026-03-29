@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { PRODUCT_ENV, PRODUCT_MERGE_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -8,6 +8,50 @@ import { createTasksRoutes } from './tasks'
 const MERGE_BASE = '1111111111111111111111111111111111111111'
 const SNAPSHOT_REF = '2222222222222222222222222222222222222222'
 const TARGET_HEAD = '3333333333333333333333333333333333333333'
+const VALID_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash',
+    '  conflictResolution:',
+    '    mode: ai',
+    '    maxAttempts: 2'
+].join('\n')
+const VERIFY_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash',
+    '  verify:',
+    '    - type: run',
+    '      cwd: .',
+    '      run: ["bun", "test"]',
+    '    - type: snapshot_contains_changes'
+].join('\n')
 
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
@@ -29,7 +73,7 @@ function seedMergeTask(store: Store, options: {
     taskId: string
     sessionId: string
     status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
-}): void {
+}) {
     store.projects.createProject({
         id: options.projectId,
         namespace: 'default',
@@ -43,59 +87,50 @@ function seedMergeTask(store: Store, options: {
         id: options.taskId,
         projectId: options.projectId,
         title: 'Merge Task',
-        status: options.status ?? 'in_progress',
+        status: options.status ?? 'in_review',
         workflowProfile: 'default',
         activeSessionId: options.sessionId
     })
 }
 
-function createMergeVerificationSnapshot(overrides?: Partial<{
-    success: boolean
-    targetBranch: string
-    sourceBranch: string
-    mergeBase: string
-    snapshotRef: string
-    expectedChangeCount: number
-    error: string
-}>): {
-    success: boolean
-    targetBranch?: string
-    sourceBranch?: string
-    mergeBase?: string
-    snapshotRef?: string
-    expectedChangeCount?: number
-    error?: string
-} {
+function createSession(sessionId: string) {
+    return {
+        id: sessionId,
+        namespace: 'default',
+        active: true,
+        thinking: false,
+        metadata: {
+            path: '/tmp/worktree',
+            host: 'test-host',
+            worktree: {
+                basePath: '/tmp/base',
+                branch: 'task-branch',
+                name: 'task-branch'
+            }
+        },
+        agentState: null
+    }
+}
+
+function createContractResponse(manifest = VALID_ACTIONS_MANIFEST) {
+    return {
+        success: true,
+        content: Buffer.from(manifest, 'utf8').toString('base64')
+    }
+}
+
+function createMergeVerificationSnapshot() {
     return {
         success: true,
         targetBranch: 'main',
         sourceBranch: 'task-branch',
         mergeBase: MERGE_BASE,
         snapshotRef: SNAPSHOT_REF,
-        expectedChangeCount: 1,
-        ...overrides
+        expectedChangeCount: 1
     }
 }
 
-function createMergeVerificationResult(overrides?: Partial<{
-    success: boolean
-    verified: boolean
-    targetBranch: string
-    mergeBase: string
-    snapshotRef: string
-    expectedChangeCount: number
-    targetHead: string
-    error: string
-}>): {
-    success: boolean
-    verified?: boolean
-    targetBranch?: string
-    mergeBase?: string
-    snapshotRef?: string
-    expectedChangeCount?: number
-    targetHead?: string
-    error?: string
-} {
+function createMergeVerificationResult() {
     return {
         success: true,
         verified: true,
@@ -103,8 +138,7 @@ function createMergeVerificationResult(overrides?: Partial<{
         mergeBase: MERGE_BASE,
         snapshotRef: SNAPSHOT_REF,
         expectedChangeCount: 1,
-        targetHead: TARGET_HEAD,
-        ...overrides
+        targetHead: TARGET_HEAD
     }
 }
 
@@ -113,7 +147,7 @@ async function waitForTask(options: {
     taskId: string
     predicate: (task: ReturnType<Store['tasks']['getTaskByNamespace']>) => boolean
     timeoutMs?: number
-}): Promise<void> {
+}) {
     const timeoutMs = options.timeoutMs ?? 2_000
     const startedAt = Date.now()
 
@@ -128,195 +162,26 @@ async function waitForTask(options: {
     throw new Error('Timed out waiting for task update')
 }
 
-describe('tasks merge route conversation kickoff', () => {
-    it('auto-runs the merge script directly and persists verified success without agent handoff', async () => {
+describe('tasks merge route contract workflow', () => {
+    it('lands a task with the platform merge workflow without agent handoff', async () => {
         const store = new Store(':memory:')
-        const projectId = 'project-merge-script'
-        const taskId = 'task-merge-script'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-script',
-            {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
+        const projectId = 'project-merge-platform-success'
+        const taskId = 'task-merge-platform-success'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-success', createSession('session-merge-success').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
 
-        let mergeStateCalls = 0
-        let captureCalls = 0
-        let verifyCalls = 0
-        let runBashCalls = 0
+        let mergeCalls = 0
         let sendMessageCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
+        const session = createSession(sessionId)
         const engine = {
             resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
+                return { ok: true, sessionId, session }
             },
             getSessionByNamespace() {
                 return session
             },
-            async gitMergeWorktreeState() {
-                mergeStateCalls += 1
-                if (mergeStateCalls === 1) {
-                    return {
-                        success: true,
-                        sourceBranch: 'task-branch',
-                        hasWorkingTreeChanges: true,
-                        committedChangedCount: 2,
-                        mergeable: true
-                    }
-                }
-                return {
-                    success: true,
-                    sourceBranch: 'task-branch',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 0,
-                    mergeable: false
-                }
-            },
-            async gitCaptureWorktreeMergeSnapshot() {
-                captureCalls += 1
-                return createMergeVerificationSnapshot()
-            },
-            async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
-                return createMergeVerificationResult()
-            },
-            async runBash(_sessionId: string, params: { command: string; cwd?: string; timeout?: number }) {
-                runBashCalls += 1
-                expect(params.cwd).toBe('/tmp/worktree')
-                expect(params.command).toContain(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
-                expect(params.command).toContain(`${PRODUCT_ENV.PROJECT_ROOT}='/tmp/worktree'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.TASK_ID}='${taskId}'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.TASK_PROJECT_ID}='${projectId}'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.MERGE_TARGET_BRANCH}='main'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.MERGE_SOURCE_BRANCH}='task-branch'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.WORKTREE_BASE_PATH}='/tmp/base'`)
-                expect(params.command).toContain(`${PRODUCT_ENV.WORKTREE_PATH}='/tmp/worktree'`)
-                return {
-                    success: true,
-                    stdout: 'merge ok\n',
-                    stderr: ''
-                }
-            },
-            async sendMessage() {
-                sendMessageCalls += 1
-                throw new Error('sendMessage should not run after direct merge success')
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as {
-            ok?: boolean
-            skippedReason?: string | null
-            commitHash?: string | null
-        }
-        expect(body.ok).toBe(true)
-        expect(body.skippedReason).toBeNull()
-        expect(body.commitHash).toBe(TARGET_HEAD)
-
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
-        expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
-        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
-        expect(mergeStateCalls).toBe(2)
-        expect(captureCalls).toBe(1)
-        expect(verifyCalls).toBe(1)
-        expect(runBashCalls).toBe(1)
-        expect(sendMessageCalls).toBe(0)
-
-        const transcript = store.messages.getMessages(sessionId, 10)
-        expect(transcript).toHaveLength(1)
-        expect(JSON.stringify(transcript[0]?.content)).toContain('HOPI auto-ran')
-        expect(JSON.stringify(transcript[0]?.content)).toContain('repo-truth verification passed')
-    })
-
-    it('hands off to the agent with captured CLI output and no hidden backend retry when direct merge fails', async () => {
-        const store = new Store(':memory:')
-        const projectId = 'project-merge-script-blocked'
-        const taskId = 'task-merge-script-blocked'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-script-blocked',
-            {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
-
-        let promptText = ''
-        let gitMergeWorktreeCalls = 0
-        let runBashCalls = 0
-        let verifyCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
-            },
-            getSessionByNamespace() {
-                return session
+            async readSessionFile() {
+                return createContractResponse()
             },
             async gitMergeWorktreeState() {
                 return {
@@ -330,178 +195,101 @@ describe('tasks merge route conversation kickoff', () => {
             async gitCaptureWorktreeMergeSnapshot() {
                 return createMergeVerificationSnapshot()
             },
+            async gitMergeWorktree(_sessionId: string, params: { strategy?: string }) {
+                mergeCalls += 1
+                expect(params.strategy).toBe('squash')
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
             async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
                 return createMergeVerificationResult()
+            },
+            async sendMessage() {
+                sendMessageCalls += 1
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { ok?: boolean; skippedReason?: string | null; commitHash?: string | null }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBeNull()
+        expect(body.commitHash).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(1)
+        expect(sendMessageCalls).toBe(0)
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
+        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
+
+        const transcript = JSON.stringify(store.messages.getMessages(sessionId, 20).map((message) => message.content))
+        expect(transcript).toContain('completed the platform merge')
+    })
+
+    it('hands conflicts to the linked session, then retries platform merge after the assistant is ready', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-platform-conflict'
+        const taskId = 'task-merge-platform-conflict'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-conflict', createSession('session-merge-conflict').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+
+        let mergeCalls = 0
+        let sendMessageCalls = 0
+        const session = createSession(sessionId)
+        const engine = {
+            resolveSessionAccess() {
+                return { ok: true, sessionId, session }
+            },
+            getSessionByNamespace() {
+                return session
+            },
+            async readSessionFile() {
+                return createContractResponse()
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 2,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
             },
             async gitMergeWorktree() {
-                gitMergeWorktreeCalls += 1
+                mergeCalls += 1
+                if (mergeCalls === 1) {
+                    return {
+                        success: false,
+                        error: 'Merge conflicts detected; manual resolution required',
+                        conflictFiles: ['src/app.ts']
+                    }
+                }
                 return {
                     success: true,
-                    commitHash: 'unexpected'
+                    commitHash: TARGET_HEAD
                 }
-            },
-            async runBash() {
-                runBashCalls += 1
-                return {
-                    success: false,
-                    stdout: '',
-                    stderr: 'script exploded',
-                    error: 'script exploded'
-                }
-            },
-            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
-                promptText = payload.text
-                store.messages.addMessage(sessionId, {
-                    role: 'user',
-                    content: { type: 'text', text: payload.text }
-                }, payload.localId)
-
-                setTimeout(() => {
-                    store.messages.addMessage(sessionId, {
-                        role: 'assistant',
-                        content: { type: 'event', data: { type: 'ready', forLocalKey: payload.localId } }
-                    })
-                }, 10)
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as { skippedReason?: string | null }
-        expect(body.skippedReason).toBe('running')
-        expect(promptText).toContain('HOPI already attempted the repo merge script directly before this prompt.')
-        expect(promptText).toContain('script exploded')
-        expect(promptText).toContain('Retry command after repairs:')
-        expect(promptText).toContain('Do not assume `git checkout main` inside the task worktree is safe')
-        expect(promptText).toContain(`${PRODUCT_ENV.WORKTREE_BASE_PATH}`)
-
-        await waitForTask({
-            store,
-            taskId,
-            predicate: (task) => task?.mergeRuntime?.status === 'blocked'
-        })
-
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.worktreeMergedAt).toBeNull()
-        expect(updatedTask?.mergeRuntime?.status).toBe('blocked')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('Same blocker repeated with no repo progress')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('change the repo state or `.hopi/merge.sh`')
-        expect(gitMergeWorktreeCalls).toBe(0)
-        expect(runBashCalls).toBe(1)
-        expect(verifyCalls).toBe(0)
-
-        const transcript = store.messages.getMessages(sessionId, 10)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('script exploded')
-    })
-
-
-    it('marks merge complete after an idle assistant summary even without a ready event', async () => {
-        const store = new Store(':memory:')
-        const projectId = 'project-merge-summary-success'
-        const taskId = 'task-merge-summary-success'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-summary-success',
-            {
-                path: '/tmp/worktree-summary-success',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-summary-success',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
-
-        let mergeStateCalls = 0
-        let captureCalls = 0
-        let verifyCalls = 0
-        let runBashCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree-summary-success',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-summary-success',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
-            },
-            getSessionByNamespace() {
-                return session
-            },
-            async gitMergeWorktreeState() {
-                mergeStateCalls += 1
-                return mergeStateCalls <= 2
-                    ? {
-                        success: true,
-                        sourceBranch: 'task-branch',
-                        hasWorkingTreeChanges: true,
-                        committedChangedCount: 2,
-                        mergeable: true
-                    }
-                    : {
-                        success: true,
-                        sourceBranch: 'task-branch',
-                        hasWorkingTreeChanges: false,
-                        committedChangedCount: 0,
-                        mergeable: false
-                    }
-            },
-            async gitCaptureWorktreeMergeSnapshot() {
-                captureCalls += 1
-                return createMergeVerificationSnapshot()
             },
             async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
                 return createMergeVerificationResult()
             },
-            async runBash() {
-                runBashCalls += 1
-                return {
-                    success: false,
-                    stdout: '',
-                    stderr: 'script exploded',
-                    error: 'script exploded'
-                }
-            },
             async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
+                sendMessageCalls += 1
                 store.messages.addMessage(sessionId, {
                     role: 'user',
                     content: { type: 'text', text: payload.text }
                 }, payload.localId)
-
-                setTimeout(() => {
-                    store.messages.addMessage(sessionId, {
-                        role: 'assistant',
-                        content: { type: 'text', text: 'Summary\n\nMerge script repaired and merge completed successfully.' }
-                    })
-                }, 10)
             },
             handleRealtimeEvent() {}
         } as unknown as SyncEngine
@@ -516,104 +304,266 @@ describe('tasks merge route conversation kickoff', () => {
         expect(response.status).toBe(200)
         const body = await response.json() as { skippedReason?: string | null }
         expect(body.skippedReason).toBe('running')
+        expect(sendMessageCalls).toBe(1)
+
+        const promptMessage = store.messages.getMessages(sessionId, 20).find((message) => message.localId?.startsWith('auto:merge_runtime:'))
+        expect(promptMessage?.localId).toBeTruthy()
+
+        if (!promptMessage?.localId) {
+            throw new Error('Expected merge repair prompt')
+        }
+
+        store.messages.addMessage(sessionId, {
+            role: 'assistant',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: promptMessage.localId
+                }
+            }
+        }, `ready:${promptMessage.localId}`)
 
         await waitForTask({
             store,
             taskId,
-            predicate: (task) => task?.mergeRuntime?.status === 'succeeded',
-            timeoutMs: 1_000
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
         })
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
-        expect(updatedTask?.worktreeMergedAt).toBeTypeOf('number')
         expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
-        expect(captureCalls).toBe(1)
-        expect(verifyCalls).toBe(1)
-        expect(runBashCalls).toBe(1)
+        expect(mergeCalls).toBe(2)
+
+        const transcript = JSON.stringify(store.messages.getMessages(sessionId, 30).map((message) => message.content))
+        expect(transcript).toContain('found conflicts')
+        expect(transcript).toContain('retried the platform merge')
     })
 
-
-    it('waits for a thinking session, then auto-runs the merge script directly once it becomes free', async () => {
+    it('runs contract-defined merge verify commands before landing', async () => {
         const store = new Store(':memory:')
-        const projectId = 'project-merge-script-queued'
-        const taskId = 'task-merge-script-queued'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-script-queued',
-            {
-                path: '/tmp/worktree-queued',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-queued',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
+        const projectId = 'project-merge-platform-verify-run'
+        const taskId = 'task-merge-platform-verify-run'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-verify-run', createSession('session-merge-verify-run').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
 
-        let captureCalls = 0
-        let verifyCalls = 0
+        const session = createSession(sessionId)
         let runBashCalls = 0
-        let sendMessageCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: true,
-            metadata: {
-                path: '/tmp/worktree-queued',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-queued',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
-        setTimeout(() => {
-            session.thinking = false
-        }, 20)
-
+        let mergeCalls = 0
         const engine = {
             resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
+                return { ok: true, sessionId, session }
             },
             getSessionByNamespace() {
                 return session
+            },
+            async readSessionFile() {
+                return createContractResponse(VERIFY_ACTIONS_MANIFEST)
+            },
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                runBashCalls += 1
+                expect(params.cwd).toBe('/tmp/worktree')
+                expect(params.command).toContain("'bun' 'test'")
+                expect(params.command).toContain(`${PRODUCT_ENV.PROJECT_ROOT}='/tmp/worktree'`)
+                expect(params.command).toContain(`${PRODUCT_ENV.TASK_ID}='task-merge-platform-verify-run'`)
+                expect(params.command).toContain(`${PRODUCT_ENV.MERGE_TARGET_BRANCH}='main'`)
+                return {
+                    success: true,
+                    stdout: 'tests ok\n',
+                    stderr: ''
+                }
             },
             async gitMergeWorktreeState() {
                 return {
                     success: true,
                     sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: runBashCalls === 0 ? 1 : 0,
-                    mergeable: runBashCalls === 0
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 1,
+                    mergeable: true
                 }
             },
             async gitCaptureWorktreeMergeSnapshot() {
-                captureCalls += 1
                 return createMergeVerificationSnapshot()
             },
-            async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
-                return createMergeVerificationResult()
-            },
-            async runBash() {
-                runBashCalls += 1
+            async gitMergeWorktree() {
+                mergeCalls += 1
                 return {
                     success: true,
-                    stdout: 'merge ok\n',
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        expect(runBashCalls).toBe(1)
+        expect(mergeCalls).toBe(1)
+    })
+
+    it('auto-repairs merge verify command failures, then retries merge after the assistant is ready', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-platform-verify-repair'
+        const taskId = 'task-merge-platform-verify-repair'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-verify-repair', createSession('session-merge-verify-repair').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+
+        const session = createSession(sessionId)
+        let runBashCalls = 0
+        let mergeCalls = 0
+        let sendMessageCalls = 0
+        const engine = {
+            resolveSessionAccess() {
+                return { ok: true, sessionId, session }
+            },
+            getSessionByNamespace() {
+                return session
+            },
+            async readSessionFile() {
+                return createContractResponse(VERIFY_ACTIONS_MANIFEST)
+            },
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                runBashCalls += 1
+                expect(params.command).toContain("'bun' 'test'")
+                if (runBashCalls === 1) {
+                    return {
+                        success: false,
+                        stdout: '',
+                        stderr: 'typecheck failed\n'
+                    }
+                }
+                return {
+                    success: true,
+                    stdout: 'tests ok\n',
                     stderr: ''
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 1,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
+            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
+                sendMessageCalls += 1
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text }
+                }, payload.localId)
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { skippedReason?: string | null }
+        expect(body.skippedReason).toBe('running')
+        expect(sendMessageCalls).toBe(1)
+        expect(mergeCalls).toBe(0)
+
+        const promptMessage = store.messages.getMessages(sessionId, 20).find((message) => message.localId?.startsWith('auto:merge_runtime:'))
+        expect(promptMessage?.localId).toBeTruthy()
+        const transcriptBeforeReady = JSON.stringify(store.messages.getMessages(sessionId, 20).map((message) => message.content))
+        expect(transcriptBeforeReady).toContain('merge verification')
+
+        if (!promptMessage?.localId) {
+            throw new Error('Expected merge verify repair prompt')
+        }
+
+        store.messages.addMessage(sessionId, {
+            role: 'assistant',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: promptMessage.localId
+                }
+            }
+        }, `ready:${promptMessage.localId}`)
+
+        await waitForTask({
+            store,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(runBashCalls).toBe(2)
+        expect(mergeCalls).toBe(1)
+
+        const transcript = JSON.stringify(store.messages.getMessages(sessionId, 30).map((message) => message.content))
+        expect(transcript).toContain('merge verification')
+        expect(transcript).toContain('retried the platform merge')
+    })
+
+    it('blocks immediately when the merge workflow contract forbids conflicted paths', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-platform-blocked'
+        const taskId = 'task-merge-platform-blocked'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-blocked', createSession('session-merge-blocked').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+
+        const manifest = VALID_ACTIONS_MANIFEST.concat('\n    blockPaths: ["infra/**"]')
+        const session = createSession(sessionId)
+        let sendMessageCalls = 0
+        const engine = {
+            resolveSessionAccess() {
+                return { ok: true, sessionId, session }
+            },
+            getSessionByNamespace() {
+                return session
+            },
+            async readSessionFile() {
+                return createContractResponse(manifest)
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 1,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitMergeWorktree() {
+                return {
+                    success: false,
+                    error: 'Merge conflicts detected; manual resolution required',
+                    conflictFiles: ['infra/main.tf']
                 }
             },
             async sendMessage() {
@@ -629,423 +579,11 @@ describe('tasks merge route conversation kickoff', () => {
             body: JSON.stringify({})
         })
 
-        expect(response.status).toBe(200)
-        const body = await response.json() as { skippedReason?: string | null }
-        expect(body.skippedReason).toBe('queued')
-        expect(runBashCalls).toBe(0)
-
-        await waitForTask({
-            store,
-            taskId,
-            predicate: (task) => Boolean(task?.worktreeMergedAt),
-            timeoutMs: 2_000
-        })
-
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
-        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
-        expect(runBashCalls).toBe(1)
-        expect(captureCalls).toBe(1)
-        expect(verifyCalls).toBe(1)
+        expect(response.status).toBe(500)
         expect(sendMessageCalls).toBe(0)
-
-        const transcript = store.messages.getMessages(sessionId, 10)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('merge ok')
-    })
-
-    it('waits for approval requests to clear, then auto-runs the merge script directly without agent handoff', async () => {
-        const store = new Store(':memory:')
-        const projectId = 'project-merge-script-approval'
-        const taskId = 'task-merge-script-approval'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-script-approval',
-            {
-                path: '/tmp/worktree-approval',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-approval',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
-
-        let captureCalls = 0
-        let verifyCalls = 0
-        let runBashCalls = 0
-        let sendMessageCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree-approval',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base-approval',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: {
-                requests: {
-                    req1: { id: 'req1' }
-                } as Record<string, { id: string }>
-            }
-        }
-
-        setTimeout(() => {
-            session.agentState = { requests: {} }
-        }, 20)
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
-            },
-            getSessionByNamespace() {
-                return session
-            },
-            async gitMergeWorktreeState() {
-                return {
-                    success: true,
-                    sourceBranch: 'task-branch',
-                    targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: runBashCalls === 0 ? 1 : 0,
-                    mergeable: runBashCalls === 0
-                }
-            },
-            async gitCaptureWorktreeMergeSnapshot() {
-                captureCalls += 1
-                return createMergeVerificationSnapshot()
-            },
-            async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
-                return createMergeVerificationResult()
-            },
-            async runBash() {
-                runBashCalls += 1
-                return {
-                    success: true,
-                    stdout: 'merge ok after approval\n',
-                    stderr: ''
-                }
-            },
-            async sendMessage() {
-                sendMessageCalls += 1
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as { skippedReason?: string | null }
-        expect(body.skippedReason).toBe('approval_pending')
-        expect(runBashCalls).toBe(0)
-
-        await waitForTask({
-            store,
-            taskId,
-            predicate: (task) => Boolean(task?.worktreeMergedAt),
-            timeoutMs: 2_000
-        })
-
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
-        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
-        expect(runBashCalls).toBe(1)
-        expect(captureCalls).toBe(1)
-        expect(verifyCalls).toBe(1)
-        expect(sendMessageCalls).toBe(0)
-
-        const transcript = store.messages.getMessages(sessionId, 10)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('merge ok after approval')
-    })
-
-    it('hands off to the agent when direct merge finishes but repo-truth verification still cannot prove success', async () => {
-        const store = new Store(':memory:')
-        const projectId = 'project-merge-verification-blocked'
-        const taskId = 'task-merge-verification-blocked'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-verification-blocked',
-            {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
-
-        let promptText = ''
-        let mergeStateCalls = 0
-        let verifyCalls = 0
-        let runBashCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
-            },
-            getSessionByNamespace() {
-                return session
-            },
-            async gitMergeWorktreeState() {
-                mergeStateCalls += 1
-                if (mergeStateCalls === 1) {
-                    return {
-                        success: true,
-                        sourceBranch: 'task-branch',
-                        hasWorkingTreeChanges: true,
-                        committedChangedCount: 2,
-                        mergeable: true
-                    }
-                }
-                return {
-                    success: true,
-                    sourceBranch: 'task-branch',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 0,
-                    mergeable: false
-                }
-            },
-            async gitCaptureWorktreeMergeSnapshot() {
-                return createMergeVerificationSnapshot()
-            },
-            async gitVerifyWorktreeMerge() {
-                verifyCalls += 1
-                return createMergeVerificationResult({
-                    verified: false,
-                    error: 'Target branch does not contain the expected worktree changes'
-                })
-            },
-            async runBash() {
-                runBashCalls += 1
-                return {
-                    success: true,
-                    stdout: 'merge ok\n',
-                    stderr: ''
-                }
-            },
-            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
-                promptText = payload.text
-                store.messages.addMessage(sessionId, {
-                    role: 'user',
-                    content: { type: 'text', text: payload.text }
-                }, payload.localId)
-
-                setTimeout(() => {
-                    store.messages.addMessage(sessionId, {
-                        role: 'assistant',
-                        content: { type: 'event', data: { type: 'ready', forLocalKey: payload.localId } }
-                    })
-                }, 10)
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-        const body = await response.json() as { skippedReason?: string | null }
-        expect(body.skippedReason).toBe('running')
-        expect(promptText).toContain('repo-truth verification failed')
-        expect(promptText).toContain('HOPI already attempted the repo merge script directly before this prompt.')
-
-        await waitForTask({
-            store,
-            taskId,
-            predicate: (task) => task?.mergeRuntime?.status === 'blocked'
-        })
-
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.worktreeMergedAt).toBeNull()
-        expect(updatedTask?.mergeRuntime?.status).toBe('blocked')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('Same blocker repeated with no repo progress')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('verify the target branch manually')
-        expect(runBashCalls).toBe(1)
-        expect(verifyCalls).toBe(2)
-    })
-
-    it('increments retry count when a blocked merge is retried into the same verified blocker', async () => {
-        const store = new Store(':memory:')
-        const projectId = 'project-merge-retry-count'
-        const taskId = 'task-merge-retry-count'
-        const sessionId = store.sessions.getOrCreateSession(
-            'session-merge-retry-count',
-            {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            null,
-            'default'
-        ).id
-        seedMergeTask(store, { projectId, taskId, sessionId, status: 'in_progress' })
-        store.tasks.updateTaskByNamespace(taskId, 'default', {
-            mergeRuntime: {
-                status: 'blocked',
-                sessionId,
-                updatedAt: Date.now() - 5_000,
-                requestedAt: Date.now() - 10_000,
-                startedAt: Date.now() - 9_000,
-                completedAt: Date.now() - 5_000,
-                retryCount: 1,
-                failureFingerprint: 'verification_failed:seed',
-                latestNote: 'Previous merge blocker.',
-                blockedReason: 'Target branch does not contain the expected worktree changes'
-            }
-        })
-
-        let mergeStateCalls = 0
-        const session = {
-            id: sessionId,
-            namespace: 'default',
-            active: true,
-            thinking: false,
-            metadata: {
-                path: '/tmp/worktree',
-                host: 'test-host',
-                worktree: {
-                    basePath: '/tmp/base',
-                    branch: 'task-branch',
-                    name: 'task-branch'
-                }
-            },
-            agentState: null
-        }
-
-        const engine = {
-            resolveSessionAccess() {
-                return {
-                    ok: true,
-                    sessionId,
-                    session
-                }
-            },
-            getSessionByNamespace() {
-                return session
-            },
-            async gitMergeWorktreeState() {
-                mergeStateCalls += 1
-                if (mergeStateCalls === 1) {
-                    return {
-                        success: true,
-                        sourceBranch: 'task-branch',
-                        hasWorkingTreeChanges: true,
-                        committedChangedCount: 2,
-                        mergeable: true
-                    }
-                }
-                return {
-                    success: true,
-                    sourceBranch: 'task-branch',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 0,
-                    mergeable: false
-                }
-            },
-            async gitCaptureWorktreeMergeSnapshot() {
-                return createMergeVerificationSnapshot()
-            },
-            async gitVerifyWorktreeMerge() {
-                return createMergeVerificationResult({
-                    verified: false,
-                    error: 'Target branch does not contain the expected worktree changes'
-                })
-            },
-            async runBash() {
-                return {
-                    success: true,
-                    stdout: 'merge ok\n',
-                    stderr: ''
-                }
-            },
-            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
-                store.messages.addMessage(sessionId, {
-                    role: 'user',
-                    content: { type: 'text', text: payload.text }
-                }, payload.localId)
-
-                setTimeout(() => {
-                    store.messages.addMessage(sessionId, {
-                        role: 'assistant',
-                        content: { type: 'event', data: { type: 'ready', forLocalKey: payload.localId } }
-                    })
-                }, 10)
-            },
-            handleRealtimeEvent() {}
-        } as unknown as SyncEngine
-
-        const app = createTestApp(store, engine)
-        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({})
-        })
-
-        expect(response.status).toBe(200)
-
-        await waitForTask({
-            store,
-            taskId,
-            predicate: (task) => task?.mergeRuntime?.status === 'blocked' && task?.mergeRuntime?.retryCount === 2
-        })
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
         expect(updatedTask?.mergeRuntime?.status).toBe('blocked')
-        expect(updatedTask?.mergeRuntime?.retryCount).toBe(2)
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('Same blocker repeated with no repo progress')
-        expect(updatedTask?.mergeRuntime?.failureFingerprint).toContain('verification_failed:')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('blocked path')
     })
-
 })

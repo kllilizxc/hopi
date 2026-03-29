@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { PRODUCT_ENV, PRODUCT_MERGE_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -8,6 +7,24 @@ import { createTasksRoutes } from './tasks'
 const MERGE_BASE = '1111111111111111111111111111111111111111'
 const SNAPSHOT_REF = '2222222222222222222222222222222222222222'
 const TARGET_HEAD = '3333333333333333333333333333333333333333'
+const VALID_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash'
+].join('\n')
 
 function createTestApp(store: Store, engine: SyncEngine | null = null): Hono {
     const app = new Hono()
@@ -108,7 +125,7 @@ describe('tasks workflow strategy routes', () => {
         expect(body.task?.workflowPhase).toBe('done')
     })
 
-    it('auto-starts a merge session, runs the merge script directly, and records CLI output in the session thread', async () => {
+    it('auto-starts a merge session, runs the platform merge workflow, and records the result in the session thread', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-merge-start'
@@ -128,9 +145,8 @@ describe('tasks workflow strategy routes', () => {
             }
         }, null, namespace)
 
-        let runBashCalls = 0
+        let mergeCalls = 0
         let sendMessageCalls = 0
-        let mergeStateCalls = 0
         const engine = {
             startSession: async () => ({
                 type: 'success',
@@ -182,25 +198,20 @@ describe('tasks workflow strategy routes', () => {
                     agentState: null
                 }
             },
-            async gitMergeWorktreeState() {
-                mergeStateCalls += 1
-                if (mergeStateCalls === 1) {
-                    return {
-                        success: true,
-                        mergeable: true,
-                        sourceBranch: 'task-branch',
-                        targetBranch: 'main',
-                        hasWorkingTreeChanges: true,
-                        committedChangedCount: 1
-                    }
-                }
+            async readSessionFile() {
                 return {
                     success: true,
-                    mergeable: false,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: true,
                     sourceBranch: 'task-branch',
                     targetBranch: 'main',
-                    hasWorkingTreeChanges: false,
-                    committedChangedCount: 0
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 1
                 }
             },
             async gitCaptureWorktreeMergeSnapshot() {
@@ -224,15 +235,12 @@ describe('tasks workflow strategy routes', () => {
                     targetHead: TARGET_HEAD
                 }
             },
-            async runBash(_sessionId: string, payload: { command: string; cwd?: string }) {
-                runBashCalls += 1
-                expect(payload.cwd).toBe('/tmp/workspace')
-                expect(payload.command).toContain(PRODUCT_MERGE_SCRIPT_RELATIVE_PATH)
-                expect(payload.command).toContain(`${PRODUCT_ENV.PROJECT_ROOT}='/tmp/workspace'`)
+            async gitMergeWorktree(_sessionId: string, payload: { strategy?: string }) {
+                mergeCalls += 1
+                expect(payload.strategy).toBe('squash')
                 return {
                     success: true,
-                    stdout: 'merge ok\n',
-                    stderr: ''
+                    commitHash: TARGET_HEAD
                 }
             },
             async sendMessage() {
@@ -257,11 +265,10 @@ describe('tasks workflow strategy routes', () => {
         expect(updatedTask?.activeSessionId).toBe(spawned.id)
         expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
         expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
-        expect(runBashCalls).toBe(1)
+        expect(mergeCalls).toBe(1)
         expect(sendMessageCalls).toBe(0)
 
         const transcript = store.messages.getMessages(spawned.id, 10)
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('HOPI auto-ran')
-        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('repo-truth verification passed')
+        expect(JSON.stringify(transcript.map((message) => message.content))).toContain('completed the platform merge')
     })
 })

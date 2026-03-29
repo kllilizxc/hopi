@@ -115,6 +115,8 @@ export class AutoRunScheduler {
                 return
             }
 
+            const projectReadinessReady = project.automationReadinessStatus === 'ready'
+
             const maxRunning = project.maxRunningSessions ?? 5
             const runningCount = this.engine.getSessionsByNamespace(namespace)
                 .filter((session) => session.metadata?.projectId === projectId && session.thinking)
@@ -135,6 +137,9 @@ export class AutoRunScheduler {
             for (const task of planned) {
                 if (started >= capacity) {
                     break
+                }
+                if (!projectReadinessReady && task.source !== 'project_init') {
+                    continue
                 }
                 if (!isTaskAutoRunnable(task)) continue
 

@@ -1,10 +1,11 @@
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
+import type { MergeWorkflow } from '@hopi/protocol/actions'
 import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
 import {
+    PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
     PRODUCT_HEADERS,
     PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
-    PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
     PRODUCT_NAME,
     PRODUCT_PREVIEW_READY_MARKER,
     PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
@@ -17,7 +18,6 @@ import {
     buildApprovalPendingActionRuntimeNote,
     buildQueuedActionRuntimeNote,
     buildRepeatedTaskActionFailureNote,
-    buildTaskActionCommandReportLines,
     getSessionRunnableState,
     sessionHasPendingRequests,
     trimTaskActionOutput,
@@ -26,7 +26,22 @@ import {
 } from '../../utils/taskActionFlow'
 import { buildTaskMergeRuntime as buildSharedTaskMergeRuntime, buildTaskPreviewRuntime as buildSharedTaskPreviewRuntime, hasMeaningfulTaskActionRuntimeChange } from '../../utils/taskActionRuntime'
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
-import { buildMergeScriptCommand, runMergeScriptIfPresent, type ScriptExecutionResult } from '../../sync/projectScripts'
+import {
+    buildMergeConflictResolutionPrompt,
+    findBlockedMergeConflictPath,
+    getMergeRunVerifyChecks,
+    loadMergeWorkflowFromSession,
+    type MergeVerifyRunCheckResult,
+    resolveMergeConflictResolutionMaxAttempts,
+    resolveMergeConflictResolutionMode,
+    requiresSnapshotMergeVerification,
+    runMergeVerifyChecks
+} from '../../sync/mergeWorkflowRunner'
+import {
+    resolveSessionLocalPath,
+    resolveSessionPreferredRootPath,
+    resolveSessionWorktreePath
+} from '../../sync/sessionRootPaths'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { relinkTaskToSession, resolveBestUsableTaskSession } from '../../sync/sessionTaskLink'
 import { startSessionFromTask } from '../../sync/taskSessionService'
@@ -621,10 +636,6 @@ function buildMergeStateCheckBlockedNote(error: string): string {
     return `${error}. Inspect the linked session output, clear the repo blocker inside the workspace, then retry merge.`
 }
 
-function buildMergeConversationBlockedNote(): string {
-    return 'Merge request finished, but the branch is still mergeable. Inspect the linked session tool output, fix the blocker inside the workspace, and retry merge there. Stop only for manual judgment or out-of-sandbox work.'
-}
-
 type MergeVerificationSnapshot = {
     mergeBase: string
     snapshotRef: string
@@ -641,6 +652,360 @@ function buildMergeVerificationBlockedNote(error?: string | null): string {
     }
 
     return 'Merge finished, but repo-truth verification could not prove the target branch contains the expected worktree changes. Inspect the linked session output, verify the target branch manually, then retry if needed.'
+}
+
+function buildMissingMergeWorkflowContractNote(manifestPath: string): string {
+    return `Merge workflow contract is missing (${manifestPath}). Create ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH} and retry merge.`
+}
+
+function buildInvalidMergeWorkflowContractNote(manifestPath: string, error: string): string {
+    return `Merge workflow contract is invalid (${manifestPath}): ${error}. Fix ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH} and retry merge.`
+}
+
+function buildPlatformMergeFailureNote(error: string): string {
+    return `Platform merge failed: ${error}. Inspect the linked session output or repo state, then retry merge.`
+}
+
+function buildMergeVerifyRunBlockedNote(error: string): string {
+    return `Merge verify command failed before landing: ${error}. Fix the source branch in the linked worktree, then retry merge.`
+}
+
+function buildMergeVerifyRepairAttemptNote(attempt: number): string {
+    return `Merge verify checks failed. Repairing the linked worktree before retry (${attempt}).`
+}
+
+function buildManualConflictResolutionNote(conflictFiles: string[]): string {
+    const suffix = conflictFiles.length > 0
+        ? ` Conflicts: ${conflictFiles.join(', ')}.`
+        : ''
+    return `Platform merge found conflicts that need manual resolution.${suffix} Resolve them in the linked worktree, then retry merge.`
+}
+
+function buildBlockedConflictPathNote(conflictFile: string): string {
+    return `Platform merge found a conflict in blocked path "${conflictFile}". Manual review required before retrying merge.`
+}
+
+function buildConflictResolutionExhaustedNote(attempts: number, conflictFiles: string[]): string {
+    const suffix = conflictFiles.length > 0
+        ? ` Latest conflicts: ${conflictFiles.join(', ')}.`
+        : ''
+    return `Platform merge still conflicts after ${attempts} AI repair attempt${attempts === 1 ? '' : 's'}.${suffix} Manual review required.`
+}
+
+function buildMergeVerifyRepairExhaustedNote(attempts: number): string {
+    return `Merge verify checks still fail after ${attempts} AI repair attempt${attempts === 1 ? '' : 's'}. Manual review required.`
+}
+
+function buildPlatformMergeSuccessMessage(options: {
+    targetBranch: string
+    strategy: MergeWorkflow['strategy']
+    targetHead: string | null
+    autoResolved: boolean
+}): string {
+    return [
+        options.autoResolved
+            ? 'HOPI retried the platform merge after AI repair and verified the result.'
+            : 'HOPI completed the platform merge and verified the result.',
+        '',
+        `Target branch: ${options.targetBranch}`,
+        `Strategy: ${options.strategy}`,
+        options.targetHead ? `Target head: ${options.targetHead}` : null
+    ].filter((line): line is string => Boolean(line)).join('\n')
+}
+
+function buildPlatformMergeConflictMessage(options: {
+    targetBranch: string
+    strategy: MergeWorkflow['strategy']
+    conflictFiles: string[]
+}): string {
+    return [
+        'HOPI attempted the platform merge and found conflicts before landing the task.',
+        '',
+        `Target branch: ${options.targetBranch}`,
+        `Strategy: ${options.strategy}`,
+        options.conflictFiles.length > 0
+            ? `Conflicts: ${options.conflictFiles.join(', ')}`
+            : 'Conflicts: inspect the latest merge stderr for exact paths.'
+    ].join('\n')
+}
+
+function buildMergeVerifyFailureMessage(options: {
+    targetBranch: string
+    failedCheck: MergeVerifyRunCheckResult | null
+}): string {
+    return [
+        'HOPI attempted merge verification before landing and found a repairable repo issue.',
+        '',
+        `Target branch: ${options.targetBranch}`,
+        options.failedCheck?.command ? `Failed check: ${options.failedCheck.command}` : null,
+        options.failedCheck?.summary ? `Summary: ${options.failedCheck.summary}` : null
+    ].filter((line): line is string => Boolean(line)).join('\n')
+}
+
+function buildMergeVerifyRepairPrompt(options: {
+    task: Pick<StoredTask, 'id' | 'title'>
+    targetBranch: string
+    sourceBranch: string | null
+    rootPath: string | null
+    worktreeBasePath?: string | null
+    repairAttempt: number
+    maxAttempts: number
+    failedCheck: MergeVerifyRunCheckResult | null
+    handoffNote?: string | null
+}): string {
+    const failedCommand = options.failedCheck?.command?.trim() || null
+    const failedSummary = options.failedCheck?.summary?.trim() || 'Merge verify command failed before landing.'
+    const stdout = trimMergeCommandOutput(options.failedCheck?.stdout, 4_000)
+    const stderr = trimMergeCommandOutput(options.failedCheck?.stderr, 4_000)
+
+    return [
+        options.handoffNote ?? null,
+        'HOPI already attempted merge verification before landing this task and it failed.',
+        '',
+        `Task: ${options.task.title}`,
+        `Task id: ${options.task.id}`,
+        `Source branch: ${options.sourceBranch ?? '(inspect current branch first)'}`,
+        `Target branch: ${options.targetBranch}`,
+        options.rootPath
+            ? `Working directory: ${options.rootPath}`
+            : 'Working directory: inspect the linked worktree path before editing files.',
+        options.worktreeBasePath ? `Base repo path: ${options.worktreeBasePath}` : null,
+        `Repair attempt: ${options.repairAttempt} / ${options.maxAttempts}`,
+        failedCommand ? `Failed verify command: \`${failedCommand}\`` : null,
+        `Failure summary: ${failedSummary}`,
+        stdout ? `Verify stdout:\n\`\`\`\n${stdout}\n\`\`\`` : null,
+        stderr ? `Verify stderr:\n\`\`\`\n${stderr}\n\`\`\`` : null,
+        '',
+        'Repair rules:',
+        '- Stay on the task source branch in this worktree.',
+        '- Fix the real repo/code/config issue that caused merge verification to fail.',
+        '- Keep changes minimal; avoid unrelated refactors.',
+        '- Do not create or edit legacy merge scripts.',
+        '- If you need human product judgment, stop and explain the exact blocker.',
+        '',
+        'Required outcome:',
+        '- Source branch is updated so HOPI can rerun merge verification and the platform merge.',
+        '- Reply with a short summary of what changed or why you are blocked.'
+    ].filter((line): line is string => Boolean(line)).join('\n')
+}
+
+type PlatformMergeAttemptOutcome =
+    | {
+        kind: 'success'
+        targetHead: string | null
+        transcriptText: string
+    }
+    | {
+        kind: 'repair'
+        repairKind: 'conflict' | 'verify'
+        promptText: string
+        transcriptText: string
+        failureFingerprint: string
+        conflictFiles?: string[]
+    }
+    | {
+        kind: 'blocked'
+        note: string
+        blockedReason: string
+        failureFingerprint: string
+    }
+
+async function attemptPlatformMerge(options: {
+    engine: SyncEngine
+    sessionId: string
+    session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
+    task: Pick<StoredTask, 'id' | 'title' | 'projectId'>
+    targetBranch: string
+    sourceBranch: string | null
+    workflow: MergeWorkflow
+    conflictStrategy?: 'manual' | 'agent'
+    handoffNote?: string | null
+    nextRepairAttempt: number
+}): Promise<PlatformMergeAttemptOutcome> {
+    const verifyRunChecks = getMergeRunVerifyChecks(options.workflow)
+    const rootPath = resolveSessionMergeRootPath(options.session)
+    if (verifyRunChecks.length > 0) {
+        if (!rootPath) {
+            const blockedReason = 'Linked session is missing a merge verify root path'
+            return {
+                kind: 'blocked',
+                note: buildMergeVerifyRunBlockedNote(blockedReason),
+                blockedReason,
+                failureFingerprint: buildMergeFailureFingerprint({
+                    reason: 'verification_failed',
+                    blockedReason
+                })
+            }
+        }
+
+        const verifyRunResult = await runMergeVerifyChecks({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath,
+            taskId: options.task.id,
+            projectId: options.task.projectId,
+            targetBranch: options.targetBranch,
+            sourceBranch: options.sourceBranch,
+            worktreeBasePath: options.session.metadata?.worktree?.basePath,
+            worktreePath: options.session.metadata?.worktree?.worktreePath ?? options.session.metadata?.path ?? rootPath,
+            checks: verifyRunChecks
+        })
+        if (!verifyRunResult.ok) {
+            return {
+                kind: 'repair',
+                repairKind: 'verify',
+                promptText: buildMergeVerifyRepairPrompt({
+                    task: options.task,
+                    targetBranch: options.targetBranch,
+                    sourceBranch: options.sourceBranch,
+                    rootPath,
+                    worktreeBasePath: options.session.metadata?.worktree?.basePath,
+                    repairAttempt: options.nextRepairAttempt,
+                    maxAttempts: resolveMergeConflictResolutionMaxAttempts(options.workflow),
+                    failedCheck: verifyRunResult.failedCheck,
+                    handoffNote: options.handoffNote
+                }),
+                transcriptText: buildMergeVerifyFailureMessage({
+                    targetBranch: options.targetBranch,
+                    failedCheck: verifyRunResult.failedCheck
+                }),
+                failureFingerprint: buildMergeFailureFingerprint({
+                    reason: 'verification_failed',
+                    blockedReason: verifyRunResult.error
+                })
+            }
+        }
+    }
+
+    const shouldRunSnapshotVerification = requiresSnapshotMergeVerification(options.workflow)
+    const snapshotResult = shouldRunSnapshotVerification
+        ? await captureMergeVerificationSnapshot({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            targetBranch: options.targetBranch
+        })
+        : null
+    if (snapshotResult && !snapshotResult.ok) {
+        const blockedReason = snapshotResult.error
+        return {
+            kind: 'blocked',
+            note: buildMergeVerificationCaptureBlockedNote(blockedReason),
+            blockedReason,
+            failureFingerprint: buildMergeFailureFingerprint({
+                reason: 'snapshot_capture_failed',
+                blockedReason
+            })
+        }
+    }
+
+    let mergeResult: RpcGitMergeWorktreeResponse
+    try {
+        mergeResult = await options.engine.gitMergeWorktree(options.sessionId, {
+            targetBranch: options.targetBranch,
+            commitMessage: buildWorktreeMergeCommitMessage(options.task),
+            strategy: options.workflow.strategy
+        })
+    } catch (error) {
+        const blockedReason = formatErrorMessage(error, 'Platform merge failed unexpectedly')
+        return {
+            kind: 'blocked',
+            note: buildPlatformMergeFailureNote(blockedReason),
+            blockedReason,
+            failureFingerprint: buildMergeFailureFingerprint({
+                reason: 'merge_execution_failed',
+                blockedReason
+            })
+        }
+    }
+
+    if (!mergeResult.success) {
+        const blockedReason = pickReadableMergeError(mergeResult, 'Platform merge failed')
+        const conflictFiles = Array.isArray(mergeResult.conflictFiles)
+            ? mergeResult.conflictFiles.map((file) => file.trim()).filter((file) => file.length > 0)
+            : []
+        const hasConflict = conflictFiles.length > 0 || /conflict/i.test(`${blockedReason}\n${mergeResult.stderr ?? ''}\n${mergeResult.stdout ?? ''}`)
+        const blockedConflict = findBlockedMergeConflictPath(conflictFiles, options.workflow.conflictResolution?.blockPaths)
+        if (blockedConflict) {
+            return {
+                kind: 'blocked',
+                note: buildBlockedConflictPathNote(blockedConflict),
+                blockedReason: blockedReason || `Conflict in blocked path ${blockedConflict}`,
+                failureFingerprint: buildMergeFailureFingerprint({
+                    reason: 'conflict_blocked',
+                    blockedReason: blockedReason || blockedConflict
+                })
+            }
+        }
+
+        if (!hasConflict || resolveMergeConflictResolutionMode(options.workflow, options.conflictStrategy) !== 'ai') {
+            return {
+                kind: 'blocked',
+                note: hasConflict ? buildManualConflictResolutionNote(conflictFiles) : buildPlatformMergeFailureNote(blockedReason),
+                blockedReason,
+                failureFingerprint: buildMergeFailureFingerprint({
+                    reason: hasConflict ? 'merge_conflict' : 'merge_execution_failed',
+                    blockedReason
+                })
+            }
+        }
+
+        return {
+            kind: 'repair',
+            repairKind: 'conflict',
+            promptText: buildMergeConflictResolutionPrompt({
+                task: options.task,
+                targetBranch: options.targetBranch,
+                sourceBranch: options.sourceBranch,
+                rootPath: resolveSessionMergeRootPath(options.session),
+                worktreeBasePath: options.session.metadata?.worktree?.basePath,
+                conflictFiles,
+                repairAttempt: options.nextRepairAttempt,
+                maxAttempts: resolveMergeConflictResolutionMaxAttempts(options.workflow),
+                handoffNote: options.handoffNote
+            }),
+            transcriptText: buildPlatformMergeConflictMessage({
+                targetBranch: options.targetBranch,
+                strategy: options.workflow.strategy,
+                conflictFiles
+            }),
+            conflictFiles,
+            failureFingerprint: buildMergeFailureFingerprint({
+                reason: 'merge_conflict',
+                blockedReason
+            })
+        }
+    }
+
+    const verificationResult = snapshotResult
+        ? await verifyMergeVerificationSnapshot({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            targetBranch: options.targetBranch,
+            snapshot: snapshotResult.snapshot
+        })
+        : { ok: true as const, targetHead: mergeResult.commitHash ?? null }
+    if (!verificationResult.ok) {
+        return {
+            kind: 'blocked',
+            note: verificationResult.note,
+            blockedReason: verificationResult.blockedReason,
+            failureFingerprint: buildMergeFailureFingerprint({
+                reason: 'verification_failed',
+                blockedReason: verificationResult.blockedReason
+            })
+        }
+    }
+
+    return {
+        kind: 'success',
+        targetHead: verificationResult.targetHead ?? mergeResult.commitHash ?? null,
+        transcriptText: buildPlatformMergeSuccessMessage({
+            targetBranch: options.targetBranch,
+            strategy: options.workflow.strategy,
+            targetHead: verificationResult.targetHead ?? mergeResult.commitHash ?? null,
+            autoResolved: options.nextRepairAttempt > 1
+        })
+    }
 }
 
 async function captureMergeVerificationSnapshot(options: {
@@ -748,86 +1113,13 @@ async function verifyMergeVerificationSnapshot(options: {
     }
 }
 
-function buildConversationMergePrompt(options: {
-    task: Pick<StoredTask, 'id' | 'title'>
-    projectId: string
-    targetBranch: string
-    sourceBranch: string | null
-    rootPath: string | null
-    worktreeBasePath?: string | null
-    worktreePath?: string | null
-    conflictStrategy: 'manual' | 'agent'
-    handoffNote?: string | null
-}): string {
-    const missingScriptMessage = `${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH} not found; inspect repo state and continue with normal workspace CLI merge commands.`
-    const firstToolCall = options.rootPath
-        ? buildMergeScriptCommand({
-            rootPath: options.rootPath,
-            taskId: options.task.id,
-            projectId: options.projectId,
-            targetBranch: options.targetBranch,
-            sourceBranch: options.sourceBranch,
-            worktreeBasePath: options.worktreeBasePath,
-            worktreePath: options.worktreePath ?? options.rootPath,
-            worktreeBranch: options.sourceBranch,
-            missingMessage: missingScriptMessage
-        })
-        : null
-    const repairStrategyLine = options.conflictStrategy === 'manual'
-        ? '- Resolve repairable blockers in-session. If a merge conflict needs human judgment, stop and explain the exact decision that is needed.'
-        : '- Resolve repairable blockers in-session and retry until the target branch contains the task changes.'
-
-    const lines = [
-        options.handoffNote ?? null,
-        'Worktree merge requested.',
-        '',
-        `Task: ${options.task.title}`,
-        `Task id: ${options.task.id}`,
-        `Source branch: ${options.sourceBranch ?? '(inspect repo state first)'}`,
-        `Target branch: ${options.targetBranch}`,
-        options.rootPath
-            ? `Working directory: ${options.rootPath}`
-            : 'Working directory: inspect the linked worktree path before running merge commands.',
-        options.worktreeBasePath ? `Base repo path: ${options.worktreeBasePath}` : null,
-        '',
-        firstToolCall ? 'First tool call (single shell command):' : 'First step:',
-        firstToolCall
-            ? `\`${firstToolCall}\``
-            : `- Find the repo root in this worktree, then run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` if it exists.`,
-        firstToolCall
-            ? `- If the command prints "${missingScriptMessage}", continue with normal workspace CLI merge commands in the same session.`
-            : `- Prefer \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` when present; otherwise continue with normal workspace CLI merge commands.`,
-        '',
-        'Worktree safety:',
-        `- Do not assume \`git checkout ${options.targetBranch}\` inside the task worktree is safe; that branch may already be checked out in another worktree.`,
-        options.worktreeBasePath
-            ? `- If target-branch operations need the base repo, prefer \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` (${options.worktreeBasePath}) or another worktree-safe git flow.`
-            : `- If target-branch operations need the base repo, inspect \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` before editing the script.`,
-        '- If Git reports "already checked out at" or a similar checked-out-branch error, treat the script as wrong and change the strategy instead of retrying the same checkout.',
-        '',
-        'Recovery loop:',
-        '- Keep the important stdout/stderr from each tool call in the thread.',
-        '- Inspect git/worktree state before guessing at a fix.',
-        '- Edit `.hopi/merge.sh` or any other workspace files when they are the real blocker.',
-        repairStrategyLine,
-        '- Stop only for manual judgment, missing external access, or other out-of-sandbox blockers; when stopping, name the blocker, last failing command, and next manual step.',
-        '',
-        'Required outcome:',
-        '- Target branch contains the task changes.',
-        '- Reply with a short summary of the result or blocker.'
-    ]
-
-    return lines.filter((line): line is string => Boolean(line)).join('\n')
-}
-
 function trimMergeCommandOutput(output: string | undefined, maxChars: number): string | null {
     return trimTaskActionOutput(output, maxChars)
 }
 
 
 const MERGE_STATE_CHECK_MANUAL_STEP = 'Inspect the linked session output, clear the repo blocker inside the workspace, then retry merge.'
-const MERGE_VERIFICATION_MANUAL_STEP = 'Inspect the linked session output, verify the target branch manually, then retry only after repo truth changes.'
-const MERGE_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, change the repo state or `.hopi/merge.sh`, then retry merge.'
+const MERGE_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, resolve the repo blocker in the worktree, then retry merge.'
 const MERGE_STILL_PENDING_BLOCKED_REASON = 'Target branch still missing the task changes after the latest agent turn'
 const PREVIEW_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, change the repo state or `.hopi/preview.sh`, then retry preview.'
 const PREVIEW_SESSION_MANUAL_STEP = 'Restart or relink the task session inside the workspace, then retry preview.'
@@ -836,7 +1128,11 @@ const PREVIEW_SESSION_INACTIVE_BLOCKED_REASON = 'Linked session became inactive 
 const PREVIEW_WAIT_TIMEOUT_BLOCKED_REASON = 'Preview stayed queued because the linked session never became idle.'
 
 type MergeFailureFingerprintReason =
-    | 'script_not_executed'
+    | 'contract_missing'
+    | 'contract_invalid'
+    | 'merge_execution_failed'
+    | 'merge_conflict'
+    | 'conflict_blocked'
     | 'snapshot_capture_failed'
     | 'merge_check_failed'
     | 'verification_failed'
@@ -846,11 +1142,6 @@ function buildMergeFailureFingerprint(options: {
     reason: MergeFailureFingerprintReason
     blockedReason?: string | null
     mergeState?: Pick<MergeGitState, 'reason' | 'sourceBranch' | 'hasWorkingTreeChanges' | 'committedChangedCount'> | null
-    scriptResult?: {
-        error?: string | null
-        stdout?: string
-        stderr?: string
-    } | null
 }): string {
     const digest = createHash('sha1').update(JSON.stringify({
         reason: options.reason,
@@ -863,13 +1154,6 @@ function buildMergeFailureFingerprint(options: {
                 committedChangedCount: options.mergeState.committedChangedCount
             }
             : null,
-        scriptResult: options.scriptResult
-            ? {
-                error: options.scriptResult.error ?? null,
-                stdout: trimMergeCommandOutput(options.scriptResult.stdout, 512),
-                stderr: trimMergeCommandOutput(options.scriptResult.stderr, 512)
-            }
-            : null
     })).digest('hex').slice(0, 12)
 
     return `${options.reason}:${digest}`
@@ -1036,16 +1320,6 @@ function getNextPreviewRepairAttemptRetryCount(task: Pick<StoredTask, 'previewRu
     return (task.previewRuntime?.retryCount ?? 0) + 1
 }
 
-function buildMergeCommandReportLines(options: {
-    command: string
-    summary: string
-    stdout?: string
-    stderr?: string
-    maxChars: number
-}): string[] {
-    return buildTaskActionCommandReportLines(options)
-}
-
 function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'subTasks'>): string {
     const title = (task.title ?? '').trim()
     const description = (task.description ?? '').trim()
@@ -1111,302 +1385,8 @@ function buildPreviewStartResultMessage(options: {
     ].filter((line): line is string => Boolean(line)).join('\n')
 }
 
-function buildDirectMergeResultMessage(options: {
-    command: string
-    summary: string
-    stdout?: string
-    stderr?: string
-    success: boolean
-}): string {
-    const header = options.success
-        ? `HOPI auto-ran \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked worktree.`
-        : `HOPI auto-ran \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` before continuing in the linked agent flow.`
-
-    return [
-        header,
-        '',
-        ...buildMergeCommandReportLines({
-            command: options.command,
-            summary: options.summary,
-            stdout: options.stdout,
-            stderr: options.stderr,
-            maxChars: 8_000
-        })
-    ].join('\n')
-}
-
-function buildDirectMergeRecoveryPrompt(options: {
-    task: Pick<StoredTask, 'id' | 'title'>
-    targetBranch: string
-    sourceBranch: string | null
-    rootPath: string
-    worktreeBasePath?: string | null
-    conflictStrategy: 'manual' | 'agent'
-    handoffNote?: string | null
-    command: string
-    summary: string
-    stdout?: string
-    stderr?: string
-}): string {
-    const repairStrategyLine = options.conflictStrategy === 'manual'
-        ? '- Resolve repairable blockers in-session. If a merge conflict needs human judgment, stop and explain the exact decision that is needed.'
-        : '- Resolve repairable blockers in-session and retry until the target branch contains the task changes.'
-
-    const lines = [
-        options.handoffNote ?? null,
-        'HOPI already attempted the repo merge script directly before this prompt.',
-        '',
-        `Task: ${options.task.title}`,
-        `Task id: ${options.task.id}`,
-        `Source branch: ${options.sourceBranch ?? '(inspect repo state first)'}`,
-        `Target branch: ${options.targetBranch}`,
-        `Working directory: ${options.rootPath}`,
-        options.worktreeBasePath ? `Base repo path: ${options.worktreeBasePath}` : null,
-        '',
-        'Direct CLI result:',
-        ...buildMergeCommandReportLines({
-            command: options.command,
-            summary: options.summary,
-            stdout: options.stdout,
-            stderr: options.stderr,
-            maxChars: 4_000
-        }),
-        '',
-        'Continue from the current repo state in this same worktree session.',
-        'Retry command after repairs:',
-        `\`${options.command}\``,
-        '',
-        'Worktree safety:',
-        `- Do not assume \`git checkout ${options.targetBranch}\` inside the task worktree is safe; that branch may already be checked out in another worktree.`,
-        options.worktreeBasePath
-            ? `- If target-branch operations need the base repo, prefer \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` (${options.worktreeBasePath}) or another worktree-safe git flow.`
-            : `- If target-branch operations need the base repo, inspect \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` before editing the script.`,
-        '- If Git reports "already checked out at" or a similar checked-out-branch error, fix the script or merge strategy instead of repeating the same checkout step.',
-        '',
-        'Recovery loop:',
-        '- Keep the important stdout/stderr from each tool call in the thread.',
-        '- Inspect git/worktree state before guessing at a fix.',
-        '- Edit `.hopi/merge.sh` or any other workspace files when they are the real blocker.',
-        repairStrategyLine,
-        '- Stop only for manual judgment, missing external access, or other out-of-sandbox blockers; when stopping, name the blocker, last failing command, and next manual step.',
-        '',
-        'Required outcome:',
-        '- Target branch contains the task changes.',
-        '- Reply with a short summary of the result or blocker.'
-    ]
-
-    return lines.filter((line): line is string => Boolean(line)).join('\n')
-}
-
 function resolveSessionMergeRootPath(session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>): string | null {
-    const worktreePath = typeof session.metadata?.worktree?.worktreePath === 'string'
-        ? session.metadata.worktree.worktreePath.trim()
-        : ''
-    const metadataPath = typeof session.metadata?.path === 'string' ? session.metadata.path.trim() : ''
-    const basePath = typeof session.metadata?.worktree?.basePath === 'string'
-        ? session.metadata.worktree.basePath.trim()
-        : ''
-
-    return worktreePath || metadataPath || basePath || null
-}
-
-type DirectMergeAttemptOutcome =
-    | {
-        kind: 'success'
-        transcriptText: string
-        targetHead: string | null
-    }
-    | {
-        kind: 'handoff'
-        transcriptText: string
-        promptText: string
-        failureFingerprint: string
-    }
-
-function describeDirectMergeAttempt(options: {
-    result: ScriptExecutionResult
-    mergeState?: MergeGitState | null
-    verification?:
-        | { ok: true; targetHead: string | null }
-        | { ok: false; note: string; blockedReason: string }
-        | null
-}): string {
-    if (!options.result.executed) {
-        return `Direct merge auto-run could not execute \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly; continuing in the linked agent session.`
-    }
-
-    if (options.mergeState?.reason === 'merge_check_failed') {
-        return `Merge-state verification after the direct script attempt failed: ${options.mergeState.error ?? 'unknown error'}.`
-    }
-
-    if (options.verification && !options.verification.ok) {
-        return `Direct merge script ran, but repo-truth verification failed: ${options.verification.blockedReason}.`
-    }
-
-    if (options.mergeState?.canMerge) {
-        const errorSuffix = !options.result.ok && options.result.error
-            ? ` Last script error: ${options.result.error}.`
-            : ''
-        return `Direct merge script ran, but the branch is still mergeable.${errorSuffix}`
-    }
-
-    if (!options.result.ok) {
-        return `Direct merge script reported an error, but repo-truth verification passed anyway: ${options.result.error ?? 'unknown error'}.`
-    }
-
-    return 'Direct merge script completed and repo-truth verification passed.'
-}
-
-async function runDirectMergeScriptAttempt(options: {
-    engine: SyncEngine
-    sessionId: string
-    task: Pick<StoredTask, 'id' | 'title'>
-    projectId: string
-    rootPath: string
-    worktreeBasePath?: string | null
-    worktreePath?: string | null
-    targetBranch: string
-    sourceBranch: string | null
-    conflictStrategy: 'manual' | 'agent'
-    handoffNote?: string | null
-    taskMergedAt: number | null
-    verificationSnapshot: MergeVerificationSnapshot
-}): Promise<DirectMergeAttemptOutcome> {
-    const command = buildMergeScriptCommand({
-        rootPath: options.rootPath,
-        taskId: options.task.id,
-        projectId: options.projectId,
-        targetBranch: options.targetBranch,
-        sourceBranch: options.sourceBranch,
-        worktreeBasePath: options.worktreeBasePath,
-        worktreePath: options.worktreePath ?? options.rootPath,
-        worktreeBranch: options.sourceBranch
-    })
-
-    const result = await runMergeScriptIfPresent({
-        engine: options.engine,
-        sessionId: options.sessionId,
-        cwd: options.rootPath,
-        taskId: options.task.id,
-        projectId: options.projectId,
-        targetBranch: options.targetBranch,
-        sourceBranch: options.sourceBranch,
-        worktreeBasePath: options.worktreeBasePath,
-        worktreePath: options.worktreePath ?? options.rootPath,
-        worktreeBranch: options.sourceBranch
-    })
-
-    if (!result.executed) {
-        const summary = describeDirectMergeAttempt({ result })
-        return {
-            kind: 'handoff',
-            transcriptText: buildDirectMergeResultMessage({
-                command,
-                summary,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                success: false
-            }),
-            promptText: buildDirectMergeRecoveryPrompt({
-                task: options.task,
-                targetBranch: options.targetBranch,
-                sourceBranch: options.sourceBranch,
-                rootPath: options.rootPath,
-                worktreeBasePath: options.worktreeBasePath,
-                conflictStrategy: options.conflictStrategy,
-                handoffNote: options.handoffNote,
-                command,
-                summary,
-                stdout: result.stdout,
-                stderr: result.stderr
-            }),
-            failureFingerprint: buildMergeFailureFingerprint({
-                reason: 'script_not_executed',
-                blockedReason: ('error' in result ? result.error : null) ?? summary,
-                scriptResult: result
-            })
-        }
-    }
-
-    const mergeState = await computeMergeGitState({
-        engine: options.engine,
-        sessionId: options.sessionId,
-        targetBranch: options.targetBranch,
-        sourceBranch: options.sourceBranch,
-        taskMergedAt: options.taskMergedAt
-    })
-
-    const verification = mergeState.canMerge
-        ? null
-        : await verifyMergeVerificationSnapshot({
-            engine: options.engine,
-            sessionId: options.sessionId,
-            targetBranch: options.targetBranch,
-            snapshot: options.verificationSnapshot
-        })
-
-    const summary = describeDirectMergeAttempt({
-        result,
-        mergeState,
-        verification
-    })
-
-    if (!mergeState.canMerge && verification?.ok) {
-        return {
-            kind: 'success',
-            transcriptText: buildDirectMergeResultMessage({
-                command,
-                summary,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                success: true
-            }),
-            targetHead: verification.targetHead
-        }
-    }
-
-    const failureFingerprint = mergeState.reason === 'merge_check_failed'
-        ? buildMergeFailureFingerprint({
-            reason: 'merge_check_failed',
-            blockedReason: mergeState.error ?? 'Merge state check failed after direct merge attempt',
-            mergeState
-        })
-        : verification && !verification.ok
-            ? buildMergeFailureFingerprint({
-                reason: 'verification_failed',
-                blockedReason: verification.blockedReason,
-                mergeState
-            })
-            : buildMergeFailureFingerprint({
-                reason: 'merge_still_pending',
-                blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
-                mergeState
-            })
-
-    return {
-        kind: 'handoff',
-        transcriptText: buildDirectMergeResultMessage({
-            command,
-            summary,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            success: false
-        }),
-        promptText: buildDirectMergeRecoveryPrompt({
-            task: options.task,
-            targetBranch: options.targetBranch,
-            sourceBranch: options.sourceBranch,
-            rootPath: options.rootPath,
-            worktreeBasePath: options.worktreeBasePath,
-            conflictStrategy: options.conflictStrategy,
-            handoffNote: options.handoffNote,
-            command,
-            summary,
-            stdout: result.stdout,
-            stderr: result.stderr
-        }),
-        failureFingerprint
-    }
+    return resolveSessionPreferredRootPath(session)
 }
 
 function getReadyEventLocalKey(content: unknown): string | null {
@@ -1532,8 +1512,8 @@ function cancelPreviewSelfHealMonitor(namespace: string, taskId: string): void {
     inFlightPreviewMonitorControllers.delete(key)
 }
 
-type DeferredDirectMergeMonitorOptions = {
-    conflictStrategy: 'manual' | 'agent'
+type DeferredPlatformMergeMonitorOptions = {
+    conflictStrategy?: 'manual' | 'agent'
     handoffNote?: string | null
 }
 
@@ -1557,8 +1537,11 @@ function scheduleConversationMergeMonitor(options: {
     sessionId: string
     promptLocalId?: string | null
     targetBranch: string
-    verificationSnapshot?: MergeVerificationSnapshot
-    deferredDirectMerge?: DeferredDirectMergeMonitorOptions
+    workflow: MergeWorkflow
+    repairAttempt?: number
+    conflictStrategy?: 'manual' | 'agent'
+    handoffNote?: string | null
+    deferredPlatformMerge?: DeferredPlatformMergeMonitorOptions
     preferredLocale?: string
 }): boolean {
     const key = buildMergeMonitorKey(options.namespace, options.taskId)
@@ -1571,9 +1554,166 @@ function scheduleConversationMergeMonitor(options: {
         try {
             let promptLocalId = options.promptLocalId ?? null
             let promptSessionId = options.sessionId
-            let verificationSnapshot = options.verificationSnapshot ?? null
+            let repairAttempt = options.repairAttempt ?? 0
+            const maxRepairAttempts = resolveMergeConflictResolutionMaxAttempts(options.workflow)
 
-            if (!promptLocalId && options.deferredDirectMerge) {
+            const applyBlockedRuntime = (task: StoredTask, sessionId: string, outcome: {
+                note: string
+                blockedReason: string
+                failureFingerprint: string
+                manualStep?: string
+            }) => {
+                const blockedState = buildMergeBlockedRuntimeState({
+                    task,
+                    note: outcome.note,
+                    blockedReason: outcome.blockedReason,
+                    failureFingerprint: outcome.failureFingerprint,
+                    manualStep: outcome.manualStep ?? MERGE_REPAIR_MANUAL_STEP
+                })
+                updateTaskMergeRuntime({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task,
+                    status: 'blocked',
+                    sessionId,
+                    failureFingerprint: blockedState.failureFingerprint,
+                    latestNote: blockedState.latestNote,
+                    blockedReason: blockedState.blockedReason
+                })
+            }
+
+            const persistSuccessfulMerge = async (
+                task: StoredTask,
+                session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>,
+                targetHead: string | null,
+                transcriptText: string
+            ) => {
+                appendAssistantTextMessage({
+                    store: options.store,
+                    engine: options.engine,
+                    sessionId: session.id,
+                    localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`,
+                    text: transcriptText
+                })
+
+                await persistSuccessfulTaskMerge({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task,
+                    sessionId: session.id,
+                    sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
+                    mergeResult: {
+                        success: true,
+                        commitHash: targetHead ?? undefined
+                    },
+                    markFinishedOnMerge: task.status === 'in_review',
+                    preferredLocale: options.preferredLocale
+                })
+            }
+
+            const dispatchConflictPrompt = async (
+                task: StoredTask,
+                session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>,
+                attempt: Extract<PlatformMergeAttemptOutcome, { kind: 'repair' }>,
+                nextAttempt: number
+            ) => {
+                appendAssistantTextMessage({
+                    store: options.store,
+                    engine: options.engine,
+                    sessionId: session.id,
+                    localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`,
+                    text: attempt.transcriptText
+                })
+
+                const nextLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`
+                await options.engine.sendMessage(session.id, {
+                    text: attempt.promptText,
+                    localId: nextLocalId,
+                    sentFrom: 'webapp'
+                })
+
+                updateTaskMergeRuntime({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task,
+                    status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
+                    sessionId: session.id,
+                    failureFingerprint: attempt.failureFingerprint,
+                    latestNote: attempt.repairKind === 'verify'
+                        ? buildMergeVerifyRepairAttemptNote(nextAttempt)
+                        : 'Platform merge found conflicts. Resolving them in the linked session before retry.',
+                    startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
+                    completedAt: null
+                })
+
+                promptLocalId = nextLocalId
+                promptSessionId = session.id
+                repairAttempt = nextAttempt
+            }
+
+            const handleResolutionAttempt = async (task: StoredTask, session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>) => {
+                const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
+                const attempt = await attemptPlatformMerge({
+                    engine: options.engine,
+                    sessionId: session.id,
+                    session,
+                    task,
+                    targetBranch: options.targetBranch,
+                    sourceBranch,
+                    workflow: options.workflow,
+                    conflictStrategy: options.conflictStrategy ?? options.deferredPlatformMerge?.conflictStrategy,
+                    handoffNote: options.handoffNote ?? options.deferredPlatformMerge?.handoffNote,
+                    nextRepairAttempt: repairAttempt + 1
+                })
+
+                if (attempt.kind === 'success') {
+                    await persistSuccessfulMerge(task, session, attempt.targetHead, attempt.transcriptText)
+                    return 'done' as const
+                }
+
+                if (attempt.kind === 'blocked') {
+                    applyBlockedRuntime(task, session.id, attempt)
+                    return 'done' as const
+                }
+
+                if (repairAttempt >= maxRepairAttempts) {
+                    applyBlockedRuntime(task, session.id, {
+                        note: attempt.repairKind === 'verify'
+                            ? buildMergeVerifyRepairExhaustedNote(repairAttempt)
+                            : buildConflictResolutionExhaustedNote(repairAttempt, attempt.conflictFiles ?? []),
+                        blockedReason: attempt.repairKind === 'verify'
+                            ? 'Merge verify checks still fail after the latest agent turn'
+                            : MERGE_STILL_PENDING_BLOCKED_REASON,
+                        failureFingerprint: buildMergeFailureFingerprint({
+                            reason: 'verification_failed',
+                            blockedReason: attempt.repairKind === 'verify'
+                                ? 'Merge verify checks still fail after the latest agent turn'
+                                : MERGE_STILL_PENDING_BLOCKED_REASON
+                        }),
+                        manualStep: MERGE_REPAIR_MANUAL_STEP
+                    })
+                    return 'done' as const
+                }
+
+                try {
+                    await dispatchConflictPrompt(task, session, attempt, repairAttempt + 1)
+                } catch (error) {
+                    const message = formatErrorMessage(error, 'Failed to send merge conflict resolution request')
+                    applyBlockedRuntime(task, session.id, {
+                        note: `Platform merge found conflicts, but conflict-resolution handoff failed: ${message}. Retry merge after the linked session is ready.`,
+                        blockedReason: message,
+                        failureFingerprint: attempt.failureFingerprint
+                    })
+                    return 'done' as const
+                }
+
+                return 'prompted' as const
+            }
+
+            if (!promptLocalId && options.deferredPlatformMerge) {
                 const runnableResult = await waitForSessionToBecomeMergeRunnable({
                     engine: options.engine,
                     sessionId: options.sessionId,
@@ -1624,10 +1764,10 @@ function scheduleConversationMergeMonitor(options: {
                             ? 'queued'
                             : 'waiting'
                     const timeoutNote = hasPendingRequests
-                        ? `Merge is waiting for an approval request before HOPI can auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\`.`
+                        ? 'Merge is waiting for an approval request before HOPI can attempt the platform merge.'
                         : session.thinking
-                            ? `Merge is still queued behind the current session turn. HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` when the session is free.`
-                            : `Waiting to auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` in the linked session.`
+                            ? 'Merge is still queued behind the current session turn. HOPI will attempt the platform merge when the session is free.'
+                            : 'Waiting to attempt the platform merge in the linked session.'
                     updateTaskMergeRuntime({
                         store: options.store,
                         engine: options.engine,
@@ -1650,27 +1790,25 @@ function scheduleConversationMergeMonitor(options: {
                         task,
                         status: 'blocked',
                         sessionId: session.id,
-                        latestNote: 'Merge stopped because the linked session went inactive before HOPI could run the merge script. Re-open the worktree session and retry merge.',
+                        latestNote: 'Merge stopped because the linked session went inactive before HOPI could attempt the platform merge. Re-open the worktree session and retry merge.',
                         blockedReason: 'session_inactive',
                         failureFingerprint: 'session_inactive'
                     })
                     return
                 }
 
-                const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
                 const mergeState = await computeMergeGitState({
                     engine: options.engine,
                     sessionId: session.id,
                     targetBranch: options.targetBranch,
-                    sourceBranch,
+                    sourceBranch: normalizeBranchName(session.metadata?.worktree?.branch),
                     taskMergedAt: task.worktreeMergedAt ?? null
                 })
 
                 if (!mergeState.canMerge) {
                     if (mergeState.reason === 'merge_check_failed') {
-                        const blockedReason = mergeState.error ?? 'Merge state check failed before auto-running the merge script'
-                        const blockedState = buildMergeBlockedRuntimeState({
-                            task,
+                        const blockedReason = mergeState.error ?? 'Merge state check failed before platform merge'
+                        applyBlockedRuntime(task, session.id, {
                             note: buildMergeStateCheckBlockedNote(blockedReason),
                             blockedReason,
                             failureFingerprint: buildMergeFailureFingerprint({
@@ -1680,52 +1818,104 @@ function scheduleConversationMergeMonitor(options: {
                             }),
                             manualStep: MERGE_STATE_CHECK_MANUAL_STEP
                         })
+                    } else {
                         updateTaskMergeRuntime({
                             store: options.store,
                             engine: options.engine,
                             namespace: options.namespace,
                             task,
-                            status: 'blocked',
+                            status: 'succeeded',
                             sessionId: session.id,
-                            failureFingerprint: blockedState.failureFingerprint,
-                            latestNote: blockedState.latestNote,
-                            blockedReason: blockedState.blockedReason
+                            latestNote: mergeState.reason === 'already_merged'
+                                ? 'Target branch already contains this task.'
+                                : 'No committed changes are waiting to merge.',
+                            completedAt: Date.now()
                         })
-                        return
                     }
+                    return
+                }
 
+                const result = await handleResolutionAttempt(task, session)
+                if (result === 'done') {
+                    return
+                }
+            }
+
+            while (promptLocalId) {
+                const promptMessage = options.store.messages.getMessageByLocalId(promptSessionId, promptLocalId)
+                const afterSeq = promptMessage?.seq ?? 0
+                const readyResult = await waitForReadyEventForLocalId({
+                    store: options.store,
+                    engine: options.engine,
+                    sessionId: promptSessionId,
+                    namespace: options.namespace,
+                    localId: promptLocalId,
+                    afterSeq,
+                    timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
+                })
+
+                const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                if (!latestTask) {
+                    return
+                }
+
+                const resolved = await resolveBestUsableTaskSession({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    task: latestTask,
+                    requireWorktree: true,
+                    allowResume: true
+                })
+
+                if (!resolved.ok) {
+                    if (latestTask.mergeRuntime?.status !== 'canceled') {
+                        updateTaskMergeRuntime({
+                            store: options.store,
+                            engine: options.engine,
+                            namespace: options.namespace,
+                            task: latestTask,
+                            status: 'blocked',
+                            latestNote: 'Merge runtime lost its linked worktree session.',
+                            blockedReason: resolved.reason
+                        })
+                    }
+                    return
+                }
+
+                const task = resolved.task
+                const session = resolved.session
+                if (task.mergeRuntime?.status === 'canceled') {
+                    return
+                }
+
+                const hasPendingRequests = sessionHasPendingRequests(session)
+                if (readyResult === 'timeout') {
+                    const timeoutStatus = hasPendingRequests
+                        ? 'approval_pending'
+                        : session.thinking
+                            ? (isMergeRetryAttempt(task) ? 'retrying' : 'running')
+                            : 'waiting'
+                    const timeoutNote = hasPendingRequests
+                        ? 'Merge is waiting for an approval request before it can continue.'
+                        : session.thinking
+                            ? 'Merge is still running in the linked session.'
+                            : 'Waiting for the linked session to confirm the merge result.'
                     updateTaskMergeRuntime({
                         store: options.store,
                         engine: options.engine,
                         namespace: options.namespace,
                         task,
-                        status: 'succeeded',
+                        status: timeoutStatus,
                         sessionId: session.id,
-                        latestNote: mergeState.reason === 'already_merged'
-                            ? 'Target branch already contains this task.'
-                            : 'No committed changes are waiting to merge.',
-                        completedAt: Date.now()
+                        latestNote: timeoutNote,
+                        startedAt: timeoutStatus === 'running' ? Date.now() : task.mergeRuntime?.startedAt ?? null,
+                        completedAt: null
                     })
                     return
                 }
 
-                const verificationSnapshotResult = await captureMergeVerificationSnapshot({
-                    engine: options.engine,
-                    sessionId: session.id,
-                    targetBranch: options.targetBranch
-                })
-                if (!verificationSnapshotResult.ok) {
-                    const message = verificationSnapshotResult.error
-                    const blockedState = buildMergeBlockedRuntimeState({
-                        task,
-                        note: buildMergeVerificationCaptureBlockedNote(message),
-                        blockedReason: message,
-                        failureFingerprint: buildMergeFailureFingerprint({
-                            reason: 'snapshot_capture_failed',
-                            blockedReason: message
-                        }),
-                        manualStep: 'Inspect repo state in the linked session, then retry merge.'
-                    })
+                if (readyResult === 'session_inactive') {
                     updateTaskMergeRuntime({
                         store: options.store,
                         engine: options.engine,
@@ -1733,357 +1923,18 @@ function scheduleConversationMergeMonitor(options: {
                         task,
                         status: 'blocked',
                         sessionId: session.id,
-                        failureFingerprint: blockedState.failureFingerprint,
-                        latestNote: blockedState.latestNote,
-                        blockedReason: blockedState.blockedReason
-                    })
-                    return
-                }
-                verificationSnapshot = verificationSnapshotResult.snapshot
-
-                const rootPath = resolveSessionMergeRootPath(session)
-                if (rootPath) {
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine: options.engine,
-                        namespace: options.namespace,
-                        task,
-                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
-                        sessionId: session.id,
-                        latestNote: `Running \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked session.`,
-                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
-                        completedAt: null
-                    })
-
-                    const directAttempt = await runDirectMergeScriptAttempt({
-                        engine: options.engine,
-                        sessionId: session.id,
-                        task,
-                        projectId: task.projectId,
-                        rootPath,
-                        worktreeBasePath: session.metadata?.worktree?.basePath,
-                        worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
-                        targetBranch: options.targetBranch,
-                        sourceBranch,
-                        conflictStrategy: options.deferredDirectMerge.conflictStrategy,
-                        handoffNote: options.deferredDirectMerge.handoffNote,
-                        taskMergedAt: task.worktreeMergedAt ?? null,
-                        verificationSnapshot
-                    })
-
-                    appendAssistantTextMessage({
-                        store: options.store,
-                        engine: options.engine,
-                        sessionId: session.id,
-                        localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`,
-                        text: directAttempt.transcriptText
-                    })
-
-                    if (directAttempt.kind === 'success') {
-                        await persistSuccessfulTaskMerge({
-                            store: options.store,
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task,
-                            sessionId: session.id,
-                            sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
-                            mergeResult: {
-                                success: true,
-                                commitHash: directAttempt.targetHead ?? undefined
-                            },
-                            markFinishedOnMerge: task.status === 'in_review',
-                            preferredLocale: options.preferredLocale
-                        })
-                        return
-                    }
-
-                    promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`
-                    promptSessionId = session.id
-                    try {
-                        await options.engine.sendMessage(session.id, {
-                            text: directAttempt.promptText,
-                            localId: promptLocalId,
-                            sentFrom: 'webapp'
-                        })
-                    } catch (error) {
-                        const message = formatErrorMessage(error, 'Failed to send merge request')
-                        updateTaskMergeRuntime({
-                            store: options.store,
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task,
-                            status: 'blocked',
-                            sessionId: session.id,
-                            latestNote: `Direct merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
-                            blockedReason: message
-                        })
-                        return
-                    }
-
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine: options.engine,
-                        namespace: options.namespace,
-                        task,
-                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
-                        sessionId: session.id,
-                        failureFingerprint: directAttempt.failureFingerprint,
-                        latestNote: 'Direct merge tool call ran first. Follow the transcript for CLI output, repairs, and retries.',
-                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
-                        completedAt: null
-                    })
-                } else {
-                    promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`
-                    promptSessionId = session.id
-                    const prompt = buildConversationMergePrompt({
-                        task,
-                        projectId: task.projectId,
-                        targetBranch: options.targetBranch,
-                        sourceBranch,
-                        rootPath,
-                        worktreeBasePath: session.metadata?.worktree?.basePath,
-                        worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
-                        conflictStrategy: options.deferredDirectMerge.conflictStrategy,
-                        handoffNote: options.deferredDirectMerge.handoffNote
-                    })
-
-                    try {
-                        await options.engine.sendMessage(session.id, {
-                            text: prompt,
-                            localId: promptLocalId,
-                            sentFrom: 'webapp'
-                        })
-                    } catch (error) {
-                        const message = formatErrorMessage(error, 'Failed to send merge request')
-                        updateTaskMergeRuntime({
-                            store: options.store,
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task,
-                            status: 'blocked',
-                            sessionId: session.id,
-                            latestNote: `Delayed merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
-                            blockedReason: message
-                        })
-                        return
-                    }
-
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine: options.engine,
-                        namespace: options.namespace,
-                        task,
-                        status: isMergeRetryAttempt(task) ? 'retrying' : 'running',
-                        sessionId: session.id,
-                        latestNote: 'Merge requested in the linked session. Follow the transcript for tool output and retries.',
-                        startedAt: task.mergeRuntime?.startedAt ?? Date.now(),
-                        completedAt: null
-                    })
-                }
-            }
-
-            if (!promptLocalId || !verificationSnapshot) {
-                return
-            }
-
-            const promptMessage = options.store.messages.getMessageByLocalId(promptSessionId, promptLocalId)
-            const afterSeq = promptMessage?.seq ?? 0
-            const readyResult = await waitForReadyEventForLocalId({
-                store: options.store,
-                engine: options.engine,
-                sessionId: promptSessionId,
-                namespace: options.namespace,
-                localId: promptLocalId,
-                afterSeq,
-                timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
-            })
-
-            const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-            if (!latestTask) {
-                return
-            }
-
-            const resolved = await resolveBestUsableTaskSession({
-                store: options.store,
-                engine: options.engine,
-                namespace: options.namespace,
-                task: latestTask,
-                requireWorktree: true,
-                allowResume: true
-            })
-
-            if (!resolved.ok) {
-                if (latestTask.mergeRuntime?.status !== 'canceled') {
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine: options.engine,
-                        namespace: options.namespace,
-                        task: latestTask,
-                        status: 'blocked',
-                        latestNote: 'Merge runtime lost its linked worktree session.',
-                        blockedReason: resolved.reason
-                    })
-                }
-                return
-            }
-
-            const task = resolved.task
-            const session = resolved.session
-            const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
-            const mergeState = await computeMergeGitState({
-                engine: options.engine,
-                sessionId: session.id,
-                targetBranch: options.targetBranch,
-                sourceBranch,
-                taskMergedAt: task.worktreeMergedAt ?? null
-            })
-
-            if (!mergeState.canMerge) {
-                if (mergeState.reason === 'merge_check_failed') {
-                    if (task.mergeRuntime?.status !== 'canceled') {
-                        const blockedReason = mergeState.error ?? 'Merge state check failed after conversation merge'
-                        const blockedState = buildMergeBlockedRuntimeState({
-                            task,
-                            note: buildMergeStateCheckBlockedNote(blockedReason),
-                            blockedReason,
-                            failureFingerprint: buildMergeFailureFingerprint({
-                                reason: 'merge_check_failed',
-                                blockedReason,
-                                mergeState
-                            }),
-                            manualStep: MERGE_STATE_CHECK_MANUAL_STEP
-                        })
-                        updateTaskMergeRuntime({
-                            store: options.store,
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task,
-                            status: 'blocked',
-                            sessionId: session.id,
-                            failureFingerprint: blockedState.failureFingerprint,
-                            latestNote: blockedState.latestNote,
-                            blockedReason: blockedState.blockedReason
-                        })
-                    }
-                    return
-                }
-
-                const verificationResult = await verifyMergeVerificationSnapshot({
-                    engine: options.engine,
-                    sessionId: session.id,
-                    targetBranch: options.targetBranch,
-                    snapshot: verificationSnapshot
-                })
-                if (!verificationResult.ok) {
-                    const blockedState = buildMergeBlockedRuntimeState({
-                        task,
-                        note: verificationResult.note,
-                        blockedReason: verificationResult.blockedReason,
-                        failureFingerprint: buildMergeFailureFingerprint({
-                            reason: 'verification_failed',
-                            blockedReason: verificationResult.blockedReason,
-                            mergeState
-                        }),
-                        manualStep: MERGE_VERIFICATION_MANUAL_STEP
-                    })
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine: options.engine,
-                        namespace: options.namespace,
-                        task,
-                        status: 'blocked',
-                        sessionId: session.id,
-                        failureFingerprint: blockedState.failureFingerprint,
-                        latestNote: blockedState.latestNote,
-                        blockedReason: blockedState.blockedReason
+                        latestNote: 'Merge stopped because the linked session went inactive. Re-open the worktree session, inspect the last tool output, and retry merge from the task conversation.',
+                        blockedReason: 'session_inactive',
+                        failureFingerprint: 'session_inactive'
                     })
                     return
                 }
 
-                await persistSuccessfulTaskMerge({
-                    store: options.store,
-                    engine: options.engine,
-                    namespace: options.namespace,
-                    task,
-                    sessionId: session.id,
-                    sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
-                    mergeResult: {
-                        success: true,
-                        commitHash: verificationResult.targetHead ?? undefined
-                    },
-                    markFinishedOnMerge: task.status === 'in_review',
-                    preferredLocale: options.preferredLocale
-                })
-                return
+                const result = await handleResolutionAttempt(task, session)
+                if (result === 'done') {
+                    return
+                }
             }
-
-            if (task.mergeRuntime?.status === 'canceled') {
-                return
-            }
-
-            const hasPendingRequests = sessionHasPendingRequests(session)
-            if (readyResult === 'timeout') {
-                const timeoutStatus = hasPendingRequests
-                    ? 'approval_pending'
-                    : session.thinking
-                        ? (isMergeRetryAttempt(task) ? 'retrying' : 'running')
-                        : 'waiting'
-                const timeoutNote = hasPendingRequests
-                    ? 'Merge is waiting for an approval request before it can continue.'
-                    : session.thinking
-                        ? 'Merge is still running in the linked session.'
-                        : 'Waiting for the linked session to confirm the merge result.'
-                updateTaskMergeRuntime({
-                    store: options.store,
-                    engine: options.engine,
-                    namespace: options.namespace,
-                    task,
-                    status: timeoutStatus,
-                    sessionId: session.id,
-                    latestNote: timeoutNote,
-                    startedAt: timeoutStatus === 'running' ? Date.now() : task.mergeRuntime?.startedAt ?? null,
-                    completedAt: null
-                })
-                return
-            }
-
-            if (readyResult === 'session_inactive') {
-                updateTaskMergeRuntime({
-                    store: options.store,
-                    engine: options.engine,
-                    namespace: options.namespace,
-                    task,
-                    status: 'blocked',
-                    sessionId: session.id,
-                    latestNote: 'Merge stopped because the linked session went inactive. Re-open the worktree session, inspect the last tool output, and retry merge from the task conversation.',
-                    blockedReason: 'session_inactive',
-                    failureFingerprint: 'session_inactive'
-                })
-                return
-            }
-
-            const blockedState = buildMergeBlockedRuntimeState({
-                task,
-                note: buildMergeConversationBlockedNote(),
-                blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
-                failureFingerprint: buildMergeFailureFingerprint({
-                    reason: 'merge_still_pending',
-                    blockedReason: MERGE_STILL_PENDING_BLOCKED_REASON,
-                    mergeState
-                }),
-                manualStep: MERGE_REPAIR_MANUAL_STEP
-            })
-            updateTaskMergeRuntime({
-                store: options.store,
-                engine: options.engine,
-                namespace: options.namespace,
-                task,
-                status: 'blocked',
-                sessionId: session.id,
-                failureFingerprint: blockedState.failureFingerprint,
-                latestNote: blockedState.latestNote,
-                blockedReason: blockedState.blockedReason
-            })
         } finally {
             inFlightConversationMergeMonitorKeys.delete(key)
         }
@@ -2290,16 +2141,8 @@ function resolveTaskPreviewPath(
     session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>,
     requestedMode: 'auto' | 'local' | 'worktree'
 ): TaskPreviewPathResult {
-    const metadata = session.metadata
-    const metadataPath = typeof metadata?.path === 'string' ? metadata.path.trim() : ''
-    const basePath = typeof metadata?.worktree?.basePath === 'string'
-        ? metadata.worktree.basePath.trim()
-        : ''
-    const worktreePath = typeof metadata?.worktree?.worktreePath === 'string'
-        ? metadata.worktree.worktreePath.trim()
-        : ''
-
-    const localPath = basePath || metadataPath
+    const worktreePath = resolveSessionWorktreePath(session) ?? ''
+    const localPath = resolveSessionLocalPath(session) ?? ''
 
     if (requestedMode === 'worktree') {
         if (!worktreePath) {
@@ -4564,7 +4407,7 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Project not found' }, 404)
         }
 
-        const targetBranch = normalizeBranchName(project.worktreeTargetBranch)
+        let targetBranch = normalizeBranchName(project.worktreeTargetBranch)
         const baseState: Omit<TaskWorktreeMergeState, 'canMerge' | 'reason' | 'error'> = {
             ok: true,
             targetBranch,
@@ -4580,15 +4423,6 @@ export function createTasksRoutes(options: {
                 ...baseState,
                 canMerge: false,
                 reason: 'task_has_no_active_session',
-                error: null
-            } satisfies TaskWorktreeMergeState)
-        }
-
-        if (!targetBranch) {
-            return c.json({
-                ...baseState,
-                canMerge: false,
-                reason: 'target_branch_not_configured',
                 error: null
             } satisfies TaskWorktreeMergeState)
         }
@@ -4624,8 +4458,27 @@ export function createTasksRoutes(options: {
 
         const session = access.session
         const sourceBranch = normalizeBranchName(session.metadata?.worktree?.branch)
+        const mergeWorkflow = await loadMergeWorkflowFromSession({
+            engine,
+            sessionId: session.id,
+            session
+        })
+
+        if (mergeWorkflow.kind === 'valid') {
+            targetBranch = normalizeBranchName(mergeWorkflow.workflow.targetBranch) ?? targetBranch
+        } else if (!targetBranch) {
+            return c.json({
+                ...baseState,
+                canMerge: false,
+                reason: 'merge_check_failed',
+                sourceBranch,
+                error: mergeWorkflow.error
+            } satisfies TaskWorktreeMergeState)
+        }
+
         const stateWithSession = {
             ...baseState,
+            targetBranch,
             sourceBranch
         }
 
@@ -4660,7 +4513,7 @@ export function createTasksRoutes(options: {
         const mergeGitState = await computeMergeGitState({
             engine,
             sessionId: session.id,
-            targetBranch,
+            targetBranch: targetBranch ?? '',
             sourceBranch,
             taskMergedAt: task.worktreeMergedAt ?? null
         })
@@ -4708,13 +4561,7 @@ export function createTasksRoutes(options: {
                 return c.json({ error: 'Project not found' }, 404)
             }
 
-            const targetBranch = normalizeBranchName(parsed.data.targetBranch)
-                ?? normalizeBranchName(project.worktreeTargetBranch)
-                ?? ''
-            if (!targetBranch) {
-                return c.json({ error: 'Target branch not configured' }, 400)
-            }
-            const conflictStrategy = parsed.data.conflictStrategy ?? 'agent'
+            const conflictStrategy = parsed.data.conflictStrategy
 
             const engine = options.getSyncEngine()
             if (!engine) {
@@ -4769,6 +4616,42 @@ export function createTasksRoutes(options: {
 
             if (!sessionId || !session?.metadata?.worktree) {
                 return c.json({ error: 'Session is not a worktree session' }, 400)
+            }
+
+            const mergeWorkflowLoad = await loadMergeWorkflowFromSession({
+                engine,
+                sessionId,
+                session
+            })
+            if (mergeWorkflowLoad.kind !== 'valid') {
+                const blockedReason = mergeWorkflowLoad.error
+                const blockedTask = updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: resolvedTask,
+                    status: 'blocked',
+                    sessionId,
+                    retryCount: getNextMergeAttemptRetryCount(resolvedTask),
+                    failureFingerprint: buildMergeFailureFingerprint({
+                        reason: mergeWorkflowLoad.kind === 'missing' ? 'contract_missing' : 'contract_invalid',
+                        blockedReason
+                    }),
+                    latestNote: mergeWorkflowLoad.kind === 'missing'
+                        ? buildMissingMergeWorkflowContractNote(mergeWorkflowLoad.manifestPath)
+                        : buildInvalidMergeWorkflowContractNote(mergeWorkflowLoad.manifestPath, blockedReason),
+                    blockedReason
+                }) ?? resolvedTask
+                return c.json({ error: blockedReason, mergeRuntime: blockedTask.mergeRuntime }, 400)
+            }
+
+            const mergeWorkflow = mergeWorkflowLoad.workflow
+            const targetBranch = normalizeBranchName(parsed.data.targetBranch)
+                ?? normalizeBranchName(mergeWorkflow.targetBranch)
+                ?? normalizeBranchName(project.worktreeTargetBranch)
+                ?? ''
+            if (!targetBranch) {
+                return c.json({ error: 'Target branch not configured' }, 400)
             }
 
             const sourceBranch = normalizeBranchName(session.metadata.worktree.branch)
@@ -4829,7 +4712,6 @@ export function createTasksRoutes(options: {
                 }))
             }
 
-            const rootPath = resolveSessionMergeRootPath(session)
             const mergeHandoffNote = buildMergeHandoffNote({
                 autoStarted,
                 resumed,
@@ -4843,11 +4725,11 @@ export function createTasksRoutes(options: {
                 const runtimeNote = runtimeStatus === 'approval_pending'
                     ? buildApprovalPendingActionRuntimeNote({
                         actionLabel: 'Merge',
-                        continuation: `HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` first`
+                        continuation: 'HOPI will attempt the platform merge when the session is free'
                     })
                     : buildQueuedActionRuntimeNote({
                         actionLabel: 'Merge',
-                        continuation: `HOPI will auto-run \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` first`
+                        continuation: 'HOPI will attempt the platform merge when the session is free'
                     })
                 const runtimeTask = updateTaskMergeRuntime({
                     store: options.store,
@@ -4869,7 +4751,8 @@ export function createTasksRoutes(options: {
                     taskId: runtimeTask.id,
                     sessionId,
                     targetBranch,
-                    deferredDirectMerge: {
+                    workflow: mergeWorkflow,
+                    deferredPlatformMerge: {
                         conflictStrategy,
                         handoffNote: mergeHandoffNote
                     },
@@ -4882,176 +4765,7 @@ export function createTasksRoutes(options: {
                 }))
             }
 
-            const verificationSnapshotResult = await captureMergeVerificationSnapshot({
-                engine,
-                sessionId,
-                targetBranch
-            })
-            if (!verificationSnapshotResult.ok) {
-                const message = verificationSnapshotResult.error
-                const blockedState = buildMergeBlockedRuntimeState({
-                    task: resolvedTask,
-                    note: buildMergeVerificationCaptureBlockedNote(message),
-                    blockedReason: message,
-                    failureFingerprint: buildMergeFailureFingerprint({
-                        reason: 'snapshot_capture_failed',
-                        blockedReason: message
-                    }),
-                    manualStep: 'Inspect repo state in the linked session, then retry merge.'
-                })
-                updateTaskMergeRuntime({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    task: resolvedTask,
-                    status: 'blocked',
-                    sessionId,
-                    retryCount,
-                    failureFingerprint: blockedState.failureFingerprint,
-                    latestNote: blockedState.latestNote,
-                    blockedReason: blockedState.blockedReason
-                })
-                return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
-            }
-
-            if (rootPath) {
-                const directRuntimeTask = updateTaskMergeRuntime({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    task: resolvedTask,
-                    status: runningRuntimeStatus,
-                    sessionId,
-                    retryCount,
-                    latestNote: `Running \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\` directly in the linked session.`,
-                    startedAt: Date.now(),
-                    completedAt: null
-                }) ?? resolvedTask
-
-                const directAttempt = await runDirectMergeScriptAttempt({
-                    engine,
-                    sessionId,
-                    task: directRuntimeTask,
-                    projectId: directRuntimeTask.projectId,
-                    rootPath,
-                    worktreeBasePath: session.metadata?.worktree?.basePath,
-                    worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
-                    targetBranch,
-                    sourceBranch,
-                    conflictStrategy,
-                    handoffNote: mergeHandoffNote,
-                    taskMergedAt: directRuntimeTask.worktreeMergedAt ?? null,
-                    verificationSnapshot: verificationSnapshotResult.snapshot
-                })
-
-                appendAssistantTextMessage({
-                    store: options.store,
-                    engine,
-                    sessionId,
-                    localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${directRuntimeTask.id}:${Date.now()}`,
-                    text: directAttempt.transcriptText
-                })
-
-                if (directAttempt.kind === 'success') {
-                    const mergedTask = await persistSuccessfulTaskMerge({
-                        store: options.store,
-                        engine,
-                        namespace,
-                        task: directRuntimeTask,
-                        sessionId,
-                        sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
-                        mergeResult: {
-                            success: true,
-                            commitHash: directAttempt.targetHead ?? undefined
-                        },
-                        markFinishedOnMerge: directRuntimeTask.status === 'in_review',
-                        preferredLocale
-                    }) ?? directRuntimeTask
-
-                    return c.json(buildMergeKickoffResponse({
-                        task: mergedTask,
-                        skippedReason: null
-                    }))
-                }
-
-                const promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${resolvedTask.id}:${Date.now()}`
-                try {
-                    await engine.sendMessage(sessionId, {
-                        text: directAttempt.promptText,
-                        localId: promptLocalId,
-                        sentFrom: 'webapp'
-                    })
-                } catch (error) {
-                    const message = formatErrorMessage(error, 'Failed to send merge request')
-                    updateTaskMergeRuntime({
-                        store: options.store,
-                        engine,
-                        namespace,
-                        task: directRuntimeTask,
-                        status: 'blocked',
-                        sessionId,
-                        latestNote: `Direct merge handoff failed: ${message}. Retry merge after the linked session is ready.`,
-                        blockedReason: message
-                    })
-                    return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
-                }
-
-                const runtimeTask = updateTaskMergeRuntime({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    task: directRuntimeTask,
-                    status: isMergeRetryAttempt(directRuntimeTask) ? 'retrying' : 'running',
-                    sessionId,
-                    failureFingerprint: directAttempt.failureFingerprint,
-                    latestNote: 'Direct merge tool call ran first. Follow the transcript for CLI output, repairs, and retries.',
-                    startedAt: directRuntimeTask.mergeRuntime?.startedAt ?? Date.now(),
-                    completedAt: null
-                }) ?? directRuntimeTask
-
-                scheduleConversationMergeMonitor({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    taskId: runtimeTask.id,
-                    sessionId,
-                    promptLocalId,
-                    targetBranch,
-                    verificationSnapshot: verificationSnapshotResult.snapshot,
-                    preferredLocale
-                })
-
-                return c.json(buildMergeKickoffResponse({
-                    task: runtimeTask,
-                    skippedReason: 'running'
-                }))
-            }
-
-            const promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${resolvedTask.id}:${Date.now()}`
-            const prompt = buildConversationMergePrompt({
-                task: resolvedTask,
-                projectId: resolvedTask.projectId,
-                targetBranch,
-                sourceBranch,
-                rootPath,
-                worktreeBasePath: session.metadata?.worktree?.basePath,
-                worktreePath: session.metadata?.worktree?.worktreePath ?? session.metadata?.path ?? rootPath,
-                conflictStrategy,
-                handoffNote: mergeHandoffNote
-            })
-
-            try {
-                await engine.sendMessage(sessionId, {
-                    text: prompt,
-                    localId: promptLocalId,
-                    sentFrom: 'webapp'
-                })
-            } catch (error) {
-                const message = formatErrorMessage(error, 'Failed to send merge request')
-                return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
-            }
-
-            const runtimeTask = updateTaskMergeRuntime({
+            const runningTask = updateTaskMergeRuntime({
                 store: options.store,
                 engine,
                 namespace,
@@ -5059,10 +4773,124 @@ export function createTasksRoutes(options: {
                 status: runningRuntimeStatus,
                 sessionId,
                 retryCount,
-                latestNote: 'Merge requested in the linked session. Follow the transcript for tool output and retries.',
+                latestNote: 'Attempting platform merge for the linked worktree.',
                 startedAt: Date.now(),
                 completedAt: null
             }) ?? resolvedTask
+
+            const mergeAttempt = await attemptPlatformMerge({
+                engine,
+                sessionId,
+                session,
+                task: runningTask,
+                targetBranch,
+                sourceBranch,
+                workflow: mergeWorkflow,
+                conflictStrategy,
+                handoffNote: mergeHandoffNote,
+                nextRepairAttempt: 1
+            })
+
+            if (mergeAttempt.kind === 'success') {
+                appendAssistantTextMessage({
+                    store: options.store,
+                    engine,
+                    sessionId,
+                    text: mergeAttempt.transcriptText,
+                    localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${runningTask.id}:${Date.now()}`
+                })
+                const mergedTask = await persistSuccessfulTaskMerge({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: runningTask,
+                    sessionId,
+                    sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
+                    mergeResult: {
+                        success: true,
+                        commitHash: mergeAttempt.targetHead ?? undefined
+                    },
+                    markFinishedOnMerge: runningTask.status === 'in_review',
+                    preferredLocale
+                }) ?? runningTask
+
+                return c.json(buildMergeKickoffResponse({
+                    task: mergedTask,
+                    skippedReason: null
+                }))
+            }
+
+            if (mergeAttempt.kind === 'blocked') {
+                const blockedState = buildMergeBlockedRuntimeState({
+                    task: runningTask,
+                    note: mergeAttempt.note,
+                    blockedReason: mergeAttempt.blockedReason,
+                    failureFingerprint: mergeAttempt.failureFingerprint,
+                    manualStep: mergeAttempt.blockedReason === `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`
+                        ? `Create ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}, then retry merge.`
+                        : MERGE_REPAIR_MANUAL_STEP
+                })
+                updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: runningTask,
+                    status: 'blocked',
+                    sessionId,
+                    retryCount,
+                    failureFingerprint: blockedState.failureFingerprint,
+                    latestNote: blockedState.latestNote,
+                    blockedReason: blockedState.blockedReason
+                })
+                return c.json({ error: mergeAttempt.blockedReason }, resolveMergeExecutionErrorStatus(mergeAttempt.blockedReason))
+            }
+
+            appendAssistantTextMessage({
+                store: options.store,
+                engine,
+                sessionId,
+                text: mergeAttempt.transcriptText,
+                localId: `${AUTO_DIRECT_MERGE_RESULT_LOCAL_ID_PREFIX}${runningTask.id}:${Date.now()}`
+            })
+
+            const promptLocalId = `${AUTO_CONVERSATION_MERGE_LOCAL_ID_PREFIX}${runningTask.id}:${Date.now()}`
+            try {
+                await engine.sendMessage(sessionId, {
+                    text: mergeAttempt.promptText,
+                    localId: promptLocalId,
+                    sentFrom: 'webapp'
+                })
+            } catch (error) {
+                const message = formatErrorMessage(error, 'Failed to send merge conflict resolution request')
+                updateTaskMergeRuntime({
+                    store: options.store,
+                    engine,
+                    namespace,
+                    task: runningTask,
+                    status: 'blocked',
+                    sessionId,
+                    retryCount,
+                    latestNote: `Platform merge found conflicts, but conflict-resolution handoff failed: ${message}. Retry merge after the linked session is ready.`,
+                    blockedReason: message
+                })
+                return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
+            }
+
+            const runtimeTask = updateTaskMergeRuntime({
+                store: options.store,
+                engine,
+                namespace,
+                task: runningTask,
+                status: isMergeRetryAttempt(runningTask) ? 'retrying' : 'running',
+                sessionId,
+                retryCount,
+                failureFingerprint: mergeAttempt.failureFingerprint,
+                latestNote: mergeAttempt.repairKind === 'verify'
+                    ? buildMergeVerifyRepairAttemptNote(1)
+                    : 'Platform merge found conflicts. Resolving them in the linked session before retry.',
+                startedAt: runningTask.mergeRuntime?.startedAt ?? Date.now(),
+                completedAt: null
+            }) ?? runningTask
 
             scheduleConversationMergeMonitor({
                 store: options.store,
@@ -5072,7 +4900,10 @@ export function createTasksRoutes(options: {
                 sessionId,
                 promptLocalId,
                 targetBranch,
-                verificationSnapshot: verificationSnapshotResult.snapshot,
+                workflow: mergeWorkflow,
+                repairAttempt: 1,
+                conflictStrategy,
+                handoffNote: mergeHandoffNote,
                 preferredLocale
             })
 

@@ -110,6 +110,8 @@ function StartSessionDialog(props: {
     taskAgentFlavor: AgentType | null
     taskPermissionMode: PermissionMode | null
     taskModel: string | null
+    workflowProfile: string | null
+    workflowPhase: string | null
     projectDefaults: {
         agent: AgentType
         permissionMode: PermissionMode
@@ -129,8 +131,19 @@ function StartSessionDialog(props: {
     const initialAgent = props.taskAgentFlavor ?? props.projectDefaults.agent
     const initialModel = props.taskModel ?? props.projectDefaults.model ?? 'auto'
     const initialPermissionMode = useMemo(() => {
-        return resolveTaskPermissionModeForFlavor(initialAgent, props.taskPermissionMode ?? props.projectDefaults.permissionMode)
-    }, [initialAgent, props.taskPermissionMode, props.projectDefaults.permissionMode])
+        const workflowProfile = (props.workflowProfile ?? '').trim().toLowerCase()
+        const workflowPhase = (props.workflowPhase ?? '').trim().toLowerCase()
+        const isGsdNonExecutionPhase = workflowProfile === 'gsd'
+            && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
+        const preferredMode: PermissionMode | null = isGsdNonExecutionPhase
+            ? initialAgent === 'gemini'
+                ? 'read-only'
+                : initialAgent === 'opencode'
+                    ? 'default'
+                    : 'plan'
+            : props.taskPermissionMode ?? props.projectDefaults.permissionMode
+        return resolveTaskPermissionModeForFlavor(initialAgent, preferredMode)
+    }, [initialAgent, props.projectDefaults.permissionMode, props.taskPermissionMode, props.workflowPhase, props.workflowProfile])
 
     const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId)
     const [agent, setAgent] = useState<AgentType>(initialAgent)
@@ -163,8 +176,20 @@ function StartSessionDialog(props: {
         if (permissionOptions.some((option) => option.mode === permissionMode)) {
             return
         }
-        setPermissionMode(resolveTaskPermissionModeForFlavor(agent, props.taskPermissionMode ?? props.projectDefaults.permissionMode))
-    }, [permissionOptions, permissionMode, agent, props.taskPermissionMode, props.projectDefaults.permissionMode])
+        const workflowProfile = (props.workflowProfile ?? '').trim().toLowerCase()
+        const workflowPhase = (props.workflowPhase ?? '').trim().toLowerCase()
+        const isGsdNonExecutionPhase = workflowProfile === 'gsd'
+            && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
+        const preferredMode: PermissionMode | null = isGsdNonExecutionPhase
+            ? agent === 'gemini'
+                ? 'read-only'
+                : agent === 'opencode'
+                    ? 'default'
+                    : 'plan'
+            : props.taskPermissionMode ?? props.projectDefaults.permissionMode
+
+        setPermissionMode(resolveTaskPermissionModeForFlavor(agent, preferredMode))
+    }, [permissionOptions, permissionMode, agent, props.projectDefaults.permissionMode, props.taskPermissionMode, props.workflowPhase, props.workflowProfile])
 
     const canStart = Boolean(workspaceId && agent && !isPending)
 
@@ -1356,6 +1381,8 @@ function TaskDetailsPanel(props: {
                 taskAgentFlavor={agentFlavor || null}
                 taskPermissionMode={props.task.permissionMode ?? null}
                 taskModel={normalizeModelName(model)}
+                workflowProfile={props.task.workflowProfile ?? null}
+                workflowPhase={props.task.workflowPhase ?? null}
                 projectDefaults={props.projectDefaults}
                 workspaces={props.workspaces}
                 defaultWorkspaceId={props.projectDefaultWorkspaceId}

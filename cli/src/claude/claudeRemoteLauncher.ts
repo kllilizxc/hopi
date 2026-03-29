@@ -73,6 +73,24 @@ function isAssistantTextClaudeMessage(body: unknown): boolean {
     return hasTextInClaudeAssistantContent((message as { content?: unknown }).content);
 }
 
+function buildUnexpectedExitMessage(error: unknown): string {
+    const detail = error instanceof Error
+        ? error.message.trim()
+        : typeof error === 'string'
+            ? error.trim()
+            : '';
+
+    if (!detail) {
+        return 'Process exited unexpectedly';
+    }
+
+    if (/^process exited unexpectedly\b/iu.test(detail)) {
+        return detail;
+    }
+
+    return `Process exited unexpectedly: ${detail}`;
+}
+
 class ClaudeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: Session;
     private abortController: AbortController | null = null;
@@ -446,7 +464,11 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                 } catch (e) {
                     logger.debug('[remote]: launch error', e);
                     if (!this.exitReason) {
-                        session.client.sendSessionEvent({ type: 'error', message: 'Process exited unexpectedly', reason: 'process-exited' });
+                        session.client.sendSessionEvent({
+                            type: 'error',
+                            message: buildUnexpectedExitMessage(e),
+                            reason: 'process-exited'
+                        });
                         emitReadyForInFlightTurn();
                         continue;
                     }

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel } from '@hopi/protocol'
-import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
+import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
@@ -8,13 +8,14 @@ import type { Store, StoredMessage, StoredTask } from '../store'
 import {
     buildRepeatedTaskActionFailureNote,
     buildTaskActionCommandReportLines,
-    trimTaskActionOutput,
-    waitForSessionToBecomeRunnable
+    trimTaskActionOutput
 } from '../utils/taskActionFlow'
 import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
+import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
+import { resolveSessionRootPathCandidates } from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
-import { buildInitScriptCommand, runInitScriptIfPresent, type ScriptExecutionResult } from './projectScripts'
+import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
 import { getWorkflowStrategy } from './workflowStrategy'
 
 function dataUrlToBase64(dataUrl: string): string {
@@ -23,6 +24,7 @@ function dataUrlToBase64(dataUrl: string): string {
 }
 
 const KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
+const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 const MESSAGE_HISTORY_PAGE_SIZE = 200
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -41,24 +43,8 @@ function stringifyUnknown(value: unknown): string {
     return String(value)
 }
 
-function formatErrorMessage(error: unknown, fallback: string): string {
-    const message = normalizeText(stringifyUnknown(error))
-    return message || fallback
-}
-
 function normalizeText(value: string): string {
     return value.replace(/\r\n/g, '\n').trim()
-}
-
-function isLikelyMissingInitScriptFailure(result: ScriptExecutionResult): boolean {
-    if (result.ok) {
-        return false
-    }
-
-    const combined = `${result.error}\n${result.stderr}\n${result.stdout}`.toLowerCase()
-    const mentionsInitScript = combined.includes(PRODUCT_INIT_SCRIPT_RELATIVE_PATH.toLowerCase()) || combined.includes('init.sh')
-    const isMissingFile = combined.includes('no such file or directory') || combined.includes('cannot open')
-    return mentionsInitScript && isMissingFile
 }
 
 function collectCodexPlanText(data: Record<string, unknown>): string | null {
@@ -205,7 +191,7 @@ function buildCarryoverHistorySection(store: Store, previousSessionId: string): 
     const lines: string[] = []
 
     for (const message of messages) {
-        if (message.localId?.startsWith(KICKOFF_LOCAL_ID_PREFIX)) {
+        if (message.localId?.startsWith(KICKOFF_LOCAL_ID_PREFIX) || message.localId?.startsWith(AUTO_WORKFLOW_LOCAL_ID_PREFIX)) {
             continue
         }
 
@@ -301,25 +287,8 @@ function resolveWorktreeWorkspacePaths(projectWorkspacePaths: string[], primaryP
 type TaskInitRuntimeStatus = NonNullable<StoredTask['initRuntime']>['status']
 
 const AUTO_INIT_SETUP_LOCAL_ID_PREFIX = 'auto:init_setup:'
-const INIT_REPAIR_WAIT_TIMEOUT_MS = 120_000
-const INIT_REPAIR_POLL_INTERVAL_MS = 250
-const INIT_REPAIR_MANUAL_STEP = 'Inspect the linked session tool output, fix `.hopi/init.sh` or workspace blockers, then retry task start.'
-const INIT_SESSION_MANUAL_STEP = 'Restart or relink the task session inside the workspace, then retry task start.'
-const INIT_WAIT_MANUAL_STEP = 'Wait for the linked session to become idle, then retry task start.'
-const INIT_SESSION_INACTIVE_BLOCKED_REASON = 'Linked session became inactive before init retry could run.'
-const INIT_WAIT_TIMEOUT_BLOCKED_REASON = 'Init retry stayed queued because the linked session never became idle.'
-
-async function waitForSessionToBecomeInitRunnable(options: {
-    engine: SyncEngine
-    sessionId: string
-    namespace: string
-    timeoutMs: number
-}): Promise<'ready' | 'session_inactive' | 'timeout'> {
-    return waitForSessionToBecomeRunnable({
-        ...options,
-        pollIntervalMs: INIT_REPAIR_POLL_INTERVAL_MS
-    })
-}
+const SETUP_WORKFLOW_MANUAL_STEP = `Inspect the linked session tool output, fix \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` setup steps or workspace blockers, then retry task start.`
+const BOOTSTRAP_SETUP_BYPASS_NOTE = `Bootstrap task skipped setup preflight so it can create or repair \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`.`
 
 function emitSessionMessageReceivedEvent(options: {
     engine: SyncEngine
@@ -390,6 +359,43 @@ function buildInitCommandReportLines(options: {
     return buildTaskActionCommandReportLines(options)
 }
 
+function resolveWorkflowKickoff(options: {
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'subTasks' | 'workflowProfile' | 'workflowPhase'>
+    kickoff: StartSessionKickoffOptions
+}): StartSessionKickoffOptions {
+    if (options.kickoff.kind === 'skip' || options.kickoff.kind === 'custom') {
+        return options.kickoff
+    }
+
+    const workflowProfile = options.task.workflowProfile?.trim().toLowerCase()
+    if (workflowProfile !== 'gsd') {
+        return options.kickoff
+    }
+
+    const phase = options.task.workflowPhase?.trim().toLowerCase()
+    let guidance: string | null = null
+    if (phase === 'discuss') {
+        guidance = 'Workflow mode: GSD discuss. Do not implement yet. Help clarify scope, constraints, unknowns, and what should be locked before planning.'
+    } else if (phase === 'plan') {
+        guidance = 'Workflow mode: GSD plan. Do not implement yet. Turn this task into a concrete execution plan with ordered steps, dependencies, risks, and missing information.'
+    } else if (phase === 'verify') {
+        guidance = 'Workflow mode: GSD verify. Focus on checking completeness, surfacing gaps, and deciding whether the task is done or should return to execution.'
+    }
+
+    if (!guidance) {
+        return options.kickoff
+    }
+
+    return {
+        kind: 'custom',
+        text: `${buildTaskKickoffSummary(options.task)}
+
+${guidance}`,
+        localId: `${AUTO_WORKFLOW_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`,
+        includeCarryoverHistory: true
+    }
+}
+
 function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'subTasks'>): string {
     const title = (task.title ?? '').trim()
     const description = (task.description ?? '').trim()
@@ -425,81 +431,473 @@ function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' 
     return 'Task'
 }
 
-function buildInitScriptResultMessage(options: {
-    rootPath: string
-    command: string
-    summary: string
-    stdout?: string
-    stderr?: string
-    attempt: 'initial' | 'retry'
-    success: boolean
-}): string {
-    const header = options.attempt === 'retry'
-        ? options.success
-            ? `HOPI re-ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` after in-session repair.`
-            : `HOPI re-ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` after in-session repair, but init still failed.`
-        : options.success
-            ? `HOPI auto-ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` while starting the task session.`
-            : `HOPI auto-ran \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\` before switching to same-session init repair.`
-
-    return [
-        header,
-        '',
-        `Working directory: ${options.rootPath}`,
-        ...buildInitCommandReportLines({
-            command: options.command,
-            summary: options.summary,
-            stdout: options.stdout,
-            stderr: options.stderr,
-            maxChars: 8_000
-        })
-    ].join('\n')
-}
-
-function buildInitScriptRepairPrompt(options: {
-    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'subTasks'>
-    rootPath: string
-    command: string
-    summary: string
-    stdout?: string
-    stderr?: string
-}): string {
-    return [
-        'Task session started, but direct init failed before normal kickoff.',
-        '',
-        `Task: ${options.task.title}`,
-        `Task id: ${options.task.id}`,
-        `Working directory: ${options.rootPath}`,
-        '',
-        'Direct CLI result:',
-        ...buildInitCommandReportLines({
-            command: options.command,
-            summary: options.summary,
-            stdout: options.stdout,
-            stderr: options.stderr,
-            maxChars: 4_000
-        }),
-        '',
-        'Repair loop:',
-        '- Inspect the current workspace state before editing anything.',
-        '- Fix `.hopi/init.sh` or the real workspace blocker inside the sandbox.',
-        '- Re-run the init command after repairs:',
-        `  \`${options.command}\``,
-        '- Keep important stdout/stderr in the thread.',
-        '- Stop only for missing external access or other out-of-sandbox blockers; if blocked, name the blocker, last failing command, and next manual step.',
-        '',
-        'After init is stable, continue with the main task:',
-        buildTaskKickoffSummary(options.task),
-        '',
-        'Reply with a short summary of the repair result or blocker.'
-    ].join('\n')
-}
-
 function buildRepeatedInitFailureNote(options: {
     blockedReason: string
     manualStep: string
 }): string {
     return buildRepeatedTaskActionFailureNote(options)
+}
+
+function buildSetupWorkflowResultMessage(result: SetupWorkflowRunResult): string {
+    const lines: string[] = []
+
+    if (result.ok) {
+        lines.push(`HOPI ran setup workflow from \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` before kickoff.`)
+    } else {
+        lines.push(`HOPI ran setup workflow from \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`, but it failed before kickoff.`)
+    }
+
+    lines.push('')
+    lines.push(`Manifest: ${result.manifestPath}`)
+    lines.push(`Working directory: ${result.rootPath}`)
+
+    for (const step of result.steps) {
+        lines.push('')
+        lines.push(`${step.status === 'succeeded' ? 'OK' : 'Failed'} step \`${step.id}\` (${step.type})`)
+        lines.push(...buildInitCommandReportLines({
+            command: step.command,
+            summary: step.summary,
+            stdout: step.stdout,
+            stderr: step.stderr,
+            maxChars: 4_000
+        }))
+    }
+
+    if (!result.ok && result.steps.length === 0) {
+        lines.push('')
+        lines.push(`Failure: ${result.error}`)
+    }
+
+    return lines.join('\n')
+}
+
+function buildInvalidSetupContractMessage(options: {
+    manifestPath: string
+    error: string
+}): string {
+    return [
+        `HOPI found \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`, but the setup contract is invalid.`,
+        '',
+        `Manifest: ${options.manifestPath}`,
+        `Error: ${options.error}`
+    ].join('\n')
+}
+
+function buildMissingSetupContractMessage(options: {
+    manifestPath: string
+}): string {
+    return [
+        `HOPI could not find \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` for this task session.`,
+        '',
+        `Expected manifest: ${options.manifestPath}`
+    ].join('\n')
+}
+
+function buildBootstrapSetupBypassMessage(): string {
+    return [
+        `HOPI skipped setup workflow preflight for this bootstrap task.`,
+        '',
+        `Reason: this task is responsible for creating or repairing \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`.`,
+        'Kickoff continues without requiring an existing contract.'
+    ].join('\n')
+}
+
+function buildBootstrapStarterContractMessage(options: {
+    manifestPath: string
+    seeded: boolean
+    inferred: boolean
+}): string {
+    if (options.seeded) {
+        return [
+            `HOPI created a starter \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` scaffold for this bootstrap task.`,
+            '',
+            `Manifest: ${options.manifestPath}`,
+            options.inferred
+                ? 'The scaffold was inferred from the repository structure; review and refine it before verifying automation.'
+                : 'The scaffold is intentionally incomplete; update it before verifying automation.'
+        ].join('\n')
+    }
+
+    return [
+        `HOPI found an existing \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` for this bootstrap task.`,
+        '',
+        `Manifest: ${options.manifestPath}`,
+        'Kickoff continues so the task can inspect and repair it if needed.'
+    ].join('\n')
+}
+
+function isMissingSessionFileError(error: string | undefined): boolean {
+    const normalized = (error ?? '').trim().toLowerCase()
+    return normalized.includes('enoent') || normalized.includes('no such file')
+}
+
+function buildBootstrapStarterContract(targetBranch: string): string {
+    return [
+        '# HOPI bootstrap scaffold.',
+        '# Replace empty sections with project-specific setup, preview, and merge rules before verifying automation.',
+        'version: 1',
+        'setup:',
+        '  steps: []',
+        'preview:',
+        '  services: []',
+        'merge:',
+        `  targetBranch: ${JSON.stringify(targetBranch)}`,
+        '  strategy: merge_commit',
+        '  conflictResolution:',
+        '    mode: ai',
+        '    maxAttempts: 2'
+    ].join('\n')
+}
+
+function isBootstrapPlaceholderContract(raw: string): boolean {
+    const normalized = raw.replace(/\r\n/g, '\n')
+    return normalized.includes('# HOPI bootstrap scaffold.')
+        && normalized.includes('setup:\n  steps: []')
+        && normalized.includes('preview:\n  services: []')
+}
+
+type BootstrapStarterContractInference = {
+    content: string
+    inferred: boolean
+}
+
+type PackageScriptMap = Record<string, string>
+
+function decodeBase64Utf8(value: string | undefined): string | null {
+    if (typeof value !== 'string' || value.length === 0) {
+        return null
+    }
+    try {
+        return Buffer.from(value, 'base64').toString('utf8')
+    } catch {
+        return null
+    }
+}
+
+async function readOptionalSessionTextFile(options: {
+    engine: SyncEngine
+    sessionId: string
+    rootPath: string
+    relativePath: string
+}): Promise<string | null> {
+    const response = await options.engine.readSessionFile(options.sessionId, options.relativePath, options.rootPath)
+    if (!response.success) {
+        if (isMissingSessionFileError(response.error)) {
+            return null
+        }
+        return null
+    }
+    return decodeBase64Utf8(response.content)
+}
+
+function tryParsePackageScripts(raw: string | null): PackageScriptMap | null {
+    if (!raw) {
+        return null
+    }
+
+    try {
+        const parsed = JSON.parse(raw) as { scripts?: unknown }
+        if (!parsed || typeof parsed !== 'object' || !parsed.scripts || typeof parsed.scripts !== 'object') {
+            return {}
+        }
+        const scripts = Object.fromEntries(
+            Object.entries(parsed.scripts as Record<string, unknown>)
+                .filter((entry): entry is [string, string] => typeof entry[0] === 'string' && typeof entry[1] === 'string')
+        )
+        return scripts
+    } catch {
+        return null
+    }
+}
+
+function getPreferredPackageManager(lockfiles: {
+    bunLock: boolean
+    pnpmLock: boolean
+    yarnLock: boolean
+    npmLock: boolean
+}): 'bun' | 'pnpm' | 'yarn' | 'npm' {
+    if (lockfiles.bunLock) return 'bun'
+    if (lockfiles.pnpmLock) return 'pnpm'
+    if (lockfiles.yarnLock) return 'yarn'
+    if (lockfiles.npmLock) return 'npm'
+    return 'npm'
+}
+
+function getRunCommand(packageManager: 'bun' | 'pnpm' | 'yarn' | 'npm', scriptName: string): string[] {
+    if (packageManager === 'yarn') {
+        return ['yarn', scriptName]
+    }
+    return [packageManager, 'run', scriptName]
+}
+
+function getInstallCommand(packageManager: 'bun' | 'pnpm' | 'yarn' | 'npm'): string[] {
+    if (packageManager === 'bun') return ['bun', 'install']
+    if (packageManager === 'pnpm') return ['pnpm', 'install', '--frozen-lockfile']
+    if (packageManager === 'yarn') return ['yarn', 'install', '--immutable']
+    return ['npm', 'install']
+}
+
+function toYamlCommand(command: string[]): string {
+    return `[${command.map((part) => JSON.stringify(part)).join(', ')}]`
+}
+
+function buildInferredBootstrapStarterContract(options: {
+    targetBranch: string
+    packageManager: 'bun' | 'pnpm' | 'yarn' | 'npm'
+    scripts: PackageScriptMap
+}): string {
+    const setupInstallCommand = toYamlCommand(getInstallCommand(options.packageManager))
+    const devHub = options.scripts['dev:hub']
+    const devWeb = options.scripts['dev:web']
+    const dev = options.scripts.dev
+    const start = options.scripts.start
+
+    const lines: string[] = [
+        '# HOPI bootstrap scaffold.',
+        '# Review inferred commands and readiness checks before verifying automation.',
+        'version: 1',
+        'setup:',
+        '  steps:',
+        '    - id: install',
+        '      type: run',
+        '      cwd: "."',
+        `      run: ${setupInstallCommand}`,
+        'preview:',
+        '  services: []',
+        'merge:',
+        `  targetBranch: ${JSON.stringify(options.targetBranch)}`,
+        '  strategy: merge_commit',
+        '  conflictResolution:',
+        '    mode: ai',
+        '    maxAttempts: 2'
+    ]
+
+    const insertIndex = lines.indexOf('  services: []')
+    const previewLines = (() => {
+        if (devHub && devWeb) {
+            return [
+                '  services:',
+                '    - id: hub',
+                '      type: run',
+                '      cwd: "."',
+                `      run: ${toYamlCommand(getRunCommand(options.packageManager, 'dev:hub'))}`,
+                '      ready:',
+                '        type: process_alive',
+                '    - id: web',
+                '      type: run',
+                '      cwd: "."',
+                `      run: ${toYamlCommand(getRunCommand(options.packageManager, 'dev:web'))}`,
+                '      ready:',
+                '        type: process_alive',
+                '      expose: primary',
+                '  success:',
+                '    require: ["hub", "web"]'
+            ]
+        }
+
+        const primaryScriptName = dev ? 'dev' : start ? 'start' : null
+        if (primaryScriptName) {
+            return [
+                '  services:',
+                '    - id: app',
+                '      type: run',
+                '      cwd: "."',
+                `      run: ${toYamlCommand(getRunCommand(options.packageManager, primaryScriptName))}`,
+                '      ready:',
+                '        type: process_alive',
+                '      expose: primary',
+                '  success:',
+                '    require: ["app"]'
+            ]
+        }
+
+        return ['  services: []']
+    })()
+
+    lines.splice(insertIndex, 1, ...previewLines)
+    return lines.join('\n')
+}
+
+async function inferBootstrapStarterContract(options: {
+    engine: SyncEngine
+    sessionId: string
+    rootPath: string
+    targetBranch: string
+}): Promise<BootstrapStarterContractInference> {
+    const [packageJsonRaw, bunLockRaw, pnpmLockRaw, yarnLockRaw, npmLockRaw] = await Promise.all([
+        readOptionalSessionTextFile({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath: options.rootPath,
+            relativePath: 'package.json'
+        }),
+        readOptionalSessionTextFile({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath: options.rootPath,
+            relativePath: 'bun.lock'
+        }),
+        readOptionalSessionTextFile({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath: options.rootPath,
+            relativePath: 'pnpm-lock.yaml'
+        }),
+        readOptionalSessionTextFile({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath: options.rootPath,
+            relativePath: 'yarn.lock'
+        }),
+        readOptionalSessionTextFile({
+            engine: options.engine,
+            sessionId: options.sessionId,
+            rootPath: options.rootPath,
+            relativePath: 'package-lock.json'
+        })
+    ])
+
+    const scripts = tryParsePackageScripts(packageJsonRaw)
+    if (!scripts) {
+        return {
+            content: buildBootstrapStarterContract(options.targetBranch),
+            inferred: false
+        }
+    }
+
+    const packageManager = getPreferredPackageManager({
+        bunLock: bunLockRaw !== null,
+        pnpmLock: pnpmLockRaw !== null,
+        yarnLock: yarnLockRaw !== null,
+        npmLock: npmLockRaw !== null
+    })
+
+    const inferredContent = buildInferredBootstrapStarterContract({
+        targetBranch: options.targetBranch,
+        packageManager,
+        scripts
+    })
+
+    return {
+        content: inferredContent,
+        inferred: !inferredContent.includes('  services: []')
+    }
+}
+
+async function ensureBootstrapStarterContract(options: {
+    engine: SyncEngine
+    sessionId: string
+    rootPath: string
+    targetBranch: string
+}): Promise<{
+    ok: true
+    seeded: boolean
+    inferred: boolean
+    manifestPath: string
+} | {
+    ok: false
+    manifestPath: string
+    error: string
+}> {
+    const normalizedRootPath = options.rootPath.replace(/\/+$/u, '')
+    const manifestPath = `${normalizedRootPath}/${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`
+    const existing = await options.engine.readSessionFile(
+        options.sessionId,
+        PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
+        options.rootPath
+    )
+
+    if (existing.success && existing.content) {
+        const raw = decodeBase64Utf8(existing.content)
+        if (raw) {
+            const parsedExisting = parseProjectActionContract({ manifestPath, raw })
+            if (parsedExisting.kind === 'valid') {
+                return {
+                    ok: true,
+                    seeded: false,
+                    inferred: false,
+                    manifestPath
+                }
+            }
+
+            if (isBootstrapPlaceholderContract(raw)) {
+                const inferredStarter = await inferBootstrapStarterContract({
+                    engine: options.engine,
+                    sessionId: options.sessionId,
+                    rootPath: options.rootPath,
+                    targetBranch: options.targetBranch
+                })
+
+                if (inferredStarter.inferred && inferredStarter.content.trim() !== raw.trim()) {
+                    const overwriteContent = Buffer.from(inferredStarter.content, 'utf8').toString('base64')
+                    const overwritten = await options.engine.writeSessionFile(options.sessionId, PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH, {
+                        cwd: options.rootPath,
+                        content: overwriteContent,
+                        createParents: true,
+                        overwrite: true
+                    })
+
+                    if (!overwritten.success) {
+                        return {
+                            ok: false,
+                            manifestPath,
+                            error: overwritten.error ?? 'Failed to refresh starter actions manifest'
+                        }
+                    }
+
+                    return {
+                        ok: true,
+                        seeded: true,
+                        inferred: true,
+                        manifestPath
+                    }
+                }
+            }
+        }
+
+        return {
+            ok: true,
+            seeded: false,
+            inferred: false,
+            manifestPath
+        }
+    }
+
+    if (!isMissingSessionFileError(existing.error)) {
+        return {
+            ok: false,
+            manifestPath,
+            error: existing.error ?? 'Failed to inspect actions manifest'
+        }
+    }
+
+    const inferredStarter = await inferBootstrapStarterContract({
+        engine: options.engine,
+        sessionId: options.sessionId,
+        rootPath: options.rootPath,
+        targetBranch: options.targetBranch
+    })
+    const content = Buffer.from(inferredStarter.content, 'utf8').toString('base64')
+    const created = await options.engine.writeSessionFile(options.sessionId, PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH, {
+        cwd: options.rootPath,
+        content,
+        createParents: true
+    })
+
+    if (!created.success) {
+        return {
+            ok: false,
+            manifestPath,
+            error: created.error ?? 'Failed to write starter actions manifest'
+        }
+    }
+
+    return {
+        ok: true,
+        seeded: true,
+        inferred: inferredStarter.inferred,
+        manifestPath
+    }
 }
 
 function buildBlockedInitRuntimeState(options: {
@@ -525,10 +923,6 @@ function buildBlockedInitRuntimeState(options: {
         blockedReason: options.blockedReason,
         failureFingerprint: options.failureFingerprint
     }
-}
-
-function getNextInitRepairAttemptRetryCount(task: Pick<StoredTask, 'initRuntime'>): number {
-    return (task.initRuntime?.retryCount ?? 0) + 1
 }
 
 function buildTaskInitFailureFingerprint(options: {
@@ -602,12 +996,13 @@ export async function startSessionFromTask(options: {
     kickoff?: StartSessionKickoffOptions
 }): Promise<StartTaskSessionResult> {
     const overrides = options.overrides ?? {}
-    const kickoff = options.kickoff ?? { kind: 'default' }
+    const requestedKickoff: StartSessionKickoffOptions = options.kickoff ?? { kind: 'default' }
 
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!task) {
         return { ok: false, error: 'Task not found' }
     }
+    const kickoff = resolveWorkflowKickoff({ task, kickoff: requestedKickoff })
     const previousSessionId = task.activeSessionId
 
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
@@ -639,10 +1034,24 @@ export async function startSessionFromTask(options: {
     const projectDefaultModel = resolveStoredModel(project.defaultModel, project.defaultModelMode)
     const model = overrideModel ?? taskModel ?? projectDefaultModel ?? undefined
 
-    const permissionMode = overrides.permissionMode
+    let permissionMode = overrides.permissionMode
         ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
         ?? undefined
+
+    const workflowProfile = (task.workflowProfile ?? '').trim().toLowerCase()
+    const workflowPhase = (task.workflowPhase ?? '').trim().toLowerCase()
+    const isGsdWorkflow = workflowProfile === 'gsd'
+    const isGsdNonExecutionPhase = isGsdWorkflow && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
+    if (isGsdNonExecutionPhase) {
+        // Workflow phases that should not trigger execution:
+        // force session into an explicit planning / read-only posture regardless of stored task settings.
+        permissionMode = agent === 'claude' || agent === 'codex'
+            ? 'plan'
+            : agent === 'gemini'
+                ? 'read-only'
+                : 'default'
+    }
     const modelMode = (() => {
         if (overrides.modelMode !== undefined) {
             return overrides.modelMode
@@ -668,7 +1077,7 @@ export async function startSessionFromTask(options: {
             ?? undefined
     })()
     const inferredYolo = permissionMode === 'yolo' && isPermissionModeAllowedForFlavor(permissionMode, agent)
-    const yolo = overrides.yolo ?? inferredYolo
+    const yolo = isGsdNonExecutionPhase ? false : overrides.yolo ?? inferredYolo
 
     const sessionType = project.defaultSessionType === 'worktree' ? 'worktree' : 'simple'
     const worktreeName = sessionType === 'worktree'
@@ -707,7 +1116,8 @@ export async function startSessionFromTask(options: {
         sessionType,
         worktreeName,
         undefined,
-        worktreeWorkspacePaths
+        worktreeWorkspacePaths,
+        sessionType === 'worktree' ? project.worktreeTargetBranch?.trim() || undefined : undefined
     )
     if (spawn.type !== 'success') {
         return { ok: false, error: spawn.message }
@@ -749,55 +1159,23 @@ export async function startSessionFromTask(options: {
     }
 
     const engineWithSessionLookup = options.engine as unknown as {
-        getSessionByNamespace?: (sessionId: string, namespace: string) => { metadata?: { path?: unknown } } | undefined
+        getSessionByNamespace?: (sessionId: string, namespace: string) => {
+            metadata?: {
+                path?: unknown
+                worktree?: {
+                    worktreePath?: unknown
+                    basePath?: unknown
+                } | null
+            } | null
+        } | undefined
     }
     const runtimeSession = typeof engineWithSessionLookup.getSessionByNamespace === 'function'
         ? engineWithSessionLookup.getSessionByNamespace.call(options.engine, spawn.sessionId, options.namespace)
         : undefined
-    const runtimePath = typeof runtimeSession?.metadata?.path === 'string'
-        ? runtimeSession.metadata.path.trim()
-        : ''
-    const initScriptCwdCandidates = Array.from(new Set([
-        runtimePath.trim(),
-        workspace.path.trim()
-    ].filter((value) => value.length > 0)))
-
-    const runInitAttempt = async (): Promise<{ initScript: ScriptExecutionResult; initScriptCwd: string }> => {
-        let initScript: ScriptExecutionResult = {
-            ok: true as const,
-            executed: false,
-            stdout: '',
-            stderr: ''
-        }
-        let initScriptCwd = initScriptCwdCandidates[0] ?? workspace.path
-
-        for (const scriptCwd of initScriptCwdCandidates) {
-            initScriptCwd = scriptCwd
-            const result = await runInitScriptIfPresent({
-                engine: options.engine,
-                sessionId: spawn.sessionId,
-                cwd: scriptCwd,
-                taskId: task.id,
-                projectId: project.id
-            })
-            if (!result.ok && isLikelyMissingInitScriptFailure(result)) {
-                initScript = {
-                    ok: true,
-                    executed: false,
-                    stdout: result.stdout,
-                    stderr: result.stderr
-                }
-                continue
-            }
-
-            initScript = result
-            if (!result.ok || result.executed) {
-                break
-            }
-        }
-
-        return { initScript, initScriptCwd }
-    }
+    const initScriptCwdCandidates = resolveSessionRootPathCandidates({
+        session: runtimeSession ?? {},
+        workspacePath: workspace.path
+    })
 
     const workflowStrategy = getWorkflowStrategy(task)
     const workflowPatch = workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
@@ -869,181 +1247,36 @@ export async function startSessionFromTask(options: {
 
     let initRecoveryAttempted = false
     let initRecoveryError: string | undefined
+    let updatedTask: StoredTask | null = null
+    const shouldBypassSetupContract = task.source === 'project_init'
 
-    let directAttempt = await runInitAttempt()
-    let initScript = directAttempt.initScript
-    let initScriptCwd = directAttempt.initScriptCwd
-    let initCommand = buildInitScriptCommand({
-        rootPath: initScriptCwd,
-        taskId: task.id,
-        projectId: project.id
-    })
-
-    if (!initScript.ok) {
-        const directFailureFingerprint = buildTaskInitFailureFingerprint({
-            reason: 'script_failure',
-            blockedReason: initScript.error,
-            initScriptCwd,
-            initScript
-        })
-
-        if (initScript.executed) {
-            appendAssistantTextMessage({
-                store: options.store,
-                engine: options.engine,
-                sessionId: spawn.sessionId,
-                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:direct-result:${Date.now()}`,
-                text: buildInitScriptResultMessage({
-                    rootPath: initScriptCwd,
-                    command: initCommand,
-                    summary: `Init script failed: ${initScript.error}.`,
-                    stdout: initScript.stdout,
-                    stderr: initScript.stderr,
-                    attempt: 'initial',
-                    success: false
-                })
-            })
-        }
-
-        const retryingTask = updateStartedTask({
-            initRuntime: buildTaskInitRuntime({
-                task: runtimeTask,
-                status: 'retrying',
-                sessionId: spawn.sessionId,
-                retryCount: getNextInitRepairAttemptRetryCount(runtimeTask),
-                failureFingerprint: directFailureFingerprint,
-                latestNote: 'Direct init failed; queued one in-session repair attempt.',
-                blockedReason: initScript.error
-            })
-        })
-        if (!retryingTask) {
-            return { ok: false, error: 'Task not found' }
-        }
-        emitStartedTaskUpdate(retryingTask)
-
-        try {
-            await options.engine.sendMessage(spawn.sessionId, {
-                text: buildInitScriptRepairPrompt({
-                    task,
-                    rootPath: initScriptCwd,
-                    command: initCommand,
-                    summary: `Init script failed: ${initScript.error}.`,
-                    stdout: initScript.stdout,
-                    stderr: initScript.stderr
-                }),
-                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:${Date.now()}`,
-                sentFrom: 'webapp'
-            })
-            initRecoveryAttempted = true
-        } catch (error) {
-            const recoveryError = formatErrorMessage(error, 'Failed to send init recovery prompt')
-            initRecoveryError = recoveryError
-            appendAssistantTextMessage({
-                store: options.store,
-                engine: options.engine,
-                sessionId: spawn.sessionId,
-                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:prompt-error:${Date.now()}`,
-                text: `HOPI could not send the automatic init repair prompt: ${recoveryError}`
-            })
-
-            const blockedTask = applyBlockedInitState({
-                blockedReason: recoveryError,
-                note: `Init repair prompt could not be delivered. ${INIT_REPAIR_MANUAL_STEP}`,
-                manualStep: INIT_REPAIR_MANUAL_STEP,
-                failureFingerprint: buildTaskInitFailureFingerprint({
-                    reason: 'repair_prompt_failed',
-                    blockedReason: recoveryError,
-                    initScriptCwd,
-                    initScript
-                })
-            })
-            if (!blockedTask) {
-                return { ok: false, error: 'Task not found' }
-            }
-            emitStartedTaskUpdate(blockedTask)
-            return {
-                ok: true,
-                task: blockedTask,
-                sessionId: spawn.sessionId,
-                initRecoveryAttempted,
-                initRecoveryError
-            }
-        }
-
-        const runnableResult = await waitForSessionToBecomeInitRunnable({
+    if (shouldBypassSetupContract) {
+        const bootstrapManifest = await ensureBootstrapStarterContract({
             engine: options.engine,
             sessionId: spawn.sessionId,
-            namespace: options.namespace,
-            timeoutMs: INIT_REPAIR_WAIT_TIMEOUT_MS
-        })
-        if (runnableResult !== 'ready') {
-            const blockedReason = runnableResult === 'session_inactive'
-                ? INIT_SESSION_INACTIVE_BLOCKED_REASON
-                : INIT_WAIT_TIMEOUT_BLOCKED_REASON
-            const manualStep = runnableResult === 'session_inactive'
-                ? INIT_SESSION_MANUAL_STEP
-                : INIT_WAIT_MANUAL_STEP
-            const blockedTask = applyBlockedInitState({
-                blockedReason,
-                note: `${blockedReason} ${manualStep}`,
-                manualStep,
-                failureFingerprint: buildTaskInitFailureFingerprint({
-                    reason: runnableResult,
-                    blockedReason
-                })
-            })
-            if (!blockedTask) {
-                return { ok: false, error: 'Task not found' }
-            }
-            emitStartedTaskUpdate(blockedTask)
-            return {
-                ok: true,
-                task: blockedTask,
-                sessionId: spawn.sessionId,
-                initRecoveryAttempted,
-                initRecoveryError
-            }
-        }
-
-        const retryAttempt = await runInitAttempt()
-        initScript = retryAttempt.initScript
-        initScriptCwd = retryAttempt.initScriptCwd
-        initCommand = buildInitScriptCommand({
-            rootPath: initScriptCwd,
-            taskId: task.id,
-            projectId: project.id
+            rootPath: initScriptCwdCandidates[0] ?? workspace.path,
+            targetBranch: project.worktreeTargetBranch?.trim() || 'main'
         })
 
-        if (initScript.executed) {
+        if (!bootstrapManifest.ok) {
             appendAssistantTextMessage({
                 store: options.store,
                 engine: options.engine,
                 sessionId: spawn.sessionId,
-                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:retry-result:${Date.now()}`,
-                text: buildInitScriptResultMessage({
-                    rootPath: initScriptCwd,
-                    command: initCommand,
-                    summary: initScript.ok
-                        ? 'Init retry succeeded after in-session repair.'
-                        : `Init retry failed: ${initScript.error}.`,
-                    stdout: initScript.stdout,
-                    stderr: initScript.stderr,
-                    attempt: 'retry',
-                    success: initScript.ok
+                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:bootstrap-manifest-failed:${Date.now()}`,
+                text: buildInvalidSetupContractMessage({
+                    manifestPath: bootstrapManifest.manifestPath,
+                    error: bootstrapManifest.error
                 })
             })
-        }
-
-        if (!initScript.ok) {
             const blockedTask = applyBlockedInitState({
-                blockedReason: initScript.error,
-                note: `Init still failed after one in-session repair attempt. ${INIT_REPAIR_MANUAL_STEP}`,
-                manualStep: INIT_REPAIR_MANUAL_STEP,
+                blockedReason: bootstrapManifest.error,
+                note: `Bootstrap contract scaffold failed. ${SETUP_WORKFLOW_MANUAL_STEP}`,
+                manualStep: SETUP_WORKFLOW_MANUAL_STEP,
                 failureFingerprint: buildTaskInitFailureFingerprint({
-                    reason: 'script_failure',
-                    blockedReason: initScript.error,
-                    initScriptCwd,
-                    initScript
+                    reason: 'bootstrap_contract_write_failed',
+                    blockedReason: bootstrapManifest.error,
+                    initScriptCwd: workspace.path
                 })
             })
             if (!blockedTask) {
@@ -1058,19 +1291,164 @@ export async function startSessionFromTask(options: {
                 initRecoveryError
             }
         }
+
+        appendAssistantTextMessage({
+            store: options.store,
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:bootstrap-bypass:${Date.now()}`,
+            text: buildBootstrapSetupBypassMessage()
+        })
+        appendAssistantTextMessage({
+            store: options.store,
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:bootstrap-manifest:${Date.now()}`,
+                text: buildBootstrapStarterContractMessage({
+                    manifestPath: bootstrapManifest.manifestPath,
+                    seeded: bootstrapManifest.seeded,
+                    inferred: bootstrapManifest.inferred
+                })
+            })
+        updatedTask = updateStartedTask({
+            initRuntime: buildTaskInitRuntime({
+                task: runtimeTask,
+                status: 'succeeded',
+                sessionId: spawn.sessionId,
+                retryCount: runtimeTask.initRuntime?.retryCount,
+                latestNote: bootstrapManifest.seeded
+                    ? `${BOOTSTRAP_SETUP_BYPASS_NOTE} Starter scaffold written.`
+                    : `${BOOTSTRAP_SETUP_BYPASS_NOTE} Existing manifest kept.`
+            })
+        })
+    } else {
+        const contractLoad = await loadProjectActionContractFromSession({
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            rootPaths: initScriptCwdCandidates
+        })
+
+        const contractRootPath = contractLoad.rootPath ?? initScriptCwdCandidates[0] ?? workspace.path
+
+        if (contractLoad.kind === 'invalid') {
+            appendAssistantTextMessage({
+                store: options.store,
+                engine: options.engine,
+                sessionId: spawn.sessionId,
+                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:contract-invalid:${Date.now()}`,
+                text: buildInvalidSetupContractMessage({
+                    manifestPath: contractLoad.manifestPath,
+                    error: contractLoad.error
+                })
+            })
+            const blockedTask = applyBlockedInitState({
+                blockedReason: contractLoad.error,
+                note: `Setup contract is invalid. ${SETUP_WORKFLOW_MANUAL_STEP}`,
+                manualStep: SETUP_WORKFLOW_MANUAL_STEP,
+                failureFingerprint: buildTaskInitFailureFingerprint({
+                    reason: 'contract_invalid',
+                    blockedReason: contractLoad.error,
+                    initScriptCwd: contractRootPath
+                })
+            })
+            if (!blockedTask) {
+                return { ok: false, error: 'Task not found' }
+            }
+            emitStartedTaskUpdate(blockedTask)
+            return {
+                ok: true,
+                task: blockedTask,
+                sessionId: spawn.sessionId,
+                initRecoveryAttempted,
+                initRecoveryError
+            }
+        }
+
+        if (contractLoad.kind === 'missing') {
+            appendAssistantTextMessage({
+                store: options.store,
+                engine: options.engine,
+                sessionId: spawn.sessionId,
+                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:contract-missing:${Date.now()}`,
+                text: buildMissingSetupContractMessage({
+                    manifestPath: contractLoad.manifestPath
+                })
+            })
+            const blockedTask = applyBlockedInitState({
+                blockedReason: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+                note: `Setup contract is missing. ${SETUP_WORKFLOW_MANUAL_STEP}`,
+                manualStep: SETUP_WORKFLOW_MANUAL_STEP,
+                failureFingerprint: buildTaskInitFailureFingerprint({
+                    reason: 'contract_missing',
+                    blockedReason: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+                    initScriptCwd: contractRootPath
+                })
+            })
+            if (!blockedTask) {
+                return { ok: false, error: 'Task not found' }
+            }
+            emitStartedTaskUpdate(blockedTask)
+            return {
+                ok: true,
+                task: blockedTask,
+                sessionId: spawn.sessionId,
+                initRecoveryAttempted,
+                initRecoveryError
+            }
+        }
+
+        const setupResult = await runSetupWorkflow({
+            engine: options.engine,
+            sessionId: spawn.sessionId,
+            rootPath: contractLoad.rootPath ?? contractRootPath,
+            manifestPath: contractLoad.manifestPath,
+            taskId: task.id,
+            projectId: project.id,
+            steps: contractLoad.contract.setup.steps
+        })
+
+        if (!setupResult.ok) {
+            appendAssistantTextMessage({
+                store: options.store,
+                engine: options.engine,
+                sessionId: spawn.sessionId,
+                localId: `${AUTO_INIT_SETUP_LOCAL_ID_PREFIX}${task.id}:setup-failed:${Date.now()}`,
+                text: buildSetupWorkflowResultMessage(setupResult)
+            })
+            const blockedTask = applyBlockedInitState({
+                blockedReason: setupResult.error,
+                note: `Setup workflow failed at step ${setupResult.stepId ?? '(unknown)'}. ${SETUP_WORKFLOW_MANUAL_STEP}`,
+                manualStep: SETUP_WORKFLOW_MANUAL_STEP,
+                failureFingerprint: buildTaskInitFailureFingerprint({
+                    reason: 'setup_workflow_failed',
+                    blockedReason: setupResult.error,
+                    initScriptCwd: setupResult.rootPath
+                })
+            })
+            if (!blockedTask) {
+                return { ok: false, error: 'Task not found' }
+            }
+            emitStartedTaskUpdate(blockedTask)
+            return {
+                ok: true,
+                task: blockedTask,
+                sessionId: spawn.sessionId,
+                initRecoveryAttempted,
+                initRecoveryError
+            }
+        }
+
+        updatedTask = updateStartedTask({
+            initRuntime: buildTaskInitRuntime({
+                task: runtimeTask,
+                status: 'succeeded',
+                sessionId: spawn.sessionId,
+                retryCount: runtimeTask.initRuntime?.retryCount,
+                latestNote: null
+            })
+        })
     }
 
-    const updatedTask = updateStartedTask({
-        initRuntime: buildTaskInitRuntime({
-            task: runtimeTask,
-            status: 'succeeded',
-            sessionId: spawn.sessionId,
-            retryCount: runtimeTask.initRuntime?.retryCount,
-            latestNote: initRecoveryAttempted
-                ? 'Init repair succeeded; kickoff resumed.'
-                : null
-        })
-    })
     if (!updatedTask) {
         return { ok: false, error: 'Task not found' }
     }
@@ -1129,35 +1507,7 @@ export async function startSessionFromTask(options: {
                 return `${baseKickoff}${historySection}`
             }
 
-            const title = (updatedTask.title ?? '').trim()
-            const desc = (updatedTask.description ?? '').trim()
-            const subTasks = Array.isArray(updatedTask.subTasks)
-                ? updatedTask.subTasks as Array<{
-                    content?: unknown
-                    status?: unknown
-                }>
-                : []
-            const subTaskLines = subTasks
-                .map((subTask) => {
-                    const content = typeof subTask.content === 'string' ? subTask.content.trim() : ''
-                    if (!content) return null
-                    const done = subTask.status === 'completed'
-                    return `- [${done ? 'x' : ' '}] ${content}`
-                })
-                .filter((line): line is string => Boolean(line))
-            const subTasksSection = subTaskLines.length > 0
-                ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
-                : ''
-
-            const baseKickoff = (() => {
-                if (title && desc) {
-                    return `Task: ${title}\n\nDescription:\n${desc}${subTasksSection}`
-                }
-                if (desc) return `${desc}${subTasksSection}`
-                if (title) return `Task: ${title}${subTasksSection}`
-                if (subTasksSection) return `Task${subTasksSection}`
-                return 'Task'
-            })()
+            const baseKickoff = buildTaskKickoffSummary(updatedTask)
 
             if (!previousSessionId || previousSessionId === spawn.sessionId) {
                 return baseKickoff
@@ -1190,4 +1540,3 @@ export async function startSessionFromTask(options: {
         initRecoveryError
     }
 }
-

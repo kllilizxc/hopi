@@ -176,7 +176,8 @@ export class ApiMachineClient {
                 yolo,
                 token,
                 sessionType,
-                worktreeName
+                worktreeName,
+                worktreeTargetBranch
             } = params || {}
 
             if (!directory) {
@@ -202,7 +203,8 @@ export class ApiMachineClient {
                 yolo,
                 token,
                 sessionType,
-                worktreeName
+                worktreeName,
+                worktreeTargetBranch
             })
 
             switch (result.type) {

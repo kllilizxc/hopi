@@ -264,4 +264,28 @@ describe('SessionChat runtime summaries', () => {
             tone: 'success'
         })
     })
+
+    it('shows bootstrap scaffold summaries as informational instead of completed init', () => {
+        const task = createTask({
+            source: 'project_init',
+            initRuntime: {
+                status: 'succeeded',
+                sessionId: 'session-1',
+                updatedAt: 30,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 30,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Bootstrap task skipped setup preflight so it can create or repair `.hopi/actions.yaml`. Starter scaffold written.',
+                blockedReason: null
+            }
+        })
+
+        expect(buildInitStatusSummary(task)).toEqual({
+            title: 'Bootstrap scaffold 已写入',
+            detail: 'Bootstrap task skipped setup preflight so it can create or repair `.hopi/actions.yaml`. Starter scaffold written.',
+            tone: 'info'
+        })
+    })
 })

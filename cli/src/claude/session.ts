@@ -13,7 +13,14 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class Session extends AgentSessionBase<EnhancedMode, PermissionMode> {
+function isClaudePermissionMode(mode: unknown): mode is PermissionMode {
+    return mode === 'default'
+        || mode === 'acceptEdits'
+        || mode === 'bypassPermissions'
+        || mode === 'plan';
+}
+
+export class Session extends AgentSessionBase<EnhancedMode> {
     readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];
     readonly mcpServers: Record<string, any>;
@@ -75,7 +82,7 @@ export class Session extends AgentSessionBase<EnhancedMode, PermissionMode> {
 
     setPermissionHandler(handler: PermissionHandler | null): void {
         this.permissionHandler = handler;
-        if (this.permissionMode) {
+        if (isClaudePermissionMode(this.permissionMode)) {
             this.permissionHandler?.handleSessionModeChange(this.permissionMode);
         }
     }

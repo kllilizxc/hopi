@@ -22,6 +22,9 @@ type DbProjectRow = {
     improvements_enabled: number
     improvements_max_pending_tasks?: number
     improvements_max_generated_new?: number
+    automation_readiness_status?: string | null
+    automation_readiness_summary?: string | null
+    automation_readiness_checked_at?: number | null
     last_improvements_at: number | null
     created_at: number
     updated_at: number
@@ -56,6 +59,17 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         maxRunningSessions: row.max_running_sessions,
         improvementsEnabled: Boolean(row.improvements_enabled),
         improvementsMaxPendingTasks: row.improvements_max_pending_tasks ?? row.improvements_max_generated_new ?? 5,
+        automationReadinessStatus: row.automation_readiness_status === 'checking'
+            ? 'checking'
+            : row.automation_readiness_status === 'ready'
+                ? 'ready'
+                : row.automation_readiness_status === 'degraded'
+                    ? 'degraded'
+                    : row.automation_readiness_status === 'blocked'
+                        ? 'blocked'
+                        : 'unknown',
+        automationReadinessSummary: row.automation_readiness_summary ?? null,
+        automationReadinessCheckedAt: row.automation_readiness_checked_at ?? null,
         lastImprovementsAt: row.last_improvements_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -84,6 +98,9 @@ export function createProject(
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+        automationReadinessSummary?: string | null
+        automationReadinessCheckedAt?: number | null
     }
 ): StoredProject {
     const now = Date.now()
@@ -95,6 +112,7 @@ export function createProject(
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
             auto_run_enabled, max_running_sessions,
             improvements_enabled, improvements_max_pending_tasks,
+            automation_readiness_status, automation_readiness_summary, automation_readiness_checked_at,
             created_at, updated_at, archived_at
         ) VALUES (
             @id, @namespace, @machine_id,
@@ -103,6 +121,7 @@ export function createProject(
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
             @auto_run_enabled, @max_running_sessions,
             @improvements_enabled, @improvements_max_pending_tasks,
+            @automation_readiness_status, @automation_readiness_summary, @automation_readiness_checked_at,
             @created_at, @updated_at, NULL
         )
     `).run({
@@ -124,6 +143,9 @@ export function createProject(
         max_running_sessions: project.maxRunningSessions ?? 5,
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: project.improvementsMaxPendingTasks ?? 5,
+        automation_readiness_status: project.automationReadinessStatus ?? 'unknown',
+        automation_readiness_summary: project.automationReadinessSummary ?? null,
+        automation_readiness_checked_at: project.automationReadinessCheckedAt ?? null,
         created_at: now,
         updated_at: now
     })
@@ -183,6 +205,9 @@ export function updateProject(
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+        automationReadinessSummary?: string | null
+        automationReadinessCheckedAt?: number | null
         lastImprovementsAt?: number | null
         archivedAt?: number | null
     }
@@ -209,6 +234,9 @@ export function updateProject(
         maxRunningSessions: patch.maxRunningSessions ?? current.maxRunningSessions,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
         improvementsMaxPendingTasks: patch.improvementsMaxPendingTasks ?? current.improvementsMaxPendingTasks,
+        automationReadinessStatus: patch.automationReadinessStatus !== undefined ? patch.automationReadinessStatus : current.automationReadinessStatus,
+        automationReadinessSummary: patch.automationReadinessSummary !== undefined ? patch.automationReadinessSummary : current.automationReadinessSummary,
+        automationReadinessCheckedAt: patch.automationReadinessCheckedAt !== undefined ? patch.automationReadinessCheckedAt : current.automationReadinessCheckedAt,
         lastImprovementsAt: patch.lastImprovementsAt !== undefined ? patch.lastImprovementsAt : current.lastImprovementsAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
@@ -231,6 +259,9 @@ export function updateProject(
             max_running_sessions = @max_running_sessions,
             improvements_enabled = @improvements_enabled,
             improvements_max_pending_tasks = @improvements_max_pending_tasks,
+            automation_readiness_status = @automation_readiness_status,
+            automation_readiness_summary = @automation_readiness_summary,
+            automation_readiness_checked_at = @automation_readiness_checked_at,
             last_improvements_at = @last_improvements_at,
             updated_at = @updated_at,
             archived_at = @archived_at
@@ -253,6 +284,9 @@ export function updateProject(
         max_running_sessions: next.maxRunningSessions,
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: next.improvementsMaxPendingTasks,
+        automation_readiness_status: next.automationReadinessStatus,
+        automation_readiness_summary: next.automationReadinessSummary,
+        automation_readiness_checked_at: next.automationReadinessCheckedAt,
         last_improvements_at: next.lastImprovementsAt,
         updated_at: now,
         archived_at: next.archivedAt

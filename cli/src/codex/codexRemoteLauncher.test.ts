@@ -2,15 +2,44 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { EnhancedMode } from './loop';
 
-const harness = vi.hoisted(() => ({
-    notifications: [] as Array<{ method: string; params: unknown }>,
-    registerRequestCalls: [] as string[],
-    startTurnParams: [] as Array<Record<string, unknown>>,
-    failOnCollaboration: false,
-    emitPlanUpdate: false
-}));
+const harness = (() => {
+    const registry = globalThis as typeof globalThis & {
+        __hopiCodexRemoteLauncherHarness?: {
+            notifications: Array<{ method: string; params: unknown }>
+            registerRequestCalls: string[]
+            startTurnParams: Array<Record<string, unknown>>
+            failOnCollaboration: boolean
+            emitPlanUpdate: boolean
+            startTurnErrorMessage: string | null
+        }
+    }
+
+    if (!registry.__hopiCodexRemoteLauncherHarness) {
+        registry.__hopiCodexRemoteLauncherHarness = {
+            notifications: [],
+            registerRequestCalls: [],
+            startTurnParams: [],
+            failOnCollaboration: false,
+            emitPlanUpdate: false,
+            startTurnErrorMessage: null
+        };
+    }
+
+    return registry.__hopiCodexRemoteLauncherHarness;
+})();
 
 vi.mock('./codexAppServerClient', () => {
+    const harness = (globalThis as typeof globalThis & {
+        __hopiCodexRemoteLauncherHarness: {
+            notifications: Array<{ method: string; params: unknown }>
+            registerRequestCalls: string[]
+            startTurnParams: Array<Record<string, unknown>>
+            failOnCollaboration: boolean
+            emitPlanUpdate: boolean
+            startTurnErrorMessage: string | null
+        }
+    }).__hopiCodexRemoteLauncherHarness;
+
     class MockCodexAppServerClient {
         private notificationHandler: ((method: string, params: unknown) => void) | null = null;
 
@@ -40,6 +69,9 @@ vi.mock('./codexAppServerClient', () => {
             harness.startTurnParams.push(params);
             if (harness.failOnCollaboration && 'collaborationMode' in params) {
                 throw new Error('Invalid params: unknown field collaborationMode');
+            }
+            if (typeof harness.startTurnErrorMessage === 'string') {
+                throw new Error(harness.startTurnErrorMessage);
             }
             const started = { turn: {} };
             harness.notifications.push({ method: 'turn/started', params: started });
@@ -182,6 +214,7 @@ describe('codexRemoteLauncher', () => {
         harness.startTurnParams = [];
         harness.failOnCollaboration = false;
         harness.emitPlanUpdate = false;
+        harness.startTurnErrorMessage = null;
         delete process.env.CODEX_USE_MCP_SERVER;
     });
 
@@ -252,5 +285,23 @@ describe('codexRemoteLauncher', () => {
         const readyEvents = sessionEvents.filter((event) => event.type === 'ready');
         expect(readyEvents.length).toBeGreaterThanOrEqual(1);
         expect(readyEvents.some((event) => event.hasAssistantReply === true)).toBe(true);
+    });
+
+    it('emits structured process-exited errors with launcher detail', async () => {
+        harness.startTurnErrorMessage = 'Codex app-server exited (code=1, signal=null)';
+        const {
+            session,
+            sessionEvents
+        } = createSessionStub();
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(sessionEvents).toContainEqual({
+            type: 'error',
+            message: 'Process exited unexpectedly: Codex app-server exited (code=1, signal=null)',
+            reason: 'process-exited'
+        });
+        expect(sessionEvents.some((event) => event.type === 'message' && event.message === 'Process exited unexpectedly')).toBe(false);
     });
 });

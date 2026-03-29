@@ -1,15 +1,13 @@
 import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import {
+    PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
-    PRODUCT_INIT_SCRIPT_RELATIVE_PATH,
-    PRODUCT_MERGE_SCRIPT_RELATIVE_PATH,
-    PRODUCT_PREVIEW_READY_MARKER,
-    PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
 } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
+import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { listWorkflowStrategyDescriptors } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
@@ -91,43 +89,43 @@ function buildProjectInitTaskDescription(options: {
     const mergeRequirement = options.sessionType === 'worktree'
         ? [
             options.targetBranch
-                ? `- This project uses worktree mode. Merge script must merge task branches into target branch \`${options.targetBranch}\`.`
-                : '- This project uses worktree mode. Merge script must detect/require configured target branch before running merge.',
+                ? `- This project uses worktree mode. Merge workflow must land task branches into target branch \`${options.targetBranch}\`.`
+                : '- This project uses worktree mode. Merge workflow must detect or require a configured target branch before landing.',
             '- Merge action runs from the task worktree. Do not blindly `git checkout` the target branch inside that worktree; the branch may already be checked out in another worktree.',
             `- Prefer a worktree-safe strategy that uses \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\` for target-branch operations, or another git flow that updates the target branch without checked-out-branch conflicts.`,
-            `- Merge script can rely on \`${PRODUCT_ENV.MERGE_TARGET_BRANCH}\`, \`${PRODUCT_ENV.MERGE_SOURCE_BRANCH}\`, \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\`, and \`${PRODUCT_ENV.WORKTREE_PATH}\` when available.`
+            `- Merge workflow can rely on \`${PRODUCT_ENV.MERGE_TARGET_BRANCH}\`, \`${PRODUCT_ENV.MERGE_SOURCE_BRANCH}\`, \`${PRODUCT_ENV.WORKTREE_BASE_PATH}\`, and \`${PRODUCT_ENV.WORKTREE_PATH}\` when available.`
         ].join('\n')
-        : '- This project currently uses simple mode. Merge script should still exist and fail with a clear message when no worktree context is available.'
+        : '- This project currently uses simple mode. Merge workflow should still define a clear target-branch policy when no worktree context is available.'
 
     return [
         `Bootstrap task for project "${options.projectName}".`,
         '',
         'Goal:',
-        'Create project-level automation scripts under `.hopi/` by analyzing the current repository structure.',
+        `Create a project automation contract at \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` by analyzing the current repository structure.`,
         '',
-        'Required files:',
-        `1) \`${PRODUCT_INIT_SCRIPT_RELATIVE_PATH}\``,
-        '   - Runs all setup needed before a task prompt starts (dependency install/check, generated files, env prep, etc.).',
-        `2) \`${PRODUCT_MERGE_SCRIPT_RELATIVE_PATH}\``,
-        '   - Runs merge-to-target workflow command(s) used by the Merge action.',
-        `3) \`${PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH}\``,
-        '   - Runs preview/dev server workflow for the Preview action.',
-        `   - Must emit readiness marker: \`${PRODUCT_PREVIEW_READY_MARKER}http://127.0.0.1:<port>\`.`,
+        'Required contract sections:',
+        '1) `setup.steps`',
+        '   - All setup needed before a task prompt starts: dependency install/check, generated files, env prep, submodules, etc.',
+        '2) `preview.services`',
+        '   - All preview/runtime services needed for review-ready work, including readiness checks and one primary exposed service.',
+        '3) `merge`',
+        '   - Landing strategy, target branch policy, verify checks, and conflict-resolution policy.',
         '',
         'Requirements:',
-        '- Use shebang: `#!/usr/bin/env bash` and `set -euo pipefail`.',
-        '- Keep scripts minimal and project-specific; no unrelated refactors.',
-        '- Ensure all three scripts are executable (`chmod +x`).',
+        '- Use declarative YAML as the platform API. Avoid repo-specific shell entrypoints unless they are invoked by explicit contract steps.',
+        '- Keep the contract minimal and project-specific; no unrelated refactors.',
+        '- Prefer deterministic commands and explicit readiness checks; no command guessing.',
         mergeRequirement,
         '',
         'Validation (must be completed before marking this task finished):',
-        '- Execute and verify init script end-to-end.',
-        '- Execute and verify merge script behavior for this project mode.',
-        '- Execute and verify preview script reaches ready marker and stable preview URL.',
-        '- Summarize validation commands + results in your final response.',
+        '- Parse the contract successfully.',
+        '- Execute and verify setup workflow end-to-end.',
+        '- Execute and verify preview stack reaches a stable primary URL.',
+        '- Document merge workflow strategy and verify checks for this project mode.',
+        '- Summarize validation commands and results in your final response.',
         '',
         'Completion rule:',
-        'Do not finish this task until scripts are fully tested and confirmed working.'
+        'Do not finish this task until the contract is fully tested and confirmed working.'
     ].join('\n')
 }
 
@@ -353,6 +351,37 @@ export function createProjectsRoutes(options: {
                 workspaceCount,
                 worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
             }
+        })
+    })
+
+    app.post('/projects/:projectId/verify-automation', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const result = await verifyProjectAutomationReadiness({
+            store: options.store,
+            engine,
+            namespace,
+            projectId
+        })
+        if (!result.ok) {
+            return c.json({ error: result.error }, result.status)
+        }
+
+        engine.handleRealtimeEvent({ type: 'project-updated', projectId, namespace, data: { projectId } })
+
+        const workspaceCount = options.store.workspaces.listWorkspacesByProject(projectId).length
+        return c.json({
+            project: {
+                ...result.project,
+                workspaceCount,
+                worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
+            },
+            verification: result.report
         })
     })
 

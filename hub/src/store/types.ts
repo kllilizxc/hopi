@@ -77,6 +77,9 @@ export type StoredProject = {
     maxRunningSessions: number
     improvementsEnabled: boolean
     improvementsMaxPendingTasks: number
+    automationReadinessStatus: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+    automationReadinessSummary: string | null
+    automationReadinessCheckedAt: number | null
     lastImprovementsAt: number | null
     createdAt: number
     updatedAt: number

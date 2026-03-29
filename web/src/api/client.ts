@@ -11,6 +11,7 @@ import type {
     MessagesResponse,
     ModelMode,
     PermissionMode,
+    ProjectAutomationVerificationResponse,
     ProjectResponse,
     ProjectsResponse,
     PushSubscriptionPayload,
@@ -267,6 +268,13 @@ export class ApiClient {
 
     async archiveProject(projectId: string): Promise<void> {
         await this.request(`/api/projects/${encodeURIComponent(projectId)}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async verifyProjectAutomation(projectId: string): Promise<ProjectAutomationVerificationResponse> {
+        return await this.request<ProjectAutomationVerificationResponse>(`/api/projects/${encodeURIComponent(projectId)}/verify-automation`, {
             method: 'POST',
             body: JSON.stringify({})
         })

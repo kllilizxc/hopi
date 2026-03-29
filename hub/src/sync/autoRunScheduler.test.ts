@@ -25,6 +25,8 @@ function createProjectWithTask(store: Store, options: {
     taskId: string
     workflowProfile: string
     workflowPhase: string | null
+    source?: string | null
+    automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
 }): void {
     store.projects.createProject({
         id: options.projectId,
@@ -32,7 +34,8 @@ function createProjectWithTask(store: Store, options: {
         machineId: 'machine-1',
         name: 'Project',
         autoRunEnabled: true,
-        maxRunningSessions: 1
+        maxRunningSessions: 1,
+        automationReadinessStatus: options.automationReadinessStatus ?? 'unknown'
     })
 
     store.tasks.createTask({
@@ -40,6 +43,7 @@ function createProjectWithTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Task',
         status: 'planned',
+        source: options.source ?? 'manual',
         workflowProfile: options.workflowProfile,
         workflowPhase: options.workflowPhase
     })
@@ -56,7 +60,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             taskId,
             workflowProfile: 'gsd',
-            workflowPhase: 'discuss'
+            workflowPhase: 'discuss',
+            automationReadinessStatus: 'ready'
         })
 
         const realtimeEvents: SyncEvent[] = []
@@ -91,7 +96,82 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             taskId,
             workflowProfile: 'gsd',
-            workflowPhase: 'execute_ready'
+            workflowPhase: 'execute_ready',
+            automationReadinessStatus: 'ready'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(task?.status).toBe('blocked')
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('does not auto-run regular tasks before project readiness is ready', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-readiness-gate'
+        const taskId = 'task-readiness-gate'
+        createProjectWithTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            automationReadinessStatus: 'unknown'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+        await delay(120)
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(task?.status).toBe('planned')
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(false)
+    })
+
+    it('still auto-runs project_init tasks before project readiness is ready', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-init-bootstrap'
+        const taskId = 'task-init-bootstrap'
+        createProjectWithTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            source: 'project_init',
+            automationReadinessStatus: 'unknown'
         })
 
         const realtimeEvents: SyncEvent[] = []

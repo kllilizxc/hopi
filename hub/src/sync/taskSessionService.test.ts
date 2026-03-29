@@ -8,285 +8,69 @@ function tick(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-describe('startSessionFromTask', () => {
-    it('runs init script before kickoff prompt when script exists', async () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-init-1'
-        const taskId = 'task-init-1'
-        const machineId = 'machine-1'
-        const workspaceId = 'workspace-1'
+function encodeBase64(value: string): string {
+    return Buffer.from(value, 'utf8').toString('base64')
+}
 
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId,
-            name: 'Project'
-        })
-        store.workspaces.createWorkspace({
-            id: workspaceId,
-            projectId,
-            path: '/tmp/workspace'
-        })
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Task',
-            status: 'planned',
-            workspaceId
-        })
+type BootstrapWriteCall = {
+    path: string
+    options: {
+        cwd?: string
+        content: string
+        createParents?: boolean
+    }
+}
 
-        const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init',
-            { path: '/tmp/workspace', host: 'localhost' },
-            null,
-            namespace
-        )
+const DEFAULT_VALID_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      cwd: .',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      cwd: .',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    '      expose: primary',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash'
+].join('\n')
 
-        const sequence: string[] = []
-        const engine = {
-            getMachineByNamespace() {
-                return {
-                    id: machineId,
-                    namespace,
-                    active: true,
-                    runnerState: { status: 'running' }
-                }
-            },
-            getSessionByNamespace() {
-                return {
-                    id: spawned.id,
-                    namespace,
-                    active: true,
-                    thinking: false,
-                    agentState: null,
-                    metadata: { path: '/tmp/workspace', host: 'localhost' }
-                }
-            },
-            async spawnSession() {
-                return { type: 'success' as const, sessionId: spawned.id }
-            },
-            async waitForSessionActive() {
-                return true
-            },
-            async applySessionConfig() {
-            },
-            async runBash() {
-                sequence.push('init')
-                return { success: true, stdout: 'init ok', stderr: '' }
-            },
-            async uploadFile() {
-                return { success: true, path: '/tmp/attachment' }
-            },
-            async sendMessage() {
-                sequence.push('kickoff')
-            },
-            handleRealtimeEvent() {
+function withValidContract<T extends Record<string, unknown>>(engine: T, manifest = DEFAULT_VALID_ACTIONS_MANIFEST): T {
+    const runBash = typeof engine.runBash === 'function'
+        ? engine.runBash as (...args: unknown[]) => Promise<unknown>
+        : async () => ({ success: true, stdout: 'setup ok', stderr: '' })
+
+    return {
+        ...engine,
+        async readSessionFile(...args: unknown[]) {
+            if (typeof engine.readSessionFile === 'function') {
+                return await (engine.readSessionFile as (...callArgs: unknown[]) => Promise<unknown>)(...args)
             }
-        } as unknown as SyncEngine
-
-        const result = await startSessionFromTask({
-            store,
-            engine,
-            namespace,
-            taskId
-        })
-
-        expect(result.ok).toBe(true)
-        expect(sequence).toEqual(['init', 'kickoff'])
-        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updatedTask?.activeSessionId).toBe(spawned.id)
-        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
-        expect(updatedTask?.initRuntime?.sessionId).toBe(spawned.id)
-        expect(updatedTask?.initRuntime?.latestNote ?? null).toBeNull()
-        expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
-    })
-
-    it('calls getSessionByNamespace with engine context when resolving init script cwd', async () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-session-context'
-        const taskId = 'task-session-context'
-        const machineId = 'machine-1'
-        const workspaceId = 'workspace-1'
-        const runtimePath = '/tmp/runtime-from-session'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId,
-            name: 'Project'
-        })
-        store.workspaces.createWorkspace({
-            id: workspaceId,
-            projectId,
-            path: '/tmp/workspace'
-        })
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Task',
-            status: 'planned',
-            workspaceId
-        })
-
-        const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-context',
-            { path: '/tmp/workspace', host: 'localhost' },
-            null,
-            namespace
-        )
-
-        let observedCwd = ''
-        function getSessionByNamespace(this: { runtimePath: string }, sessionId: string, ns: string) {
             return {
-                id: sessionId,
-                namespace: ns,
-                metadata: { path: this.runtimePath, host: 'localhost' }
+                success: true,
+                content: encodeBase64(manifest)
             }
+        },
+        async runBash(...args: unknown[]) {
+            return await runBash(...args)
         }
+    }
+}
 
-        const engine = {
-            runtimePath,
-            getMachineByNamespace() {
-                return {
-                    id: machineId,
-                    namespace,
-                    active: true,
-                    runnerState: { status: 'running' }
-                }
-            },
-            getSessionByNamespace,
-            async spawnSession() {
-                return { type: 'success' as const, sessionId: spawned.id }
-            },
-            async waitForSessionActive() {
-                return true
-            },
-            async applySessionConfig() {
-            },
-            async runBash(_sessionId: string, params: { cwd?: string }) {
-                observedCwd = params.cwd ?? ''
-                return { success: true, stdout: '', stderr: '' }
-            },
-            async uploadFile() {
-                return { success: true, path: '/tmp/attachment' }
-            },
-            async sendMessage() {
-            },
-            handleRealtimeEvent() {
-            }
-        } as unknown as SyncEngine
-
-        const result = await startSessionFromTask({
-            store,
-            engine,
-            namespace,
-            taskId
-        })
-
-        expect(result.ok).toBe(true)
-        expect(observedCwd).toBe(runtimePath)
-    })
-
-    it('falls back to workspace path when init script is missing in runtime path', async () => {
+describe('startSessionFromTask', () => {
+    it('uses setup workflow from actions manifest before kickoff when contract exists', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-fallback'
-        const taskId = 'task-init-fallback'
-        const machineId = 'machine-1'
-        const workspaceId = 'workspace-1'
-        const runtimePath = '/tmp/worktree-path'
-        const workspacePath = '/tmp/base-workspace'
-
-        store.projects.createProject({
-            id: projectId,
-            namespace,
-            machineId,
-            name: 'Project'
-        })
-        store.workspaces.createWorkspace({
-            id: workspaceId,
-            projectId,
-            path: workspacePath
-        })
-        store.tasks.createTask({
-            id: taskId,
-            projectId,
-            title: 'Task',
-            status: 'planned',
-            workspaceId
-        })
-
-        const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-fallback',
-            { path: runtimePath, host: 'localhost' },
-            null,
-            namespace
-        )
-
-        const runBashCwds: string[] = []
-        let kickoffText = ''
-        const engine = {
-            getMachineByNamespace() {
-                return {
-                    id: machineId,
-                    namespace,
-                    active: true,
-                    runnerState: { status: 'running' }
-                }
-            },
-            getSessionByNamespace() {
-                return {
-                    id: spawned.id,
-                    namespace,
-                    metadata: { path: runtimePath, host: 'localhost' }
-                }
-            },
-            async spawnSession() {
-                return { type: 'success' as const, sessionId: spawned.id }
-            },
-            async waitForSessionActive() {
-                return true
-            },
-            async applySessionConfig() {
-            },
-            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
-                runBashCwds.push(params.cwd ?? '')
-                if ((params.cwd ?? '') === runtimePath) {
-                    const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
-                    return { success: true, stdout: marker, stderr: '' }
-                }
-                return { success: true, stdout: 'init ok', stderr: '' }
-            },
-            async uploadFile() {
-                return { success: true, path: '/tmp/attachment' }
-            },
-            async sendMessage(_sessionId: string, payload: { text: string }) {
-                kickoffText = payload.text
-            },
-            handleRealtimeEvent() {
-            }
-        } as unknown as SyncEngine
-
-        const result = await startSessionFromTask({
-            store,
-            engine,
-            namespace,
-            taskId
-        })
-
-        expect(result.ok).toBe(true)
-        expect(runBashCwds).toEqual([runtimePath, workspacePath])
-        expect(kickoffText).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
-        expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
-    })
-
-    it('skips init when shell reports init script not found', async () => {
-        const store = new Store(':memory:')
-        const namespace = 'default'
-        const projectId = 'project-init-not-found'
-        const taskId = 'task-init-not-found'
+        const projectId = 'project-setup-contract-1'
+        const taskId = 'task-setup-contract-1'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
         const workspacePath = '/tmp/workspace'
@@ -311,14 +95,16 @@ describe('startSessionFromTask', () => {
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-not-found',
+            'spawned-session-setup-contract-1',
             { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        let sendMessageCalled = false
-        const engine = {
+        const sequence: string[] = []
+        let observedCommand = ''
+        let observedCwd = ''
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -331,6 +117,9 @@ describe('startSessionFromTask', () => {
                 return {
                     id: spawned.id,
                     namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
                     metadata: { path: workspacePath, host: 'localhost' }
                 }
             },
@@ -342,23 +131,47 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash() {
+            async readSessionFile() {
                 return {
-                    success: false,
-                    error: 'Command failed: bash .hopi/init.sh',
-                    stdout: '',
-                    stderr: 'bash: .hopi/init.sh: No such file or directory'
+                    success: true,
+                    content: encodeBase64([
+                        'version: 1',
+                        'setup:',
+                        '  steps:',
+                        '    - id: deps',
+                        '      type: run',
+                        '      cwd: .',
+                        '      run: ["bun", "install"]',
+                        'preview:',
+                        '  services:',
+                        '    - id: web',
+                        '      type: run',
+                        '      cwd: .',
+                        '      run: ["bun", "run", "dev"]',
+                        '      ready:',
+                        '        type: process_alive',
+                        '      expose: primary',
+                        'merge:',
+                        '  targetBranch: main',
+                        '  strategy: squash'
+                    ].join('\n'))
                 }
+            },
+            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
+                sequence.push('setup')
+                observedCommand = params.command
+                observedCwd = params.cwd ?? ''
+                return { success: true, stdout: 'deps installed', stderr: '' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
             },
             async sendMessage() {
-                sendMessageCalled = true
+                sequence.push('kickoff')
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -368,18 +181,25 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(sendMessageCalled).toBe(true)
+        expect(sequence).toEqual(['setup', 'kickoff'])
+        expect(observedCwd).toBe(workspacePath)
+        expect(observedCommand).toContain("'bun' 'install'")
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.activeSessionId).toBe(spawned.id)
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
+        expect(updatedTask?.initRuntime?.sessionId).toBe(spawned.id)
+        expect(updatedTask?.initRuntime?.latestNote ?? null).toBeNull()
+        expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
     })
 
-    it('skips init fallback when base workspace path is outside working directory', async () => {
+    it('blocks task when setup workflow from actions manifest fails', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-outside-working-dir'
-        const taskId = 'task-init-outside-working-dir'
+        const projectId = 'project-setup-contract-fail'
+        const taskId = 'task-setup-contract-fail'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
-        const runtimePath = '/tmp/worktree-path'
-        const workspacePath = '/tmp/base-workspace'
+        const workspacePath = '/tmp/workspace'
 
         store.projects.createProject({
             id: projectId,
@@ -401,15 +221,14 @@ describe('startSessionFromTask', () => {
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-outside-working-dir',
-            { path: runtimePath, host: 'localhost' },
+            'spawned-session-setup-contract-fail',
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        const runBashCwds: string[] = []
-        let kickoffText = ''
-        const engine = {
+        let sendMessageCalled = false
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -422,6 +241,141 @@ describe('startSessionFromTask', () => {
                 return {
                     id: spawned.id,
                     namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: encodeBase64([
+                        'version: 1',
+                        'setup:',
+                        '  steps:',
+                        '    - id: deps',
+                        '      type: run',
+                        '      cwd: .',
+                        '      run: ["bun", "install"]',
+                        'preview:',
+                        '  services:',
+                        '    - id: web',
+                        '      type: run',
+                        '      cwd: .',
+                        '      run: ["bun", "run", "dev"]',
+                        '      ready:',
+                        '        type: process_alive',
+                        '      expose: primary',
+                        'merge:',
+                        '  targetBranch: main',
+                        '  strategy: squash'
+                    ].join('\n'))
+                }
+            },
+            async runBash() {
+                return { success: false, error: 'bun install failed', stdout: 'installing', stderr: 'bun install failed' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(sendMessageCalled).toBe(false)
+        expect(result.initRecoveryAttempted).toBe(false)
+        expect(result.task.activeSessionId).toBe(spawned.id)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id,
+            blockedReason: 'bun install failed'
+        })
+        expect(result.task.initRuntime?.latestNote).toContain('Setup workflow failed')
+        expect(result.task.initRuntime?.latestNote).toContain('retry task start')
+        const messages = store.messages.getMessages(spawned.id, 10)
+        expect(messages).toHaveLength(1)
+        const content = messages[0]?.content as { content?: { text?: string } }
+        expect(content.content?.text).toContain('HOPI ran setup workflow from `.hopi/actions.yaml`, but it failed before kickoff.')
+    })
+
+    it('skips runtime root paths outside the session working directory and uses the workspace contract', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-setup-contract-worktree'
+        const taskId = 'task-setup-contract-worktree'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const runtimePath = '/Users/realizer/Code/hopi'
+        const workspacePath = '/Users/realizer/Code/hopi-worktrees/self-task'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-setup-contract-worktree',
+            { path: runtimePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const readAttempts: string[] = []
+        let observedCwd = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
                     metadata: { path: runtimePath, host: 'localhost' }
                 }
             },
@@ -433,29 +387,39 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash(_sessionId: string, params: { command: string; cwd?: string }) {
-                const cwd = params.cwd ?? ''
-                runBashCwds.push(cwd)
+            async readSessionFile(_sessionId: string, _path: string, cwd?: string) {
+                readAttempts.push(cwd ?? '')
                 if (cwd === runtimePath) {
-                    const marker = params.command.match(/echo '([^']+)'/)?.[1] ?? ''
-                    return { success: true, stdout: marker, stderr: '' }
+                    return {
+                        success: false,
+                        error: `Access denied: Path '${runtimePath}' is outside the working directory`
+                    }
                 }
+
+                if (cwd === workspacePath) {
+                    return {
+                        success: true,
+                        content: encodeBase64(DEFAULT_VALID_ACTIONS_MANIFEST)
+                    }
+                }
+
                 return {
                     success: false,
-                    error: `Access denied: Path '${workspacePath}' is outside the working directory`,
-                    stdout: '',
-                    stderr: ''
+                    error: 'Failed to read file: ENOENT'
                 }
+            },
+            async runBash(_sessionId: string, params: { cwd?: string }) {
+                observedCwd = params.cwd ?? ''
+                return { success: true, stdout: 'deps installed', stderr: '' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
             },
-            async sendMessage(_sessionId: string, payload: { text: string }) {
-                kickoffText = payload.text
+            async sendMessage() {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -465,17 +429,20 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(runBashCwds).toEqual([runtimePath, workspacePath])
-        expect(kickoffText).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+        expect(readAttempts).toEqual([runtimePath, workspacePath])
+        expect(observedCwd).toBe(workspacePath)
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
     })
 
-    it('fails start when init script execution fails', async () => {
+    it('blocks task when actions manifest is invalid', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-fail'
-        const taskId = 'task-init-fail'
+        const projectId = 'project-setup-contract-invalid'
+        const taskId = 'task-setup-contract-invalid'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
 
         store.projects.createProject({
             id: projectId,
@@ -486,7 +453,7 @@ describe('startSessionFromTask', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.tasks.createTask({
             id: taskId,
@@ -497,13 +464,352 @@ describe('startSessionFromTask', () => {
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-fail',
-            { path: '/tmp/workspace', host: 'localhost' },
+            'spawned-session-setup-contract-invalid',
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        let archiveCalled = false
+        let runBashCalled = false
+        let sendMessageCalled = false
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: encodeBase64([
+                        'version: 1',
+                        'setup:',
+                        '  steps: []',
+                        'preview:',
+                        '  services: []',
+                        'merge:',
+                        '  targetBranch: ""'
+                    ].join('\n'))
+                }
+            },
+            async runBash() {
+                runBashCalled = true
+                return { success: true, stdout: '', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(runBashCalled).toBe(false)
+        expect(sendMessageCalled).toBe(false)
+        expect(result.initRecoveryAttempted).toBe(false)
+        expect(result.task.activeSessionId).toBe(spawned.id)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id
+        })
+        expect(result.task.initRuntime?.blockedReason).toContain('setup.steps')
+        const messages = store.messages.getMessages(spawned.id, 10)
+        expect(messages).toHaveLength(1)
+        const content = messages[0]?.content as { content?: { text?: string } }
+        expect(content.content?.text).toContain('the setup contract is invalid')
+    })
+
+    it('prefers worktree metadata path over base workspace path for setup contract loading', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-setup-contract-worktree-metadata'
+        const taskId = 'task-setup-contract-worktree-metadata'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/Users/realizer/Code/hopi'
+        const worktreePath = '/Users/realizer/Code/hopi-worktrees/self-task'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-setup-contract-worktree-metadata',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const readAttempts: string[] = []
+        let observedCwd = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: {
+                        path: workspacePath,
+                        host: 'localhost',
+                        worktree: {
+                            basePath: workspacePath,
+                            worktreePath
+                        }
+                    }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile(_sessionId: string, _path: string, cwd?: string) {
+                readAttempts.push(cwd ?? '')
+                if (cwd === worktreePath) {
+                    return {
+                        success: true,
+                        content: encodeBase64(DEFAULT_VALID_ACTIONS_MANIFEST)
+                    }
+                }
+
+                return {
+                    success: false,
+                    error: `Access denied: Path '${workspacePath}' is outside the working directory`
+                }
+            },
+            async runBash(_sessionId: string, params: { cwd?: string }) {
+                observedCwd = params.cwd ?? ''
+                return { success: true, stdout: 'deps installed', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(readAttempts).toEqual([worktreePath])
+        expect(observedCwd).toBe(worktreePath)
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
+    })
+
+    it('blocks task when actions manifest is missing', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-setup-contract-missing'
+        const taskId = 'task-setup-contract-missing'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-setup-contract-missing',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let sendMessageCalled = false
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                sendMessageCalled = true
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(sendMessageCalled).toBe(false)
+        expect(result.initRecoveryAttempted).toBe(false)
+        expect(result.task.activeSessionId).toBe(spawned.id)
+        expect(result.task.initRuntime).toMatchObject({
+            status: 'blocked',
+            sessionId: spawned.id
+        })
+        expect(result.task.initRuntime?.blockedReason).toContain('.hopi/actions.yaml')
+        const messages = store.messages.getMessages(spawned.id, 10)
+        expect(messages).toHaveLength(1)
+        const content = messages[0]?.content as { content?: { text?: string } }
+        expect(content.content?.text).toContain('could not find `.hopi/actions.yaml`')
+    })
+
+    it('starts project_init tasks without requiring an existing actions manifest', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap-contract-missing'
+        const taskId = 'task-bootstrap-contract-missing'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'planned',
+            workspaceId,
+            source: 'project_init'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-bootstrap-contract-missing',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let readSessionFileCalled = false
+        let writeSessionFileCall: BootstrapWriteCall | undefined
+        let runBashCalled = false
         let sendMessageCalled = false
         const engine = {
             getMachineByNamespace() {
@@ -521,7 +827,7 @@ describe('startSessionFromTask', () => {
                     active: true,
                     thinking: false,
                     agentState: null,
-                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                    metadata: { path: workspacePath, host: 'localhost' }
                 }
             },
             async spawnSession() {
@@ -532,11 +838,20 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash() {
-                return { success: false, error: 'init failed', stdout: '', stderr: 'init failed' }
+            async readSessionFile() {
+                readSessionFileCalled = true
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
             },
-            async archiveSession() {
-                archiveCalled = true
+            async writeSessionFile(_sessionId: string, path: string, options: { cwd?: string; content: string; createParents?: boolean }) {
+                writeSessionFileCall = { path, options }
+                return { success: true, hash: 'starter-hash' }
+            },
+            async runBash() {
+                runBashCalled = true
+                return { success: true, stdout: '', stderr: '' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
@@ -556,67 +871,67 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        if (!result.ok) {
-            return
+        expect(readSessionFileCalled).toBe(true)
+        expect(writeSessionFileCall).toBeDefined()
+        const seededWrite = writeSessionFileCall
+        if (!seededWrite) {
+            throw new Error('Expected bootstrap scaffold write')
         }
-        expect(result.initRecoveryAttempted).toBe(true)
-        expect(result.task.initRuntime).toMatchObject({
-            status: 'blocked',
-            sessionId: spawned.id,
-            blockedReason: 'init failed',
-            retryCount: 1
-        })
-        expect(result.task.initRuntime?.latestNote).toContain('Same blocker repeated')
-        expect(result.task.initRuntime?.latestNote).toContain('retry task start')
-        expect(archiveCalled).toBe(false)
+        expect(seededWrite.path).toBe('.hopi/actions.yaml')
+        expect(seededWrite.options.cwd).toBe(workspacePath)
+        expect(seededWrite.options.createParents).toBe(true)
+        expect(Buffer.from(seededWrite.options.content, 'base64').toString('utf8')).toContain('steps: []')
+        expect(runBashCalled).toBe(false)
         expect(sendMessageCalled).toBe(true)
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.activeSessionId).toBe(spawned.id)
-        expect(updatedTask?.status).toBe('in_progress')
-        expect(updatedTask?.initRuntime).toMatchObject({
-            status: 'blocked',
-            sessionId: spawned.id,
-            blockedReason: 'init failed',
-            retryCount: 1
-        })
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
+        expect(updatedTask?.initRuntime?.latestNote).toContain('Starter scaffold written')
+        const messages = store.messages.getMessages(spawned.id, 10)
+        expect(messages).toHaveLength(2)
+        const transcript = JSON.stringify(messages.map((message) => message.content))
+        expect(transcript).toContain('skipped setup workflow preflight')
+        expect(transcript).toContain('created a starter')
     })
 
-
-    it('keeps the started session linked when init retries and then blocks', async () => {
+    it('infers a non-placeholder starter contract from package.json and bun lockfiles', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-handoff'
-        const taskId = 'task-init-handoff'
+        const projectId = 'project-bootstrap-inferred'
+        const taskId = 'task-bootstrap-inferred'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId,
-            name: 'Project'
+            name: 'Project',
+            worktreeTargetBranch: 'dev'
         })
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.tasks.createTask({
             id: taskId,
             projectId,
-            title: 'Task',
+            title: 'Initialize project scripts',
             status: 'planned',
-            workspaceId
+            workspaceId,
+            source: 'project_init'
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-handoff',
-            { path: '/tmp/workspace', host: 'localhost' },
+            'spawned-session-bootstrap-inferred',
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        let archiveCalled = false
+        let writeSessionFileCall: BootstrapWriteCall | undefined
         const engine = {
             getMachineByNamespace() {
                 return {
@@ -633,7 +948,7 @@ describe('startSessionFromTask', () => {
                     active: true,
                     thinking: false,
                     agentState: null,
-                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                    metadata: { path: workspacePath, host: 'localhost' }
                 }
             },
             async spawnSession() {
@@ -644,11 +959,39 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash() {
-                return { success: false, error: 'init failed', stdout: 'checking deps', stderr: 'init failed' }
+            async readSessionFile(_sessionId: string, path: string) {
+                if (path === '.hopi/actions.yaml') {
+                    return {
+                        success: false,
+                        error: 'Failed to read file: ENOENT'
+                    }
+                }
+                if (path === 'package.json') {
+                    return {
+                        success: true,
+                        content: Buffer.from(JSON.stringify({
+                            scripts: {
+                                dev: 'concurrently "bun run dev:hub" "bun run dev:web"',
+                                'dev:hub': 'cd hub && bun run dev',
+                                'dev:web': 'cd web && bun run dev'
+                            }
+                        }), 'utf8').toString('base64')
+                    }
+                }
+                if (path === 'bun.lock') {
+                    return {
+                        success: true,
+                        content: Buffer.from('# bun lock', 'utf8').toString('base64')
+                    }
+                }
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
             },
-            async archiveSession() {
-                archiveCalled = true
+            async writeSessionFile(_sessionId: string, path: string, options: { cwd?: string; content: string; createParents?: boolean }) {
+                writeSessionFileCall = { path, options }
+                return { success: true, hash: 'starter-hash' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
@@ -667,58 +1010,59 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        if (!result.ok) {
-            return
+        const seededWrite = writeSessionFileCall
+        if (!seededWrite) {
+            throw new Error('Expected inferred bootstrap scaffold write')
         }
-        expect(result.sessionId).toBe(spawned.id)
-        expect(result.initRecoveryAttempted).toBe(true)
-        expect(result.task.activeSessionId).toBe(spawned.id)
-        expect(result.task.initRuntime).toMatchObject({
-            status: 'blocked',
-            sessionId: spawned.id,
-            blockedReason: 'init failed',
-            retryCount: 1
-        })
-        expect(archiveCalled).toBe(false)
+        const content = Buffer.from(seededWrite.options.content, 'base64').toString('utf8')
+        expect(content).toContain('run: ["bun", "install"]')
+        expect(content).toContain('id: hub')
+        expect(content).toContain('run: ["bun", "run", "dev:hub"]')
+        expect(content).toContain('id: web')
+        expect(content).toContain('run: ["bun", "run", "dev:web"]')
+        expect(content).toContain('targetBranch: "dev"')
+        expect(content).not.toContain('steps: []')
+        expect(content).not.toContain('services: []')
     })
 
-
-    it('retries init inside the same session and sends kickoff only after retry succeeds', async () => {
+    it('refreshes an existing placeholder actions manifest into an inferred starter contract', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-retry-success'
-        const taskId = 'task-init-retry-success'
+        const projectId = 'project-bootstrap-refresh'
+        const taskId = 'task-bootstrap-refresh'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId,
-            name: 'Project'
+            name: 'Project',
+            worktreeTargetBranch: 'dev'
         })
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.tasks.createTask({
             id: taskId,
             projectId,
-            title: 'Task',
-            description: 'Finish the task after init is fixed.',
+            title: 'Initialize project scripts',
             status: 'planned',
-            workspaceId
+            workspaceId,
+            source: 'project_init'
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-retry-success',
-            { path: '/tmp/workspace', host: 'localhost' },
+            'spawned-session-bootstrap-refresh',
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        let runCount = 0
+        const writeCalls: Array<BootstrapWriteCall & { options: BootstrapWriteCall['options'] & { overwrite?: boolean } }> = []
         const engine = {
             getMachineByNamespace() {
                 return {
@@ -735,7 +1079,7 @@ describe('startSessionFromTask', () => {
                     active: true,
                     thinking: false,
                     agentState: null,
-                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                    metadata: { path: workspacePath, host: 'localhost' }
                 }
             },
             async spawnSession() {
@@ -746,20 +1090,58 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash() {
-                runCount += 1
-                return runCount === 1
-                    ? { success: false, error: 'missing deps', stdout: 'checking deps', stderr: 'missing deps' }
-                    : { success: true, stdout: 'deps fixed', stderr: '' }
+            async readSessionFile(_sessionId: string, path: string) {
+                if (path === '.hopi/actions.yaml') {
+                    return {
+                        success: true,
+                        content: Buffer.from([
+                            '# HOPI bootstrap scaffold.',
+                            '# Replace empty sections with project-specific setup, preview, and merge rules before verifying automation.',
+                            'version: 1',
+                            'setup:',
+                            '  steps: []',
+                            'preview:',
+                            '  services: []',
+                            'merge:',
+                            '  targetBranch: "dev"',
+                            '  strategy: merge_commit',
+                            '  conflictResolution:',
+                            '    mode: ai',
+                            '    maxAttempts: 2'
+                        ].join('\n'), 'utf8').toString('base64')
+                    }
+                }
+                if (path === 'package.json') {
+                    return {
+                        success: true,
+                        content: Buffer.from(JSON.stringify({
+                            scripts: {
+                                dev: 'concurrently "bun run dev:hub" "bun run dev:web"',
+                                'dev:hub': 'cd hub && bun run dev',
+                                'dev:web': 'cd web && bun run dev'
+                            }
+                        }), 'utf8').toString('base64')
+                    }
+                }
+                if (path === 'bun.lock') {
+                    return {
+                        success: true,
+                        content: Buffer.from('# bun lock', 'utf8').toString('base64')
+                    }
+                }
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async writeSessionFile(_sessionId: string, path: string, options: BootstrapWriteCall['options'] & { overwrite?: boolean }) {
+                writeCalls.push({ path, options })
+                return { success: true, hash: 'starter-hash' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
             },
-            async sendMessage(sessionId: string, payload: { text?: string; localId?: string }) {
-                store.messages.addMessage(sessionId, {
-                    role: 'user',
-                    content: { type: 'text', text: payload.text ?? '' }
-                }, payload.localId)
+            async sendMessage() {
             },
             handleRealtimeEvent() {
             }
@@ -773,65 +1155,62 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        if (!result.ok) {
-            return
-        }
-        expect(result.initRecoveryAttempted).toBe(true)
-        expect(result.task.initRuntime).toMatchObject({
-            status: 'succeeded',
-            sessionId: spawned.id,
-            retryCount: 1
-        })
-
-        const messageLocalIds = store.messages.getMessages(spawned.id, 10)
-            .map((message) => message.localId ?? '')
-        const directFailureIndex = messageLocalIds.findIndex((localId) => localId.includes(':direct-result:'))
-        const repairPromptIndex = messageLocalIds.findIndex((localId) => localId.startsWith('auto:init_setup:') && !localId.includes(':direct-result:') && !localId.includes(':retry-result:') && !localId.includes(':prompt-error:'))
-        const retrySuccessIndex = messageLocalIds.findIndex((localId) => localId.includes(':retry-result:'))
-        const kickoffIndex = messageLocalIds.findIndex((localId) => localId.startsWith('auto:kickoff:'))
-        expect(directFailureIndex).toBeGreaterThanOrEqual(0)
-        expect(repairPromptIndex).toBeGreaterThan(directFailureIndex)
-        expect(retrySuccessIndex).toBeGreaterThan(repairPromptIndex)
-        expect(kickoffIndex).toBeGreaterThan(retrySuccessIndex)
+        expect(writeCalls).toHaveLength(1)
+        expect(writeCalls[0]?.options.overwrite).toBe(true)
+        const content = Buffer.from(writeCalls[0]!.options.content, 'base64').toString('utf8')
+        expect(content).toContain('run: ["bun", "install"]')
+        expect(content).toContain('run: ["bun", "run", "dev:web"]')
+        expect(content).not.toContain('steps: []')
+        expect(content).not.toContain('services: []')
     })
 
-    it('waits for approval requests to clear before retrying init in the same session', async () => {
+    it('uses worktree metadata path when bootstrapping a missing actions manifest', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
-        const projectId = 'project-init-approval-wait'
-        const taskId = 'task-init-approval-wait'
+        const projectId = 'project-bootstrap-worktree-metadata'
+        const taskId = 'task-bootstrap-worktree-metadata'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
+        const workspacePath = '/Users/realizer/Code/hopi'
+        const worktreePath = '/Users/realizer/Code/hopi-worktrees/task-bootstrap'
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId,
-            name: 'Project'
+            name: 'Project',
+            defaultSessionType: 'worktree'
         })
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.tasks.createTask({
             id: taskId,
             projectId,
-            title: 'Task',
-            description: 'Wait for approval, then finish init retry.',
+            title: 'Initialize project scripts',
             status: 'planned',
-            workspaceId
+            workspaceId,
+            source: 'project_init'
         })
 
         const spawned = store.sessions.getOrCreateSession(
-            'spawned-session-init-approval-wait',
-            { path: '/tmp/workspace', host: 'localhost' },
+            'spawned-session-bootstrap-worktree-metadata',
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
 
-        let runCount = 0
-        let approvalPolls = 0
+        const readAttempts: string[] = []
+        let writeSessionFileCall: {
+            path: string
+            options: {
+                cwd?: string
+                content: string
+                createParents?: boolean
+            }
+        } | undefined
         const engine = {
             getMachineByNamespace() {
                 return {
@@ -842,28 +1221,20 @@ describe('startSessionFromTask', () => {
                 }
             },
             getSessionByNamespace() {
-                const waitingForApproval = runCount === 1 && approvalPolls < 2
-                if (waitingForApproval) {
-                    approvalPolls += 1
-                }
-
                 return {
                     id: spawned.id,
                     namespace,
                     active: true,
                     thinking: false,
-                    agentState: waitingForApproval
-                        ? {
-                            requests: {
-                                'req-1': {
-                                    tool: 'bash',
-                                    arguments: {},
-                                    createdAt: Date.now()
-                                }
-                            }
+                    agentState: null,
+                    metadata: {
+                        path: workspacePath,
+                        host: 'localhost',
+                        worktree: {
+                            basePath: workspacePath,
+                            worktreePath
                         }
-                        : null,
-                    metadata: { path: '/tmp/workspace', host: 'localhost' }
+                    }
                 }
             },
             async spawnSession() {
@@ -874,20 +1245,21 @@ describe('startSessionFromTask', () => {
             },
             async applySessionConfig() {
             },
-            async runBash() {
-                runCount += 1
-                return runCount === 1
-                    ? { success: false, error: 'missing deps', stdout: 'checking deps', stderr: 'missing deps' }
-                    : { success: true, stdout: 'deps fixed', stderr: '' }
+            async readSessionFile(_sessionId: string, _path: string, cwd?: string) {
+                readAttempts.push(cwd ?? '')
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async writeSessionFile(_sessionId: string, path: string, options: { cwd?: string; content: string; createParents?: boolean }) {
+                writeSessionFileCall = { path, options }
+                return { success: true, hash: 'starter-hash' }
             },
             async uploadFile() {
                 return { success: true, path: '/tmp/attachment' }
             },
-            async sendMessage(sessionId: string, payload: { text?: string; localId?: string }) {
-                store.messages.addMessage(sessionId, {
-                    role: 'user',
-                    content: { type: 'text', text: payload.text ?? '' }
-                }, payload.localId)
+            async sendMessage() {
             },
             handleRealtimeEvent() {
             }
@@ -901,18 +1273,10 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        if (!result.ok) {
-            return
-        }
-
-        expect(approvalPolls).toBeGreaterThanOrEqual(2)
-        expect(runCount).toBe(2)
-        expect(result.initRecoveryAttempted).toBe(true)
-        expect(result.task.initRuntime).toMatchObject({
-            status: 'succeeded',
-            sessionId: spawned.id,
-            retryCount: 1
-        })
+        expect(readAttempts.length).toBeGreaterThan(0)
+        expect(readAttempts.every((attempt) => attempt === worktreePath)).toBe(true)
+        expect(writeSessionFileCall?.path).toBe('.hopi/actions.yaml')
+        expect(writeSessionFileCall?.options.cwd).toBe(worktreePath)
     })
 
     it('emits task-updated before waiting for kickoff message delivery', async () => {
@@ -954,7 +1318,7 @@ describe('startSessionFromTask', () => {
         let resolveSendMessage: () => void = () => {}
         let sendMessageCalled = false
 
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace(id: string, ns: string) {
                 if (id !== machineId || ns !== namespace) {
                     return undefined
@@ -986,7 +1350,7 @@ describe('startSessionFromTask', () => {
             handleRealtimeEvent(event: SyncEvent) {
                 realtimeEvents.push(event)
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const pending = startSessionFromTask({
             store,
@@ -1045,7 +1409,7 @@ describe('startSessionFromTask', () => {
         )
 
         let spawnedAgent = ''
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1070,7 +1434,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1100,6 +1464,7 @@ describe('startSessionFromTask', () => {
             machineId,
             name: 'Project',
             defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'dev',
             defaultWorkspaceId: workspaceAId
         })
         store.workspaces.createWorkspace({
@@ -1130,7 +1495,8 @@ describe('startSessionFromTask', () => {
         let spawnedPath = ''
         let spawnedSessionType: 'simple' | 'worktree' | undefined
         let spawnedWorktreeWorkspacePaths: string[] | undefined
-        const engine = {
+        let spawnedWorktreeTargetBranch: string | undefined
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1148,11 +1514,13 @@ describe('startSessionFromTask', () => {
                 sessionType?: 'simple' | 'worktree',
                 _worktreeName?: string,
                 _resumeSessionId?: string,
-                worktreeWorkspacePaths?: string[]
+                worktreeWorkspacePaths?: string[],
+                worktreeTargetBranch?: string
             ) {
                 spawnedPath = path
                 spawnedSessionType = sessionType
                 spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                spawnedWorktreeTargetBranch = worktreeTargetBranch
                 return { type: 'success' as const, sessionId: spawned.id }
             },
             async waitForSessionActive() {
@@ -1167,7 +1535,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1179,6 +1547,7 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(spawnedPath).toBe(workspaceBPath)
         expect(spawnedSessionType).toBe('worktree')
+        expect(spawnedWorktreeTargetBranch).toBe('dev')
         expect(spawnedWorktreeWorkspacePaths?.[0]).toBe(workspaceBPath)
         expect(spawnedWorktreeWorkspacePaths).toContain(workspaceAPath)
         expect(spawnedWorktreeWorkspacePaths).toContain(workspaceBPath)
@@ -1242,7 +1611,7 @@ describe('startSessionFromTask', () => {
         )
 
         let kickoffText = ''
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1267,7 +1636,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1333,7 +1702,7 @@ describe('startSessionFromTask', () => {
         )
 
         let kickoffText = ''
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1358,7 +1727,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1410,7 +1779,7 @@ describe('startSessionFromTask', () => {
         )
 
         const appliedConfigs: Array<Record<string, unknown>> = []
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1435,7 +1804,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1486,7 +1855,7 @@ describe('startSessionFromTask', () => {
         )
 
         const appliedConfigs: Array<Record<string, unknown>> = []
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1511,7 +1880,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1564,7 +1933,7 @@ describe('startSessionFromTask', () => {
 
         const appliedConfigs: Array<Record<string, unknown>> = []
         let spawnedModel: string | undefined
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1590,7 +1959,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1644,7 +2013,7 @@ describe('startSessionFromTask', () => {
 
         const appliedConfigs: Array<Record<string, unknown>> = []
         let spawnedModel: string | undefined
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1670,7 +2039,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1721,7 +2090,7 @@ describe('startSessionFromTask', () => {
 
         let payloadText = ''
         let payloadLocalId = ''
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1747,7 +2116,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,
@@ -1801,7 +2170,7 @@ describe('startSessionFromTask', () => {
         )
 
         let sendMessageCalled = false
-        const engine = {
+        const engine = withValidContract({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -1826,7 +2195,7 @@ describe('startSessionFromTask', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const result = await startSessionFromTask({
             store,

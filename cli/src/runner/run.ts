@@ -189,6 +189,9 @@ export async function startRunner(): Promise<void> {
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
       const worktreeName = options.worktreeName;
+      const worktreeTargetBranch = sessionType === 'worktree'
+        ? options.worktreeTargetBranch?.trim() || undefined
+        : undefined;
       const normalizedWorktreeWorkspacePaths = sessionType === 'worktree'
         ? Array.from(new Set([
             directory,
@@ -333,7 +336,8 @@ export async function startRunner(): Promise<void> {
             const worktreeResult = await createWorktree({
               basePath: workspacePath,
               nameHint: nameHint || `workspace-${index + 1}`,
-              worktreeRootDir: multiWorkspaceRoot ?? undefined
+              worktreeRootDir: multiWorkspaceRoot ?? undefined,
+              baseBranch: worktreeTargetBranch
             });
             if (!worktreeResult.ok) {
               logger.debug(`[RUNNER RUN] Worktree creation failed for ${workspacePath}: ${worktreeResult.error}`);
@@ -352,7 +356,8 @@ export async function startRunner(): Promise<void> {
         } else {
           const worktreeResult = await createWorktree({
             basePath: normalizedWorktreeWorkspacePaths[0] ?? directory,
-            nameHint: worktreeName
+            nameHint: worktreeName,
+            baseBranch: worktreeTargetBranch
           });
           if (!worktreeResult.ok) {
             logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);

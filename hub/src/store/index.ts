@@ -31,7 +31,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 11
+const SCHEMA_VERSION: number = 12
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -358,6 +358,9 @@ export class Store {
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
                 improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
+                automation_readiness_status TEXT NOT NULL DEFAULT 'unknown',
+                automation_readiness_summary TEXT,
+                automation_readiness_checked_at INTEGER,
                 workflow_profile TEXT,
                 last_improvements_at INTEGER,
                 created_at INTEGER NOT NULL,
@@ -539,6 +542,9 @@ export class Store {
         if (SCHEMA_VERSION >= 11) {
             this.migrateFromV10ToV11()
         }
+        if (SCHEMA_VERSION >= 12) {
+            this.migrateFromV11ToV12()
+        }
     }
 
     private migrateFromV4ToV5(): void {
@@ -683,6 +689,22 @@ export class Store {
         }
         if (!taskColumns.has('init_runtime')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN init_runtime TEXT')
+        }
+    }
+
+    private migrateFromV11ToV12(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v11 to v12 migration.')
+        }
+        if (!projectColumns.has('automation_readiness_status')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN automation_readiness_status TEXT NOT NULL DEFAULT 'unknown'")
+        }
+        if (!projectColumns.has('automation_readiness_summary')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_readiness_summary TEXT')
+        }
+        if (!projectColumns.has('automation_readiness_checked_at')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_readiness_checked_at INTEGER')
         }
     }
 
