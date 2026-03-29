@@ -5,6 +5,7 @@ import { PRODUCT_ENV } from '@hopi/protocol/brand';
 
 import type { WorktreeInfo } from '@/runner/worktree';
 import { logger } from '@/ui/logger';
+import { resolveGitExecutable } from './resolveGitExecutable';
 import { resolveCliWorkingDirectory } from './workingDirectory';
 
 export function readWorktreeEnv(): WorktreeInfo | null {
@@ -94,7 +95,8 @@ function readWorktreeFromGit(): WorktreeInfo | null {
 
 function runGit(args: string[], cwd: string): string | null {
     try {
-        const output = execFileSync('git', args, {
+        const gitCommand = resolveGitExecutable(process.env);
+        const output = execFileSync(gitCommand, args, {
             cwd,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore']

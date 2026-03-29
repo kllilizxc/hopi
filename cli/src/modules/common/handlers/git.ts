@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'util'
 import { PRODUCT_SLUG } from '@hopi/protocol/brand'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
+import { resolveGitExecutable } from '@/utils/resolveGitExecutable'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
 import { formatMergeFailureMessage } from '../gitMergeConflictDetection'
 import { validatePath } from '../pathSecurity'
@@ -58,6 +59,7 @@ interface GitAutocommitWorktreeResponse {
 interface GitMergeWorktreeRequest {
     targetBranch: string
     commitMessage: string
+    strategy?: 'ff' | 'merge_commit' | 'squash'
     timeout?: number
 }
 
@@ -71,6 +73,8 @@ interface GitMergeWorktreeResponse {
     exitCode?: number
     error?: string
 }
+
+type MergeStrategy = 'ff' | 'merge_commit' | 'squash'
 
 interface GitMergeWorktreeStateRequest {
     targetBranch: string
@@ -168,12 +172,14 @@ async function runGitCommand(
     env?: NodeJS.ProcessEnv
 ): Promise<GitCommandResponse> {
     try {
+        const mergedEnv = env ? { ...process.env, ...env } : process.env
+        const gitCommand = resolveGitExecutable(mergedEnv)
         const options: ExecFileOptions = {
             cwd,
             timeout: timeout ?? 10_000,
-            env: env ? { ...process.env, ...env } : undefined
+            env: mergedEnv
         }
-        const { stdout, stderr } = await execFileAsync('git', args, options)
+        const { stdout, stderr } = await execFileAsync(gitCommand, args, options)
         return {
             success: true,
             stdout: stdout ? stdout.toString() : '',
@@ -227,6 +233,15 @@ function normalizeBaseRef(raw: unknown): string | null {
         return null
     }
     return value
+}
+
+function normalizeMergeStrategy(raw: unknown): MergeStrategy | null {
+    if (raw === undefined) {
+        return 'squash'
+    }
+    return raw === 'ff' || raw === 'merge_commit' || raw === 'squash'
+        ? raw
+        : null
 }
 
 async function autoCommitWorktreeIfNeeded(
@@ -423,6 +438,16 @@ async function resolveMergeBase(basePath: string, targetBranch: string, sourceRe
     }
 
     return { ok: true, mergeBase }
+}
+
+async function cleanupFailedMergeAttempt(mergeTargetPath: string, timeout: number): Promise<void> {
+    const mergeHead = await runGitCommand(['rev-parse', '--verify', '-q', 'MERGE_HEAD'], mergeTargetPath, timeout)
+    if (mergeHead.success) {
+        await runGitCommand(['merge', '--abort'], mergeTargetPath, timeout)
+        return
+    }
+
+    await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
 }
 
 async function createWorktreeVerificationSnapshotRef(worktreePath: string, timeout: number): Promise<
@@ -857,6 +882,11 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             return rpcError('Commit message required')
         }
 
+        const strategy = normalizeMergeStrategy(data.strategy)
+        if (!strategy) {
+            return rpcError('Invalid merge strategy')
+        }
+
         const timeout = data.timeout ?? 60_000
 
         const autoCommit = await autoCommitWorktreeIfNeeded(worktree.worktreePath, commitMessage, timeout)
@@ -928,10 +958,15 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 }
             }
 
-            const mergeResult = await runGitCommand(['merge', '--squash', worktree.branch], mergeTargetPath, timeout)
+            const mergeArgs = strategy === 'ff'
+                ? ['merge', '--ff-only', worktree.branch]
+                : strategy === 'merge_commit'
+                    ? ['merge', '--no-ff', '--no-commit', worktree.branch]
+                    : ['merge', '--squash', worktree.branch]
+            const mergeResult = await runGitCommand(mergeArgs, mergeTargetPath, timeout)
             if (!mergeResult.success) {
                 const conflicts = await runGitCommand(['diff', '--name-only', '--diff-filter=U'], mergeTargetPath, timeout)
-                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
+                await cleanupFailedMergeAttempt(mergeTargetPath, timeout)
                 const conflictFiles = conflicts.success
                     ? (conflicts.stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
                     : []
@@ -950,13 +985,28 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 })
             }
 
+            if (strategy === 'ff') {
+                const hashResult = await runGitCommand(['rev-parse', 'HEAD'], mergeTargetPath, timeout)
+                const commitHash = hashResult.success ? (hashResult.stdout ?? '').trim() : undefined
+
+                return {
+                    success: true,
+                    commitHash: commitHash || undefined,
+                    stdout: mergeResult.stdout,
+                    stderr: mergeResult.stderr,
+                    exitCode: mergeResult.exitCode
+                }
+            }
+
             const staged = await runGitCommand(['diff', '--cached', '--name-only'], mergeTargetPath, timeout)
             if (!staged.success) {
-                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
+                await cleanupFailedMergeAttempt(mergeTargetPath, timeout)
                 return staged
             }
             if ((staged.stdout ?? '').trim().length === 0) {
-                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
+                if (strategy === 'squash') {
+                    await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
+                }
                 return { success: true, skippedReason: 'no_changes' }
             }
 
@@ -970,7 +1020,7 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
                 )
             }
             if (!commitResult.success) {
-                await runGitCommand(['reset', '--hard'], mergeTargetPath, timeout)
+                await cleanupFailedMergeAttempt(mergeTargetPath, timeout)
                 return commitResult
             }
 

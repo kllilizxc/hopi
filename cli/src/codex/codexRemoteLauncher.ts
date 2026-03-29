@@ -105,6 +105,24 @@ function normalizePlanEntries(value: unknown): PlanEntry[] {
     return entries;
 }
 
+function buildUnexpectedExitMessage(error: unknown): string {
+    const detail = error instanceof Error
+        ? error.message.trim()
+        : typeof error === 'string'
+            ? error.trim()
+            : '';
+
+    if (!detail) {
+        return 'Process exited unexpectedly';
+    }
+
+    if (/^process exited unexpectedly\b/iu.test(detail)) {
+        return detail;
+    }
+
+    return `Process exited unexpectedly: ${detail}`;
+}
+
 class CodexRemoteLauncher extends RemoteLauncherBase {
     private readonly session: CodexSession;
     private readonly useAppServer: boolean;
@@ -1028,8 +1046,13 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         logger.debug('[Codex] Marked session as not created after abort for proper resume');
                     }
                 } else {
-                    messageBuffer.addMessage('Process exited unexpectedly', 'status');
-                    session.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                    const unexpectedExitMessage = buildUnexpectedExitMessage(error);
+                    messageBuffer.addMessage(unexpectedExitMessage, 'status');
+                    session.sendSessionEvent({
+                        type: 'error',
+                        message: unexpectedExitMessage,
+                        reason: 'process-exited'
+                    });
                     if (useAppServer) {
                         this.currentTurnId = null;
                         this.currentThreadId = null;

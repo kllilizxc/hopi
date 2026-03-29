@@ -30,6 +30,7 @@ import {
     type RpcPathExistsResponse,
     type RpcPreviewStatus,
     type RpcReadFileResponse,
+    type RpcWriteFileResponse,
     type RpcUploadFileResponse
 } from './rpcGateway'
 import { SessionCache } from './sessionCache'
@@ -50,6 +51,7 @@ export type {
     RpcPathExistsResponse,
     RpcPreviewStatus,
     RpcReadFileResponse,
+    RpcWriteFileResponse,
     RpcUploadFileResponse
 } from './rpcGateway'
 
@@ -429,7 +431,8 @@ export class SyncEngine {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         resumeSessionId?: string,
-        worktreeWorkspacePaths?: string[]
+        worktreeWorkspacePaths?: string[],
+        worktreeTargetBranch?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -440,7 +443,8 @@ export class SyncEngine {
             sessionType,
             worktreeName,
             resumeSessionId,
-            worktreeWorkspacePaths
+            worktreeWorkspacePaths,
+            worktreeTargetBranch
         )
     }
 
@@ -698,7 +702,11 @@ export class SyncEngine {
         return await this.rpcGateway.gitAutocommitWorktree(sessionId, options)
     }
 
-    async gitMergeWorktree(sessionId: string, options: { targetBranch: string; commitMessage: string }): Promise<RpcGitMergeWorktreeResponse> {
+    async gitMergeWorktree(sessionId: string, options: {
+        targetBranch: string
+        commitMessage: string
+        strategy?: 'ff' | 'merge_commit' | 'squash'
+    }): Promise<RpcGitMergeWorktreeResponse> {
         return await this.rpcGateway.gitMergeWorktree(sessionId, options)
     }
 
@@ -718,9 +726,9 @@ export class SyncEngine {
         return await this.rpcGateway.gitVerifyWorktreeMerge(sessionId, options)
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
+    async readSessionFile(sessionId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
         try {
-            return await this.rpcGateway.readSessionFile(sessionId, path)
+            return await this.rpcGateway.readSessionFile(sessionId, path, cwd)
         } catch (error) {
             if (!shouldRetrySessionConfigApply(error)) {
                 throw error
@@ -734,8 +742,38 @@ export class SyncEngine {
             return await this.rpcGateway.readFileOnMachine(
                 fallback.machineId,
                 path,
-                fallback.sessionPath
+                cwd ?? fallback.sessionPath
             )
+        }
+    }
+
+    async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.rpcGateway.readFileOnMachine(machineId, path, cwd)
+    }
+
+    async writeSessionFile(sessionId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        try {
+            return await this.rpcGateway.writeSessionFile(sessionId, path, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.writeFileOnMachine(fallback.machineId, path, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
         }
     }
 

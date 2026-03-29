@@ -163,7 +163,7 @@ describe('NewTaskDialog', () => {
             priority: 'high',
             agent: 'codex',
             model: 'auto',
-            permissionMode: 'default',
+            permissionMode: 'plan',
             workflowProfile: 'gsd',
         })
         expect(stored).not.toHaveProperty('title')

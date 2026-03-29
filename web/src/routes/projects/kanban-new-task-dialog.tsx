@@ -106,6 +106,29 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
     }, [newTaskPriority, newTaskAgent, newTaskModel, newTaskPermissionMode, newTaskWorkflowProfile])
 
     useEffect(() => {
+        const workflowProfile = newTaskWorkflowProfile.trim().toLowerCase()
+        if (workflowProfile !== 'gsd') {
+            return
+        }
+
+        const desiredMode: PermissionMode = newTaskAgent === 'gemini'
+            ? 'read-only'
+            : newTaskAgent === 'opencode'
+                ? 'default'
+                : 'plan'
+
+        if (newTaskPermissionMode === desiredMode) {
+            return
+        }
+
+        if (!newTaskPermissionOptions.some((option) => option.mode === desiredMode)) {
+            return
+        }
+
+        setNewTaskPermissionMode(desiredMode)
+    }, [newTaskAgent, newTaskPermissionMode, newTaskPermissionOptions, newTaskWorkflowProfile])
+
+    useEffect(() => {
         const wasOpen = wasOpenRef.current
 
         if (props.open && !wasOpen) {

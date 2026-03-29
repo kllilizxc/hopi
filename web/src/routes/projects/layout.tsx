@@ -20,6 +20,7 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
@@ -279,7 +280,8 @@ export default function ProjectsPage() {
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
-    const { createTask } = useCreateTask(api)
+    const { createTask, isPending: isCreatingTask } = useCreateTask(api)
+    const { startTaskSession } = useStartTaskSession(api)
 
     const [createOpen, setCreateOpen] = useState(false)
     const [newTaskOpen, setNewTaskOpen] = useState(false)
@@ -331,31 +333,59 @@ export default function ProjectsPage() {
         if (!selectedProjectId) return
 
         const model = normalizeModelName(data.model)
-        setNewTaskOpen(false)
+        void (async () => {
+            try {
+                const created = await createTask({
+                    projectId: selectedProjectId,
+                    title: data.title,
+                    description: data.description,
+                    priority: data.priority || undefined,
+                    status: 'planned',
+                    agentFlavor: data.agent,
+                    permissionMode: data.permissionMode,
+                    model: model ?? undefined,
+                    modelMode: data.agent === 'claude' ? resolveClaudeModelMode(model) ?? undefined : undefined,
+                    workflowProfile: data.workflowProfile,
+                    sortKey: Date.now()
+                })
 
-        void createTask({
-            projectId: selectedProjectId,
-            title: data.title,
-            description: data.description,
-            priority: data.priority || undefined,
-            status: 'planned',
-            agentFlavor: data.agent,
-            permissionMode: data.permissionMode,
-            model: model ?? undefined,
-            modelMode: data.agent === 'claude' ? resolveClaudeModelMode(model) ?? undefined : undefined,
-            workflowProfile: data.workflowProfile,
-            sortKey: Date.now()
-        }).then((created) => {
-            addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
-        }).catch((error) => {
-            addToast({
-                title: t('projects.tasks.createFailed'),
-                body: error instanceof Error ? error.message : 'Failed to create task',
-                sessionId: '',
-                url: ''
-            })
-        })
-    }, [selectedProjectId, createTask, addToast, t])
+                setNewTaskOpen(false)
+                addToast({ title: t('projects.tasks.created'), body: created.title, sessionId: '', url: '' })
+
+                const workflowProfile = (created.workflowProfile ?? data.workflowProfile).trim().toLowerCase()
+                if (workflowProfile !== 'gsd') {
+                    return
+                }
+
+                try {
+                    const started = await startTaskSession({
+                        taskId: created.id,
+                        projectId: selectedProjectId
+                    })
+                    addToast({ title: t('projects.sessions.started'), body: '', sessionId: started.sessionId, url: '' })
+                } catch (error) {
+                    addToast({
+                        title: t('projects.sessions.startFailed'),
+                        body: error instanceof Error ? error.message : 'Failed to start session',
+                        sessionId: '',
+                        url: ''
+                    })
+                }
+
+                void navigate({
+                    to: '/projects/$projectId/tasks/$taskId',
+                    params: { projectId: selectedProjectId, taskId: created.id }
+                })
+            } catch (error) {
+                addToast({
+                    title: t('projects.tasks.createFailed'),
+                    body: error instanceof Error ? error.message : 'Failed to create task',
+                    sessionId: '',
+                    url: ''
+                })
+            }
+        })()
+    }, [selectedProjectId, createTask, addToast, navigate, startTaskSession, t])
 
     const handleBackToProjects = useCallback(() => {
         void navigate({ to: '/projects' })
@@ -442,7 +472,7 @@ export default function ProjectsPage() {
                     defaultAgent={defaultTaskAgent}
                     defaultPermissionMode={projectDefaultPermissionMode}
                     workflowStrategies={workflowStrategies}
-                    isCreating={false}
+                    isCreating={isCreatingTask}
                     onCreate={handleCreateTask}
                 />
             ) : null}

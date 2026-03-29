@@ -346,6 +346,7 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
     }
 
     const retrySuffix = buildTaskActionRetrySuffix(resolveTaskActionRetryCount(runtime))
+    const isBootstrapTask = task?.source === 'project_init'
 
     switch (runtime.status) {
         case 'running':
@@ -376,6 +377,13 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
                 tone: 'error'
             }
         case 'succeeded':
+            if (isBootstrapTask) {
+                return {
+                    title: 'Bootstrap scaffold 已写入',
+                    detail: runtime.latestNote ?? '已写入 starter actions.yaml，等待任务继续补全与验证。',
+                    tone: 'info'
+                }
+            }
             return {
                 title: 'Init 已完成',
                 detail: runtime.latestNote ?? '仓库 init 已完成，任务 kickoff 已继续。',

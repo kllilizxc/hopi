@@ -193,6 +193,9 @@ export const SessionSchema = z.object({
 
 export type Session = z.infer<typeof SessionSchema>
 
+export const AutomationReadinessStatusSchema = z.enum(['unknown', 'checking', 'ready', 'degraded', 'blocked'])
+export type AutomationReadinessStatus = z.infer<typeof AutomationReadinessStatusSchema>
+
 export const ProjectSchema = z.object({
     id: z.string(),
     namespace: z.string(),
@@ -212,6 +215,9 @@ export const ProjectSchema = z.object({
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
+    automationReadinessStatus: AutomationReadinessStatusSchema.optional(),
+    automationReadinessSummary: z.string().nullable().optional(),
+    automationReadinessCheckedAt: z.number().nullable().optional(),
     worktreeLocked: z.boolean().optional(),
     createdAt: z.number(),
     updatedAt: z.number(),

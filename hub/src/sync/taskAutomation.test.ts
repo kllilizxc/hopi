@@ -156,6 +156,635 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
+    it('blocks linked task when the agent reports process-exited', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const errorMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'error',
+                    message: 'Process exited unexpectedly',
+                    reason: 'process-exited'
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, errorMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('blocked')
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('blocks linked task when a launcher emits legacy process-exited message events', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-legacy'
+        const taskId = 'task-legacy'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'in_progress',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const errorMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'message',
+                    message: 'Process exited unexpectedly: Codex app-server exited (code=1, signal=null)'
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, errorMsg))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('blocked')
+    })
+
+    it('converts bootstrap init success into blocked when the agent exits before continuing', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap'
+        const taskId = 'task-bootstrap'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'project_init',
+            initRuntime: {
+                status: 'succeeded',
+                sessionId,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Bootstrap task skipped setup preflight so it can create or repair `.hopi/actions.yaml`. Starter scaffold written.',
+                blockedReason: null
+            }
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const errorMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'error',
+                    message: 'Process exited unexpectedly',
+                    reason: 'process-exited'
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, errorMsg))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('blocked')
+        expect(updated?.initRuntime?.status).toBe('blocked')
+        expect(updated?.initRuntime?.latestNote).toContain('Starter scaffold was written')
+        expect(updated?.initRuntime?.blockedReason).toBe('Process exited unexpectedly')
+    })
+
+    it('asks the agent to continue repairing bootstrap contract when ready arrives with invalid actions.yaml', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap-invalid-ready'
+        const taskId = 'task-bootstrap-invalid-ready'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/bootstrap-invalid-ready'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            workspaceId,
+            source: 'project_init',
+            initRuntime: {
+                status: 'succeeded',
+                sessionId,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Bootstrap task skipped setup preflight so it can create or repair `.hopi/actions.yaml`. Starter scaffold written.',
+                blockedReason: null
+            }
+        })
+
+        const sentMessages: Array<{ text: string; localId?: string | null }> = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from([
+                        'version: 1',
+                        'setup:',
+                        '  steps: []',
+                        'preview:',
+                        '  services: []',
+                        'merge:',
+                        '  targetBranch: "main"',
+                        '  strategy: merge_commit',
+                        '  conflictResolution:',
+                        '    mode: ai',
+                        '    maxAttempts: 2'
+                    ].join('\n'), 'utf8').toString('base64')
+                }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string; localId?: string | null }) {
+                sentMessages.push(payload)
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('in_progress')
+        expect(updated?.initRuntime?.status).toBe('retrying')
+        expect(updated?.initRuntime?.retryCount).toBe(1)
+        expect(sentMessages).toHaveLength(1)
+        expect(sentMessages[0]?.text).toContain('Current validation errors:')
+        expect(sentMessages[0]?.text).toContain('setup.steps')
+    })
+
+    it('blocks bootstrap task after repair attempts are exhausted and actions.yaml is still invalid', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap-invalid-exhausted'
+        const taskId = 'task-bootstrap-invalid-exhausted'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/bootstrap-invalid-exhausted'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            workspaceId,
+            source: 'project_init',
+            initRuntime: {
+                status: 'retrying',
+                sessionId,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: null,
+                retryCount: 2,
+                failureFingerprint: null,
+                latestNote: 'Bootstrap contract still invalid after ready; asked the agent to continue repairing it (2/2).',
+                blockedReason: null
+            }
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from([
+                        'version: 1',
+                        'setup:',
+                        '  steps: []',
+                        'preview:',
+                        '  services: []',
+                        'merge:',
+                        '  targetBranch: "main"',
+                        '  strategy: merge_commit',
+                        '  conflictResolution:',
+                        '    mode: ai',
+                        '    maxAttempts: 2'
+                    ].join('\n'), 'utf8').toString('base64')
+                }
+            },
+            async sendMessage() {
+                throw new Error('should not send another repair prompt')
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('blocked')
+        expect(updated?.initRuntime?.status).toBe('blocked')
+        expect(updated?.initRuntime?.blockedReason).toContain('Invalid .hopi/actions.yaml')
+    })
+
+    it('moves bootstrap task to in_review only after preview becomes ready', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap-preview-ready'
+        const taskId = 'task-bootstrap-preview-ready'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/bootstrap-preview-ready'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            workspaceId,
+            source: 'project_init',
+            initRuntime: {
+                status: 'succeeded',
+                sessionId,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Starter scaffold written.',
+                blockedReason: null
+            }
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? {
+                    ...session,
+                    metadata: {
+                        ...session.metadata,
+                        worktree: {
+                            basePath: '/tmp/base',
+                            worktreePath: '/tmp/bootstrap-preview-ready'
+                        }
+                    }
+                } : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from([
+                        'version: 1',
+                        'setup:',
+                        '  steps:',
+                        '    - id: install',
+                        '      type: run',
+                        '      cwd: "."',
+                        '      run: ["bun", "install"]',
+                        'preview:',
+                        '  services:',
+                        '    - id: web',
+                        '      type: run',
+                        '      cwd: "."',
+                        '      run: ["bun", "run", "dev:web"]',
+                        '      ready:',
+                        '        type: process_alive',
+                        '      expose: primary',
+                        '  success:',
+                        '    require: ["web"]',
+                        'merge:',
+                        '  targetBranch: "main"',
+                        '  strategy: merge_commit'
+                    ].join('\n'), 'utf8').toString('base64')
+                }
+            },
+            async previewStartForSession() {
+                return {
+                    active: true,
+                    status: 'ready',
+                    taskId,
+                    sessionId,
+                    mode: 'worktree' as const,
+                    rootPath: '/tmp/bootstrap-preview-ready',
+                    url: 'http://127.0.0.1:4173',
+                    updatedAt: Date.now(),
+                    logTail: []
+                }
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('in_review')
+        expect(updated?.previewRuntime?.status).toBe('ready')
+        expect(updated?.initRuntime?.latestNote).toContain('preview readiness')
+    })
+
+    it('keeps bootstrap task in progress and sends preview repair prompt when preview probe fails', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-bootstrap-preview-failed'
+        const taskId = 'task-bootstrap-preview-failed'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/bootstrap-preview-failed'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Initialize project scripts',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            workspaceId,
+            source: 'project_init',
+            initRuntime: {
+                status: 'succeeded',
+                sessionId,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Starter scaffold written.',
+                blockedReason: null
+            }
+        })
+
+        const sentMessages: Array<{ text: string }> = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from([
+                        'version: 1',
+                        'setup:',
+                        '  steps:',
+                        '    - id: install',
+                        '      type: run',
+                        '      cwd: "."',
+                        '      run: ["bun", "install"]',
+                        'preview:',
+                        '  services:',
+                        '    - id: web',
+                        '      type: run',
+                        '      cwd: "."',
+                        '      run: ["bun", "run", "dev:web"]',
+                        '      ready:',
+                        '        type: process_alive',
+                        '      expose: primary',
+                        '  success:',
+                        '    require: ["web"]',
+                        'merge:',
+                        '  targetBranch: "main"',
+                        '  strategy: merge_commit'
+                    ].join('\n'), 'utf8').toString('base64')
+                }
+            },
+            async previewStartForSession() {
+                return {
+                    active: true,
+                    status: 'error',
+                    taskId,
+                    sessionId,
+                    mode: 'local' as const,
+                    rootPath: '/tmp/bootstrap-preview-failed',
+                    command: 'bun run dev:web',
+                    updatedAt: Date.now(),
+                    error: 'Preview process exited with code 1',
+                    logTail: ['Error: missing env']
+                }
+            },
+            async previewStopForSession() {
+                return {
+                    active: false,
+                    status: 'stopped',
+                    taskId,
+                    sessionId,
+                    updatedAt: Date.now(),
+                    logTail: []
+                }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                sentMessages.push(payload)
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('in_progress')
+        expect(updated?.previewRuntime?.status).toBe('retrying')
+        expect(updated?.previewRuntime?.retryCount).toBe(1)
+        expect(updated?.initRuntime?.status).toBe('retrying')
+        expect(sentMessages).toHaveLength(1)
+        expect(sentMessages[0]?.text).toContain('bootstrap preview probe failed')
+        expect(sentMessages[0]?.text).toContain('Preview process exited with code 1')
+    })
+
     it('flips to in_review even when only codex tool-call messages exist before ready', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -760,6 +1389,58 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
+    it('keeps gsd discuss tasks in discuss while the user chats', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-gsd-discuss'
+        const taskId = 'task-gsd-discuss'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'GSD project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'GSD task',
+            status: 'planned',
+            workflowProfile: 'gsd',
+            workflowPhase: 'discuss',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'let us discuss before acting' },
+            meta: { sentFrom: 'webapp' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('planned')
+        expect(afterPrompt?.workflowPhase).toBe('discuss')
+    })
+
     it('applies gsd workflow phase transitions on prompt and ready', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -820,6 +1501,68 @@ describe('TaskAutomation', () => {
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(afterReady?.status).toBe('in_review')
         expect(afterReady?.workflowPhase).toBe('verify')
+    })
+
+    it('keeps gsd discuss phase while discussing in session', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-gsd-discuss'
+        const taskId = 'task-gsd-discuss'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'GSD discuss project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'GSD discuss task',
+            status: 'planned',
+            workflowProfile: 'gsd',
+            workflowPhase: 'discuss',
+            activeSessionId: sessionId
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'Let us clarify scope before planning.' },
+            meta: { sentFrom: 'webapp' }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('planned')
+        expect(afterPrompt?.workflowPhase).toBe('discuss')
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterReady?.status).toBe('planned')
+        expect(afterReady?.workflowPhase).toBe('discuss')
     })
 
     it('ignores workflow automation prompts for task progress state', () => {

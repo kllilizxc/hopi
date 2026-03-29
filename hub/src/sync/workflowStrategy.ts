@@ -56,6 +56,33 @@ const defaultStrategy: WorkflowStrategy = {
     }
 }
 
+function preserveGsdTaskPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): WorkflowTaskPatch {
+    return {
+        status: task.status as TaskStatus,
+        workflowPhase: task.workflowPhase ?? null
+    }
+}
+
+function getGsdPromptPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): WorkflowTaskPatch {
+    if (task.workflowPhase === 'execute_ready' || task.workflowPhase === 'execute' || task.workflowPhase === 'verify') {
+        return {
+            status: 'in_progress',
+            workflowPhase: 'execute'
+        }
+    }
+    return preserveGsdTaskPatch(task)
+}
+
+function getGsdReadyPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): WorkflowTaskPatch {
+    if (task.workflowPhase === 'execute') {
+        return {
+            status: 'in_review',
+            workflowPhase: 'verify'
+        }
+    }
+    return preserveGsdTaskPatch(task)
+}
+
 const gsdStrategy: WorkflowStrategy = {
     id: 'gsd',
     label: 'GSD',
@@ -64,7 +91,7 @@ const gsdStrategy: WorkflowStrategy = {
     canAutoRunTask(task) {
         return task.workflowPhase === 'execute_ready'
     },
-    getTaskPatchForTransition(transition) {
+    getTaskPatchForTransition(transition, task) {
         if (transition === 'task_finished') {
             return {
                 workflowPhase: 'done'
@@ -72,17 +99,15 @@ const gsdStrategy: WorkflowStrategy = {
         }
 
         if (transition === 'assistant_ready') {
-            return {
-                status: 'in_review',
-                workflowPhase: 'verify'
-            }
+            return getGsdReadyPatch(task)
         }
 
-        if (transition === 'session_started' || transition === 'task_prompted' || transition === 'thinking_resumed') {
-            return {
-                status: 'in_progress',
-                workflowPhase: 'execute'
-            }
+        if (transition === 'task_prompted' || transition === 'thinking_resumed') {
+            return getGsdPromptPatch(task)
+        }
+
+        if (transition === 'session_started') {
+            return preserveGsdTaskPatch(task)
         }
 
         return null

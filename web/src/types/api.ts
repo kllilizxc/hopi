@@ -84,6 +84,23 @@ export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type ProjectsResponse = { projects: Array<Project & { workspaceCount: number }> }
 export type ProjectResponse = { project: Project & { workspaceCount: number } }
+export type ProjectAutomationVerificationResponse = {
+    project: Project & { workspaceCount: number }
+    verification: {
+        status: NonNullable<Project['automationReadinessStatus']>
+        summary: string
+        checkedAt: number
+        workspaceId: string | null
+        workspacePath: string | null
+        checks: Array<{
+            key: 'workspace' | 'contract' | 'init' | 'preview' | 'merge'
+            label: string
+            ok: boolean
+            path: string | null
+            detail: string
+        }>
+    }
+}
 export type WorkspacesResponse = { workspaces: Workspace[] }
 export type WorkspaceResponse = { workspace: Workspace }
 export type TasksResponse = { tasks: Task[] }

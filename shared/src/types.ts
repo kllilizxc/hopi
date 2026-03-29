@@ -1,4 +1,5 @@
 export type {
+    AutomationReadinessStatus,
     AgentState,
     AgentStateCompletedRequest,
     AgentStateRequest,

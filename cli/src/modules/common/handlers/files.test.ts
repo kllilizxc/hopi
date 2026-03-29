@@ -53,5 +53,28 @@ describe('file RPC handlers', () => {
         expect(parsed.success).toBe(false)
         expect(parsed.error ?? '').toContain('outside the working directory')
     })
-})
 
+    it('writes file within cwd scope and creates parent directories when requested', async () => {
+        const response = await rpc.handleRequest({
+            method: 'session-test:writeFile',
+            params: JSON.stringify({
+                cwd: 'src',
+                path: '.hopi/actions.yaml',
+                createParents: true,
+                content: Buffer.from('version: 1\n', 'utf8').toString('base64')
+            })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; hash?: string }
+        expect(parsed.success).toBe(true)
+        expect(parsed.hash).toBeTruthy()
+
+        const verify = await rpc.handleRequest({
+            method: 'session-test:readFile',
+            params: JSON.stringify({ cwd: 'src', path: '.hopi/actions.yaml' })
+        })
+        const verifyParsed = JSON.parse(verify) as { success: boolean; content?: string }
+        expect(verifyParsed.success).toBe(true)
+        expect(Buffer.from(verifyParsed.content ?? '', 'base64').toString()).toBe('version: 1\n')
+    })
+})

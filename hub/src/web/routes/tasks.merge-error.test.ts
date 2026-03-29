@@ -8,6 +8,24 @@ import { createTasksRoutes } from './tasks'
 const MERGE_BASE = '1111111111111111111111111111111111111111'
 const SNAPSHOT_REF = '2222222222222222222222222222222222222222'
 const TARGET_HEAD = '3333333333333333333333333333333333333333'
+const VALID_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash'
+].join('\n')
 
 function createMergeVerificationSnapshot(): {
     success: boolean
@@ -114,6 +132,18 @@ function createTestApp(store: Store, engine: SyncEngine): Hono {
     return app
 }
 
+function withValidContract<T extends Record<string, unknown>>(engine: T): T {
+    return {
+        ...engine,
+        async readSessionFile() {
+            return {
+                success: true,
+                content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+            }
+        }
+    }
+}
+
 describe('tasks merge route runtime behavior', () => {
     it('returns thrown error message for unexpected merge failures', async () => {
         const store = new Store(':memory:')
@@ -177,7 +207,7 @@ describe('tasks merge route runtime behavior', () => {
         })
 
         let resumeCalls = 0
-        const engine = {
+        const engine = withValidContract({
             resolveSessionAccess(sessionId: string) {
                 if (sessionId === staleSession.id) {
                     return {
@@ -263,7 +293,7 @@ describe('tasks merge route runtime behavior', () => {
                 }
             },
             handleRealtimeEvent() {}
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
@@ -309,7 +339,7 @@ describe('tasks merge route runtime behavior', () => {
             sessionId: 'missing-session-id'
         })
 
-        const engine = {
+        const engine = withValidContract({
             resolveSessionAccess(sessionId: string) {
                 if (sessionId === backlinkSession.id) {
                     return {
@@ -372,7 +402,7 @@ describe('tasks merge route runtime behavior', () => {
                 }
             },
             handleRealtimeEvent() {}
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
@@ -412,7 +442,7 @@ describe('tasks merge route runtime behavior', () => {
         })
 
         let sendMessageCalls = 0
-        const engine = {
+        const engine = withValidContract({
             resolveSessionAccess(sessionId: string) {
                 return {
                     ok: true,
@@ -477,7 +507,7 @@ describe('tasks merge route runtime behavior', () => {
                 }, payload.localId)
             },
             handleRealtimeEvent() {}
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
@@ -494,7 +524,7 @@ describe('tasks merge route runtime behavior', () => {
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.mergeRuntime?.status).toBe('queued')
         expect(updatedTask?.mergeRuntime?.latestNote).toContain('queued behind')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('auto-run')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('platform merge')
     })
 
     it('marks merge approval-pending when the linked session is waiting for permission', async () => {
@@ -517,7 +547,7 @@ describe('tasks merge route runtime behavior', () => {
 
         const requests = { req1: { id: 'req1' } }
         let sendMessageCalls = 0
-        const engine = {
+        const engine = withValidContract({
             resolveSessionAccess(sessionId: string) {
                 return {
                     ok: true,
@@ -582,7 +612,7 @@ describe('tasks merge route runtime behavior', () => {
                 }, payload.localId)
             },
             handleRealtimeEvent() {}
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
@@ -598,7 +628,7 @@ describe('tasks merge route runtime behavior', () => {
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updatedTask?.mergeRuntime?.status).toBe('approval_pending')
-        expect(updatedTask?.mergeRuntime?.latestNote).toContain('auto-run')
+        expect(updatedTask?.mergeRuntime?.latestNote).toContain('platform merge')
     })
 
     it('cancels queued merge runtime and aborts the linked session', async () => {

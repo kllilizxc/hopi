@@ -21,6 +21,12 @@ export type RpcReadFileResponse = {
     error?: string
 }
 
+export type RpcWriteFileResponse = {
+    success: boolean
+    hash?: string
+    error?: string
+}
+
 export type RpcUploadFileResponse = {
     success: boolean
     path?: string
@@ -187,7 +193,8 @@ export class RpcGateway {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         resumeSessionId?: string,
-        worktreeWorkspacePaths?: string[]
+        worktreeWorkspacePaths?: string[],
+        worktreeTargetBranch?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
@@ -202,7 +209,8 @@ export class RpcGateway {
                     yolo,
                     sessionType,
                     worktreeName,
-                    resumeSessionId
+                    resumeSessionId,
+                    worktreeTargetBranch
                 }
             )
             if (result && typeof result === 'object') {
@@ -330,7 +338,11 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-autocommit-worktree', options) as RpcGitAutocommitWorktreeResponse
     }
 
-    async gitMergeWorktree(sessionId: string, options: { targetBranch: string; commitMessage: string }): Promise<RpcGitMergeWorktreeResponse> {
+    async gitMergeWorktree(sessionId: string, options: {
+        targetBranch: string
+        commitMessage: string
+        strategy?: 'ff' | 'merge_commit' | 'squash'
+    }): Promise<RpcGitMergeWorktreeResponse> {
         return await this.sessionRpc(sessionId, 'git-merge-worktree', options, {
             timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
         }) as RpcGitMergeWorktreeResponse
@@ -360,6 +372,26 @@ export class RpcGateway {
 
     async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
         return await this.machineRpc(machineId, 'readFile', { path, cwd }) as RpcReadFileResponse
+    }
+
+    async writeSessionFile(sessionId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        return await this.sessionRpc(sessionId, 'writeFile', { path, ...options }) as RpcWriteFileResponse
+    }
+
+    async writeFileOnMachine(machineId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        return await this.machineRpc(machineId, 'writeFile', { path, ...options }) as RpcWriteFileResponse
     }
 
     async listDirectory(sessionId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {

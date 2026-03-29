@@ -29,6 +29,9 @@ export class ProjectStore {
         maxRunningSessions?: number
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
+        automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+        automationReadinessSummary?: string | null
+        automationReadinessCheckedAt?: number | null
     }): StoredProject {
         return createProject(this.db, project)
     }
@@ -64,6 +67,9 @@ export class ProjectStore {
             maxRunningSessions?: number
             improvementsEnabled?: boolean
             improvementsMaxPendingTasks?: number
+            automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+            automationReadinessSummary?: string | null
+            automationReadinessCheckedAt?: number | null
             lastImprovementsAt?: number | null
             archivedAt?: number | null
         }
