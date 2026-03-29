@@ -317,6 +317,10 @@ export function shouldShowInitRuntimeInSession(task: Task | null | undefined, se
         return false
     }
 
+    if (!isActiveInitRuntimeStatus(task.initRuntime.status) && task.initRuntime.status !== 'blocked') {
+        return false
+    }
+
     const runtimeSessionId = task.initRuntime.sessionId
     return !runtimeSessionId || runtimeSessionId === sessionId
 }
