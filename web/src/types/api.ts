@@ -6,6 +6,7 @@ import type {
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
+    TaskSessionStartFailure,
     Workspace,
     WorktreeMetadata
 } from '@hopi/protocol/types'
@@ -25,6 +26,7 @@ export type {
     TaskActionRuntimeEnvelope,
     TaskAttachment,
     TaskPriority,
+    TaskSessionStartFailure,
     TaskWorkflowPhase,
     TaskStatus,
     TodoItem,
@@ -93,7 +95,7 @@ export type TaskStartSessionResponse = {
     task: Task
     sessionId: string
     initRecoveryAttempted?: boolean
-    initRecoveryError?: string
+    initRecoveryError?: TaskSessionStartFailure
 }
 export type TaskWorktreeMergeSkippedReason =
     | 'already_merged'

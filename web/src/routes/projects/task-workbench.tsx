@@ -240,7 +240,7 @@ function StartSessionDialog(props: {
 
                     {error ? (
                         <div className="px-3 text-sm text-red-600">
-                            {error}
+                            {error.message}
                         </div>
                     ) : null}
                 </div>

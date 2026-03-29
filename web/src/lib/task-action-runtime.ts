@@ -1,3 +1,4 @@
+import { areTaskSessionStartFailuresEqual } from '@hopi/protocol/task-session-start'
 import type { Task, TaskActionRuntimeEnvelope, TaskActionRuntimeCoreStatus, TaskPreviewStatus, TaskWorktreeMergeStateResponse } from '@/types/api'
 
 export type TaskActionStatusSummary = {
@@ -39,12 +40,25 @@ export function areTaskActionRuntimesEqual<Runtime extends TaskActionRuntimeLike
         && left.failureFingerprint === right.failureFingerprint
         && left.latestNote === right.latestNote
         && left.blockedReason === right.blockedReason
+        && areTaskSessionStartFailuresEqual(left.failure, right.failure)
 }
 
 export function buildTaskActionRetrySuffix(retryCount: number | null | undefined): string {
     return retryCount && retryCount > 0
         ? `（已重试 ${retryCount} 次）`
         : ''
+}
+
+function resolveTaskActionRetryCount(runtime: TaskActionRuntimeLike | null | undefined): number | null | undefined {
+    return runtime?.failure?.retry?.count ?? runtime?.retryCount
+}
+
+function resolveTaskActionFailureDetail(runtime: TaskActionRuntimeLike | null | undefined): string | null {
+    return runtime?.failure?.message
+        ?? runtime?.latestNote
+        ?? runtime?.failure?.blockedReason
+        ?? runtime?.blockedReason
+        ?? null
 }
 
 export function isBusyTaskActionRuntimeStatus(status: TaskActionRuntimeCoreStatus | null | undefined): boolean {
@@ -124,7 +138,7 @@ export function buildMergeRuntimeSummary(
         }
     }
 
-    const retrySuffix = buildTaskActionRetrySuffix(runtime.retryCount)
+    const retrySuffix = buildTaskActionRetrySuffix(resolveTaskActionRetryCount(runtime))
 
     switch (runtime.status) {
         case 'queued':
@@ -165,7 +179,7 @@ export function buildMergeRuntimeSummary(
         case 'blocked':
             return {
                 title: `Merge 受阻${retrySuffix}`,
-                detail: runtime.latestNote ?? runtime.blockedReason ?? '需要先解决阻塞后再试。',
+                detail: resolveTaskActionFailureDetail(runtime) ?? '需要先解决阻塞后再试。',
                 tone: 'error'
             }
         case 'succeeded':
@@ -201,7 +215,7 @@ export function buildPreviewStatusSummary(
     runtime: Task['previewRuntime'] | null | undefined,
     preview: TaskPreviewStatus | null
 ): TaskActionPreviewStatusSummary | null {
-    const retrySuffix = buildTaskActionRetrySuffix(runtime?.retryCount)
+    const retrySuffix = buildTaskActionRetrySuffix(resolveTaskActionRetryCount(runtime))
 
     if (preview?.status === 'ready') {
         return {
@@ -251,7 +265,7 @@ export function buildPreviewStatusSummary(
         case 'blocked':
             return {
                 title: `Preview 受阻${retrySuffix}`,
-                detail: runtime.latestNote ?? runtime.blockedReason ?? '需要先解决阻塞后再试。',
+                detail: resolveTaskActionFailureDetail(runtime) ?? '需要先解决阻塞后再试。',
                 tone: 'error'
             }
         case 'ready':
@@ -331,7 +345,7 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
         return null
     }
 
-    const retrySuffix = buildTaskActionRetrySuffix(runtime.retryCount)
+    const retrySuffix = buildTaskActionRetrySuffix(resolveTaskActionRetryCount(runtime))
 
     switch (runtime.status) {
         case 'running':
@@ -351,14 +365,14 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
         case 'retrying':
             return {
                 title: `Init 修复中${retrySuffix}`,
-                detail: runtime.latestNote ?? 'Init 脚本失败后，正在同一会话里修复并重试。',
+                detail: resolveTaskActionFailureDetail(runtime) ?? 'Init 脚本失败后，正在同一会话里修复并重试。',
                 tone: 'info',
                 busy: true
             }
         case 'blocked':
             return {
                 title: `Init 受阻${retrySuffix}`,
-                detail: runtime.latestNote ?? runtime.blockedReason ?? '需要先解决 init 阻塞后再继续任务。',
+                detail: resolveTaskActionFailureDetail(runtime) ?? '需要先解决 init 阻塞后再继续任务。',
                 tone: 'error'
             }
         case 'succeeded':

@@ -1,4 +1,5 @@
 import type { SyncEvent } from '@hopi/protocol/types'
+import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
 import type { Store } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { startSessionFromTask } from './taskSessionService'
@@ -189,10 +190,13 @@ export class AutoRunScheduler {
                     type: 'toast',
                     namespace,
                     data: {
-                        title: 'Auto-run failed',
-                        body: `${task.title}: ${result.error}`,
+                        ...buildTaskSessionStartFailureToast({
+                            taskTitle: task.title,
+                            failure: result.error
+                        }),
                         sessionId: '',
-                        url: ''
+                        url: '',
+                        taskStartFailure: result.error
                     }
                 })
             }

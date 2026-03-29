@@ -2,11 +2,16 @@ import {
     TaskInitRuntimeSchema,
     TaskMergeRuntimeSchema,
     TaskPreviewRuntimeSchema,
-    type TaskActionRuntimeEnvelope,
     type TaskInitRuntime,
     type TaskMergeRuntime,
     type TaskPreviewRuntime
 } from '@hopi/protocol/schemas'
+import {
+    areTaskSessionStartFailuresEqual,
+    normalizeTaskSessionStartFailure,
+    type TaskSessionStartFailure
+} from '@hopi/protocol/task-session-start'
+import type { TaskActionRuntimeEnvelope } from '@hopi/protocol/schemas'
 
 export const TASK_ACTION_RUNTIME_TEXT_MAX_LENGTH = 280
 
@@ -139,7 +144,8 @@ export function normalizeTaskActionRuntime<Runtime extends TaskActionRuntimeWith
             : undefined,
         failureFingerprint: normalizeRuntimeFingerprint(value.failureFingerprint),
         latestNote: normalizeRuntimeText(value.latestNote),
-        blockedReason: normalizeRuntimeText(value.blockedReason)
+        blockedReason: normalizeRuntimeText(value.blockedReason),
+        failure: normalizeTaskSessionStartFailure(value.failure)
     })
 }
 
@@ -197,6 +203,7 @@ export function hasMeaningfulTaskActionRuntimeChange<Runtime extends TaskActionR
         || (current.failureFingerprint ?? null) !== (next.failureFingerprint ?? null)
         || (current.latestNote ?? null) !== (next.latestNote ?? null)
         || (current.blockedReason ?? null) !== (next.blockedReason ?? null)
+        || !areTaskSessionStartFailuresEqual(current.failure, next.failure)
 }
 
 function buildTaskActionRuntime<Status extends TaskActionRuntimeStatus>(options: {
@@ -209,6 +216,7 @@ function buildTaskActionRuntime<Status extends TaskActionRuntimeStatus>(options:
     failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
+    failure?: TaskSessionStartFailure | null
     startedAt?: number | null
     completedAt?: number | null
     lifecycle: TaskActionRuntimeLifecycle<Status>
@@ -232,6 +240,14 @@ function buildTaskActionRuntime<Status extends TaskActionRuntimeStatus>(options:
         : options.lifecycle.clearFailureFingerprintStatuses.includes(options.status)
             ? null
             : current?.failureFingerprint ?? null
+    const failure = options.failure !== undefined
+        ? normalizeTaskSessionStartFailure(options.failure) ?? null
+        : options.lifecycle.clearFailureFingerprintStatuses.includes(options.status)
+            ? null
+            : current?.failure ?? null
+    const retryCount = options.retryCount ?? failure?.retry?.count ?? current?.retryCount
+    const latestNote = options.latestNote ?? failure?.message ?? null
+    const blockedReason = options.blockedReason ?? failure?.blockedReason ?? null
 
     return {
         status: options.status,
@@ -240,10 +256,11 @@ function buildTaskActionRuntime<Status extends TaskActionRuntimeStatus>(options:
         requestedAt,
         startedAt,
         completedAt,
-        retryCount: options.retryCount ?? current?.retryCount,
+        retryCount,
         failureFingerprint,
-        latestNote: options.latestNote ?? null,
-        blockedReason: options.blockedReason ?? null
+        latestNote,
+        blockedReason,
+        failure
     }
 }
 
@@ -257,6 +274,7 @@ export function buildTaskMergeRuntime(options: {
     failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
+    failure?: TaskSessionStartFailure | null
     startedAt?: number | null
     completedAt?: number | null
     now?: number
@@ -277,6 +295,7 @@ export function buildTaskPreviewRuntime(options: {
     failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
+    failure?: TaskSessionStartFailure | null
     startedAt?: number | null
     completedAt?: number | null
     now?: number
@@ -297,6 +316,7 @@ export function buildTaskInitRuntime(options: {
     failureFingerprint?: string | null
     latestNote?: string | null
     blockedReason?: string | null
+    failure?: TaskSessionStartFailure | null
     startedAt?: number | null
     completedAt?: number | null
     now?: number
