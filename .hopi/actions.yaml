@@ -1,0 +1,65 @@
+version: 1
+
+setup:
+  steps:
+    - id: install
+      type: run
+      cwd: .
+      run: ["bun", "install", "--frozen-lockfile"]
+      timeoutSec: 1200
+
+preview:
+  services:
+    - id: hub
+      type: run
+      cwd: .
+      env:
+        HOPI_HOME: .tmp/hopi-preview-home
+        HOPI_LISTEN_PORT: "43006"
+      run:
+        - bash
+        - -lc
+        - mkdir -p .tmp/hopi-preview-home && if [ ! -d node_modules ]; then bun install --frozen-lockfile; fi; cd hub && exec bun run start
+      ready:
+        type: http
+        url: http://127.0.0.1:43006/health
+        expectStatus: 200
+        timeoutSec: 240
+
+    - id: web
+      type: run
+      cwd: .
+      dependsOn: ["hub"]
+      env:
+        HOPI_LISTEN_PORT: "43006"
+        HOPI_WEB_PORT: "43173"
+      run:
+        - bash
+        - -lc
+        - if [ ! -d node_modules ]; then bun install --frozen-lockfile; fi; cd web && exec bun run dev
+      ready:
+        type: http
+        url: http://127.0.0.1:43173
+        expectStatus: 200
+        timeoutSec: 240
+      expose: primary
+
+  success:
+    require: ["hub", "web"]
+
+merge:
+  # Worktree mode.
+  # Land task branches into dev via platform-owned merge flow.
+  # Use HOPI_WORKTREE_BASE_PATH / isolated target-branch operations when available;
+  # do not blindly git-checkout dev inside the task worktree.
+  targetBranch: dev
+  strategy: merge_commit
+  conflictResolution:
+    mode: ai
+    maxAttempts: 2
+  verify:
+    - type: run
+      cwd: .
+      run: ["bun", "typecheck"]
+      timeoutSec: 1200
+    - type: snapshot_contains_changes
