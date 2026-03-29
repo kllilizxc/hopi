@@ -18,6 +18,7 @@ import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
 import { isMobileViewport } from '@/lib/device'
+import { isOptimisticTaskId } from '@/lib/optimistic-task'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import type { AgentType } from '@/components/NewSession/types'
@@ -338,6 +339,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const [isSubTasksExpanded, setIsSubTasksExpanded] = useState(false)
 
     const isGeneratedPending = props.task.source === 'improvements_scan'
+    const isCreatingTask = isOptimisticTaskId(props.task.id)
     const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const useArchiveStyle = props.task.status === 'finished'
@@ -355,11 +357,15 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     return (
         <div className="relative">
             <div
-                draggable
+                draggable={!isCreatingTask}
                 data-kanban-task-id={props.task.id}
                 data-kanban-task-index={props.index}
                 data-kanban-column-status={props.columnStatus}
                 onDragStart={(event) => {
+                    if (isCreatingTask) {
+                        event.preventDefault()
+                        return
+                    }
                     event.dataTransfer.setData('text/plain', props.task.id)
                     props.onStartDrag(props.task.id, props.task.status, props.index)
                 }}
@@ -371,17 +377,30 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     const before = event.clientY < rect.top + rect.height / 2
                     props.onHoverDropTarget(props.columnStatus, before ? props.index : props.index + 1)
                 }}
-                onDoubleClick={() => props.onActivateTask(props.task)}
-                onClick={() => props.onActivateTask(props.task)}
-                onTouchStart={(event) => props.onTaskTouchStart(event, props.task, props.columnStatus, props.index)}
+                onDoubleClick={() => {
+                    if (isCreatingTask) return
+                    props.onActivateTask(props.task)
+                }}
+                onClick={() => {
+                    if (isCreatingTask) return
+                    props.onActivateTask(props.task)
+                }}
+                onTouchStart={(event) => {
+                    if (isCreatingTask) return
+                    props.onTaskTouchStart(event, props.task, props.columnStatus, props.index)
+                }}
                 onTouchMove={(event) => props.onTaskTouchMove(event, props.task.id)}
                 onTouchEnd={() => props.onTaskTouchEnd(props.task.id)}
                 onTouchCancel={() => props.onTaskTouchCancel(props.task.id)}
                 onContextMenu={(event) => {
+                    if (isCreatingTask) {
+                        event.preventDefault()
+                        return
+                    }
                     event.preventDefault()
                     setIsMoveMenuOpen(true)
                 }}
-                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm cursor-pointer ${useArchiveStyle
+                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${useArchiveStyle
                     ? ''
                     : 'ring-1 ring-inset ring-[var(--app-divider)]'
                     } ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
@@ -407,6 +426,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 <div className="text-[10px] text-[var(--app-hint)]">
                                     {t('projects.tasks.hasSession')}
                                 </div>
+                            ) : null}
+                            {isCreatingTask ? (
+                                <Tag size="xs" variant="default">
+                                    {t('projects.tasks.creating')}
+                                </Tag>
                             ) : null}
                             <Tag size="xs" variant="default">
                                 {getAgentFlavorLabel(cardAgentFlavor)}
@@ -476,11 +500,13 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         value={props.task.status}
                         options={props.moveOptions}
                         onValueChange={(value) => {
+                            if (isCreatingTask) return
                             props.onMoveTask(props.task.id, value, 0)
                             setIsMoveMenuOpen(false)
                         }}
                         open={isMoveMenuOpen}
                         onOpenChange={setIsMoveMenuOpen}
+                        disabled={isCreatingTask}
                         align="end"
                         trigger={
                             <IconButton
@@ -488,6 +514,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 variant="ghost"
                                 size="xs"
                                 className="shrink-0 rounded-md"
+                                disabled={isCreatingTask}
                                 onClick={(event) => {
                                     event.stopPropagation()
                                 }}
@@ -891,6 +918,9 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const handleTaskActivate = useCallback((task: Task) => {
         if (suppressClickRef.current) {
             suppressClickRef.current = false
+            return
+        }
+        if (isOptimisticTaskId(task.id)) {
             return
         }
         const to = task.activeSessionId
