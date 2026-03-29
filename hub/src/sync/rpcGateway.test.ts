@@ -14,7 +14,7 @@ class FakeCliSocket {
     timeout(ms: number): { emitWithAck: (event: string, payload: unknown) => Promise<string> } {
         this.timeoutCalls.push(ms)
         return {
-            emitWithAck: async () => JSON.stringify({ success: true })
+            emitWithAck: async () => JSON.stringify({ success: true, path: '/tmp', entries: [] })
         }
     }
 }

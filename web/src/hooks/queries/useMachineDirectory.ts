@@ -35,8 +35,8 @@ export function useMachineDirectory(
             }
 
             return {
-                currentPath: response.path ?? null,
-                entries: response.entries ?? [],
+                currentPath: response.path,
+                entries: response.entries,
                 error: null
             }
         },

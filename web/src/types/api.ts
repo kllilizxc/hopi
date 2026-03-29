@@ -1,8 +1,10 @@
 import type {
+    DirectoryEntry,
     Project,
     Task,
     TaskWorkflowPhase,
     DecryptedMessage as ProtocolDecryptedMessage,
+    ListDirectoryResponse,
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
@@ -14,6 +16,8 @@ export type {
     AgentState,
     AttachmentMetadata,
     AgentFlavor,
+    DirectoryEntry,
+    ListDirectoryResponse,
     ModelMode,
     PermissionMode,
     Project,
@@ -210,20 +214,6 @@ export type FileSearchItem = {
 export type FileSearchResponse = {
     success: boolean
     files?: FileSearchItem[]
-    error?: string
-}
-
-export type DirectoryEntry = {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-export type ListDirectoryResponse = {
-    success: boolean
-    path?: string
-    entries?: DirectoryEntry[]
     error?: string
 }
 

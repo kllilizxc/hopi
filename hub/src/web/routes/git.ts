@@ -1,3 +1,4 @@
+import { ListDirectoryQuerySchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -7,10 +8,6 @@ import { requireSessionFromParam, requireSyncEngine } from './guards'
 const fileSearchSchema = z.object({
     query: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(500).optional()
-})
-
-const directorySchema = z.object({
-    path: z.string().optional()
 })
 
 const filePathSchema = z.object({
@@ -227,7 +224,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return c.json({ success: false, error: 'Session path not available' })
         }
 
-        const parsed = directorySchema.safeParse(c.req.query())
+        const parsed = ListDirectoryQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query' }, 400)
         }
