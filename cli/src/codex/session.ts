@@ -11,7 +11,7 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class CodexSession extends AgentSessionBase<EnhancedMode> {
+export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode> {
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
     readonly startedBy: 'runner' | 'terminal';
