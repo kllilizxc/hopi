@@ -680,6 +680,18 @@ export class ApiClient {
         )
     }
 
+    async listMachineDirectory(machineId: string, path?: string): Promise<ListDirectoryResponse> {
+        const params = new URLSearchParams()
+        if (path) {
+            params.set('path', path)
+        }
+
+        const qs = params.toString()
+        return await this.request<ListDirectoryResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/directory${qs ? `?${qs}` : ''}`
+        )
+    }
+
     async spawnSession(
         machineId: string,
         directory: string,

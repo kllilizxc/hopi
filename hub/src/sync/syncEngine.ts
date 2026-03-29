@@ -588,6 +588,10 @@ export class SyncEngine {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
     }
 
+    async listMachineDirectory(machineId: string, path: string): Promise<RpcListDirectoryResponse> {
+        return await this.rpcGateway.listDirectoryOnMachine(machineId, path)
+    }
+
     async runBash(sessionId: string, params: {
         command: string
         cwd?: string

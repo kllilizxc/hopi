@@ -36,8 +36,13 @@ describe('directory RPC handlers', () => {
             params: JSON.stringify({ path: '' })
         })
 
-        const parsed = JSON.parse(response) as { success: boolean; entries?: Array<{ name: string; type: string }> }
+        const parsed = JSON.parse(response) as {
+            success: boolean
+            path?: string
+            entries?: Array<{ name: string; type: string }>
+        }
         expect(parsed.success).toBe(true)
+        expect(parsed.path).toBe(rootDir)
 
         const names = (parsed.entries ?? []).map((entry) => entry.name)
         expect(names).toContain('src')
@@ -50,8 +55,13 @@ describe('directory RPC handlers', () => {
             params: JSON.stringify({ cwd: 'src', path: '' })
         })
 
-        const parsed = JSON.parse(response) as { success: boolean; entries?: Array<{ name: string; type: string }> }
+        const parsed = JSON.parse(response) as {
+            success: boolean
+            path?: string
+            entries?: Array<{ name: string; type: string }>
+        }
         expect(parsed.success).toBe(true)
+        expect(parsed.path).toBe(join(rootDir, 'src'))
 
         const names = (parsed.entries ?? []).map((entry) => entry.name)
         expect(names).toContain('index.ts')

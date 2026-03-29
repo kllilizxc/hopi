@@ -258,6 +258,11 @@ export default {
   'projects.workspaces.fields.label': 'Label',
   'projects.workspaces.fields.labelPlaceholder': 'Optional',
   'projects.workspaces.fields.path': 'Path',
+  'projects.workspaces.picker.emptySelection': 'Select a directory from the tree below.',
+  'projects.workspaces.picker.selectMachine': 'Select a machine first.',
+  'projects.workspaces.picker.emptyDirectory': 'Empty directory',
+  'projects.workspaces.picker.expand': 'Expand directory',
+  'projects.workspaces.picker.collapse': 'Collapse directory',
 
   'projects.workspaces.add.open': 'Add',
   'projects.workspaces.add.title': 'Add workspaces',

@@ -19,6 +19,7 @@ interface DirectoryEntry {
 
 interface ListDirectoryResponse {
     success: boolean
+    path?: string
     entries?: DirectoryEntry[]
     error?: string
 }
@@ -109,7 +110,11 @@ export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, 
                 return a.name.localeCompare(b.name)
             })
 
-            return { success: true, entries: directoryEntries }
+            return {
+                success: true,
+                path: resolvedPath,
+                entries: directoryEntries
+            }
         } catch (error) {
             logger.debug('Failed to list directory:', error)
             return rpcError(getErrorMessage(error, 'Failed to list directory'))

@@ -258,6 +258,11 @@ export default {
   'projects.workspaces.fields.label': '标签',
   'projects.workspaces.fields.labelPlaceholder': '可选',
   'projects.workspaces.fields.path': '路径',
+  'projects.workspaces.picker.emptySelection': '请先在下方文件树中选择目录。',
+  'projects.workspaces.picker.selectMachine': '请先选择机器。',
+  'projects.workspaces.picker.emptyDirectory': '空目录',
+  'projects.workspaces.picker.expand': '展开目录',
+  'projects.workspaces.picker.collapse': '收起目录',
 
   'projects.workspaces.add.open': '添加',
   'projects.workspaces.add.title': '添加工作区',
