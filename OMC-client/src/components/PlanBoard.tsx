@@ -1,8 +1,17 @@
 import { Link } from '@tanstack/react-router'
-import type { OmcPlanRuntime, OmcPlanningIndexResponse } from '@hopi/protocol/types'
+import type {
+    OmcGuidedPlanningRun,
+    OmcPlanRuntime,
+    OmcPlanningIndexResponse,
+    OmcProgramOverviewResponse
+} from '@hopi/protocol/types'
+import PlanningBootstrapPanel from '@/components/PlanningBootstrapPanel'
 
 type PlanBoardProps = {
     programId: string
+    program: OmcProgramOverviewResponse['program']
+    planning: OmcProgramOverviewResponse['planning']
+    planningRun: OmcGuidedPlanningRun | null
     phases: OmcPlanningIndexResponse['phases']
     runtimes: Record<string, OmcPlanRuntime | undefined>
 }
@@ -13,17 +22,48 @@ function renderBadge(label: string, tone: 'neutral' | 'accent' | 'warning' | 'su
     return <span className={`omc-badge omc-badge--${tone}`}>{label}</span>
 }
 
+function renderMergeBadge(runtime: OmcPlanRuntime | undefined) {
+    if (!runtime) {
+        return null
+    }
+
+    if (runtime.mergeStatus === 'ready') {
+        return renderBadge('ready-to-merge', 'success')
+    }
+
+    if (runtime.mergeStatus === 'blocked') {
+        return renderBadge('merge-blocked', 'warning')
+    }
+
+    if (runtime.mergeStatus === 'conflict') {
+        return renderBadge('conflict', 'warning')
+    }
+
+    if (runtime.mergeStatus === 'merged') {
+        return renderBadge('merged', 'success')
+    }
+
+    return null
+}
+
 export default function PlanBoard(props: PlanBoardProps) {
     if (props.phases.length === 0) {
+        if (props.planning.hasPlans) {
+            return (
+                <section className="omc-panel omc-empty-panel">
+                    <h2>Executable plan cards detected</h2>
+                    <p>OMC is refreshing the planning index and handing you back to the normal board.</p>
+                </section>
+            )
+        }
+
         return (
-            <section className="omc-panel omc-empty-panel">
-                <h2>No plans found yet</h2>
-                <p>
-                    OMC did load the program, but it could not find a usable markdown planning tree with
-                    `phases/*-PLAN.md` cards. Check the program planning root or set `HOPI_OMC_PLANNING_ROOT`
-                    before starting the hub.
-                </p>
-            </section>
+            <PlanningBootstrapPanel
+                programId={props.programId}
+                program={props.program}
+                planning={props.planning}
+                planningRun={props.planningRun}
+            />
         )
     }
 
@@ -69,13 +109,24 @@ export default function PlanBoard(props: PlanBoardProps) {
                                                     <div className="omc-card__badges">
                                                         {isReadyToRun ? renderBadge('ready-to-run', 'accent') : null}
                                                         {renderBadge(`${plan.checklistDone}/${plan.checklistTotal} tasks`, plan.checklistOpen === 0 ? 'success' : 'neutral')}
+                                                        {runtime?.loopStatus ? renderBadge(runtime.loopStatus, runtime.loopStatus === 'review' ? 'warning' : runtime.loopStatus === 'running' ? 'accent' : 'neutral') : null}
+                                                        {renderMergeBadge(runtime)}
                                                         {runtime?.attemptCount ? renderBadge(`attempts ${runtime.attemptCount}`, 'warning') : null}
+                                                        {runtime?.reviewRequired ? renderBadge('needs-human', 'warning') : null}
+                                                        {runtime?.reviewApprovedAt ? renderBadge('review-approved', 'success') : null}
+                                                        {runtime?.consecutiveFailureCount ? renderBadge(`failures ${runtime.consecutiveFailureCount}`, 'warning') : null}
                                                         {runtime?.lastFailureFingerprint ? renderBadge(runtime.lastFailureFingerprint, 'warning') : null}
                                                     </div>
                                                     {plan.firstOpenItem ? (
                                                         <div className="omc-card__next">
                                                             <span>Next</span>
                                                             <strong>{plan.firstOpenItem}</strong>
+                                                        </div>
+                                                    ) : null}
+                                                    {runtime?.latestEvidenceSummary ? (
+                                                        <div className="omc-card__next">
+                                                            <span>Signal</span>
+                                                            <strong>{runtime.latestEvidenceSummary}</strong>
                                                         </div>
                                                     ) : null}
                                                 </Link>

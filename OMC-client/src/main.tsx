@@ -12,6 +12,14 @@ import {
 import { createAppRouter } from '@/router'
 import './index.css'
 
+function resolveHubOrigin(): string {
+    if (typeof __HOPI_HUB_URL__ === 'string' && __HOPI_HUB_URL__.trim()) {
+        return __HOPI_HUB_URL__.trim()
+    }
+
+    return window.location.origin
+}
+
 function LoginScreen(props: { initialToken?: string; error?: string | null; onSubmit: (token: string) => void }) {
     const [token, setToken] = useState(props.initialToken ?? '')
 
@@ -44,6 +52,7 @@ function LoginScreen(props: { initialToken?: string; error?: string | null; onSu
 
 function App() {
     const baseUrl = window.location.origin
+    const hubOrigin = resolveHubOrigin()
     const urlToken = new URLSearchParams(window.location.search).get('token')
     const initialAccessToken = urlToken || getStoredAccessToken(baseUrl) || ''
     const [accessToken, setAccessToken] = useState(initialAccessToken)
@@ -87,10 +96,12 @@ function App() {
         sessionToken
             ? new OmcApiClient(baseUrl, sessionToken, {
                 getToken: () => sessionTokenRef.current,
-                onUnauthorized: refreshSessionToken
+                onUnauthorized: refreshSessionToken,
+                hubOrigin,
+                getAccessToken: () => accessToken
             })
             : null
-    ), [baseUrl, refreshSessionToken, sessionToken])
+    ), [accessToken, baseUrl, hubOrigin, refreshSessionToken, sessionToken])
     const queryClient = useMemo(() => new QueryClient(), [])
     const router = useMemo(() => createAppRouter(routerBasepath), [routerBasepath])
 

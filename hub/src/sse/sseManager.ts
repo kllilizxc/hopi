@@ -283,9 +283,13 @@ function getEventCategory(event: SyncEvent): SSEEventCategory | null {
             return 'toasts'
         case 'connection-changed':
         case 'omc-program-updated':
+        case 'omc-guided-planning-updated':
         case 'omc-plan-runtime-updated':
         case 'omc-attempt-added':
+        case 'omc-attempt-updated':
         case 'omc-evidence-added':
+        case 'omc-review-updated':
+        case 'omc-merge-updated':
             return null
         default: {
             const _exhaustive: never = event

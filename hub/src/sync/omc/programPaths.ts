@@ -6,7 +6,11 @@ function normalizeCandidate(candidate: string): string {
     return resolve(candidate)
 }
 
-function hasPlanningPhases(planningRoot: string): boolean {
+export function buildRepoLocalOmcPlanningRoot(repoRoot: string): string {
+    return normalizeCandidate(join(repoRoot, '.planning'))
+}
+
+export function hasOmcPlanningPhases(planningRoot: string): boolean {
     return existsSync(join(planningRoot, 'phases'))
 }
 
@@ -23,16 +27,16 @@ export function resolveOmcPlanningRoot(repoRoot: string, options?: {
         explicitPlanningRoot,
         join(repoRoot, '..', '.planning'),
         join(homeDir, 'gsd-workspaces', `${repoName}-omc`, '.planning'),
-        join(repoRoot, '.planning')
+        buildRepoLocalOmcPlanningRoot(repoRoot)
     ]
         .filter((candidate): candidate is string => Boolean(candidate))
         .map(normalizeCandidate)
 
     for (const candidate of candidates) {
-        if (hasPlanningPhases(candidate)) {
+        if (hasOmcPlanningPhases(candidate)) {
             return candidate
         }
     }
 
-    return candidates[0] ?? normalizeCandidate(join(repoRoot, '.planning'))
+    return candidates[0] ?? buildRepoLocalOmcPlanningRoot(repoRoot)
 }

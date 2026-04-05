@@ -115,6 +115,17 @@ export function buildOmcContextPack(options: {
         'Output contract:',
         `- Allowed statuses: ${outputContract.allowedStatuses.join(', ')}`,
         `- Required fields in your stop/update message: ${outputContract.requiredFields.join(', ')}`,
+        '- End your final message with the marker `OMC_ATTEMPT_OUTCOME` followed by one JSON object or one fenced JSON block.',
+        '- Use this exact shape:',
+        '```json',
+        JSON.stringify({
+            status: 'progressed',
+            summary: 'What changed in this attempt',
+            changedFiles: ['path/to/file'],
+            checks: [{ label: 'bun run typecheck', result: 'passed', detail: 'short note' }],
+            nextSuggestedStep: 'Smallest next step or null'
+        }, null, 2),
+        '```',
         '',
         'Make the smallest real forward step you can, then report back using the output contract.'
     ]
@@ -158,7 +169,8 @@ export function buildOmcContextPack(options: {
                 summary: options.previousAttempt.summary,
                 failureFingerprint: options.previousAttempt.failureFingerprint,
                 changedFiles: options.previousAttempt.changedFiles,
-                checks: options.previousAttempt.checks
+                checks: options.previousAttempt.checks,
+                nextSuggestedStep: options.previousAttempt.nextSuggestedStep
             }
             : null,
         operatingRules,

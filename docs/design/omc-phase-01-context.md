@@ -1,89 +1,189 @@
 # Phase 1: OMC Foundation - Context
 
-**Gathered:** 2026-03-29
+**Gathered:** 2026-04-05
 **Status:** Ready for planning
-**Source:** User discussion + `docs/design/factory-mode-ralph-gsd.md`
+**Source:** User discussion on redesigning OMC around a message-driven operator panel
 
 <domain>
 ## Phase Boundary
 
-This phase creates the first runnable `OMC` thin slice as a new GSD workspace and product surface.
+This context **supersedes the earlier 2026-03-29 board-first Phase 1 assumptions** for the current OMC prototype redesign.
+
+This phase establishes the first **message-driven operator shell** for OMC.
 
 The scope is:
 
-- a new `OMC-client/` frontend subproject
-- the minimum hub-side OMC schemas, APIs, and realtime events
-- markdown-first planning indexing from `.planning/phases/**/*PLAN.md`
-- a phase-grouped board where `1 card = 1 PLAN.md`
-- a plan detail page focused on loop execution state
-- manual start of one plan loop
-- first-attempt / evidence visibility
+- redesign the OMC interaction model around a right-side message panel that behaves like a real chat app
+- move all operator decisions, confirmations, clarifications, and custom guidance into that message panel
+- keep the main canvas as contextual read-only support for goals, strategy, execution streams, and plan drilldown
+- define scalable thread, message, and state-lifecycle rules so the panel remains usable when many issues accumulate
+- reuse third-party chat primitives and existing HOPI chat building blocks wherever possible instead of continuing the bespoke prototype panel
 
-This phase should produce a system that can actually run one plan-oriented loop, not just a read-only board.
+This phase should produce a prototype shell where the user can:
+
+- see the system state on the main canvas
+- receive every interruption-worthy topic as a message thread
+- act through quick actions or freeform chat in that thread
+- continue asking follow-up questions in the same thread
+- trust that thread state reflects whether the system still needs intervention
 
 This phase does **not** include:
 
-- automatic scheduler-driven plan selection
-- automatic merge
-- multi-repo orchestration
-- a heavy planning editor
-- compatibility projections back into the legacy `projects` kanban
+- real hub/runtime integration
+- replacing markdown planning truth
+- rebuilding the entire left-side strategy/goal surfaces
+- multi-agent mailbox orchestration
+- notifications, push delivery, or mobile-native message sync
+- attachments, voice, or rich multimodal chat features
 
 </domain>
 
 <decisions>
 ## Implementation Decisions
 
-### Workspace and product boundary
-- This work starts in a **new GSD workspace**, not by continuing the current `.planning` milestone.
-- The new frontend subproject is named `OMC-client/`.
-- OMC is treated as a second product mode, not a thin extension of the current `projects` UI.
-- Existing HOPI runtime pieces should be reused as infrastructure, but OMC gets its own product model and route surface.
+### Product posture
+- The message panel is the **primary operator control surface** for OMC.
+- The main canvas is for understanding system state; the message panel is for deciding, guiding, and questioning.
+- Main-content controls for approvals, risks, route changes, and ad hoc guidance should be removed or reduced to read-only context.
+- Anything that truly needs the user's intervention should appear in the message panel first, not as a scattered button elsewhere in the UI.
 
-### Execution unit and board model
-- The primary board card is `1 PLAN.md`.
-- `phase` is used for grouping / swimlanes / filtering, not as the primary execution card.
-- `1 loop run = 1 PLAN`.
-- `1 attempt = advance the current smallest step inside that plan`.
-- `1 PLAN = 1 worktree`.
+### Shell layout
+- Desktop uses a fixed right-side message panel rather than a floating modal or bottom drawer.
+- Recommended desktop width is roughly `420-480px`.
+- Mobile should collapse the message experience into a dedicated full-screen drawer/sheet rather than trying to keep a narrow side rail.
+- The default opened thread should be the **highest-priority unresolved thread**, not a passive overview/status thread.
 
-### Phase 1 delivery shape
-- Phase 1 must be **runnable**, not read-only.
-- Loop triggering is manual in Phase 1: user selects a plan and starts it explicitly.
-- Phase 1 should stop after proving `1 plan -> 1 loop -> 1 attempt` with visible runtime state.
-- Automatic scheduling is deferred until later phases.
+### Thread model
+- A thread is **one operator-relevant topic**, not one raw message and not one generic domain object.
+- Thread types should be modeled around intervention topics:
+  - `status`
+  - `approval`
+  - `risk`
+  - `direction`
+  - follow-up conversation inside the same thread
+- The system should avoid creating a new thread for every new bubble; follow-up discussion about the same decision stays inside the original thread.
+- Goal-, stream-, and plan-level context should be attached to threads as metadata, not used as the thread identity itself.
 
-### Plan detail posture
-- Plan detail is execution-first.
-- The top of the screen should emphasize runtime status, attempts, evidence, and primary actions.
-- Parsed plan content and file references should remain visible, but secondary to the execution controls.
+### First Agent message contract
+- Every newly opened thread starts with one structured Agent message.
+- That first message must include, in compact form:
+  - current status
+  - relevant background
+  - why the system is interrupting now
+  - recommended actions
+  - an explicit invitation to reply in freeform text
+- Approval threads must also say:
+  - what happens if the user confirms
+  - what happens if the user defers
+- Risk threads must also say:
+  - what happens if the system continues silently
+  - what happens if the user asks to tighten/suppress/change direction
+- The message should always show associated context chips or metadata for:
+  - related goal
+  - related execution stream
+  - related phase/plan when applicable
+  - current impact scope
 
-### Planning and authoring strategy
-- Planning source of truth stays in markdown.
-- OMC-client should support only the thinnest planning edits in Phase 1.
-- Preferred editing flows are: open file, small patch, re-parse.
-- Phase 1 should not introduce a structured planning editor or markdown/database sync engine.
+### Interaction model
+- Every actionable thread must support **both**:
+  - quick actions
+  - freeform user input
+- Quick actions are for common high-confidence responses such as:
+  - confirm
+  - defer
+  - continue silently
+  - tighten scope
+  - maintain route
+  - accelerate
+- Freeform input is a first-class control path, not a note field.
+- The user must be able to ask arbitrary questions in-thread, such as:
+  - why this surfaced now
+  - what happens next
+  - what evidence supports the recommendation
+  - how the instruction changes current execution
+- Each thread uses one normal chat composer for the active thread; the product should not render a separate input box under every bubble.
 
-### Review and merge posture
-- Human review remains the default gate.
-- Automatic merge is explicitly out of scope for Phase 1.
-- Review can be informed by agent summaries and evidence, but final approval remains human.
+### Thread lifecycle and state transitions
+- Message-level state stays lightweight:
+  - sent
+  - read
+  - failed
+  - action-applied
+- The main lifecycle belongs to the **thread**, with these states:
+  - `pending`
+  - `in-progress`
+  - `waiting`
+  - `silent`
+  - `resolved`
+- State semantics:
+  - `pending`: new topic needs user intervention
+  - `in-progress`: user has responded; system is acting on the instruction
+  - `waiting`: the system came back with a new concrete question in the same thread
+  - `silent`: user explicitly deferred or suppressed the issue
+  - `resolved`: the decision loop is closed and no further intervention is required
+- Reading a thread does **not** resolve it.
+- A thread moves back to `pending` when new evidence or a changed situation invalidates the old decision.
+- Unread/read should remain a secondary marker; it must not be confused with resolved/unresolved.
+
+### Main-canvas / message-panel split
+- The main canvas should keep:
+  - goal portfolio
+  - strategy
+  - execution streams
+  - phase/plan drilldown
+  - current system posture
+- The main canvas should not own primary action buttons for:
+  - approvals
+  - risk handling
+  - route changes
+  - custom guidance
+- The message panel is the single place where the user confirms, defers, instructs, or questions.
+- Main-canvas components may link to a thread or highlight that a topic exists, but should not duplicate its primary controls.
+
+### Third-party and reuse posture
+- The redesign should prefer third-party and existing HOPI chat infrastructure over extending the bespoke prototype panel.
+- Preferred foundation:
+  - `@assistant-ui/react`
+  - `@assistant-ui/react-markdown`
+- The project should reuse existing HOPI chat building blocks where sensible, especially:
+  - thread viewport behavior
+  - composer behavior
+  - markdown rendering
+  - message presentation patterns
+- The product should still build a **custom thin inbox layer** for:
+  - thread list
+  - thread grouping
+  - thread metadata
+  - intervention-state badges
+  - context chips / quick-action rails
+- The current fully bespoke prototype message shell should not be treated as the long-term architecture.
 
 ### the agent's Discretion
-- Exact naming of internal runtime types and route groups.
-- Exact visual design of the board and inspector, as long as execution state stays primary.
-- Exact shape of the first-attempt output contract, as long as attempts remain inspectable and evidence-backed.
+- Exact visual styling of the inbox and conversation panels.
+- Exact badge labels for thread state, as long as the state machine above is preserved.
+- Exact thread grouping labels in the inbox, as long as unresolved vs handled vs silent remains legible.
+- Exact message-bubble styling and iconography.
+- Whether handled threads are collapsed by default behind one section or split into `resolved` and `silent`.
+- Whether the active thread header includes extra metadata rows or compact chips.
 
 </decisions>
 
 <specifics>
 ## Specific Ideas
 
-- The product should feel like a control plane for a one-person software company, not a generic task board.
-- The board should stay legible with few columns: `Planning`, `Running`, `Review`, `Done`.
-- `Ready` should not be a top-level column in Phase 1; it can be card metadata inside `Planning`.
-- Attempt history should be visible and first-class rather than hidden behind chat/session internals.
-- The runtime should be clearly Ralph-shaped: deterministic context pack, fresh attempt, evidence collection, policy evaluation.
+- The user wants the product to feel like a real messaging app, not a dashboard covered in action cards.
+- Anything that needs confirmation should appear as a message from the Agent in a shared message stream.
+- The first Agent message should explain:
+  - current state
+  - background
+  - what needs confirmation
+  - convenient action buttons
+- The user must also be able to keep talking to the Agent in natural language to get more context or give custom instructions.
+- The user explicitly rejected:
+  - one input box per message
+  - action-heavy cards spread through the main canvas
+  - a message system that does not scale when many issues appear
+  - controls that look like they change state but do not meaningfully affect the scenario
 
 </specifics>
 
@@ -92,20 +192,23 @@ This phase does **not** include:
 
 **Downstream agents MUST read these before planning or implementing.**
 
-### Product and phase definition
-- `docs/design/factory-mode-ralph-gsd.md` — primary design document for OMC, Ralph loop, GSD integration, board model, runtime concepts, and v1 constraints
-- `docs/design/omc-phase-01-context.md` — current phase boundary and locked Phase 1 decisions
+### Product direction
+- `docs/design/factory-mode-ralph-gsd.md` — long-term OMC product direction and operator-shell context
+- `docs/design/omc-phase-01-context.md` — canonical Phase 1 redesign context; use this instead of the earlier board-first assumptions
+- `docs/design/omc-planning-seed/01-CONTEXT.md` — repo-local mirror of the same redesign context
 
-### Existing platform context
-- `README.md` — HOPI product framing and package-level overview
-- `cli/README.md` — CLI/runtime integration boundaries relevant to Codex execution
-- `hub/README.md` — backend/API/realtime capabilities to reuse
-- `web/README.md` — existing web architecture and route patterns to reuse selectively
+### Existing HOPI chat stack to reuse
+- `web/package.json` — confirms `@assistant-ui/react` and `@assistant-ui/react-markdown` are already first-party dependencies in HOPI
+- `web/src/components/AssistantChat/HappyThread.tsx` — existing thread viewport, scroll, status, and message-shell patterns
+- `web/src/components/AssistantChat/HappyComposer.tsx` — existing composer behavior, draft handling, and interaction patterns
+- `web/src/components/MarkdownRenderer.tsx` — existing markdown rendering layer for chat content
+- `web/src/components/SessionChat.tsx` — how the current product composes runtime + thread + composer into one chat surface
 
-### Codebase maps
-- `.planning/codebase/STRUCTURE.md` — package layout and likely integration points
-- `.planning/codebase/STACK.md` — runtime/framework/tooling constraints
-- `.planning/codebase/INTEGRATIONS.md` — key cross-package integration seams
+### Current prototype code to replace or absorb
+- `omc-prototype/src/components/MessagePanel.tsx` — current bespoke message panel to be rethought around the new thread/inbox contract
+- `omc-prototype/src/prototype/store.tsx` — current mock interaction engine and thread/message state
+- `omc-prototype/src/prototype/types.ts` — current prototype state types that need to grow a proper thread model
+- `omc-prototype/src/router.tsx` — current main/side-panel shell composition
 
 </canonical_refs>
 
@@ -113,38 +216,35 @@ This phase does **not** include:
 ## Existing Code Insights
 
 ### Reusable Assets
-- `hub/src/web/` already provides REST routing, auth, and server composition patterns suitable for a new `/omc` surface.
-- `hub/src/sse/` and existing realtime pathways can carry OMC plan/runtime updates without inventing another transport.
-- `hub/src/store/` and SQLite-backed persistence patterns are already good enough for first OMC runtime records.
-- `cli/src/codex/` already gives a brownfield seam for Codex-first runtime integration.
-- `web/src/router.tsx`, TanStack Router usage, and query/mutation patterns are reusable reference points even though OMC gets a new frontend subproject.
-- Existing file/search/diff/worktree primitives in HOPI reduce the amount of new orchestration infrastructure Phase 1 needs.
+- `web/src/components/AssistantChat/HappyThread.tsx` already solves core thread-viewport problems such as scrolling, incremental loading, skeletons, and message rendering.
+- `web/src/components/AssistantChat/HappyComposer.tsx` already contains a mature composer with drafts, keyboard behavior, and input-state handling.
+- `web/src/components/MarkdownRenderer.tsx` already wraps `@assistant-ui/react-markdown` for consistent message-body rendering.
+- `web/src/components/SessionChat.tsx` shows how HOPI composes thread runtime, assistant-ui runtime, and supporting controls into one integrated surface.
 
 ### Established Patterns
-- HOPI is local-first, runtime-heavy, and already comfortable with session transport plus hub-side persistence.
-- Existing product surfaces are session-first; OMC must deliberately avoid inheriting that mental model as its primary object model.
-- Current task/project surfaces show that status-heavy boards can become noisy when too many semantic states become columns.
+- HOPI already uses assistant-ui primitives in the main product, so adopting them in OMC reduces technology sprawl.
+- The current prototype already has a mock state engine capable of driving approvals, risks, routes, and reactions; the redesign can preserve the mock engine while replacing the UI shell.
+- The user consistently prefers minimal main screens and wants real control to live in the conversation surface instead of scattered action cards.
 
 ### Integration Points
-- New hub route namespace for `/omc`
-- New shared schemas/events for OMC runtime objects
-- Codex attempt runner integration in CLI/hub seam
-- Planning indexer that reads markdown files and exposes parsed board/detail data
-- Human review / merge gate built on top of existing git/worktree capabilities
+- `omc-prototype/src/router.tsx` is the natural shell seam for a stronger right-side inbox + active-thread layout.
+- `omc-prototype/src/prototype/store.tsx` is the natural seam for introducing explicit thread lifecycle and per-thread chat state.
+- Existing goal/risk/approval data in the prototype can be transformed into thread seeds rather than rendered as independent action cards.
+- Existing left-side screens should remain as contextual read surfaces that can link into the message thread currently asking for action.
 
 </code_context>
 
 <deferred>
 ## Deferred Ideas
 
-- Automatic plan scheduling and policy-driven next-plan selection
-- Automatic merge once evidence passes
-- Multi-repo orchestration
-- Rich planning editor or structured planning graph
-- Legacy task/project compatibility views for OMC runtime objects
+- Multi-agent or multi-person shared inbox behavior
+- Push notifications or external delivery channels for unresolved threads
+- Attachments, voice, or multimodal message content
+- Rich evidence viewers embedded directly in the message thread
+- Full mobile-native message experience polish beyond the basic drawer/sheet posture
 
 </deferred>
 
 ---
 *Phase: 01-omc-foundation*
-*Context gathered: 2026-03-29*
+*Context gathered: 2026-04-05*

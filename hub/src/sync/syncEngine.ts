@@ -35,6 +35,8 @@ import {
 } from './rpcGateway'
 import { SessionCache } from './sessionCache'
 import { TaskAutomation } from './taskAutomation'
+import { OmcLoopAutomation } from './omc/loopAutomation'
+import { OmcPlanningAutomation } from './omc/planningAutomation'
 
 export type { Session, SyncEvent } from '@hopi/protocol/types'
 export type { Machine } from './machineCache'
@@ -76,6 +78,8 @@ export class SyncEngine {
     private readonly rpcGateway: RpcGateway
     private readonly taskAutomation: TaskAutomation
     private readonly autoRunScheduler: AutoRunScheduler
+    private readonly omcLoopAutomation: OmcLoopAutomation
+    private readonly omcPlanningAutomation: OmcPlanningAutomation
     private inactivityTimer: NodeJS.Timeout | null = null
 
     constructor(
@@ -92,8 +96,12 @@ export class SyncEngine {
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
         this.taskAutomation = new TaskAutomation(this.store, this)
         this.autoRunScheduler = new AutoRunScheduler(this.store, this)
+        this.omcLoopAutomation = new OmcLoopAutomation(this.store, this)
+        this.omcPlanningAutomation = new OmcPlanningAutomation(this.store, this)
         this.eventPublisher.subscribe((event) => this.taskAutomation.handleEvent(event))
         this.eventPublisher.subscribe((event) => this.autoRunScheduler.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcLoopAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcPlanningAutomation.handleEvent(event))
         this.reloadAll()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
     }

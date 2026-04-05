@@ -1,6 +1,11 @@
 import type {
     OmcAttemptCheck,
+    OmcAttemptTerminationReason,
     OmcContextPack,
+    OmcGuidedPlanningBrief,
+    OmcGuidedPlanningRunStage,
+    OmcGuidedPlanningRunStatus,
+    OmcMergeStatus,
     OmcAttemptStatus,
     OmcBoardColumn,
     OmcEvidenceKind,
@@ -120,6 +125,22 @@ export type OmcProgramRow = {
     updatedAt: number
 }
 
+export type OmcPlanningRunRow = {
+    id: string
+    programId: string
+    namespace: string
+    status: OmcGuidedPlanningRunStatus
+    stage: OmcGuidedPlanningRunStage
+    brief: OmcGuidedPlanningBrief
+    sessionId: string | null
+    summary: string | null
+    error: string | null
+    generatedPlanPaths: string[]
+    createdAt: number
+    updatedAt: number
+    completedAt: number | null
+}
+
 export type OmcPlanRuntimeRow = {
     programId: string
     namespace: string
@@ -137,6 +158,10 @@ export type OmcPlanRuntimeRow = {
     consecutiveFailureCount: number
     lastFailureFingerprint: string | null
     reviewRequired: boolean
+    reviewApprovedAt: number | null
+    mergeStatus: OmcMergeStatus
+    mergeBlockedReason: string | null
+    lastMergeAttemptAt: number | null
     mergeApprovedAt: number | null
     doneAt: number | null
     latestEvidenceSummary: string | null
@@ -156,6 +181,7 @@ export type OmcAttemptRow = {
     status: OmcAttemptStatus
     summary: string | null
     failureFingerprint: string | null
+    terminationReason: OmcAttemptTerminationReason | null
     changedFiles: string[]
     checks: OmcAttemptCheck[]
     nextSuggestedStep: string | null

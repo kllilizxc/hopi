@@ -15,6 +15,7 @@ import { WorkspaceStore } from './workspaceStore'
 export type {
     OmcAttemptRow,
     OmcEvidenceRow,
+    OmcPlanningRunRow,
     OmcPlanRuntimeRow,
     OmcProgramRow,
     StoredMachine,
@@ -37,7 +38,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 14
+const SCHEMA_VERSION: number = 17
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -48,6 +49,7 @@ const REQUIRED_TABLES = [
     'workspaces',
     'tasks',
     'omc_programs',
+    'omc_planning_runs',
     'omc_plan_runtimes',
     'omc_attempts',
     'omc_evidence'
@@ -450,6 +452,25 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_omc_programs_namespace ON omc_programs(namespace);
 
+            CREATE TABLE IF NOT EXISTS omc_planning_runs (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                brief_json TEXT NOT NULL,
+                session_id TEXT,
+                summary TEXT,
+                error TEXT,
+                generated_plan_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_program ON omc_planning_runs(program_id, namespace, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_session ON omc_planning_runs(session_id, namespace, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS omc_plan_runtimes (
                 program_id TEXT NOT NULL,
                 namespace TEXT NOT NULL DEFAULT 'default',
@@ -467,6 +488,10 @@ export class Store {
                 consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
                 last_failure_fingerprint TEXT,
                 review_required INTEGER NOT NULL DEFAULT 0,
+                review_approved_at INTEGER,
+                merge_status TEXT NOT NULL DEFAULT 'idle',
+                merge_blocked_reason TEXT,
+                last_merge_attempt_at INTEGER,
                 merge_approved_at INTEGER,
                 done_at INTEGER,
                 latest_evidence_summary TEXT,
@@ -489,6 +514,7 @@ export class Store {
                 status TEXT NOT NULL,
                 summary TEXT,
                 failure_fingerprint TEXT,
+                termination_reason TEXT,
                 changed_files_json TEXT NOT NULL DEFAULT '[]',
                 checks_json TEXT NOT NULL DEFAULT '[]',
                 next_suggested_step TEXT,
@@ -644,6 +670,15 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 14) {
             this.migrateFromV13ToV14()
+        }
+        if (SCHEMA_VERSION >= 15) {
+            this.migrateFromV14ToV15()
+        }
+        if (SCHEMA_VERSION >= 16) {
+            this.migrateFromV15ToV16()
+        }
+        if (SCHEMA_VERSION >= 17) {
+            this.migrateFromV16ToV17()
         }
     }
 
@@ -841,6 +876,10 @@ export class Store {
                 consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
                 last_failure_fingerprint TEXT,
                 review_required INTEGER NOT NULL DEFAULT 0,
+                review_approved_at INTEGER,
+                merge_status TEXT NOT NULL DEFAULT 'idle',
+                merge_blocked_reason TEXT,
+                last_merge_attempt_at INTEGER,
                 merge_approved_at INTEGER,
                 done_at INTEGER,
                 latest_evidence_summary TEXT,
@@ -863,6 +902,7 @@ export class Store {
                 status TEXT NOT NULL,
                 summary TEXT,
                 failure_fingerprint TEXT,
+                termination_reason TEXT,
                 changed_files_json TEXT NOT NULL DEFAULT '[]',
                 checks_json TEXT NOT NULL DEFAULT '[]',
                 next_suggested_step TEXT,
@@ -905,6 +945,58 @@ export class Store {
         if (!omcAttemptColumns.has('context_pack_json')) {
             this.db.exec('ALTER TABLE omc_attempts ADD COLUMN context_pack_json TEXT')
         }
+    }
+
+    private migrateFromV14ToV15(): void {
+        const omcAttemptColumns = this.getColumnNames('omc_attempts')
+        if (omcAttemptColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_attempts table for v14 to v15 migration.')
+        }
+        if (!omcAttemptColumns.has('termination_reason')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN termination_reason TEXT')
+        }
+    }
+
+    private migrateFromV15ToV16(): void {
+        const omcPlanRuntimeColumns = this.getColumnNames('omc_plan_runtimes')
+        if (omcPlanRuntimeColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_plan_runtimes table for v15 to v16 migration.')
+        }
+        if (!omcPlanRuntimeColumns.has('review_approved_at')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN review_approved_at INTEGER')
+        }
+        if (!omcPlanRuntimeColumns.has('merge_status')) {
+            this.db.exec("ALTER TABLE omc_plan_runtimes ADD COLUMN merge_status TEXT NOT NULL DEFAULT 'idle'")
+        }
+        if (!omcPlanRuntimeColumns.has('merge_blocked_reason')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN merge_blocked_reason TEXT')
+        }
+        if (!omcPlanRuntimeColumns.has('last_merge_attempt_at')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN last_merge_attempt_at INTEGER')
+        }
+    }
+
+    private migrateFromV16ToV17(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_planning_runs (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                brief_json TEXT NOT NULL,
+                session_id TEXT,
+                summary TEXT,
+                error TEXT,
+                generated_plan_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_program ON omc_planning_runs(program_id, namespace, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_session ON omc_planning_runs(session_id, namespace, created_at DESC);
+        `)
     }
 
     private getMachineColumnNames(): Set<string> {

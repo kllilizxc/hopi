@@ -1,0 +1,29 @@
+{
+    "name": "omc-prototype",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@assistant-ui/react": "^0.11.53",
+        "@assistant-ui/react-markdown": "^0.11.9",
+        "@tanstack/react-router": "^1.143.6",
+        "react": "^19.2.3",
+        "react-dom": "^19.2.3",
+        "remark-gfm": "^4.0.1"
+    },
+    "devDependencies": {
+        "@types/react": "^19.2.7",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^5.1.2",
+        "typescript": "^5.9.3",
+        "vite": "^7.3.0",
+        "vitest": "^4.0.16"
+    }
+}

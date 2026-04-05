@@ -32,6 +32,10 @@ a {
     text-decoration: none;
 }
 
+code {
+    font: 600 0.92em/1.4 "SFMono-Regular", "IBM Plex Mono", monospace;
+}
+
 button,
 input {
     font: inherit;
@@ -92,6 +96,7 @@ input {
 }
 
 .omc-program-list,
+.omc-programs-page,
 .omc-attempt-inspector,
 .omc-plan-page,
 .omc-board-page {
@@ -130,6 +135,12 @@ input {
 .omc-panel,
 .omc-login__card {
     padding: 24px;
+}
+
+.omc-program-attach,
+.omc-bootstrap-panel {
+    display: grid;
+    gap: 18px;
 }
 
 .omc-empty-panel {
@@ -261,6 +272,23 @@ input {
     grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
 }
 
+.omc-cockpit {
+    display: grid;
+    gap: 20px;
+}
+
+.omc-cockpit__hero-grid {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.omc-cockpit__lists {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
 .omc-panel__header {
     display: flex;
     justify-content: space-between;
@@ -308,6 +336,213 @@ input {
 }
 
 .omc-primary-button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.omc-primary-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #c76a33 0%, #ad5325 100%);
+    color: white;
+    text-decoration: none;
+}
+
+.omc-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.omc-callout {
+    display: grid;
+    gap: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+    border-radius: 22px;
+    border: 1px solid rgba(183, 96, 45, 0.16);
+    background: rgba(183, 96, 45, 0.08);
+}
+
+.omc-callout--accent {
+    border-color: rgba(183, 96, 45, 0.2);
+    background: rgba(183, 96, 45, 0.11);
+}
+
+.omc-callout--warning {
+    border-color: rgba(143, 90, 9, 0.22);
+    background: rgba(143, 90, 9, 0.1);
+}
+
+.omc-callout--success {
+    border-color: rgba(61, 113, 71, 0.22);
+    background: rgba(61, 113, 71, 0.1);
+}
+
+.omc-callout--review h3,
+.omc-cockpit__lists h3 {
+    margin: 0;
+}
+
+.omc-callout p {
+    margin: 0;
+    color: var(--omc-muted);
+}
+
+.omc-form {
+    display: grid;
+    gap: 14px;
+}
+
+.omc-form__field {
+    display: grid;
+    gap: 8px;
+}
+
+.omc-form__field span {
+    color: var(--omc-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+
+.omc-input {
+    width: 100%;
+    border-radius: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--omc-line);
+    background: rgba(255, 255, 255, 0.92);
+    color: inherit;
+    font: inherit;
+}
+
+.omc-textarea {
+    min-height: 116px;
+    resize: vertical;
+}
+
+.omc-bootstrap-panel__actions {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
+}
+
+.omc-bootstrap-panel__guided {
+    display: grid;
+    gap: 16px;
+}
+
+.omc-guided-progress {
+    display: grid;
+    gap: 16px;
+    padding: 18px;
+    border-radius: 20px;
+    border: 1px solid rgba(82, 61, 25, 0.12);
+    background: rgba(255, 252, 246, 0.88);
+}
+
+.omc-guided-progress--accent {
+    box-shadow: inset 0 0 0 1px rgba(199, 106, 51, 0.12);
+}
+
+.omc-guided-progress--warning {
+    box-shadow: inset 0 0 0 1px rgba(138, 45, 19, 0.12);
+}
+
+.omc-guided-progress--success {
+    box-shadow: inset 0 0 0 1px rgba(28, 130, 84, 0.12);
+}
+
+.omc-guided-progress__header,
+.omc-guided-progress__meta {
+    display: grid;
+    gap: 12px;
+}
+
+.omc-guided-progress__header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+}
+
+.omc-guided-progress__signal {
+    display: grid;
+    gap: 8px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(76, 59, 31, 0.08);
+}
+
+.omc-guided-progress__signal span,
+.omc-guided-progress__signal small {
+    color: var(--omc-muted);
+}
+
+.omc-guided-progress__signal strong {
+    font-size: 18px;
+    line-height: 1.5;
+}
+
+.omc-guided-progress__rail {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.omc-guided-progress__rail li {
+    display: grid;
+    gap: 6px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(76, 59, 31, 0.08);
+    background: rgba(255, 255, 255, 0.58);
+}
+
+.omc-guided-progress__rail li span {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--omc-muted);
+}
+
+.omc-guided-progress__rail li[data-state='current'] {
+    border-color: rgba(199, 106, 51, 0.28);
+    background: rgba(255, 244, 236, 0.96);
+}
+
+.omc-guided-progress__rail li[data-state='complete'] {
+    border-color: rgba(28, 130, 84, 0.18);
+    background: rgba(242, 251, 246, 0.9);
+}
+
+.omc-guided-progress__rail li[data-state='upcoming'] {
+    opacity: 0.72;
+}
+
+.omc-guided-progress__meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.omc-secondary-button,
+.omc-secondary-link {
+    border: 1px solid var(--omc-line);
+    border-radius: 16px;
+    padding: 12px 16px;
+    background: rgba(255, 250, 242, 0.8);
+    color: var(--omc-ink);
+    cursor: pointer;
+    text-decoration: none;
+    font: inherit;
+}
+
+.omc-secondary-button:disabled {
     cursor: default;
     opacity: 0.6;
 }
@@ -405,7 +640,12 @@ input {
 
 @media (max-width: 1180px) {
     .omc-phase__grid,
-    .omc-plan-layout {
+    .omc-plan-layout,
+    .omc-cockpit__hero-grid,
+    .omc-cockpit__lists,
+    .omc-bootstrap-panel__actions,
+    .omc-guided-progress__rail,
+    .omc-guided-progress__meta {
         grid-template-columns: 1fr 1fr;
     }
 }
@@ -424,7 +664,13 @@ input {
     }
 
     .omc-phase__grid,
-    .omc-plan-layout {
+    .omc-plan-layout,
+    .omc-cockpit__hero-grid,
+    .omc-cockpit__lists,
+    .omc-bootstrap-panel__actions,
+    .omc-guided-progress__header,
+    .omc-guided-progress__rail,
+    .omc-guided-progress__meta {
         grid-template-columns: 1fr;
     }
 }

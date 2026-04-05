@@ -1,42 +1,39 @@
 import { randomUUID } from 'node:crypto'
-import type { Session } from '@hopi/protocol/types'
+import type { OmcAttempt, OmcAttemptOutcome, OmcEvidence, OmcPlanDetailResponse, OmcPlanRuntime, OmcProgram } from '@hopi/protocol/types'
 import type { Store } from '../../store'
 import type { SyncEngine } from '../syncEngine'
-import { resolveSessionPreferredRootPath, resolveSessionWorktreePath } from '../sessionRootPaths'
-import { buildOmcAttemptAddedEvent, buildOmcPlanRuntimeUpdatedEvent, buildOmcProgramUpdatedEvent } from './events'
+import { buildSystemOmcAttemptOutcome } from './attemptOutcome'
+import {
+    buildOmcAttemptAddedEvent,
+    buildOmcPlanRuntimeUpdatedEvent,
+    buildOmcProgramUpdatedEvent
+} from './events'
 import { buildOmcContextPack } from './contextPackBuilder'
 import { collectOmcEvidence } from './evidenceCollector'
-import type { OmcPlanDetailResponse, OmcPlanRuntime, OmcProgram } from '@hopi/protocol/types'
+import {
+    createDefaultOmcAttemptRuntimeAdapter,
+    type OmcAttemptRuntimeAdapter
+} from './runtimeAdapter'
 
-function buildWorktreeName(plan: OmcPlanDetailResponse['plan']): string {
-    const slug = `${plan.planKey}-${plan.planTitle}`
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64)
-
-    return slug || `omc-${plan.planKey}`
-}
-
-function resolveMachineId(engine: SyncEngine, program: OmcProgram, namespace: string): string {
-    if (program.machineId) {
-        const machine = engine.getMachineByNamespace(program.machineId, namespace)
-        if (machine?.active) {
-            return machine.id
-        }
+export type OmcPlanAttemptLaunchResult =
+    | {
+        kind: 'started'
+        program: OmcProgram
+        runtime: OmcPlanRuntime
+        attempt: OmcAttempt
+        evidence: OmcEvidence[]
+        adapterId: string
     }
-
-    const onlineMachine = engine.getOnlineMachinesByNamespace(namespace)[0]
-    if (!onlineMachine) {
-        throw new Error('No machine online. Start the runner and try again: hopi runner start')
+    | {
+        kind: 'dispatch-failed'
+        program: OmcProgram
+        runtime: OmcPlanRuntime
+        attempt: OmcAttempt
+        evidence: OmcEvidence[]
+        adapterId: string
+        error: string
+        outcome: OmcAttemptOutcome
     }
-
-    return onlineMachine.id
-}
-
-function resolveSessionBranch(session: Session | undefined): string | null {
-    return session?.metadata?.worktree?.branch?.trim() || null
-}
 
 export async function startOmcPlanAttempt(options: {
     store: Store
@@ -45,23 +42,32 @@ export async function startOmcPlanAttempt(options: {
     program: OmcProgram
     plan: OmcPlanDetailResponse['plan']
     runtime: OmcPlanRuntime
-}): Promise<{
-    program: OmcProgram
-    runtime: OmcPlanRuntime
-    attempt: import('@hopi/protocol/types').OmcAttempt
-    evidence: import('@hopi/protocol/types').OmcEvidence[]
-}> {
-    if (options.runtime.loopStatus === 'running') {
+    loopRunId?: string | null
+    adapter?: OmcAttemptRuntimeAdapter
+}): Promise<OmcPlanAttemptLaunchResult> {
+    const existingRunningAttempt = options.store.omcRuntime
+        .listAttempts(options.program.id, options.plan.planKey, options.namespace)
+        .find((attempt) => attempt.status === 'running' && !attempt.completedAt)
+
+    if (existingRunningAttempt) {
         throw new Error('This plan already has a running loop.')
     }
 
-    const machineId = resolveMachineId(options.engine, options.program, options.namespace)
-    const persistedProgram = options.program.machineId === machineId
+    const adapter = options.adapter ?? createDefaultOmcAttemptRuntimeAdapter()
+    const launch = await adapter.startAttemptSession({
+        engine: options.engine,
+        namespace: options.namespace,
+        program: options.program,
+        plan: options.plan,
+        runtime: options.runtime
+    })
+
+    const persistedProgram = options.program.machineId === launch.machineId
         ? options.program
         : options.store.omcRuntime.upsertProgram({
             id: options.program.id,
             namespace: options.namespace,
-            machineId,
+            machineId: launch.machineId,
             name: options.program.name,
             repoRoot: options.program.repoRoot,
             planningRoot: options.program.planningRoot,
@@ -69,63 +75,27 @@ export async function startOmcPlanAttempt(options: {
             targetBranch: options.program.targetBranch ?? null
         })
 
-    if (persistedProgram.machineId === machineId) {
-        options.engine.handleRealtimeEvent(buildOmcProgramUpdatedEvent(persistedProgram))
-    }
+    options.engine.handleRealtimeEvent(buildOmcProgramUpdatedEvent(persistedProgram))
 
-    const loopRunId = randomUUID()
+    const loopRunId = options.loopRunId ?? options.runtime.currentLoopRunId ?? randomUUID()
     const attemptId = randomUUID()
     const attemptNumber = options.runtime.attemptCount + 1
-    const targetBranch = persistedProgram.targetBranch ?? persistedProgram.primaryBranch ?? null
-    const spawnDirectory = options.runtime.currentWorktreePath ?? persistedProgram.repoRoot
-    const useExistingWorktree = Boolean(options.runtime.currentWorktreePath)
+    const previousAttempt = options.store.omcRuntime.listAttempts(
+        persistedProgram.id,
+        options.plan.planKey,
+        options.namespace
+    )[0] ?? null
 
-    const spawnResult = await options.engine.spawnSession(
-        machineId,
-        spawnDirectory,
-        'codex',
-        undefined,
-        false,
-        useExistingWorktree ? 'simple' : 'worktree',
-        useExistingWorktree ? undefined : buildWorktreeName(options.plan),
-        undefined,
-        undefined,
-        targetBranch ?? undefined
-    )
-
-    if (spawnResult.type !== 'success') {
-        throw new Error(spawnResult.message)
-    }
-
-    const sessionId = spawnResult.sessionId
-    const becameActive = await options.engine.waitForSessionActive(sessionId, 20_000)
-    if (!becameActive) {
-        throw new Error('Session failed to become active')
-    }
-
-    let sessionConfigError: string | null = null
-    try {
-        await options.engine.applySessionConfig(sessionId, {
-            permissionMode: 'acceptEdits'
-        })
-    } catch (error) {
-        sessionConfigError = error instanceof Error ? error.message : String(error)
-    }
-
-    const session = options.engine.getSessionByNamespace(sessionId, options.namespace)
-    const worktreePath = resolveSessionWorktreePath(session ?? {}) ?? resolveSessionPreferredRootPath(session ?? {}) ?? options.runtime.currentWorktreePath ?? spawnDirectory
-    const currentBranch = resolveSessionBranch(session) ?? options.runtime.currentBranch ?? null
-    const previousAttempt = options.store.omcRuntime.listAttempts(persistedProgram.id, options.plan.planKey, options.namespace)[0] ?? null
     const contextPack = buildOmcContextPack({
         program: persistedProgram,
         plan: options.plan,
         attemptId,
         loopRunId,
         attemptNumber,
-        sessionId,
-        worktreePath,
-        currentBranch,
-        targetBranch,
+        sessionId: launch.sessionId,
+        worktreePath: launch.worktreePath,
+        currentBranch: launch.currentBranch,
+        targetBranch: launch.targetBranch,
         previousAttempt
     })
 
@@ -138,9 +108,9 @@ export async function startOmcPlanAttempt(options: {
         column: 'Running',
         loopStatus: 'running',
         currentLoopRunId: loopRunId,
-        currentWorktreePath: worktreePath,
-        currentBranch,
-        targetBranch,
+        currentWorktreePath: launch.worktreePath,
+        currentBranch: launch.currentBranch,
+        targetBranch: launch.targetBranch,
         attemptCount: attemptNumber,
         reviewRequired: false,
         doneAt: null,
@@ -149,16 +119,16 @@ export async function startOmcPlanAttempt(options: {
     })
     options.engine.handleRealtimeEvent(buildOmcPlanRuntimeUpdatedEvent(runtime, options.namespace))
 
-    let attempt = options.store.omcRuntime.addAttempt(options.namespace, {
+    const attempt = options.store.omcRuntime.addAttempt(options.namespace, {
         id: attemptId,
         programId: persistedProgram.id,
         planKey: options.plan.planKey,
         planPath: options.plan.planPath,
         loopRunId,
-        sessionId,
+        sessionId: launch.sessionId,
         attemptNumber,
         status: 'running',
-        summary: 'Context pack prepared and session started.',
+        summary: `Attempt started via ${adapter.id}.`,
         contextPack
     })
     options.engine.handleRealtimeEvent(buildOmcAttemptAddedEvent(attempt, options.namespace))
@@ -174,7 +144,7 @@ export async function startOmcPlanAttempt(options: {
             kind: 'note',
             label: 'context-pack',
             status: 'info',
-            summary: 'Deterministic context pack prepared for this manual OMC attempt.',
+            summary: `Deterministic context pack prepared for ${adapter.id}.`,
             payload: { contextPack }
         }),
         collectOmcEvidence({
@@ -187,17 +157,18 @@ export async function startOmcPlanAttempt(options: {
             kind: 'summary',
             label: 'session-start',
             status: 'info',
-            summary: `Started Codex session ${sessionId} for plan ${options.plan.planKey}.`,
+            summary: `Started ${adapter.id} session ${launch.sessionId} for plan ${options.plan.planKey}.`,
             payload: {
-                sessionId,
-                worktreePath,
-                currentBranch,
-                targetBranch
+                adapterId: adapter.id,
+                sessionId: launch.sessionId,
+                worktreePath: launch.worktreePath,
+                currentBranch: launch.currentBranch,
+                targetBranch: launch.targetBranch
             }
         })
     ]
 
-    if (sessionConfigError) {
+    if (launch.sessionConfigError) {
         evidence.push(
             collectOmcEvidence({
                 store: options.store,
@@ -209,28 +180,50 @@ export async function startOmcPlanAttempt(options: {
                 kind: 'note',
                 label: 'session-config',
                 status: 'warning',
-                summary: `Session started, but apply-session-config returned: ${sessionConfigError}`,
+                summary: `Session started, but apply-session-config returned: ${launch.sessionConfigError}`,
                 payload: {
-                    sessionId,
-                    error: sessionConfigError
+                    sessionId: launch.sessionId,
+                    error: launch.sessionConfigError
                 }
             })
         )
     }
 
     try {
-        await options.engine.sendMessage(sessionId, {
-            text: contextPack.promptText,
-            sentFrom: 'webapp'
+        await adapter.dispatchContextPack({
+            engine: options.engine,
+            sessionId: launch.sessionId,
+            promptText: contextPack.promptText
         })
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        attempt = options.store.omcRuntime.updateAttempt(options.namespace, attempt.id, {
+        const failedAttempt = options.store.omcRuntime.updateAttempt(options.namespace, attempt.id, {
             status: 'failed',
-            summary: 'Failed to dispatch the context pack into the Codex session.',
+            summary: 'Failed to dispatch the context pack into the runtime session.',
             failureFingerprint: 'prompt-dispatch',
+            terminationReason: 'prompt-dispatch',
             completedAt: Date.now()
         }) ?? attempt
+
+        evidence.push(
+            collectOmcEvidence({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                programId: persistedProgram.id,
+                planKey: options.plan.planKey,
+                attemptId: failedAttempt.id,
+                kind: 'note',
+                label: 'prompt-dispatch',
+                status: 'failed',
+                summary: `Failed to dispatch context pack to session ${launch.sessionId}: ${message}`,
+                payload: {
+                    sessionId: launch.sessionId,
+                    adapterId: adapter.id,
+                    error: message
+                }
+            })
+        )
 
         const failedRuntime = options.store.omcRuntime.upsertPlanRuntime(options.namespace, {
             programId: persistedProgram.id,
@@ -238,38 +231,34 @@ export async function startOmcPlanAttempt(options: {
             planPath: options.plan.planPath,
             phaseKey: options.plan.phaseKey,
             phaseLabel: options.plan.phaseLabel,
-            column: 'Review',
-            loopStatus: 'review',
+            column: 'Running',
+            loopStatus: 'running',
             currentLoopRunId: loopRunId,
-            currentWorktreePath: worktreePath,
-            currentBranch,
-            targetBranch,
-            lastFailureFingerprint: 'prompt-dispatch',
-            reviewRequired: true,
+            currentWorktreePath: launch.worktreePath,
+            currentBranch: launch.currentBranch,
+            targetBranch: launch.targetBranch,
             latestEvidenceSummary: message,
             lastAttemptAt: Date.now(),
             updatedAt: Date.now()
         })
         options.engine.handleRealtimeEvent(buildOmcPlanRuntimeUpdatedEvent(failedRuntime, options.namespace))
 
-        collectOmcEvidence({
-            store: options.store,
-            engine: options.engine,
-            namespace: options.namespace,
-            programId: persistedProgram.id,
-            planKey: options.plan.planKey,
-            attemptId: attempt.id,
-            kind: 'note',
-            label: 'prompt-dispatch',
-            status: 'failed',
-            summary: `Failed to dispatch context pack to session ${sessionId}: ${message}`,
-            payload: {
-                sessionId,
-                error: message
-            }
-        })
-
-        throw new Error(message)
+        return {
+            kind: 'dispatch-failed',
+            program: persistedProgram,
+            runtime: failedRuntime,
+            attempt: failedAttempt,
+            evidence,
+            adapterId: adapter.id,
+            error: message,
+            outcome: buildSystemOmcAttemptOutcome({
+                status: 'failed',
+                summary: `Context-pack dispatch failed: ${message}`,
+                terminationReason: 'prompt-dispatch',
+                failureFingerprint: 'prompt-dispatch',
+                nextSuggestedStep: 'Re-open the loop after fixing the dispatch or runner issue.'
+            })
+        }
     }
 
     evidence.push(
@@ -283,9 +272,10 @@ export async function startOmcPlanAttempt(options: {
             kind: 'summary',
             label: 'prompt-dispatched',
             status: 'info',
-            summary: 'Context pack prompt sent to the Codex session.',
+            summary: 'Context pack prompt sent to the runtime session.',
             payload: {
-                sessionId
+                adapterId: adapter.id,
+                sessionId: launch.sessionId
             }
         })
     )
@@ -299,19 +289,21 @@ export async function startOmcPlanAttempt(options: {
         column: 'Running',
         loopStatus: 'running',
         currentLoopRunId: loopRunId,
-        currentWorktreePath: worktreePath,
-        currentBranch,
-        targetBranch,
-        latestEvidenceSummary: 'Context pack sent to Codex session.',
+        currentWorktreePath: launch.worktreePath,
+        currentBranch: launch.currentBranch,
+        targetBranch: launch.targetBranch,
+        latestEvidenceSummary: `Context pack sent to ${adapter.id} session.`,
         lastAttemptAt: Date.now(),
         updatedAt: Date.now()
     })
     options.engine.handleRealtimeEvent(buildOmcPlanRuntimeUpdatedEvent(refreshedRuntime, options.namespace))
 
     return {
+        kind: 'started',
         program: persistedProgram,
         runtime: refreshedRuntime,
         attempt,
-        evidence
+        evidence,
+        adapterId: adapter.id
     }
 }

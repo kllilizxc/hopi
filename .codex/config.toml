@@ -1,0 +1,21 @@
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics", "--userDataDir", "/tmp/chrome-devtools-mcp-profile"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.chrome-devtools.env]
+NPM_CONFIG_CACHE = "/tmp/codex-npm-cache"
+CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+[mcp_servers.chrome-devtools.tools.click]
+approval_mode = "approve"
+
+[mcp_servers.chrome-devtools-live]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics", "--browserUrl", "http://127.0.0.1:9222"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.chrome-devtools-live.env]
+NPM_CONFIG_CACHE = "/tmp/codex-npm-cache"

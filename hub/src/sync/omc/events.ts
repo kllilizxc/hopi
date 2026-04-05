@@ -1,4 +1,13 @@
-import type { OmcAttempt, OmcEvidence, OmcPlanRuntime, OmcProgram, SyncEvent } from '@hopi/protocol/types'
+import type {
+    OmcAttempt,
+    OmcEvidence,
+    OmcGuidedPlanningRun,
+    OmcMergePacket,
+    OmcPlanRuntime,
+    OmcProgram,
+    OmcProgramPlanningState,
+    SyncEvent
+} from '@hopi/protocol/types'
 
 export function buildOmcProgramUpdatedEvent(program: OmcProgram): SyncEvent {
     return {
@@ -8,6 +17,24 @@ export function buildOmcProgramUpdatedEvent(program: OmcProgram): SyncEvent {
         data: {
             programId: program.id,
             program
+        }
+    }
+}
+
+export function buildOmcGuidedPlanningUpdatedEvent(
+    run: OmcGuidedPlanningRun,
+    planning: OmcProgramPlanningState,
+    namespace: string
+): SyncEvent {
+    return {
+        type: 'omc-guided-planning-updated',
+        namespace,
+        programId: run.programId,
+        runId: run.id,
+        data: {
+            runId: run.id,
+            run,
+            planning
         }
     }
 }
@@ -39,6 +66,20 @@ export function buildOmcAttemptAddedEvent(attempt: OmcAttempt, namespace: string
     }
 }
 
+export function buildOmcAttemptUpdatedEvent(attempt: OmcAttempt, namespace: string): SyncEvent {
+    return {
+        type: 'omc-attempt-updated',
+        namespace,
+        programId: attempt.programId,
+        planKey: attempt.planKey,
+        attemptId: attempt.id,
+        data: {
+            attemptId: attempt.id,
+            attempt
+        }
+    }
+}
+
 export function buildOmcEvidenceAddedEvent(evidence: OmcEvidence, namespace: string): SyncEvent {
     return {
         type: 'omc-evidence-added',
@@ -50,6 +91,33 @@ export function buildOmcEvidenceAddedEvent(evidence: OmcEvidence, namespace: str
         data: {
             evidenceId: evidence.id,
             evidence
+        }
+    }
+}
+
+export function buildOmcReviewUpdatedEvent(runtime: OmcPlanRuntime, namespace: string): SyncEvent {
+    return {
+        type: 'omc-review-updated',
+        namespace,
+        programId: runtime.programId,
+        planKey: runtime.planKey,
+        data: {
+            planKey: runtime.planKey,
+            runtime
+        }
+    }
+}
+
+export function buildOmcMergeUpdatedEvent(runtime: OmcPlanRuntime, namespace: string, packet?: OmcMergePacket): SyncEvent {
+    return {
+        type: 'omc-merge-updated',
+        namespace,
+        programId: runtime.programId,
+        planKey: runtime.planKey,
+        data: {
+            planKey: runtime.planKey,
+            runtime,
+            packet
         }
     }
 }

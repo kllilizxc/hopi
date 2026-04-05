@@ -2,6 +2,8 @@ import type { Database } from 'bun:sqlite'
 import {
     OmcAttemptSchema,
     OmcEvidenceSchema,
+    OmcGuidedPlanningBriefSchema,
+    OmcGuidedPlanningRunSchema,
     OmcPlanRuntimeSchema,
     OmcProgramSchema
 } from '@hopi/protocol/schemas'
@@ -10,12 +12,15 @@ import type {
     OmcAttemptCheck,
     OmcContextPack,
     OmcEvidence,
+    OmcGuidedPlanningBrief,
+    OmcGuidedPlanningRun,
     OmcPlanRuntime,
     OmcProgram
 } from '@hopi/protocol/types'
 import type {
     OmcAttemptRow,
     OmcEvidenceRow,
+    OmcPlanningRunRow,
     OmcPlanRuntimeRow,
     OmcProgramRow
 } from '../../store/types'
@@ -31,6 +36,22 @@ type DbOmcProgramRow = {
     target_branch: string | null
     created_at: number
     updated_at: number
+}
+
+type DbOmcPlanningRunRow = {
+    id: string
+    program_id: string
+    namespace: string
+    status: OmcPlanningRunRow['status']
+    stage: OmcPlanningRunRow['stage']
+    brief_json: string
+    session_id: string | null
+    summary: string | null
+    error: string | null
+    generated_plan_paths_json: string
+    created_at: number
+    updated_at: number
+    completed_at: number | null
 }
 
 type DbOmcPlanRuntimeRow = {
@@ -50,6 +71,10 @@ type DbOmcPlanRuntimeRow = {
     consecutive_failure_count: number
     last_failure_fingerprint: string | null
     review_required: number
+    review_approved_at: number | null
+    merge_status: OmcPlanRuntimeRow['mergeStatus']
+    merge_blocked_reason: string | null
+    last_merge_attempt_at: number | null
     merge_approved_at: number | null
     done_at: number | null
     latest_evidence_summary: string | null
@@ -69,6 +94,7 @@ type DbOmcAttemptRow = {
     status: OmcAttemptRow['status']
     summary: string | null
     failure_fingerprint: string | null
+    termination_reason: string | null
     changed_files_json: string
     checks_json: string
     next_suggested_step: string | null
@@ -119,6 +145,23 @@ function toProgram(row: DbOmcProgramRow): OmcProgram {
     })
 }
 
+function toPlanningRun(row: DbOmcPlanningRunRow): OmcGuidedPlanningRun {
+    return OmcGuidedPlanningRunSchema.parse({
+        id: row.id,
+        programId: row.program_id,
+        status: row.status,
+        stage: row.stage,
+        brief: OmcGuidedPlanningBriefSchema.parse(parseJsonValue<Record<string, unknown>>(row.brief_json, {})),
+        sessionId: row.session_id,
+        summary: row.summary,
+        error: row.error,
+        generatedPlanPaths: parseJsonValue<string[]>(row.generated_plan_paths_json, []),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        completedAt: row.completed_at
+    })
+}
+
 function toPlanRuntime(row: DbOmcPlanRuntimeRow): OmcPlanRuntime {
     return OmcPlanRuntimeSchema.parse({
         programId: row.program_id,
@@ -136,6 +179,10 @@ function toPlanRuntime(row: DbOmcPlanRuntimeRow): OmcPlanRuntime {
         consecutiveFailureCount: row.consecutive_failure_count,
         lastFailureFingerprint: row.last_failure_fingerprint,
         reviewRequired: Boolean(row.review_required),
+        reviewApprovedAt: row.review_approved_at,
+        mergeStatus: row.merge_status,
+        mergeBlockedReason: row.merge_blocked_reason,
+        lastMergeAttemptAt: row.last_merge_attempt_at,
         mergeApprovedAt: row.merge_approved_at,
         doneAt: row.done_at,
         latestEvidenceSummary: row.latest_evidence_summary,
@@ -156,6 +203,7 @@ function toAttempt(row: DbOmcAttemptRow): OmcAttempt {
         status: row.status,
         summary: row.summary,
         failureFingerprint: row.failure_fingerprint,
+        terminationReason: row.termination_reason,
         changedFiles: parseJsonValue<string[]>(row.changed_files_json, []),
         checks: parseJsonValue<OmcAttemptCheck[]>(row.checks_json, []),
         nextSuggestedStep: row.next_suggested_step,
@@ -252,6 +300,175 @@ export class OmcRuntimeStore {
         return stored
     }
 
+    getPlanningRunByNamespace(runId: string, namespace: string): OmcGuidedPlanningRun | null {
+        const row = this.db.prepare(`
+            SELECT * FROM omc_planning_runs
+            WHERE id = ? AND namespace = ?
+            LIMIT 1
+        `).get(runId, namespace) as DbOmcPlanningRunRow | undefined
+
+        return row ? toPlanningRun(row) : null
+    }
+
+    getLatestPlanningRun(programId: string, namespace: string): OmcGuidedPlanningRun | null {
+        const row = this.db.prepare(`
+            SELECT * FROM omc_planning_runs
+            WHERE program_id = ? AND namespace = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(programId, namespace) as DbOmcPlanningRunRow | undefined
+
+        return row ? toPlanningRun(row) : null
+    }
+
+    getActivePlanningRun(programId: string, namespace: string): OmcGuidedPlanningRun | null {
+        const row = this.db.prepare(`
+            SELECT * FROM omc_planning_runs
+            WHERE program_id = ? AND namespace = ? AND status IN ('queued', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(programId, namespace) as DbOmcPlanningRunRow | undefined
+
+        return row ? toPlanningRun(row) : null
+    }
+
+    getRunningPlanningRunBySessionId(sessionId: string, namespace: string): OmcGuidedPlanningRun | null {
+        const row = this.db.prepare(`
+            SELECT * FROM omc_planning_runs
+            WHERE session_id = ? AND namespace = ? AND status IN ('queued', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(sessionId, namespace) as DbOmcPlanningRunRow | undefined
+
+        return row ? toPlanningRun(row) : null
+    }
+
+    listPlanningRuns(programId: string, namespace: string): OmcGuidedPlanningRun[] {
+        const rows = this.db.prepare(`
+            SELECT * FROM omc_planning_runs
+            WHERE program_id = ? AND namespace = ?
+            ORDER BY created_at DESC
+        `).all(programId, namespace) as DbOmcPlanningRunRow[]
+
+        return rows.map(toPlanningRun)
+    }
+
+    addPlanningRun(namespace: string, input: {
+        id: string
+        programId: string
+        status: OmcGuidedPlanningRun['status']
+        stage: OmcGuidedPlanningRun['stage']
+        brief: OmcGuidedPlanningBrief
+        sessionId?: string | null
+        summary?: string | null
+        error?: string | null
+        generatedPlanPaths?: string[]
+        completedAt?: number | null
+    }): OmcGuidedPlanningRun {
+        const now = Date.now()
+        const next = OmcGuidedPlanningRunSchema.parse({
+            id: input.id,
+            programId: input.programId,
+            status: input.status,
+            stage: input.stage,
+            brief: input.brief,
+            sessionId: input.sessionId ?? null,
+            summary: input.summary ?? null,
+            error: input.error ?? null,
+            generatedPlanPaths: input.generatedPlanPaths ?? [],
+            createdAt: now,
+            updatedAt: now,
+            completedAt: input.completedAt ?? null
+        })
+
+        this.db.prepare(`
+            INSERT INTO omc_planning_runs (
+                id, program_id, namespace, status, stage, brief_json, session_id,
+                summary, error, generated_plan_paths_json, created_at, updated_at, completed_at
+            ) VALUES (
+                @id, @program_id, @namespace, @status, @stage, @brief_json, @session_id,
+                @summary, @error, @generated_plan_paths_json, @created_at, @updated_at, @completed_at
+            )
+        `).run({
+            id: next.id,
+            program_id: next.programId,
+            namespace,
+            status: next.status,
+            stage: next.stage,
+            brief_json: JSON.stringify(next.brief),
+            session_id: next.sessionId ?? null,
+            summary: next.summary ?? null,
+            error: next.error ?? null,
+            generated_plan_paths_json: JSON.stringify(next.generatedPlanPaths),
+            created_at: next.createdAt,
+            updated_at: next.updatedAt,
+            completed_at: next.completedAt ?? null
+        })
+
+        const stored = this.getPlanningRunByNamespace(next.id, namespace)
+        if (!stored) {
+            throw new Error('Failed to insert OMC guided planning run')
+        }
+        return stored
+    }
+
+    updatePlanningRun(namespace: string, runId: string, patch: {
+        status?: OmcGuidedPlanningRun['status']
+        stage?: OmcGuidedPlanningRun['stage']
+        brief?: OmcGuidedPlanningBrief
+        sessionId?: string | null
+        summary?: string | null
+        error?: string | null
+        generatedPlanPaths?: string[]
+        completedAt?: number | null
+    }): OmcGuidedPlanningRun | null {
+        const current = this.getPlanningRunByNamespace(runId, namespace)
+        if (!current) {
+            return null
+        }
+
+        const next = OmcGuidedPlanningRunSchema.parse({
+            ...current,
+            status: patch.status ?? current.status,
+            stage: patch.stage ?? current.stage,
+            brief: patch.brief ?? current.brief,
+            sessionId: patch.sessionId !== undefined ? patch.sessionId : current.sessionId,
+            summary: patch.summary !== undefined ? patch.summary : current.summary,
+            error: patch.error !== undefined ? patch.error : current.error,
+            generatedPlanPaths: patch.generatedPlanPaths ?? current.generatedPlanPaths,
+            updatedAt: Date.now(),
+            completedAt: patch.completedAt !== undefined ? patch.completedAt : current.completedAt
+        })
+
+        this.db.prepare(`
+            UPDATE omc_planning_runs
+            SET status = @status,
+                stage = @stage,
+                brief_json = @brief_json,
+                session_id = @session_id,
+                summary = @summary,
+                error = @error,
+                generated_plan_paths_json = @generated_plan_paths_json,
+                updated_at = @updated_at,
+                completed_at = @completed_at
+            WHERE id = @id AND namespace = @namespace
+        `).run({
+            id: runId,
+            namespace,
+            status: next.status,
+            stage: next.stage,
+            brief_json: JSON.stringify(next.brief),
+            session_id: next.sessionId ?? null,
+            summary: next.summary ?? null,
+            error: next.error ?? null,
+            generated_plan_paths_json: JSON.stringify(next.generatedPlanPaths),
+            updated_at: next.updatedAt,
+            completed_at: next.completedAt ?? null
+        })
+
+        return this.getPlanningRunByNamespace(runId, namespace)
+    }
+
     listPlanRuntimes(programId: string, namespace: string): OmcPlanRuntime[] {
         const rows = this.db.prepare(`
             SELECT * FROM omc_plan_runtimes
@@ -290,6 +507,10 @@ export class OmcRuntimeStore {
             consecutiveFailureCount?: number
             lastFailureFingerprint?: string | null
             reviewRequired?: boolean
+            reviewApprovedAt?: number | null
+            mergeStatus?: OmcPlanRuntime['mergeStatus']
+            mergeBlockedReason?: string | null
+            lastMergeAttemptAt?: number | null
             mergeApprovedAt?: number | null
             doneAt?: number | null
             latestEvidenceSummary?: string | null
@@ -314,6 +535,10 @@ export class OmcRuntimeStore {
             consecutiveFailureCount: input.consecutiveFailureCount ?? current?.consecutiveFailureCount ?? 0,
             lastFailureFingerprint: input.lastFailureFingerprint !== undefined ? input.lastFailureFingerprint : current?.lastFailureFingerprint ?? null,
             reviewRequired: input.reviewRequired ?? current?.reviewRequired ?? false,
+            reviewApprovedAt: input.reviewApprovedAt !== undefined ? input.reviewApprovedAt : current?.reviewApprovedAt ?? null,
+            mergeStatus: input.mergeStatus ?? current?.mergeStatus ?? 'idle',
+            mergeBlockedReason: input.mergeBlockedReason !== undefined ? input.mergeBlockedReason : current?.mergeBlockedReason ?? null,
+            lastMergeAttemptAt: input.lastMergeAttemptAt !== undefined ? input.lastMergeAttemptAt : current?.lastMergeAttemptAt ?? null,
             mergeApprovedAt: input.mergeApprovedAt !== undefined ? input.mergeApprovedAt : current?.mergeApprovedAt ?? null,
             doneAt: input.doneAt !== undefined ? input.doneAt : current?.doneAt ?? null,
             latestEvidenceSummary: input.latestEvidenceSummary !== undefined ? input.latestEvidenceSummary : current?.latestEvidenceSummary ?? null,
@@ -326,14 +551,16 @@ export class OmcRuntimeStore {
                 program_id, namespace, plan_key, plan_path, phase_key, phase_label,
                 column_name, loop_status, current_loop_run_id, current_worktree_path,
                 current_branch, target_branch, attempt_count, consecutive_failure_count,
-                last_failure_fingerprint, review_required, merge_approved_at, done_at,
-                latest_evidence_summary, last_attempt_at, updated_at
+                last_failure_fingerprint, review_required, review_approved_at,
+                merge_status, merge_blocked_reason, last_merge_attempt_at,
+                merge_approved_at, done_at, latest_evidence_summary, last_attempt_at, updated_at
             ) VALUES (
                 @program_id, @namespace, @plan_key, @plan_path, @phase_key, @phase_label,
                 @column_name, @loop_status, @current_loop_run_id, @current_worktree_path,
                 @current_branch, @target_branch, @attempt_count, @consecutive_failure_count,
-                @last_failure_fingerprint, @review_required, @merge_approved_at, @done_at,
-                @latest_evidence_summary, @last_attempt_at, @updated_at
+                @last_failure_fingerprint, @review_required, @review_approved_at,
+                @merge_status, @merge_blocked_reason, @last_merge_attempt_at,
+                @merge_approved_at, @done_at, @latest_evidence_summary, @last_attempt_at, @updated_at
             )
             ON CONFLICT(namespace, program_id, plan_key) DO UPDATE SET
                 plan_path = excluded.plan_path,
@@ -349,6 +576,10 @@ export class OmcRuntimeStore {
                 consecutive_failure_count = excluded.consecutive_failure_count,
                 last_failure_fingerprint = excluded.last_failure_fingerprint,
                 review_required = excluded.review_required,
+                review_approved_at = excluded.review_approved_at,
+                merge_status = excluded.merge_status,
+                merge_blocked_reason = excluded.merge_blocked_reason,
+                last_merge_attempt_at = excluded.last_merge_attempt_at,
                 merge_approved_at = excluded.merge_approved_at,
                 done_at = excluded.done_at,
                 latest_evidence_summary = excluded.latest_evidence_summary,
@@ -371,6 +602,10 @@ export class OmcRuntimeStore {
             consecutive_failure_count: next.consecutiveFailureCount,
             last_failure_fingerprint: next.lastFailureFingerprint ?? null,
             review_required: next.reviewRequired ? 1 : 0,
+            review_approved_at: next.reviewApprovedAt ?? null,
+            merge_status: next.mergeStatus ?? 'idle',
+            merge_blocked_reason: next.mergeBlockedReason ?? null,
+            last_merge_attempt_at: next.lastMergeAttemptAt ?? null,
             merge_approved_at: next.mergeApprovedAt ?? null,
             done_at: next.doneAt ?? null,
             latest_evidence_summary: next.latestEvidenceSummary ?? null,
@@ -396,6 +631,7 @@ export class OmcRuntimeStore {
         status: OmcAttempt['status']
         summary?: string | null
         failureFingerprint?: string | null
+        terminationReason?: OmcAttempt['terminationReason']
         changedFiles?: string[]
         checks?: OmcAttemptCheck[]
         nextSuggestedStep?: string | null
@@ -407,11 +643,12 @@ export class OmcRuntimeStore {
             INSERT INTO omc_attempts (
                 id, program_id, namespace, plan_key, plan_path, loop_run_id,
                 session_id, attempt_number, status, summary, failure_fingerprint,
-                changed_files_json, checks_json, next_suggested_step, context_pack_json,
+                termination_reason, changed_files_json, checks_json, next_suggested_step, context_pack_json,
                 created_at, updated_at, completed_at
             ) VALUES (
                 @id, @program_id, @namespace, @plan_key, @plan_path, @loop_run_id,
                 @session_id, @attempt_number, @status, @summary, @failure_fingerprint,
+                @termination_reason,
                 @changed_files_json, @checks_json, @next_suggested_step, @context_pack_json,
                 @created_at, @updated_at, @completed_at
             )
@@ -427,6 +664,7 @@ export class OmcRuntimeStore {
             status: input.status,
             summary: input.summary ?? null,
             failure_fingerprint: input.failureFingerprint ?? null,
+            termination_reason: input.terminationReason ?? null,
             changed_files_json: JSON.stringify(input.changedFiles ?? []),
             checks_json: JSON.stringify(input.checks ?? []),
             next_suggested_step: input.nextSuggestedStep ?? null,
@@ -447,6 +685,7 @@ export class OmcRuntimeStore {
         status?: OmcAttempt['status']
         summary?: string | null
         failureFingerprint?: string | null
+        terminationReason?: OmcAttempt['terminationReason']
         changedFiles?: string[]
         checks?: OmcAttemptCheck[]
         nextSuggestedStep?: string | null
@@ -463,6 +702,7 @@ export class OmcRuntimeStore {
             status: patch.status ?? current.status,
             summary: patch.summary !== undefined ? patch.summary : current.summary,
             failureFingerprint: patch.failureFingerprint !== undefined ? patch.failureFingerprint : current.failureFingerprint,
+            terminationReason: patch.terminationReason !== undefined ? patch.terminationReason : current.terminationReason,
             changedFiles: patch.changedFiles ?? current.changedFiles,
             checks: patch.checks ?? current.checks,
             nextSuggestedStep: patch.nextSuggestedStep !== undefined ? patch.nextSuggestedStep : current.nextSuggestedStep,
@@ -476,6 +716,7 @@ export class OmcRuntimeStore {
             SET status = @status,
                 summary = @summary,
                 failure_fingerprint = @failure_fingerprint,
+                termination_reason = @termination_reason,
                 changed_files_json = @changed_files_json,
                 checks_json = @checks_json,
                 next_suggested_step = @next_suggested_step,
@@ -489,6 +730,7 @@ export class OmcRuntimeStore {
             status: next.status,
             summary: next.summary ?? null,
             failure_fingerprint: next.failureFingerprint ?? null,
+            termination_reason: next.terminationReason ?? null,
             changed_files_json: JSON.stringify(next.changedFiles),
             checks_json: JSON.stringify(next.checks),
             next_suggested_step: next.nextSuggestedStep ?? null,
@@ -516,6 +758,17 @@ export class OmcRuntimeStore {
         `).all(programId, planKey, namespace) as DbOmcAttemptRow[]
 
         return rows.map(toAttempt)
+    }
+
+    getRunningAttemptBySessionId(sessionId: string, namespace: string): OmcAttempt | null {
+        const row = this.db.prepare(`
+            SELECT * FROM omc_attempts
+            WHERE session_id = ? AND namespace = ? AND completed_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(sessionId, namespace) as DbOmcAttemptRow | undefined
+
+        return row ? toAttempt(row) : null
     }
 
     addEvidence(namespace: string, input: {

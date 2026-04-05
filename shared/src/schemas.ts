@@ -406,6 +406,23 @@ export type OmcLoopStatus = z.infer<typeof OmcLoopStatusSchema>
 export const OmcAttemptStatusSchema = z.enum(['queued', 'running', 'progressed', 'blocked', 'completed', 'failed', 'canceled'])
 export type OmcAttemptStatus = z.infer<typeof OmcAttemptStatusSchema>
 
+export const OmcMergeStatusSchema = z.enum(['idle', 'ready', 'merging', 'blocked', 'conflict', 'merged'])
+export type OmcMergeStatus = z.infer<typeof OmcMergeStatusSchema>
+
+export const OmcAttemptOutcomeStatusSchema = z.enum(['progressed', 'blocked', 'completed', 'failed', 'canceled'])
+export type OmcAttemptOutcomeStatus = z.infer<typeof OmcAttemptOutcomeStatusSchema>
+
+export const OmcAttemptTerminationReasonSchema = z.enum([
+    'structured-completion',
+    'prompt-dispatch',
+    'session-error',
+    'session-inactive',
+    'session-removed',
+    'runner-offline',
+    'user-canceled'
+])
+export type OmcAttemptTerminationReason = z.infer<typeof OmcAttemptTerminationReasonSchema>
+
 export const OmcCheckResultSchema = z.enum(['passed', 'failed', 'warning', 'skipped'])
 export type OmcCheckResult = z.infer<typeof OmcCheckResultSchema>
 
@@ -421,6 +438,18 @@ export const OmcAttemptCheckSchema = z.object({
     detail: z.string().nullable().optional()
 })
 export type OmcAttemptCheck = z.infer<typeof OmcAttemptCheckSchema>
+
+export const OmcAttemptOutcomeSchema = z.object({
+    status: OmcAttemptOutcomeStatusSchema,
+    summary: z.string().trim().min(1),
+    failureFingerprint: z.string().trim().min(1).nullable().optional(),
+    changedFiles: z.array(z.string().trim().min(1)).default([]),
+    checks: z.array(OmcAttemptCheckSchema).default([]),
+    nextSuggestedStep: z.string().trim().min(1).nullable().optional(),
+    terminationReason: OmcAttemptTerminationReasonSchema,
+    source: z.enum(['assistant-structured', 'system-fallback'])
+})
+export type OmcAttemptOutcome = z.infer<typeof OmcAttemptOutcomeSchema>
 
 export const OmcContextPackSchema = z.object({
     identity: z.object({
@@ -464,7 +493,8 @@ export const OmcContextPackSchema = z.object({
         summary: z.string().nullable().optional(),
         failureFingerprint: z.string().nullable().optional(),
         changedFiles: z.array(z.string()),
-        checks: z.array(OmcAttemptCheckSchema)
+        checks: z.array(OmcAttemptCheckSchema),
+        nextSuggestedStep: z.string().nullable().optional()
     }).nullable().optional(),
     operatingRules: z.array(z.string()),
     outputContract: z.object({
@@ -505,6 +535,10 @@ export const OmcPlanRuntimeSchema = z.object({
     consecutiveFailureCount: z.number().int().min(0),
     lastFailureFingerprint: z.string().nullable().optional(),
     reviewRequired: z.boolean(),
+    reviewApprovedAt: z.number().nullable().optional(),
+    mergeStatus: OmcMergeStatusSchema.optional(),
+    mergeBlockedReason: z.string().trim().min(1).nullable().optional(),
+    lastMergeAttemptAt: z.number().nullable().optional(),
     mergeApprovedAt: z.number().nullable().optional(),
     doneAt: z.number().nullable().optional(),
     latestEvidenceSummary: z.string().nullable().optional(),
@@ -524,6 +558,7 @@ export const OmcAttemptSchema = z.object({
     status: OmcAttemptStatusSchema,
     summary: z.string().nullable().optional(),
     failureFingerprint: z.string().nullable().optional(),
+    terminationReason: OmcAttemptTerminationReasonSchema.nullable().optional(),
     changedFiles: z.array(z.string()),
     checks: z.array(OmcAttemptCheckSchema),
     nextSuggestedStep: z.string().nullable().optional(),
@@ -626,8 +661,90 @@ export const OmcProgramListResponseSchema = z.object({
 })
 export type OmcProgramListResponse = z.infer<typeof OmcProgramListResponseSchema>
 
+export const OmcProgramPlanningStatusSchema = z.enum(['detected', 'missing', 'attached', 'seeded'])
+export type OmcProgramPlanningStatus = z.infer<typeof OmcProgramPlanningStatusSchema>
+
+export const OmcProgramPlanningStateSchema = z.object({
+    status: OmcProgramPlanningStatusSchema,
+    planningRoot: z.string().trim().min(1),
+    hasPlanning: z.boolean(),
+    hasPlans: z.boolean(),
+    phaseCount: z.number().int().min(0),
+    planCount: z.number().int().min(0),
+    seedFiles: z.array(z.string().trim().min(1)).default([])
+})
+export type OmcProgramPlanningState = z.infer<typeof OmcProgramPlanningStateSchema>
+
+export const OmcGuidedPlanningRunStatusSchema = z.enum(['queued', 'running', 'completed', 'failed', 'canceled'])
+export type OmcGuidedPlanningRunStatus = z.infer<typeof OmcGuidedPlanningRunStatusSchema>
+
+export const OmcGuidedPlanningRunStageSchema = z.enum(['brief', 'discuss', 'plan', 'handoff'])
+export type OmcGuidedPlanningRunStage = z.infer<typeof OmcGuidedPlanningRunStageSchema>
+
+export const OmcGuidedPlanningBriefSchema = z.object({
+    productIntent: z.string().trim().min(1),
+    firstSlice: z.string().trim().min(1)
+})
+export type OmcGuidedPlanningBrief = z.infer<typeof OmcGuidedPlanningBriefSchema>
+
+export const OmcGuidedPlanningRunSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    status: OmcGuidedPlanningRunStatusSchema,
+    stage: OmcGuidedPlanningRunStageSchema,
+    brief: OmcGuidedPlanningBriefSchema,
+    sessionId: z.string().nullable().optional(),
+    summary: z.string().nullable().optional(),
+    error: z.string().nullable().optional(),
+    generatedPlanPaths: z.array(z.string().trim().min(1)).default([]),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    completedAt: z.number().nullable().optional()
+})
+export type OmcGuidedPlanningRun = z.infer<typeof OmcGuidedPlanningRunSchema>
+
+export const OmcGuidedPlanningStartRequestSchema = z.object({
+    brief: OmcGuidedPlanningBriefSchema
+})
+export type OmcGuidedPlanningStartRequest = z.infer<typeof OmcGuidedPlanningStartRequestSchema>
+
+export const OmcGuidedPlanningStateResponseSchema = z.object({
+    programId: z.string(),
+    planning: OmcProgramPlanningStateSchema,
+    run: OmcGuidedPlanningRunSchema.nullable()
+})
+export type OmcGuidedPlanningStateResponse = z.infer<typeof OmcGuidedPlanningStateResponseSchema>
+
+export const OmcGuidedPlanningControlResponseSchema = z.object({
+    programId: z.string(),
+    planning: OmcProgramPlanningStateSchema,
+    run: OmcGuidedPlanningRunSchema
+})
+export type OmcGuidedPlanningControlResponse = z.infer<typeof OmcGuidedPlanningControlResponseSchema>
+
+export const OmcAttachLocalRepoRequestSchema = z.object({
+    repoRoot: z.string().trim().min(1),
+    name: z.string().trim().min(1).optional()
+})
+export type OmcAttachLocalRepoRequest = z.infer<typeof OmcAttachLocalRepoRequestSchema>
+
+export const OmcAttachPlanningRootRequestSchema = z.object({
+    planningRoot: z.string().trim().min(1)
+})
+export type OmcAttachPlanningRootRequest = z.infer<typeof OmcAttachPlanningRootRequestSchema>
+
+export const OmcCreatePlanningSeedRequestSchema = z.object({})
+export type OmcCreatePlanningSeedRequest = z.infer<typeof OmcCreatePlanningSeedRequestSchema>
+
+export const OmcProgramBootstrapResponseSchema = z.object({
+    program: OmcProgramSummarySchema,
+    planning: OmcProgramPlanningStateSchema
+})
+export type OmcProgramBootstrapResponse = z.infer<typeof OmcProgramBootstrapResponseSchema>
+
 export const OmcProgramOverviewResponseSchema = z.object({
-    program: OmcProgramSummarySchema
+    program: OmcProgramSummarySchema,
+    planning: OmcProgramPlanningStateSchema
 })
 export type OmcProgramOverviewResponse = z.infer<typeof OmcProgramOverviewResponseSchema>
 
@@ -651,6 +768,81 @@ export const OmcPlanStartResponseSchema = z.object({
     evidence: z.array(OmcEvidenceSchema)
 })
 export type OmcPlanStartResponse = z.infer<typeof OmcPlanStartResponseSchema>
+
+export const OmcPlanControlResponseSchema = z.object({
+    programId: z.string(),
+    planKey: z.string().trim().min(1),
+    runtime: OmcPlanRuntimeSchema,
+    attempt: OmcAttemptSchema.nullable().optional(),
+    sessionId: z.string().nullable().optional(),
+    sessionUrl: z.string().nullable().optional()
+})
+export type OmcPlanControlResponse = z.infer<typeof OmcPlanControlResponseSchema>
+
+export const OmcMergePacketFileSummarySchema = z.object({
+    totalFiles: z.number().int().min(0),
+    files: z.array(z.string().trim().min(1))
+})
+export type OmcMergePacketFileSummary = z.infer<typeof OmcMergePacketFileSummarySchema>
+
+export const OmcMergePacketChecksSummarySchema = z.object({
+    total: z.number().int().min(0),
+    passed: z.number().int().min(0),
+    failed: z.number().int().min(0),
+    warning: z.number().int().min(0),
+    skipped: z.number().int().min(0),
+    items: z.array(OmcAttemptCheckSchema)
+})
+export type OmcMergePacketChecksSummary = z.infer<typeof OmcMergePacketChecksSummarySchema>
+
+export const OmcMergePacketCompletionSummarySchema = z.object({
+    status: OmcAttemptStatusSchema.nullable().optional(),
+    summary: z.string().trim().min(1),
+    terminationReason: OmcAttemptTerminationReasonSchema.nullable().optional(),
+    nextSuggestedStep: z.string().trim().min(1).nullable().optional()
+})
+export type OmcMergePacketCompletionSummary = z.infer<typeof OmcMergePacketCompletionSummarySchema>
+
+export const OmcMergePacketPreconditionStatusSchema = z.enum(['ready', 'warning', 'blocked'])
+export type OmcMergePacketPreconditionStatus = z.infer<typeof OmcMergePacketPreconditionStatusSchema>
+
+export const OmcMergePacketPreconditionSchema = z.object({
+    key: z.string().trim().min(1),
+    label: z.string().trim().min(1),
+    status: OmcMergePacketPreconditionStatusSchema,
+    detail: z.string().trim().min(1).nullable().optional()
+})
+export type OmcMergePacketPrecondition = z.infer<typeof OmcMergePacketPreconditionSchema>
+
+export const OmcMergePacketSchema = z.object({
+    phaseLabel: z.string().trim().min(1),
+    planKey: z.string().trim().min(1),
+    planTitle: z.string().trim().min(1),
+    targetBranch: z.string().trim().min(1).nullable().optional(),
+    sourceBranch: z.string().trim().min(1).nullable().optional(),
+    worktreePath: z.string().trim().min(1).nullable().optional(),
+    attemptCount: z.number().int().min(0),
+    changedFilesSummary: OmcMergePacketFileSummarySchema,
+    checksSummary: OmcMergePacketChecksSummarySchema,
+    completionSummary: OmcMergePacketCompletionSummarySchema,
+    warnings: z.array(z.string().trim().min(1)),
+    blockers: z.array(z.string().trim().min(1)),
+    preconditions: z.array(OmcMergePacketPreconditionSchema)
+})
+export type OmcMergePacket = z.infer<typeof OmcMergePacketSchema>
+
+export const OmcMergePacketResponseSchema = z.object({
+    packet: OmcMergePacketSchema
+})
+export type OmcMergePacketResponse = z.infer<typeof OmcMergePacketResponseSchema>
+
+export const OmcReviewReopenActionSchema = z.enum(['resume_loop', 'back_to_planning'])
+export type OmcReviewReopenAction = z.infer<typeof OmcReviewReopenActionSchema>
+
+export const OmcReviewReopenRequestSchema = z.object({
+    action: OmcReviewReopenActionSchema
+})
+export type OmcReviewReopenRequest = z.infer<typeof OmcReviewReopenRequestSchema>
 
 const SessionEventBaseSchema = z.object({
     namespace: z.string().optional()
@@ -759,6 +951,16 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         }).optional()
     }),
     SessionEventBaseSchema.extend({
+        type: z.literal('omc-guided-planning-updated'),
+        programId: z.string(),
+        runId: z.string(),
+        data: z.object({
+            runId: z.string(),
+            run: OmcGuidedPlanningRunSchema.optional(),
+            planning: OmcProgramPlanningStateSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
         type: z.literal('omc-plan-runtime-updated'),
         programId: z.string(),
         planKey: z.string(),
@@ -778,6 +980,16 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         }).optional()
     }),
     SessionEventBaseSchema.extend({
+        type: z.literal('omc-attempt-updated'),
+        programId: z.string(),
+        planKey: z.string(),
+        attemptId: z.string(),
+        data: z.object({
+            attemptId: z.string(),
+            attempt: OmcAttemptSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
         type: z.literal('omc-evidence-added'),
         programId: z.string(),
         planKey: z.string(),
@@ -786,6 +998,25 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         data: z.object({
             evidenceId: z.string(),
             evidence: OmcEvidenceSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-review-updated'),
+        programId: z.string(),
+        planKey: z.string(),
+        data: z.object({
+            planKey: z.string(),
+            runtime: OmcPlanRuntimeSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-merge-updated'),
+        programId: z.string(),
+        planKey: z.string(),
+        data: z.object({
+            planKey: z.string(),
+            runtime: OmcPlanRuntimeSchema.optional(),
+            packet: OmcMergePacketSchema.optional()
         }).optional()
     })
 ])

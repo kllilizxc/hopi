@@ -1,254 +1,254 @@
 # Phase 1: OMC Foundation - Research
 
-**Researched:** 2026-03-29
-**Domain:** Brownfield introduction of a new `Ralph loop + GSD` product mode beside HOPI's existing session-first web app
-**Confidence:** HIGH for repo-grounded integration seams, package/build constraints, and plan slicing; MEDIUM for the exact first-pass OMC runtime schema names until implementation starts
+**Researched:** 2026-04-05
+**Domain:** Message-driven operator shell for the OMC prototype
+**Confidence:** HIGH for reuse boundaries inside this repo; MEDIUM for the exact assistant-ui extraction shape until implementation starts
 
 <research_summary>
 ## Summary
 
-HOPI already has most of the runtime substrate OMC needs: SQLite-backed persistence, hub REST + SSE plumbing, worktree-aware tasks/projects, Codex runtime integration, and a browser client architecture built on TanStack Router/Query. What it does **not** have is the right product model or frontend/build shape for a native `Ralph loop + GSD` control plane.
+The new Phase 1 should **not** continue the earlier board-first OMC foundation work. The repo now contains a clearer direction: OMC should behave like an operator inbox plus active-thread chat surface, with the left canvas acting as context only.
 
-The most important brownfield fact is this: **HOPI currently assumes one frontend app and one `web/dist` bundle**. `hub/src/web/server.ts`, the root `package.json` scripts, the embedded asset generator, and the single-exe build all point to the existing `web/` package only. That means Phase 1 cannot be planned as "just add a few routes" if `OMC-client/` is truly a new frontend subproject. The phase must explicitly create the second frontend package and the serving/build plumbing for `/omc`.
+The strongest brownfield finding is that HOPI already has a solid chat stack in `web/`:
 
-The safest Phase 1 shape is therefore:
+- `@assistant-ui/react`
+- `@assistant-ui/react-markdown`
+- a message runtime adapter
+- a robust thread viewport
+- a mature composer
+- markdown rendering
 
-1. add a new OMC runtime/domain layer in `shared/` + `hub/`,
-2. add a markdown-first planning indexer that reads `.planning/phases/**/*PLAN.md`,
-3. add a Codex-first manual plan-start path with visible attempt/evidence state,
-4. add `OMC-client/` as a separate frontend package,
-5. teach the hub and build system to serve that second frontend under `/omc`.
+So the best Phase 1 shape is **not** to keep extending the bespoke `omc-prototype` message panel. Instead:
 
-This preserves the user decision that OMC is a second product mode, not a cosmetic fork of the current `projects` view.
+1. define a first-class thread/message/lifecycle domain in the prototype store,
+2. add a slim OMC-local assistant-ui runtime bridge,
+3. rebuild the right rail as `Inbox + Active Thread`,
+4. then strip primary decision controls out of the main canvas and make it context-first.
+
+That gives the user the chat-app flexibility they asked for, while staying close to real product infrastructure instead of building a second fake chat system.
 </research_summary>
 
 <repo_findings>
 ## Repo Findings
 
-### HOPI already has strong runtime substrate for OMC
-- `hopi/hub/src/web/server.ts` already provides the authenticated API shell, SSE events, and static app serving patterns OMC can reuse.
-- `hopi/hub/src/store/index.ts` shows the current SQLite store is already the canonical persistence layer for sessions, projects, workspaces, and tasks. Phase 1 can add OMC runtime tables/projections here without introducing new infra.
-- `hopi/cli/src/codex/runCodex.ts` confirms Codex is already a first-class runtime with permission-mode sync, session lifecycle hooks, and worktree-aware working directories.
-- Existing file/search/diff/worktree primitives mean OMC does not need to invent new machine-side execution infrastructure in Phase 1.
+### Existing HOPI chat foundation is already strong
+- [web/package.json](/Users/realizer/Code/hopi/web/package.json) already includes `@assistant-ui/react` and `@assistant-ui/react-markdown`.
+- [web/src/lib/assistant-runtime.ts](/Users/realizer/Code/hopi/web/src/lib/assistant-runtime.ts) already shows the key seam we need: app-specific messages can be converted into assistant-ui `ThreadMessageLike` records and driven through `useExternalStoreRuntime`.
+- [web/src/components/AssistantChat/HappyThread.tsx](/Users/realizer/Code/hopi/web/src/components/AssistantChat/HappyThread.tsx) already solves thread viewport behavior, loading skeletons, scroll behavior, and chat rendering posture.
+- [web/src/components/AssistantChat/HappyComposer.tsx](/Users/realizer/Code/hopi/web/src/components/AssistantChat/HappyComposer.tsx) already solves a lot of composer-level concerns such as drafts, key handling, and input management.
+- [web/src/components/MarkdownRenderer.tsx](/Users/realizer/Code/hopi/web/src/components/MarkdownRenderer.tsx) already gives a repo-native markdown rendering seam for richer Agent messages.
 
-### Current orchestration model is close, but at the wrong abstraction level
-- `hopi/shared/src/schemas.ts` already models `Project`, `Workspace`, `Task`, worktree metadata, and action runtimes. This is useful substrate, but not the same thing as OMC's target objects (`Program`, `PlanRuntime`, `LoopRun`, `Attempt`, `Evidence`).
-- `hopi/hub/src/sync/workflowStrategy.ts` shows HOPI already has a thin built-in `gsd` workflow profile, but it only maps task transitions like `discuss`, `plan`, `execute`, `verify`; it is not a native Ralph loop engine.
-- `hopi/hub/src/sync/autoRunScheduler.ts` proves there is already project/task auto-run scheduling logic, but it is task/session-centric and keyed to the current `planned -> in_progress -> in_review` model. Phase 1 should **not** force OMC into this scheduler; manual plan start is the safer first slice.
+### The current prototype message panel is architecturally too bespoke
+- [omc-prototype/src/components/MessagePanel.tsx](/Users/realizer/Code/hopi/omc-prototype/src/components/MessagePanel.tsx) currently derives `ThreadSeed` view objects inside the component itself, so thread identity is ephemeral and coupled to render-time page context.
+- The panel currently mixes:
+  - route parsing
+  - thread derivation
+  - inbox grouping
+  - conversation rendering
+  - quick actions
+  - freeform composer
+  into one file.
+- Current thread membership is still shaped by the left-side route context, which conflicts with the newly locked product rule that the message panel is the primary operator surface.
 
-### Existing web architecture is reusable, but the current app is session-first
-- `hopi/web/src/router.tsx` and `hopi/web/README.md` show one TanStack Router app whose primary object is the session, with projects/tasks layered on later.
-- Current route architecture can be reused as a reference for query/mutation patterns, auth, and mobile-safe route structure.
-- But the current app shell is still fundamentally built around `/sessions` and `/projects`, not `/programs`, `/plans`, `/attempts`, and `/review`.
+### Current prototype state is too shallow for a scalable inbox
+- [omc-prototype/src/prototype/types.ts](/Users/realizer/Code/hopi/omc-prototype/src/prototype/types.ts) defines `PrototypeChatMessage`, but messages only carry `id`, `role`, `body`, `goalId`, and `threadId`.
+- There is no first-class thread object, no lifecycle state, no unread marker, no stable created/updated timestamps, and no thread-level context record.
+- [omc-prototype/src/prototype/store.tsx](/Users/realizer/Code/hopi/omc-prototype/src/prototype/store.tsx) stores chat as one flat array and caps it globally, which means one busy thread can crowd out another thread’s history.
+- The current reducer is good enough as a mock behavior engine, but not yet as a durable thread model.
 
-### The second frontend package is a real build-time concern, not a naming detail
-- Root scripts in `hopi/package.json` only build `web` today: `build:web`, `dev:web`, and `build:single-exe` all assume a single frontend app.
-- `hopi/hub/src/web/server.ts` only discovers one `web/dist` directory and serves it as the catch-all browser app.
-- `hopi/hub/scripts/generate-embedded-web-assets.ts` and `hopi/hub/src/web/embeddedAssets.ts` embed only one web asset manifest today.
-- Therefore, if Phase 1 creates `OMC-client/` as a real second package, it must also plan:
-  - workspace package registration,
-  - dev/build scripts for OMC,
-  - hub static serving rules for `/omc`,
-  - embedded-asset generation and single-exe support for the second app.
+### Router shell is already the right seam
+- [omc-prototype/src/router.tsx](/Users/realizer/Code/hopi/omc-prototype/src/router.tsx) already has the core shell we want:
+  - left content area
+  - right message rail
+- That means Phase 1 does not need a routing rethink. It needs a better right rail and cleaner separation of concerns between the left canvas and the message surface.
 
-### Markdown-first planning is a good fit, but workspace-relative paths matter
-- The new OMC workspace uses `.planning/` at the workspace root and the repo worktree under `hopi/`.
-- That means all repo references used by future planners/executors must resolve as `hopi/...`, not repo-root-relative bare paths like `hub/src/...`.
-- The planning indexer should therefore parse workspace-root `.planning`, but emit repo file references that point into `hopi/...`.
+### Main-canvas surfaces still own actions that should move to chat
+- [omc-prototype/src/components/DashboardPanels.tsx](/Users/realizer/Code/hopi/omc-prototype/src/components/DashboardPanels.tsx) and related goal/execution pages still carry approval/risk/direction controls or control-adjacent patterns.
+- Those controls now conflict with the locked context:
+  - the main canvas should explain
+  - the message panel should decide
 
-### Phase 1 naturally decomposes into four implementation seams
-Repo inspection strongly suggests four clean seams:
-- `shared/` — OMC schemas, event payloads, and typed response contracts
-- `hub/` — planning indexer, runtime store, loop control endpoints, SSE events, and static serving for `/omc`
-- `cli/` or hub/CLI seam — Codex attempt launch/integration contract for manual plan start
-- `OMC-client/` — board, plan detail, attempt inspector, thin planning actions
-
-This lines up well with the product boundary and reduces the chance of one giant mixed task workbench refactor.
 </repo_findings>
 
 <architecture_recommendation>
 ## Architecture Recommendation
 
-### Recommended Phase 1 architecture
-Use a **parallel product-mode architecture**, not a projection layered onto the current task board.
+### Recommended foundation
+Use a **hybrid architecture**:
 
-Concretely:
-- keep the current HOPI stack as infrastructure,
-- add a new OMC domain layer in `shared/` and `hub/`,
-- add `OMC-client/` as a second frontend package,
-- serve that frontend from the existing hub under `/omc`.
+- custom inbox model and domain state owned by OMC
+- assistant-ui owned active-thread conversation pane
 
-### Recommended serving/build posture
-Treat `OMC-client/` as a sibling to `web/`, not a subfolder inside `web/`.
+That means:
+- do **not** treat assistant-ui as the inbox framework
+- do treat assistant-ui as the conversation runtime/rendering/composer framework
 
-Safer path:
-1. register `OMC-client` in the root workspace,
-2. add `dev:omc` and `build:omc`,
-3. update hub static serving so `/omc` maps to OMC assets while `/` continues serving the session app,
-4. then update embedded-asset generation and single-exe build to include both apps.
+### Recommended runtime seam
+Create an OMC-local runtime adapter similar in spirit to [web/src/lib/assistant-runtime.ts](/Users/realizer/Code/hopi/web/src/lib/assistant-runtime.ts):
 
-This is heavier than adding routes inside `web/`, but it honors the product decision that OMC is not just another tab.
+- `OperatorThread` and `OperatorMessage` stay OMC domain objects
+- a converter maps the active thread’s messages into assistant-ui messages
+- the active thread pane is wrapped in an `AssistantRuntimeProvider`
 
-### Recommended runtime shape for Phase 1
-Phase 1 should **not** build the full long-term orchestration graph yet.
+This keeps the product-specific inbox state separate from the generic conversation rendering layer.
 
-Best thin-slice model:
-- `Program` — one primary repo/machine/workspace family
-- `PlanRuntime` — runtime view for one `PLAN.md`
-- `Attempt` — one manual fresh-context execution run
-- `Evidence` — attached validation/check output
+### Recommended thread model
+Create first-class types for:
 
-This is enough to render the board, start one plan, and inspect the first attempt without prematurely building a full scheduler.
+- `OperatorThread`
+- `OperatorMessage`
+- `ThreadLifecycleState`
+- `QuickAction`
+- `ThreadContextRef`
 
-### Recommended plan-indexing shape
-The planning indexer should remain a read model builder:
-- source of truth: `.planning/phases/**/*PLAN.md`
-- card identity: plan path / plan key
-- phase grouping from parent phase directory
-- parsed fields: title, summary, checklist counts, first open item, file timestamps
-- runtime column assignment from DB, not from markdown prose guessing
+Thread identity should be topic-based, not route-based and not object-id-based alone.
 
-### Recommended frontend posture
-Plan detail should be execution-first:
-- top: runtime summary, attempts, evidence, primary actions
-- bottom: parsed plan, file refs, thin edit/open-file actions
+Recommended thread types:
+- `status`
+- `approval`
+- `risk`
+- `direction`
 
-This fits the OMC control-plane goal and avoids turning Phase 1 into a markdown editor project.
+### Recommended ownership split
+- `prototype/store` owns:
+  - thread creation
+  - lifecycle transitions
+  - quick-action results
+  - thread reopening
+  - goal/risk/approval derived effects
+- `MessagePanel` owns:
+  - inbox list composition
+  - active thread rendering
+  - message composer wiring
+- left-side screens own:
+  - context
+  - navigation to relevant threads
+  - no primary decision buttons
+
+### Recommended styling/reuse posture
+- Reuse patterns from `web` chat stack, not the exact components wholesale.
+- Avoid importing `SessionChat` or `HappyThread` directly into `omc-prototype`; they are tied to broader app/runtime context and Tailwind-heavy styling assumptions.
+- Prefer a slim local port:
+  - assistant-ui runtime hookup
+  - markdown renderer
+  - minimal message bubble components
+  - one composer
+
 </architecture_recommendation>
 
 <plan_recommendation>
 ## Recommended 3-Plan Split
 
-### Plan 01-01 — Seed OMC domain model and hub-side runtime APIs/events
-Focus: shared/hub runtime foundation for OMC.
+### Plan 01-01 — Define operator thread domain and lifecycle
+Focus: replace the current ad hoc thread derivation with first-class thread/message/lifecycle state.
 
 Include:
-- OMC runtime schemas/events/contracts in `hopi/shared/src/`
-- initial SQLite/store support in `hopi/hub/src/store/`
-- hub route namespace for `/api/omc/*`
-- runtime state for program / plan runtime / attempt / evidence
-- first manual plan-start endpoint contract
+- thread domain types
+- per-thread message storage
+- thread selectors and default-thread selection
+- first-message contract generation
+- lifecycle transitions: `pending / in-progress / waiting / silent / resolved`
 
 Why first:
-- the board and plan detail need typed data contracts before the new client can exist meaningfully
-- attempt inspection and SSE updates need a durable runtime source of truth
+- every later UI decision depends on correct thread identity and lifecycle
+- extending the current render-time `ThreadSeed` model would lock in the wrong architecture
 
-### Plan 01-02 — Build planning indexer plus phase-grouped OMC board
-Focus: parsing `.planning` into OMC read models and rendering the first board.
+### Plan 01-02 — Build the assistant-ui inbox and active-thread surface
+Focus: replace the bespoke right rail with a scalable inbox + real chat conversation pane.
 
 Include:
-- markdown-first planning indexer in hub
-- board/list/detail read APIs
-- SSE/query invalidation shape for OMC runtime updates
-- `OMC-client/` package scaffold, routing shell, and phase-grouped board UI
-- board semantics: `Planning`, `Running`, `Review`, `Done`
+- add `@assistant-ui/react` and markdown deps to `omc-prototype`
+- add an OMC-local thread runtime adapter
+- build inbox sections for unresolved / handled / silent threads
+- build one active-thread conversation pane with one composer
+- thread-specific quick actions and markdown-capable Agent messages
 
 Why second:
-- after runtime contracts exist, the next visible proof is that OMC can read real GSD plans as cards
-- it also forces the second frontend package and `/omc` serving path to become real
+- once the thread model is correct, the largest UI rewrite can happen on top of a stable state seam
 
-### Plan 01-03 — Add plan detail, manual plan start, and attempt/evidence inspection
-Focus: the first runnable Ralph-shaped interaction.
+### Plan 01-03 — Demote the canvas to context and wire thread handoff
+Focus: remove duplicated decision controls from the left canvas and make all real intervention happen in the message surface.
 
 Include:
-- execution-first plan detail page
-- manual start action for one plan
-- first Codex attempt launch/integration path
-- attempt inspector and evidence presentation
-- thin planning actions (`open file`, minimal patch flow hooks if trivial)
+- remove primary approval/risk/direction controls from main views
+- replace them with thread links / focus affordances
+- surface thread status as metadata only
+- ensure unresolved threads always outrank passive overview threads
+- add basic mobile drawer behavior for the message surface
 
 Why third:
-- this is the first point where OMC stops being a read-only shell
-- it proves the user-facing promise of `1 plan -> 1 loop -> 1 attempt`
+- this cleanup is only safe after the replacement message surface exists
+
 </plan_recommendation>
 
 <validation_architecture>
 ## Validation Architecture
 
 ### What needs verification
-- the new OMC schemas and store/runtime routes typecheck cleanly across shared/hub/web
-- the planning indexer correctly parses real `.planning/phases/**/*PLAN.md` files
-- the hub can serve a second frontend app under `/omc` without regressing the existing web shell
-- manual plan start produces a durable attempt record and inspectable evidence
-- `OMC-client/` can render board + plan detail from real API data
+- thread model is first-class and no longer derived ad hoc inside the message panel
+- one active thread uses a normal chat composer and markdown-capable messages
+- quick actions and freeform replies both update thread state and visible conversation
+- main-canvas controls no longer duplicate thread actions
+- unresolved threads win default selection over passive overview/status threads
 
 ### Best validation layers
-- type safety:
-  - `bun run typecheck`
-- hub/store/route coverage:
-  - `bun run test:hub`
-- OMC-client route/component coverage once package exists:
-  - package-local tests, plus root script integration when available
-- build/hosting coverage:
-  - `bun run build`
-  - single-app and dual-app static serving checks in hub
-
-### Suggested phase gate
-- `bun run typecheck`
-- `bun run test:hub`
-- frontend package checks for `OMC-client` once created
-- a manual smoke path:
-  1. load `/omc`
-  2. see parsed plan cards
-  3. open a plan
-  4. trigger manual plan start
-  5. see attempt and evidence appear
+- package type safety:
+  - `bun run typecheck:omc-prototype`
+- package build safety:
+  - `bun run build:omc-prototype`
+- manual behavior checks:
+  1. open the prototype
+  2. see unresolved threads listed separately from handled/silent
+  3. open a thread and respond through quick action
+  4. open a thread and respond through freeform text
+  5. confirm lifecycle changes are visible
+  6. confirm main pages no longer own the decision
 
 ### Important validation gap to plan for
-Because Phase 1 introduces a second frontend package, build/test validation must include static-serving and embedded-asset behavior, not just React route tests.
+There are currently no web tests for `omc-prototype`, so Phase 1 should expect manual behavior verification to remain important unless a light component test harness is added.
+
 </validation_architecture>
 
 <risks>
 ## Risks and Pitfalls
 
-### Pitfall 1: creating `OMC-client/` in name only
-If the plan adds OMC routes inside `web/` while pretending there is a new subproject, the architecture will drift from the locked product decision immediately.
+### Pitfall 1: continuing to retrofit the current MessagePanel
+This preserves the wrong ownership boundary and makes thread identity depend on render-time page context.
 
-### Pitfall 2: forgetting hub/build coupling
-If the plan creates a second frontend package but ignores `hub/src/web/server.ts`, root scripts, and embedded-asset generation, `/omc` will not actually be shippable.
+### Pitfall 2: direct wholesale reuse of SessionChat
+This would drag in session-first assumptions, broader runtime wiring, and styling baggage that the prototype does not need.
 
-### Pitfall 3: reusing current task state as canonical OMC state
-`TaskStatus` and `workflowPhase` are useful references, but Phase 1 should not let them become the canonical OMC state machine.
+### Pitfall 3: keeping one global flat message log
+This prevents stable thread history and will make a busy thread crowd out other intervention topics.
 
-### Pitfall 4: implementing a board before a runtime contract
-If the board lands first with mocked or ad hoc data, the product will immediately drift from the attempt/evidence model OMC is supposed to expose.
+### Pitfall 4: using assistant-ui as the inbox model
+assistant-ui is a strong conversation surface, but OMC still needs a custom topic inbox with domain-specific thread grouping and lifecycle behavior.
 
-### Pitfall 5: overbuilding the scheduler too early
-Manual plan start is enough for Phase 1. Pulling auto-selection and retry policy into this phase would slow delivery and muddy the product boundary.
+### Pitfall 5: leaving actions on the canvas during the transition
+That will keep the product in an ambiguous state where the user never learns that the chat surface is the primary operator channel.
 
-### Pitfall 6: path confusion inside the new workspace
-The repo lives under `hopi/` in this workspace. Plans, research, and future executor prompts need to reference repo files with that prefix or downstream agents will read the wrong files.
 </risks>
 
 <sources>
 ## Sources
 
-### Primary
-- `.planning/PROJECT.md`
-- `.planning/REQUIREMENTS.md`
-- `.planning/ROADMAP.md`
-- `.planning/phases/01-omc-foundation/01-CONTEXT.md`
-- `.planning/codebase/STRUCTURE.md`
-- `.planning/codebase/STACK.md`
-- `.planning/codebase/INTEGRATIONS.md`
-- `.planning/codebase/CONCERNS.md`
-- `hopi/AGENTS.md`
-- `hopi/README.md`
-- `hopi/cli/README.md`
-- `hopi/hub/README.md`
-- `hopi/web/README.md`
-- `hopi/package.json`
-- `hopi/shared/src/schemas.ts`
-- `hopi/cli/src/codex/runCodex.ts`
-- `hopi/hub/src/store/index.ts`
-- `hopi/hub/src/sync/workflowStrategy.ts`
-- `hopi/hub/src/sync/autoRunScheduler.ts`
-- `hopi/hub/src/web/server.ts`
-- `hopi/hub/src/web/embeddedAssets.ts`
-- `hopi/docs/design/factory-mode-ralph-gsd.md`
-- `hopi/docs/design/omc-phase-01-context.md`
+### Primary repo sources
+- [docs/design/omc-phase-01-context.md](/Users/realizer/Code/hopi/docs/design/omc-phase-01-context.md)
+- [docs/design/omc-planning-seed/01-CONTEXT.md](/Users/realizer/Code/hopi/docs/design/omc-planning-seed/01-CONTEXT.md)
+- [docs/design/factory-mode-ralph-gsd.md](/Users/realizer/Code/hopi/docs/design/factory-mode-ralph-gsd.md)
+- [web/package.json](/Users/realizer/Code/hopi/web/package.json)
+- [web/src/lib/assistant-runtime.ts](/Users/realizer/Code/hopi/web/src/lib/assistant-runtime.ts)
+- [web/src/components/AssistantChat/HappyThread.tsx](/Users/realizer/Code/hopi/web/src/components/AssistantChat/HappyThread.tsx)
+- [web/src/components/AssistantChat/HappyComposer.tsx](/Users/realizer/Code/hopi/web/src/components/AssistantChat/HappyComposer.tsx)
+- [web/src/components/MarkdownRenderer.tsx](/Users/realizer/Code/hopi/web/src/components/MarkdownRenderer.tsx)
+- [web/src/components/SessionChat.tsx](/Users/realizer/Code/hopi/web/src/components/SessionChat.tsx)
+- [omc-prototype/src/components/MessagePanel.tsx](/Users/realizer/Code/hopi/omc-prototype/src/components/MessagePanel.tsx)
+- [omc-prototype/src/prototype/store.tsx](/Users/realizer/Code/hopi/omc-prototype/src/prototype/store.tsx)
+- [omc-prototype/src/prototype/types.ts](/Users/realizer/Code/hopi/omc-prototype/src/prototype/types.ts)
+- [omc-prototype/src/router.tsx](/Users/realizer/Code/hopi/omc-prototype/src/router.tsx)
 
-### Notes
-- Research based on direct repo inspection and the newly created OMC workspace.
-- The most important Phase 1 implementation constraint is dual-frontend serving/build support for the new `OMC-client/` package.
+### External product references
+- [assistant-ui thread docs](https://www.assistant-ui.com/docs/ui/thread)
+- [assistant-ui context/runtime docs](https://www.assistant-ui.com/docs/guides/context-api)
+
 </sources>
