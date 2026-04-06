@@ -1,18 +1,4 @@
 import type { OperatorThread, ThreadLifecycleState } from '@/prototype/types'
-import { Glyph } from '@/components/Visuals'
-
-function iconForThread(thread: OperatorThread) {
-    switch (thread.kind) {
-        case 'approval':
-            return 'approval'
-        case 'risk':
-            return 'risk'
-        case 'direction':
-            return 'strategy'
-        case 'status':
-            return 'digest'
-    }
-}
 
 function labelForSection(state: ThreadLifecycleState) {
     switch (state) {
@@ -29,6 +15,21 @@ function labelForSection(state: ThreadLifecycleState) {
     }
 }
 
+function previewForThread(thread: OperatorThread) {
+    if (thread.lifecycle === 'silent' || thread.lifecycle === 'resolved') {
+        return thread.preview || thread.firstMessage.currentStatus
+    }
+    return thread.firstMessage.currentStatus || thread.preview
+}
+
+function contextForThread(thread: OperatorThread) {
+    const refs = thread.refs
+        .filter((ref) => ref.kind !== 'impact')
+        .slice(0, 2)
+        .map((ref) => ref.label)
+    return refs.join(' · ')
+}
+
 function toneClass(thread: OperatorThread) {
     if (thread.tone === 'warning') {
         return 'is-warning'
@@ -39,6 +40,34 @@ function toneClass(thread: OperatorThread) {
     return ''
 }
 
+function renderRow(thread: OperatorThread, activeThreadId: string | null, onSelect: (threadId: string) => void) {
+    const context = contextForThread(thread)
+
+    return (
+        <button
+            key={thread.id}
+            type="button"
+            className={`prototype-inbox-row ${toneClass(thread)}${thread.id === activeThreadId ? ' is-active' : ''}`}
+            onClick={() => onSelect(thread.id)}
+        >
+            <div className="prototype-inbox-row__content">
+                <div className="prototype-inbox-row__topline">
+                    <div className="prototype-inbox-row__title">
+                        {thread.unread ? <span className="prototype-thread-dot" /> : null}
+                        <strong>{thread.title}</strong>
+                    </div>
+                    <span>{thread.updatedAt}</span>
+                </div>
+                <p>{previewForThread(thread)}</p>
+                <div className="prototype-inbox-row__meta">
+                    <span>{thread.statusLabel}</span>
+                    {context ? <span>{context}</span> : null}
+                </div>
+            </div>
+        </button>
+    )
+}
+
 export default function ThreadInbox(props: {
     threads: OperatorThread[]
     activeThreadId: string | null
@@ -46,35 +75,12 @@ export default function ThreadInbox(props: {
     onToggleHandled: () => void
     onSelect: (threadId: string) => void
 }) {
-    const passiveThreads = props.threads.filter((thread) => thread.passive)
     const inboxBuckets: ThreadLifecycleState[] = ['pending', 'waiting', 'in-progress']
-    const handledThreads = props.threads.filter((thread) => thread.lifecycle === 'resolved' || thread.lifecycle === 'silent')
+    const passiveThreads = props.threads.filter((thread) => thread.passive || thread.lifecycle === 'silent')
+    const handledThreads = props.threads.filter((thread) => thread.lifecycle === 'resolved' && !thread.passive)
 
     return (
         <div className="prototype-inbox-shell">
-            {passiveThreads.length > 0 ? (
-                <section className="prototype-inbox-section">
-                    <div className="prototype-inbox-section__label">系统</div>
-                    {passiveThreads.map((thread) => (
-                        <button
-                            key={thread.id}
-                            type="button"
-                            className={`prototype-inbox-row ${toneClass(thread)}${thread.id === props.activeThreadId ? ' is-active' : ''}`}
-                            onClick={() => props.onSelect(thread.id)}
-                        >
-                            <div className="prototype-inbox-row__icon">
-                                <Glyph name={iconForThread(thread)} />
-                            </div>
-                            <div className="prototype-inbox-row__copy">
-                                <strong>{thread.title}</strong>
-                                <p>{thread.preview}</p>
-                            </div>
-                            <span className="prototype-inbox-row__meta">{thread.updatedAt}</span>
-                        </button>
-                    ))}
-                </section>
-            ) : null}
-
             {inboxBuckets.map((bucket) => {
                 const bucketThreads = props.threads.filter((thread) => !thread.passive && thread.lifecycle === bucket)
                 if (bucketThreads.length === 0) {
@@ -87,29 +93,20 @@ export default function ThreadInbox(props: {
                             <span>{labelForSection(bucket)}</span>
                             <strong>{bucketThreads.length}</strong>
                         </div>
-                        {bucketThreads.map((thread) => (
-                            <button
-                                key={thread.id}
-                                type="button"
-                                className={`prototype-inbox-row ${toneClass(thread)}${thread.id === props.activeThreadId ? ' is-active' : ''}`}
-                                onClick={() => props.onSelect(thread.id)}
-                            >
-                                <div className="prototype-inbox-row__icon">
-                                    <Glyph name={iconForThread(thread)} />
-                                </div>
-                                <div className="prototype-inbox-row__copy">
-                                    <strong>{thread.title}</strong>
-                                    <p>{thread.preview}</p>
-                                </div>
-                                <div className="prototype-inbox-row__tail">
-                                    {thread.unread ? <span className="prototype-thread-dot" /> : null}
-                                    <span>{thread.updatedAt}</span>
-                                </div>
-                            </button>
-                        ))}
+                        {bucketThreads.map((thread) => renderRow(thread, props.activeThreadId, props.onSelect))}
                     </section>
                 )
             })}
+
+            {passiveThreads.length > 0 ? (
+                <section className="prototype-inbox-section">
+                    <div className="prototype-inbox-section__label">
+                        <span>静默更新</span>
+                        <strong>{passiveThreads.length}</strong>
+                    </div>
+                    {passiveThreads.map((thread) => renderRow(thread, props.activeThreadId, props.onSelect))}
+                </section>
+            ) : null}
 
             {handledThreads.length > 0 ? (
                 <section className="prototype-inbox-section">
@@ -117,23 +114,7 @@ export default function ThreadInbox(props: {
                         <span>已处理</span>
                         <strong>{handledThreads.length}</strong>
                     </button>
-                    {props.showHandled ? handledThreads.map((thread) => (
-                        <button
-                            key={thread.id}
-                            type="button"
-                            className={`prototype-inbox-row ${toneClass(thread)}${thread.id === props.activeThreadId ? ' is-active' : ''}`}
-                            onClick={() => props.onSelect(thread.id)}
-                        >
-                            <div className="prototype-inbox-row__icon">
-                                <Glyph name={iconForThread(thread)} />
-                            </div>
-                            <div className="prototype-inbox-row__copy">
-                                <strong>{thread.title}</strong>
-                                <p>{thread.preview}</p>
-                            </div>
-                            <span className="prototype-inbox-row__meta">{thread.statusLabel}</span>
-                        </button>
-                    )) : null}
+                    {props.showHandled ? handledThreads.map((thread) => renderRow(thread, props.activeThreadId, props.onSelect)) : null}
                 </section>
             ) : null}
         </div>

@@ -1,4 +1,7 @@
+import { createInitialWorldModel, createWorkOrder } from './orchestration'
 import type {
+    AgentEvent,
+    PrototypeApprovalItem,
     PrototypeCheckpoint,
     PrototypeCheckpointId,
     PrototypeDirectionPosture,
@@ -6,8 +9,14 @@ import type {
     PrototypeGoalPriority,
     PrototypeRiskState,
     PrototypeApprovalState,
+    PrototypePhase,
+    PrototypePlanCard,
     PrototypeScenarioSnapshot,
-    PrototypeTimeWindow
+    PrototypeStream,
+    PrototypeTimeWindow,
+    WorldModel,
+    WorkOrder,
+    WorkOrderState,
 } from './types'
 
 const CHECKPOINTS: PrototypeCheckpoint[] = [
@@ -1289,6 +1298,248 @@ export function getPrototypeSnapshot(checkpointId: PrototypeCheckpointId): Proto
     return prototypeScenario[checkpointId]
 }
 
+export function collectApprovalItems(snapshot: PrototypeScenarioSnapshot): PrototypeApprovalItem[] {
+    const seen = new Set<string>()
+    const orderedWindows: PrototypeTimeWindow[] = ['today', 'last24h', 'yesterday']
+    const items: PrototypeApprovalItem[] = []
+
+    for (const window of orderedWindows) {
+        const batch = snapshot.approvalBatches[window]
+        if (!batch) {
+            continue
+        }
+
+        for (const item of batch.items) {
+            if (seen.has(item.id)) {
+                continue
+            }
+            seen.add(item.id)
+            items.push(item)
+        }
+    }
+
+    return items
+}
+
+function inferWorkOrderStateForStream(stream: PrototypeStream): WorkOrderState {
+    switch (stream.status) {
+        case 'mapping':
+            return 'queued'
+        case 'running':
+            return 'executing'
+        case 'blocked':
+            return 'blocked'
+        case 'ready-for-approval':
+            return 'reviewer_check'
+        case 'watching':
+            return 'queued'
+    }
+}
+
+function findPrimaryPhase(phases: PrototypePhase[], streamId: string) {
+    return phases.find((phase) => phase.streamId === streamId && phase.status !== 'Done')
+        ?? phases.find((phase) => phase.streamId === streamId)
+        ?? null
+}
+
+function findPrimaryPlan(planCards: PrototypePlanCard[], streamId: string, phaseId: string | null) {
+    return planCards.find((card) => card.streamId === streamId && (!phaseId || card.phaseId === phaseId) && card.column !== 'Done')
+        ?? planCards.find((card) => card.streamId === streamId && (!phaseId || card.phaseId === phaseId))
+        ?? null
+}
+
+export function resolveApprovalSeedTarget(
+    checkpointId: PrototypeCheckpointId,
+    itemId: string,
+): { streamId: string; phaseId: string | null; planId: string | null } {
+    switch (checkpointId) {
+        case 'strategy':
+            switch (itemId) {
+                case 'approval-direction-weekly-brief':
+                    return {
+                        streamId: 'stream-weekly-brief-outline',
+                        phaseId: 'phase-brief-1',
+                        planId: 'plan-strategy-3',
+                    }
+                default:
+                    throw new Error(`resolveApprovalSeedTarget: unsupported strategy item ${itemId}`)
+            }
+        case 'approval':
+            switch (itemId) {
+                case 'approval-branch-ingest':
+                    return {
+                        streamId: 'stream-ingest-contracts',
+                        phaseId: 'phase-ingest-3',
+                        planId: 'plan-approval-1',
+                    }
+                case 'approval-scope-brief':
+                    return {
+                        streamId: 'stream-weekly-brief-outline',
+                        phaseId: 'phase-brief-2',
+                        planId: 'plan-approval-3',
+                    }
+                default:
+                    throw new Error(`resolveApprovalSeedTarget: unsupported approval item ${itemId}`)
+            }
+        case 'execution':
+            switch (itemId) {
+                case 'approval-branch-ingest':
+                    return {
+                        streamId: 'stream-holdings-normalization',
+                        phaseId: 'phase-ingest-2',
+                        planId: 'plan-execution-3',
+                    }
+                case 'approval-direction-brief-replan':
+                    return {
+                        streamId: 'stream-weekly-brief-outline',
+                        phaseId: 'phase-brief-2',
+                        planId: 'plan-execution-5',
+                    }
+                default:
+                    throw new Error(`resolveApprovalSeedTarget: unsupported execution item ${itemId}`)
+            }
+        default:
+            throw new Error(`resolveApprovalSeedTarget: unsupported checkpoint ${checkpointId}`)
+    }
+}
+
+export function createSeededWorldModel(checkpointId: PrototypeCheckpointId): WorldModel {
+    const snapshot = getPrototypeSnapshot(checkpointId)
+    const focusGoalId = snapshot.goals[0]?.id ?? null
+    const focusStreamId = focusGoalId
+        ? snapshot.streams.find((stream) => stream.goalId === focusGoalId)?.id ?? null
+        : null
+
+    const world = createInitialWorldModel({
+        focusGoalId,
+        focusStreamId,
+    })
+
+    const workOrders: Record<string, WorkOrder> = {}
+
+    for (const stream of snapshot.streams) {
+        const phase = findPrimaryPhase(snapshot.phases, stream.id)
+        const plan = findPrimaryPlan(snapshot.planCards, stream.id, phase?.id ?? null)
+        const order = createWorkOrder({
+            id: `wo:${stream.id}`,
+            goalId: stream.goalId,
+            streamId: stream.id,
+            phaseId: phase?.id ?? null,
+            planId: plan?.id ?? null,
+            summary: stream.summary,
+            constraints: stream.dependencyLabel ? [stream.dependencyLabel] : [],
+        })
+
+        order.state = inferWorkOrderStateForStream(stream)
+        order.loop.round = stream.progress > 0 ? 1 : 0
+        order.loop.lastDriverSummary = stream.latestMove
+
+        workOrders[order.id] = order
+    }
+
+    if (checkpointId === 'execution') {
+        const executionTraceEvents = [
+            {
+                id: 'evt-execution-holdings-observation',
+                kind: 'Observation',
+                workOrderId: 'wo:stream-holdings-normalization',
+                emittedBy: 'driver',
+                createdAt: 'Day 1 · 09:01',
+                payload: {
+                    summary: 'Holdings normalization matched the latest broker sample without widening scope.',
+                },
+            },
+            {
+                id: 'evt-execution-holdings-proposal',
+                kind: 'Proposal',
+                workOrderId: 'wo:stream-holdings-normalization',
+                emittedBy: 'driver',
+                createdAt: 'Day 1 · 09:02',
+                payload: {
+                    summary: 'Promotion packet can be staged once the proof cycle remains green.',
+                },
+            },
+            {
+                id: 'evt-execution-holdings-verdict',
+                kind: 'ReviewerVerdict',
+                workOrderId: 'wo:stream-holdings-normalization',
+                emittedBy: 'reviewer',
+                createdAt: 'Day 1 · 09:03',
+                payload: {
+                    verdict: 'needs_decision',
+                    summary: 'The branch is steady, but the batch boundary should decide promotion.',
+                },
+            },
+        ] satisfies AgentEvent[]
+
+        world.agentEvents.push(...executionTraceEvents)
+    }
+
+    for (const item of collectApprovalItems(snapshot)) {
+        const target = resolveApprovalSeedTarget(checkpointId, item.id)
+        const order = createWorkOrder({
+            id: `work-order:${item.id}`,
+            goalId: item.goalId,
+            streamId: target.streamId,
+            phaseId: target.phaseId,
+            planId: target.planId,
+            summary: item.title,
+            constraints: [item.summary],
+        })
+
+        order.state = item.state === 'pending' ? 'waiting_user' : 'queued'
+        order.waitingOnTopicId = `approval:${item.id}`
+        order.loop.round = 1
+        order.loop.lastReviewerSummary = item.summary
+        order.loop.lastDecisionSummary = item.state === 'guided' ? item.summary : null
+
+        workOrders[order.id] = order
+    }
+
+    if (checkpointId === 'approval') {
+        const approvalTraceEvents = [
+            {
+                id: 'evt-approval-branch-observation',
+                kind: 'Observation',
+                workOrderId: 'work-order:approval-branch-ingest',
+                emittedBy: 'driver',
+                createdAt: 'Day 1 · 18:29',
+                payload: {
+                    summary: 'Driver finished the last proof pass on holdings normalization.',
+                },
+            },
+            {
+                id: 'evt-approval-branch-proposal',
+                kind: 'Proposal',
+                workOrderId: 'work-order:approval-branch-ingest',
+                emittedBy: 'driver',
+                createdAt: 'Day 1 · 18:30',
+                payload: {
+                    summary: 'Promotion packet is ready for batch review.',
+                },
+            },
+            {
+                id: 'evt-approval-branch-verdict',
+                kind: 'ReviewerVerdict',
+                workOrderId: 'work-order:approval-branch-ingest',
+                emittedBy: 'reviewer',
+                createdAt: 'Day 1 · 18:31',
+                payload: {
+                    verdict: 'needs_decision',
+                    summary: 'Proof is green, but the branch should wait for user promotion approval.',
+                },
+            },
+        ] satisfies AgentEvent[]
+
+        world.agentEvents.push(...approvalTraceEvents)
+    }
+
+    return {
+        ...world,
+        workOrders,
+    }
+}
+
 export function applyGoalOverrides(
     goals: PrototypeGoal[],
     overrides: {
@@ -1331,6 +1582,63 @@ export function applyRiskOverrides<T extends { id: string; state: PrototypeRiskS
         ...risk,
         state: overrides[risk.id] ?? risk.state
     }))
+}
+
+export function applyWorldModelEffects(snapshot: PrototypeScenarioSnapshot, world: WorldModel): PrototypeScenarioSnapshot {
+    if (snapshot.checkpoint.id !== 'approval') {
+        return snapshot
+    }
+
+    const ordersByGoal = new Map<string, WorkOrder[]>()
+    const relevantOrders = Object.values(world.workOrders).filter((order) => snapshot.goals.some((goal) => goal.id === order.goalId))
+
+    for (const order of relevantOrders) {
+        const list = ordersByGoal.get(order.goalId) ?? []
+        list.push(order)
+        ordersByGoal.set(order.goalId, list)
+    }
+
+    const chooseOrder = (orders: WorkOrder[] | undefined) => {
+        if (!orders || orders.length === 0) {
+            return null
+        }
+
+        return orders.find((order) => Boolean(order.loop.lastDecisionSummary))
+            ?? orders.find((order) => order.state === 'waiting_user')
+            ?? orders[0]
+    }
+
+    for (const goal of snapshot.goals) {
+        const order = chooseOrder(ordersByGoal.get(goal.id))
+        if (!order) {
+            continue
+        }
+
+        if (order.state === 'waiting_user') {
+            goal.needsApproval = true
+        }
+
+        if (order.loop.lastDecisionSummary) {
+            goal.headline = `已按指令回到队列：${order.loop.lastDecisionSummary}`
+            goal.progressLabel = '已按指令重新排队'
+            goal.needsApproval = false
+        }
+    }
+
+    for (const stream of snapshot.streams) {
+        const order = relevantOrders.find((entry) => entry.streamId === stream.id)
+        if (!order) {
+            continue
+        }
+
+        if (order.loop.lastDecisionSummary) {
+            stream.latestMove = `用户指令：${order.loop.lastDecisionSummary}`
+        } else if (order.state === 'waiting_user') {
+            stream.latestMove = `等待用户决定：${order.summary}`
+        }
+    }
+
+    return snapshot
 }
 
 export function timeWindowLabel(window: PrototypeTimeWindow): string {

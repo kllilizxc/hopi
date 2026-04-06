@@ -1,72 +1,16 @@
 import type { AttachmentMetadata, MessageStatus } from '@/types/api'
-
-export type UsageData = {
-    input_tokens: number
-    output_tokens: number
-    cache_creation_input_tokens?: number
-    cache_read_input_tokens?: number
-    service_tier?: string
-}
-
-export type AgentEvent =
-    | { type: 'switch'; mode: 'local' | 'remote' }
-    | { type: 'message'; message: string }
-    | { type: 'error'; message: string; reason?: 'aborted' | 'process-exited' | 'prompt-failed' | 'task-failed' | 'unknown' }
-    | { type: 'title-changed'; title: string }
-    | { type: 'limit-reached'; endsAt: number }
-    | { type: 'ready'; forLocalKey?: string; hasAssistantReply?: boolean }
-    | { type: 'api-error'; retryAttempt: number; maxRetries: number; error: unknown }
-    | { type: 'turn-duration'; durationMs: number }
-    | { type: 'microcompact'; trigger: string; preTokens: number; tokensSaved: number }
-    | { type: 'compact'; trigger: string; preTokens: number }
-    | ({ type: string } & Record<string, unknown>)
-
-export type ToolResultPermission = {
-    date: number
-    result: 'approved' | 'denied'
-    mode?: string
-    allowedTools?: string[]
-    decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort'
-}
-
-export type ToolUse = {
-    type: 'tool-call'
-    id: string
-    name: string
-    input: unknown
-    description: string | null
-    uuid: string
-    parentUUID: string | null
-}
-
-export type ToolResult = {
-    type: 'tool-result'
-    tool_use_id: string
-    content: unknown
-    is_error: boolean
-    is_partial?: boolean
-    uuid: string
-    parentUUID: string | null
-    permissions?: ToolResultPermission
-}
-
-export type NormalizedAgentContent =
-    | {
-        type: 'text'
-        text: string
-        uuid: string
-        parentUUID: string | null
-    }
-    | {
-        type: 'reasoning'
-        text: string
-        uuid: string
-        parentUUID: string | null
-    }
-    | ToolUse
-    | ToolResult
-    | { type: 'summary'; summary: string }
-    | { type: 'sidechain'; uuid: string; prompt: string }
+import type {
+    AgentEvent,
+    NormalizedAgentContent,
+    ToolResultPermission,
+    UsageData,
+} from '@hopi/protocol/chat'
+export type {
+    AgentEvent,
+    NormalizedAgentContent,
+    ToolResultPermission,
+    UsageData,
+} from '@hopi/protocol/chat'
 
 export type NormalizedMessage = ({
     role: 'user'

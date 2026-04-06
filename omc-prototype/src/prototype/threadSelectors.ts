@@ -1,4 +1,34 @@
-import type { OperatorThread } from './types'
+import type { DecisionTopic, OperatorThread } from './types'
+
+function isActionableLifecycle(lifecycle: DecisionTopic['lifecycle']) {
+    return lifecycle === 'pending'
+        || lifecycle === 'waiting'
+        || lifecycle === 'in-progress'
+}
+
+function isActionableInterventionTopic(topic: DecisionTopic) {
+    return topic.kind !== 'status' && isActionableLifecycle(topic.lifecycle)
+}
+
+function scoreTopicForInbox(topic: DecisionTopic) {
+    let score = 0
+
+    if (topic.kind !== 'status') {
+        score += 100
+    }
+    if (topic.lifecycle === 'pending') {
+        score += 30
+    } else if (topic.lifecycle === 'waiting') {
+        score += 20
+    } else if (topic.lifecycle === 'in-progress') {
+        score += 10
+    }
+    if (topic.unread) {
+        score += 1
+    }
+
+    return score
+}
 
 function isUnresolved(thread: OperatorThread) {
     return thread.lifecycle === 'pending'
@@ -63,4 +93,18 @@ export function getPrimaryRelatedThread(
 
 export function countUnresolvedThreads(threads: OperatorThread[]) {
     return threads.filter(isUnresolved).length
+}
+
+export function sortTopicsForInbox(topics: DecisionTopic[]) {
+    return [...topics].sort((left, right) => {
+        const scoreDiff = scoreTopicForInbox(right) - scoreTopicForInbox(left)
+        if (scoreDiff !== 0) {
+            return scoreDiff
+        }
+        return left.title.localeCompare(right.title, 'zh-Hans')
+    })
+}
+
+export function countActionableTopics(topics: DecisionTopic[]) {
+    return topics.filter(isActionableInterventionTopic).length
 }

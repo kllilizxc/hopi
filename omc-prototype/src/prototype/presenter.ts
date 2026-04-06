@@ -290,22 +290,32 @@ export function goalPresentation(goal: PrototypeGoal, checkpoint: PrototypeCheck
         }
     }
 
+    if (goal.id === 'goal-weekly-brief') {
+        return {
+            title: goalTitle(goal.id),
+            summary: '先做可信的周报底座，暂不把异常叙事做重。',
+            headline: ({
+                intake: '先保留目标，不急着把它做成内容项目。',
+                strategy: '周报已经绑定到信号质量，不再空转。',
+                execution: '系统主动收 scope，避免在噪声上硬推版本。',
+                approval: '收紧后已经恢复稳定，可以低打扰继续推进。'
+            })[checkpoint],
+            successSignal: '每周简报能稳定给出漂移、数据新鲜度和可行动提示。',
+            progressLabel: ({
+                intake: '等待策略成形',
+                strategy: '围绕信号质量重新定调',
+                execution: '已降 scope，等待方向确认',
+                approval: '收紧后恢复稳定'
+            })[checkpoint]
+        }
+    }
+
     return {
-        title: goalTitle(goal.id),
-        summary: '先做可信的周报底座，暂不把异常叙事做重。',
-        headline: ({
-            intake: '先保留目标，不急着把它做成内容项目。',
-            strategy: '周报已经绑定到信号质量，不再空转。',
-            execution: '系统主动收 scope，避免在噪声上硬推版本。',
-            approval: '收紧后已经恢复稳定，可以低打扰继续推进。'
-        })[checkpoint],
-        successSignal: '每周简报能稳定给出漂移、数据新鲜度和可行动提示。',
-        progressLabel: ({
-            intake: '等待策略成形',
-            strategy: '围绕信号质量重新定调',
-            execution: '已降 scope，等待方向确认',
-            approval: '收紧后恢复稳定'
-        })[checkpoint]
+        title: goal.title,
+        summary: goal.summary,
+        headline: goal.headline,
+        successSignal: goal.successSignal,
+        progressLabel: goal.progressLabel
     }
 }
 

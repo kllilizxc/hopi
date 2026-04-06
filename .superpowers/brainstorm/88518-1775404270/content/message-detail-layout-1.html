@@ -1,0 +1,99 @@
+<h2>消息详情首屏骨架</h2>
+<p class="subtitle">优先目标：信息层级清楚，其次质感，再其次聊天感。请选择最顺手的一种。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 顶部摘要条</div>
+        <div class="mockup-body" style="display:grid;gap:12px;padding:16px;background:linear-gradient(180deg,#fbfdf9 0%,#f4f8f3 100%);">
+          <div style="display:grid;gap:8px;padding:14px 16px;border:1px solid rgba(45,74,56,.12);border-radius:18px;background:rgba(255,255,255,.92);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <strong style="font-size:16px;">做出每周投资简报</strong>
+              <span style="padding:4px 10px;border-radius:999px;background:rgba(31,138,100,.10);font-size:12px;">等你回复</span>
+            </div>
+            <div style="font-size:12px;color:#607064;">目标：每周简报 · 执行流：周报框架 · 建议动作：确认优先级</div>
+          </div>
+          <div style="display:grid;gap:10px;min-height:240px;align-content:end;">
+            <div style="max-width:78%;padding:14px 16px;border-radius:18px;border:1px solid rgba(45,74,56,.10);background:white;">现在在待启动，置信 24%。</div>
+            <div style="justify-self:end;max-width:74%;padding:14px 16px;border-radius:18px;background:#142017;color:white;">先把主线确定成“周报框架”。</div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;">
+            <div style="padding:12px 14px;border-radius:16px;border:1px solid rgba(45,74,56,.10);background:rgba(255,255,255,.94);color:#607064;">继续追问，或直接告诉 Agent 怎么做</div>
+            <div style="padding:12px 18px;border-radius:999px;background:#1f8a64;color:white;">发送</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>摘要压成一条</h3>
+      <p>首屏更干净，对话更像主工作区；适合你已经知道上下文，只想快速读和回。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 双层信息头</div>
+        <div class="mockup-body" style="display:grid;gap:12px;padding:16px;background:linear-gradient(180deg,#fbfdf9 0%,#f4f8f3 100%);">
+          <div style="display:grid;gap:10px;">
+            <div style="display:grid;gap:8px;padding:14px 16px;border:1px solid rgba(45,74,56,.12);border-radius:18px;background:rgba(255,255,255,.94);">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <strong style="font-size:16px;">做出每周投资简报</strong>
+                <span style="padding:4px 10px;border-radius:999px;background:rgba(20,32,23,.06);font-size:12px;">等你回复</span>
+              </div>
+              <div style="font-size:12px;color:#607064;">目标：每周简报 · 执行流：周报框架</div>
+            </div>
+            <div style="padding:12px 14px;border-radius:16px;border:1px solid rgba(31,138,100,.16);background:rgba(31,138,100,.08);">
+              <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#607064;">执行动作</div>
+              <div style="margin-top:6px;font-weight:600;">直接回复要保留哪些栏目，Agent 就继续排框架。</div>
+            </div>
+          </div>
+          <div style="display:grid;gap:10px;min-height:210px;align-content:end;">
+            <div style="max-width:78%;padding:14px 16px;border-radius:18px;border:1px solid rgba(45,74,56,.10);background:white;">如果你不改方向，我会按“框架先行”推进。</div>
+            <div style="justify-self:end;max-width:70%;padding:14px 16px;border-radius:18px;background:#142017;color:white;">保留宏观、板块、风险提示。</div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;">
+            <div style="padding:12px 14px;border-radius:16px;border:1px solid rgba(45,74,56,.10);background:rgba(255,255,255,.94);color:#607064;">继续追问，或直接告诉 Agent 怎么做</div>
+            <div style="padding:12px 18px;border-radius:999px;background:#1f8a64;color:white;">发送</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>状态一层，动作一层</h3>
+      <p>信息层级最稳，先知道“这是什么”，再知道“现在该干嘛”；首屏略更满一点。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 内联动作提示</div>
+        <div class="mockup-body" style="display:grid;gap:12px;padding:16px;background:linear-gradient(180deg,#fbfdf9 0%,#f4f8f3 100%);">
+          <div style="display:grid;gap:8px;padding:14px 16px;border:1px solid rgba(45,74,56,.12);border-radius:18px;background:rgba(255,255,255,.94);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <strong style="font-size:16px;">做出每周投资简报</strong>
+              <span style="padding:4px 10px;border-radius:999px;background:rgba(20,32,23,.06);font-size:12px;">等你回复</span>
+            </div>
+            <div style="font-size:12px;color:#607064;">目标：每周简报 · 执行流：周报框架 · 现在要你：确认保留栏目</div>
+          </div>
+          <div style="display:grid;gap:10px;min-height:240px;align-content:end;">
+            <div style="max-width:82%;padding:14px 16px;border-radius:18px;border:1px solid rgba(31,138,100,.16);background:rgba(31,138,100,.08);">
+              现在在待启动，卡点是主线没完全定死。你直接改优先级也可以。
+            </div>
+            <div style="justify-self:end;max-width:70%;padding:14px 16px;border-radius:18px;background:#142017;color:white;">先按框架做，但风险栏要提前。</div>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;">
+            <div style="padding:12px 14px;border-radius:16px;border:1px solid rgba(45,74,56,.10);background:rgba(255,255,255,.94);color:#607064;">继续追问，或直接告诉 Agent 怎么做</div>
+            <div style="padding:12px 18px;border-radius:999px;background:#1f8a64;color:white;">发送</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>动作揉进摘要</h3>
+      <p>首屏最轻，聊天感更强；但“状态”和“动作”容易混成一句，层级没有 B 稳。</p>
+    </div>
+  </div>
+</div>

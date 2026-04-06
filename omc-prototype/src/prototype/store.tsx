@@ -1,11 +1,32 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import type {
+    OmcGuidedPlanningRun,
+    OmcPlanDetailResponse,
+    OmcPlanRuntime,
+    OmcPlanningIndexResponse,
+    OmcProgramPlanningState,
+    OmcProgramSummary,
+    OmcProgramOverviewResponse,
+    SyncEvent,
+} from '@hopi/protocol/types'
 import {
     applyGoalOverrides,
     applyRiskOverrides,
     getPrototypeSnapshot,
-    prototypeCheckpoints
+    prototypeCheckpoints,
+    applyWorldModelEffects,
+    createSeededWorldModel,
+    collectApprovalItems,
+    resolveApprovalSeedTarget,
 } from './scenario'
+import { deriveDecisionTopics } from './decisionTopics'
+import { buildPrototypeSnapshotFromOmc, buildWorldModelFromOmc } from './omcProjection'
+import { resolveThreadIntent } from './omcThreadIntents'
+import { createWorkOrder } from './orchestration'
+import { usePrototypeRemoteApiOptional } from './remoteApi'
+import { resumeAfterDecision } from './workOrderLoop'
 import { syncOperatorThreadBundle } from './threads'
+import { ingestIncomingMessages as ingestSessionMessages } from '@/lib/sessionMessageStore'
 import {
     approvalContextPresentation,
     riskContextPresentation
@@ -17,6 +38,7 @@ import type {
     PrototypeApprovalState,
     OperatorMessage,
     OperatorThread,
+    DecisionTopic,
     PrototypeClock,
     PrototypeDataSource,
     PrototypeDirectionPosture,
@@ -32,7 +54,10 @@ import type {
     PrototypeStream,
     PrototypeStreamDetail,
     PrototypeTimeWindow,
-    PrototypeCheckpointId
+    PrototypeCheckpointId,
+    WorldModel,
+    WorkOrder,
+    TraceSelection
 } from './types'
 
 type PrototypeReaction = {
@@ -45,6 +70,8 @@ type PrototypeUiState = {
     checkpoint: PrototypeCheckpointId
     window: PrototypeTimeWindow
     autoplay: boolean
+    worldModel: WorldModel
+    decisionTopics: Record<string, DecisionTopic>
     approvalStates: Record<string, PrototypeApprovalState | undefined>
     riskStates: Record<string, PrototypeRiskState | undefined>
     goalPriorities: Record<string, PrototypeGoalPriority | undefined>
@@ -53,12 +80,16 @@ type PrototypeUiState = {
     threadsById: Record<string, OperatorThread>
     messagesByThread: Record<string, OperatorMessage[]>
     activeThreadId: string | null
+    activeThreadSelectionId: number
+    traceSelection: TraceSelection | null
     lastReaction: PrototypeReaction | null
 }
 
 type PrototypeAction =
     | { type: 'attach-demo-program' }
     | { type: 'set-active-thread'; id: string }
+    | { type: 'open-plan-trace'; input: TraceSelection }
+    | { type: 'clear-plan-trace' }
     | { type: 'approve-batch-item'; id: string }
     | { type: 'defer-batch-item'; id: string }
     | { type: 'guide-approval'; id: string; goalId: string; direction: PrototypeDirectionPosture }
@@ -83,9 +114,19 @@ type PrototypeStoreValue = {
     clock: PrototypeClock
     threads: OperatorThread[]
     activeThread: OperatorThread | null
+    activeThreadSelectionId: number
+    live: null | {
+        programs: Array<Pick<OmcProgramSummary, 'id' | 'name' | 'repoRoot'>>
+        selectedProgramId: string | null
+        error: string | null
+        planning: OmcProgramPlanningState | null
+        planningRun: OmcGuidedPlanningRun | null
+        sessionIdByPlanKey: Record<string, string | null>
+    }
 }
 
 const STORAGE_KEY = 'hopi:omc-prototype:v1'
+const LIVE_PROGRAM_STORAGE_KEY = 'hopi:omc-prototype:selected-program'
 
 const PrototypeStoreContext = createContext<PrototypeStoreValue | null>(null)
 
@@ -131,8 +172,191 @@ function migrateLegacyMessages(rawMessages: unknown): Record<string, OperatorMes
     }, {})
 }
 
+function cloneWorldModel(worldModel: WorldModel): WorldModel {
+    return {
+        currentFocus: {
+            goalId: worldModel.currentFocus.goalId,
+            streamId: worldModel.currentFocus.streamId,
+        },
+        workOrders: Object.fromEntries(
+            Object.entries(worldModel.workOrders).map(([id, order]) => [
+                id,
+                {
+                    ...order,
+                    constraints: [...order.constraints],
+                    loop: {
+                        ...order.loop,
+                    },
+                },
+            ]),
+        ),
+        decisionTopics: Object.fromEntries(
+            Object.entries(worldModel.decisionTopics).map(([id, topic]) => [
+                id,
+                {
+                    ...topic,
+                    messages: [...topic.messages],
+                },
+            ]),
+        ),
+        agentEvents: [...worldModel.agentEvents],
+    }
+}
+
+function approvalThreadIdForItem(itemId: string): string {
+    return `approval:${itemId}`
+}
+
+function settleApprovalWorkOrder(order: WorkOrder, summary: string): WorkOrder {
+    return {
+        ...order,
+        constraints: [...order.constraints],
+        loop: {
+            ...order.loop,
+            lastDecisionSummary: summary,
+        },
+        state: 'queued',
+        waitingOnTopicId: null,
+    }
+}
+
+function approvalDecisionSummary(
+    item: PrototypeApprovalItem,
+    state: 'approved' | 'deferred' | 'guided',
+    direction?: PrototypeDirectionPosture,
+): string {
+    switch (state) {
+        case 'approved':
+            return `${approvalActionLabel(item.kind)}：${item.title}`
+        case 'deferred':
+            return `稍后处理：${item.title}`
+        case 'guided':
+            return `请按「${labelDirection(direction ?? 'maintain')}」处理：${item.title}`
+    }
+}
+
+function primaryStreamId(snapshot: PrototypeScenarioSnapshot, goalId: string): string | null {
+    return snapshot.streams.find((stream) => stream.goalId === goalId)?.id ?? null
+}
+
+function createApprovalWorkOrderSeed(snapshot: PrototypeScenarioSnapshot, item: PrototypeApprovalItem, previous: WorkOrder | undefined): WorkOrder {
+    const target = resolveApprovalSeedTarget(snapshot.checkpoint.id, item.id)
+    const base = createWorkOrder({
+        id: `work-order:${item.id}`,
+        goalId: item.goalId,
+        streamId: target.streamId,
+        phaseId: target.phaseId,
+        planId: target.planId,
+        summary: item.summary,
+    })
+
+    const state =
+        previous?.state
+        ?? (
+            item.state === 'pending'
+                ? 'waiting_user'
+                : item.state === 'approved'
+                    ? 'accepted'
+                    : item.state === 'deferred'
+                        ? 'blocked'
+                        : 'queued'
+        )
+
+    return {
+        ...base,
+        ...(previous ?? {}),
+        state,
+        summary: previous?.summary ?? base.summary,
+        constraints: previous ? [...previous.constraints] : [...base.constraints],
+        loop: {
+            ...base.loop,
+            ...(previous?.loop ?? {}),
+        },
+        waitingOnTopicId: previous?.waitingOnTopicId ?? (
+            state === 'waiting_user'
+                ? approvalThreadIdForItem(item.id)
+                : null
+        ),
+    }
+}
+
+function projectWorldModel(snapshot: PrototypeScenarioSnapshot, worldModel: WorldModel): WorldModel {
+    const nextWorld = cloneWorldModel(worldModel)
+    const seededWorld = createSeededWorldModel(snapshot.checkpoint.id)
+    const focusGoalId = snapshot.goals.some((goal) => goal.id === nextWorld.currentFocus.goalId)
+        ? nextWorld.currentFocus.goalId
+        : snapshot.goals[0]?.id ?? null
+
+    nextWorld.currentFocus = {
+        goalId: focusGoalId,
+        streamId: snapshot.streams.some((stream) =>
+            stream.id === nextWorld.currentFocus.streamId
+            && stream.goalId === focusGoalId,
+        )
+            ? nextWorld.currentFocus.streamId
+            : (focusGoalId ? primaryStreamId(snapshot, focusGoalId) : null),
+    }
+
+    nextWorld.workOrders = Object.fromEntries(
+        Object.entries(seededWorld.workOrders).map(([id, seededOrder]) => {
+            const previous = nextWorld.workOrders[id]
+            if (!previous) {
+                return [id, seededOrder]
+            }
+
+            return [id, {
+                ...seededOrder,
+                ...previous,
+                constraints: [...previous.constraints],
+                loop: {
+                    ...seededOrder.loop,
+                    ...previous.loop,
+                },
+            }]
+        }),
+    )
+
+    nextWorld.agentEvents = nextWorld.agentEvents.filter((event) => Boolean(nextWorld.workOrders[event.workOrderId]))
+
+    if (snapshot.checkpoint.id !== 'approval') {
+        return nextWorld
+    }
+
+    for (const item of collectApprovalItems(snapshot)) {
+        const id = `work-order:${item.id}`
+        nextWorld.workOrders[id] = createApprovalWorkOrderSeed(snapshot, item, nextWorld.workOrders[id])
+    }
+
+    return nextWorld
+}
+
+function resolveDecisionTopicAfterReply(
+    topic: DecisionTopic | undefined,
+    thread: OperatorThread,
+    text: string,
+): DecisionTopic {
+    return {
+        id: thread.id,
+        kind: thread.kind,
+        title: thread.title,
+        goalId: thread.goalId,
+        workOrderId: topic?.workOrderId ?? null,
+        lifecycle: 'resolved',
+        unread: false,
+        messages: [...(topic?.messages ?? []), text],
+    }
+}
+
 function syncThreadState(state: PrototypeUiState): PrototypeUiState {
-    const snapshot = buildDerivedSnapshot(state)
+    const projectedWorld = projectWorldModel(getPrototypeSnapshot(state.checkpoint), state.worldModel)
+    const snapshot = buildDerivedSnapshot({
+        ...state,
+        worldModel: projectedWorld,
+    })
+    const derivedTopics = deriveDecisionTopics({
+        world: projectedWorld,
+        previousTopics: state.decisionTopics,
+    })
     const { bundle, activeThreadId } = syncOperatorThreadBundle({
         snapshot,
         previousState: {
@@ -140,13 +364,41 @@ function syncThreadState(state: PrototypeUiState): PrototypeUiState {
             messagesByThread: state.messagesByThread,
             activeThreadId: state.activeThreadId,
         },
+        decisionTopics: derivedTopics,
     })
 
     return {
         ...state,
+        worldModel: projectedWorld,
+        decisionTopics: derivedTopics,
         threadsById: bundle.threadsById,
         messagesByThread: bundle.messagesByThread,
         activeThreadId,
+    }
+}
+
+function selectThreadState(state: PrototypeUiState, threadId: string | null): PrototypeUiState {
+    return {
+        ...state,
+        activeThreadId: threadId,
+        activeThreadSelectionId: state.activeThreadSelectionId + 1,
+    }
+}
+
+function openPlanTraceState(state: PrototypeUiState, input: TraceSelection): PrototypeUiState {
+    return {
+        ...state,
+        traceSelection: {
+            planId: input.planId,
+            streamId: input.streamId,
+        },
+    }
+}
+
+function clearPlanTraceState(state: PrototypeUiState): PrototypeUiState {
+    return {
+        ...state,
+        traceSelection: null,
     }
 }
 
@@ -161,6 +413,10 @@ function buildInitialState(): PrototypeUiState {
                     checkpoint: parsed.checkpoint ?? 'intake',
                     window: parsed.window ?? 'today',
                     autoplay: parsed.autoplay ?? false,
+                    worldModel: parsed.worldModel
+                        ? cloneWorldModel(parsed.worldModel as WorldModel)
+                        : createSeededWorldModel(parsed.checkpoint ?? 'intake'),
+                    decisionTopics: parsed.decisionTopics ? { ...(parsed.decisionTopics as Record<string, DecisionTopic>) } : {},
                     approvalStates: parsed.approvalStates ?? {},
                     riskStates: parsed.riskStates ?? {},
                     goalPriorities: parsed.goalPriorities ?? {},
@@ -169,6 +425,8 @@ function buildInitialState(): PrototypeUiState {
                     threadsById: parsed.threadsById ?? {},
                     messagesByThread: parsed.messagesByThread ?? migrateLegacyMessages((parsed as { chatMessages?: unknown }).chatMessages),
                     activeThreadId: parsed.activeThreadId ?? null,
+                    activeThreadSelectionId: parsed.activeThreadSelectionId ?? 0,
+                    traceSelection: parsed.traceSelection ? { ...(parsed.traceSelection as TraceSelection) } : null,
                     lastReaction: parsed.lastReaction ?? null,
                 })
             } catch {
@@ -181,6 +439,8 @@ function buildInitialState(): PrototypeUiState {
         checkpoint: 'intake',
         window: 'today',
         autoplay: false,
+        worldModel: createSeededWorldModel('intake'),
+        decisionTopics: {},
         approvalStates: {},
         riskStates: {},
         goalPriorities: {},
@@ -189,6 +449,8 @@ function buildInitialState(): PrototypeUiState {
         threadsById: {},
         messagesByThread: {},
         activeThreadId: null,
+        activeThreadSelectionId: 0,
+        traceSelection: null,
         lastReaction: null,
     })
 }
@@ -445,62 +707,111 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
             return syncThreadState({
                 ...state,
                 attachedProgramId: 'personal-quant',
+                worldModel: createSeededWorldModel(state.checkpoint),
+                decisionTopics: {},
                 threadsById: {},
                 messagesByThread: {},
                 activeThreadId: null,
+                activeThreadSelectionId: 0,
                 lastReaction: null,
             })
         case 'set-active-thread':
-            return {
+            return selectThreadState({
                 ...state,
-                activeThreadId: action.id,
                 threadsById: markThreadRead(state.threadsById, action.id),
-            }
+                traceSelection: null,
+            }, action.id)
+        case 'open-plan-trace':
+            return openPlanTraceState(state, action.input)
+        case 'clear-plan-trace':
+            return clearPlanTraceState(state)
         case 'approve-batch-item': {
             const item = findApprovalItem(state, action.id)
+            const threadId = approvalThreadIdForItem(action.id)
+            const thread = state.threadsById[threadId]
+            const workOrderId = `work-order:${action.id}`
+            const summary = item ? approvalDecisionSummary(item, 'approved') : '已批准'
             const reaction = reactionForApproval(action.id, 'approved')
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 approvalStates: {
                     ...state.approvalStates,
                     [action.id]: 'approved'
                 },
-                messagesByThread: item
+                worldModel: state.worldModel.workOrders[workOrderId]
+                    ? {
+                        ...state.worldModel,
+                        workOrders: {
+                            ...state.worldModel.workOrders,
+                            [workOrderId]: settleApprovalWorkOrder(state.worldModel.workOrders[workOrderId], summary),
+                        },
+                    }
+                    : state.worldModel,
+                decisionTopics: thread
+                    ? {
+                        ...state.decisionTopics,
+                        [threadId]: resolveDecisionTopicAfterReply(state.decisionTopics[threadId], thread, summary),
+                    }
+                    : state.decisionTopics,
+                messagesByThread: item && thread
                     ? appendConversation(
                         state,
-                        `approval:${action.id}`,
-                        `${approvalActionLabel(item.kind)}：${item.title}`,
+                        threadId,
+                        summary,
                         reaction.summary
                     )
                     : state.messagesByThread,
-                activeThreadId: `approval:${action.id}`,
                 lastReaction: reaction
-            })
+            }, threadId))
         }
         case 'defer-batch-item': {
             const item = findApprovalItem(state, action.id)
+            const threadId = approvalThreadIdForItem(action.id)
+            const thread = state.threadsById[threadId]
+            const workOrderId = `work-order:${action.id}`
+            const summary = item ? approvalDecisionSummary(item, 'deferred') : '稍后处理'
             const reaction = reactionForApproval(action.id, 'deferred')
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 approvalStates: {
                     ...state.approvalStates,
                     [action.id]: 'deferred'
                 },
-                messagesByThread: item
+                worldModel: state.worldModel.workOrders[workOrderId]
+                    ? {
+                        ...state.worldModel,
+                        workOrders: {
+                            ...state.worldModel.workOrders,
+                            [workOrderId]: settleApprovalWorkOrder(state.worldModel.workOrders[workOrderId], summary),
+                        },
+                    }
+                    : state.worldModel,
+                decisionTopics: thread
+                    ? {
+                        ...state.decisionTopics,
+                        [threadId]: resolveDecisionTopicAfterReply(state.decisionTopics[threadId], thread, summary),
+                    }
+                    : state.decisionTopics,
+                messagesByThread: item && thread
                     ? appendConversation(
                         state,
-                        `approval:${action.id}`,
-                        `稍后处理：${item.title}`,
+                        threadId,
+                        summary,
                         reaction.summary
                     )
                     : state.messagesByThread,
-                activeThreadId: `approval:${action.id}`,
                 lastReaction: reaction
-            })
+            }, threadId))
         }
         case 'guide-approval': {
             const item = findApprovalItem(state, action.id)
-            return syncThreadState({
+            const threadId = approvalThreadIdForItem(action.id)
+            const thread = state.threadsById[threadId]
+            const workOrderId = `work-order:${action.id}`
+            const summary = item
+                ? approvalDecisionSummary(item, 'guided', action.direction)
+                : `请按「${labelDirection(action.direction)}」处理`
+            return syncThreadState(selectThreadState({
                 ...state,
                 approvalStates: {
                     ...state.approvalStates,
@@ -510,23 +821,39 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                     ...state.goalDirections,
                     [action.goalId]: action.direction
                 },
-                messagesByThread: appendConversation(
-                    state,
-                    `approval:${action.id}`,
-                    item ? `请按「${labelDirection(action.direction)}」处理：${item.title}` : `请改走${labelDirection(action.direction)}`,
-                    '收到，我会按这个方向改排后续动作，并把这条确认先从消息流里收起。'
-                ),
-                activeThreadId: `approval:${action.id}`,
+                worldModel: state.worldModel.workOrders[workOrderId]
+                    ? {
+                        ...state.worldModel,
+                        workOrders: {
+                            ...state.worldModel.workOrders,
+                            [workOrderId]: settleApprovalWorkOrder(state.worldModel.workOrders[workOrderId], summary),
+                        },
+                    }
+                    : state.worldModel,
+                decisionTopics: thread
+                    ? {
+                        ...state.decisionTopics,
+                        [threadId]: resolveDecisionTopicAfterReply(state.decisionTopics[threadId], thread, summary),
+                    }
+                    : state.decisionTopics,
+                messagesByThread: item && thread
+                    ? appendConversation(
+                        state,
+                        threadId,
+                        summary,
+                        '收到，我会按这个方向改排后续动作，并把这条确认先从消息流里收起。'
+                    )
+                    : state.messagesByThread,
                 lastReaction: {
                     title: `${titleForGoal(action.goalId)}已改走${labelDirection(action.direction)}`,
                     summary: '系统会按你的指导重排这条待批事项后面的动作，不再只是等你确认。'
                 }
-            })
+            }, threadId))
         }
         case 'submit-approval-guidance': {
             const direction = inferDirectionFromGuidance(action.text)
 
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 approvalStates: {
                     ...state.approvalStates,
@@ -546,17 +873,16 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                     action.text.trim(),
                     `收到，我会按“${summarizeGuidance(action.text)}”去处理这条待批事项，并重排 ${titleForGoal(action.goalId)} 的下一步。`
                 ),
-                activeThreadId: `approval:${action.id}`,
                 lastReaction: {
                     title: `已记录你的指导`,
                     summary: `“${summarizeGuidance(action.text)}”会作为 ${titleForGoal(action.goalId)} 的当前执行要求。`
                 }
-            })
+            }, `approval:${action.id}`))
         }
         case 'acknowledge-risk': {
             const risk = findRiskItem(state, action.id)
             const reaction = reactionForRisk(action.id, 'acknowledged')
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 riskStates: {
                     ...state.riskStates,
@@ -570,14 +896,13 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                         reaction.summary
                     )
                     : state.messagesByThread,
-                activeThreadId: `risk:${action.id}`,
                 lastReaction: reaction
-            })
+            }, `risk:${action.id}`))
         }
         case 'defer-risk': {
             const risk = findRiskItem(state, action.id)
             const reaction = reactionForRisk(action.id, 'deferred')
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 riskStates: {
                     ...state.riskStates,
@@ -591,13 +916,12 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                         reaction.summary
                     )
                     : state.messagesByThread,
-                activeThreadId: `risk:${action.id}`,
                 lastReaction: reaction
-            })
+            }, `risk:${action.id}`))
         }
         case 'guide-risk': {
             const risk = findRiskItem(state, action.id)
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 riskStates: {
                     ...state.riskStates,
@@ -613,17 +937,16 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                     risk ? `请按「${labelDirection(action.direction)}」处理风险：${risk.title}` : `请改走${labelDirection(action.direction)}`,
                     '收到，我会按这个方向继续跑，并把这条风险从当前打扰位降下去。'
                 ),
-                activeThreadId: `risk:${action.id}`,
                 lastReaction: {
                     title: `${titleForGoal(action.goalId)}已改走${labelDirection(action.direction)}`,
                     summary: '系统会按这个方向消化当前风险，并同步重排后续执行。'
                 }
-            })
+            }, `risk:${action.id}`))
         }
         case 'submit-risk-guidance': {
             const direction = inferDirectionFromGuidance(action.text)
 
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 riskStates: {
                     ...state.riskStates,
@@ -643,12 +966,11 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                     action.text.trim(),
                     `收到，我会按“${summarizeGuidance(action.text)}”消化这条风险，并同步改排 ${titleForGoal(action.goalId)} 的后续动作。`
                 ),
-                activeThreadId: `risk:${action.id}`,
                 lastReaction: {
                     title: `已记录你的指导`,
                     summary: `“${summarizeGuidance(action.text)}”会成为 ${titleForGoal(action.goalId)} 处理这条风险的当前要求。`
                 }
-            })
+            }, `risk:${action.id}`))
         }
         case 'send-thread-reply': {
             const text = action.text.trim()
@@ -675,13 +997,31 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
 
             const approvalId = thread.kind === 'approval' ? thread.id.replace(/^approval:/, '') : null
             const riskId = thread.kind === 'risk' ? thread.id.replace(/^risk:/, '') : null
+            const waitingOrder = approvalId && !isQuestion
+                ? Object.values(state.worldModel.workOrders).find((order) => order.waitingOnTopicId === thread.id)
+                : null
 
-            return syncThreadState({
+            return syncThreadState(selectThreadState({
                 ...state,
                 approvalStates: approvalId && !isQuestion ? {
                     ...state.approvalStates,
                     [approvalId]: 'guided',
                 } : state.approvalStates,
+                worldModel: waitingOrder && approvalId && !isQuestion
+                    ? {
+                        ...state.worldModel,
+                        workOrders: {
+                            ...state.worldModel.workOrders,
+                            [waitingOrder.id]: resumeAfterDecision(waitingOrder, text),
+                        },
+                    }
+                    : state.worldModel,
+                decisionTopics: waitingOrder && approvalId && !isQuestion
+                    ? {
+                        ...state.decisionTopics,
+                        [thread.id]: resolveDecisionTopicAfterReply(state.decisionTopics[thread.id], thread, text),
+                    }
+                    : state.decisionTopics,
                 riskStates: riskId && !isQuestion ? {
                     ...state.riskStates,
                     [riskId]: 'guided',
@@ -704,28 +1044,39 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                     text,
                     buildAgentChatReply(state, thread, text, state.checkpoint)
                 ),
-                activeThreadId: action.threadId,
                 lastReaction: reaction
-            })
+            }, action.threadId))
         }
         case 'set-checkpoint':
             return syncThreadState({
                 ...state,
                 checkpoint: action.id,
+                worldModel: createSeededWorldModel(action.id),
+                decisionTopics: {},
                 lastReaction: null
             })
         case 'next-checkpoint':
-            return syncThreadState({
+            return syncThreadState((() => {
+                const checkpoint = nextCheckpoint(state.checkpoint)
+                return {
                 ...state,
-                checkpoint: nextCheckpoint(state.checkpoint),
-                lastReaction: null
-            })
+                    checkpoint,
+                    worldModel: createSeededWorldModel(checkpoint),
+                    decisionTopics: {},
+                    lastReaction: null
+                }
+            })())
         case 'previous-checkpoint':
-            return syncThreadState({
+            return syncThreadState((() => {
+                const checkpoint = previousCheckpoint(state.checkpoint)
+                return {
                 ...state,
-                checkpoint: previousCheckpoint(state.checkpoint),
-                lastReaction: null
-            })
+                    checkpoint,
+                    worldModel: createSeededWorldModel(checkpoint),
+                    decisionTopics: {},
+                    lastReaction: null
+                }
+            })())
         case 'set-window':
             return syncThreadState({
                 ...state,
@@ -1441,17 +1792,19 @@ function buildDerivedSnapshot(state: PrototypeUiState): PrototypeScenarioSnapsho
     applyApprovalConsequences(snapshot, state.approvalStates)
     applyRiskConsequences(snapshot, state.riskStates)
     applyGoalGuidanceEffects(snapshot, state.goalGuidance)
+    applyWorldModelEffects(snapshot, state.worldModel)
     sortScenario(snapshot)
 
     return snapshot
 }
 
-function createDataSource(state: PrototypeUiState): PrototypeDataSource {
-    const snapshot = buildDerivedSnapshot(state)
-
+function createDataSourceFromSnapshot(snapshot: PrototypeScenarioSnapshot): PrototypeDataSource {
     const getBatch = (window: PrototypeTimeWindow): PrototypeApprovalBatch => snapshot.approvalBatches[window]
 
     return {
+        getSnapshot() {
+            return snapshot
+        },
         getPortfolio(window): PrototypePortfolioView {
             return {
                 checkpoint: snapshot.checkpoint,
@@ -1505,7 +1858,181 @@ function createDataSource(state: PrototypeUiState): PrototypeDataSource {
     }
 }
 
-export function PrototypeStoreProvider(props: { children: React.ReactNode }) {
+function createDataSource(state: PrototypeUiState): PrototypeDataSource {
+    return createDataSourceFromSnapshot(buildDerivedSnapshot(state))
+}
+
+type LiveProjection = {
+    programId: string
+    programs: Array<Pick<OmcProgramSummary, 'id' | 'name' | 'repoRoot'>>
+    overview: OmcProgramOverviewResponse
+    index: OmcPlanningIndexResponse
+    runtimes: OmcPlanRuntime[]
+    planningRun: OmcGuidedPlanningRun | null
+    details: Record<string, OmcPlanDetailResponse>
+    snapshot: PrototypeScenarioSnapshot
+    worldModel: WorldModel
+    runtimeByPlanKey: Record<string, OmcPlanRuntime>
+    sessionIdByPlanKey: Record<string, string | null>
+    threadPlanKeyById: Record<string, string>
+}
+
+type LiveThreadState = {
+    threadsById: Record<string, OperatorThread>
+    messagesByThread: Record<string, OperatorMessage[]>
+    activeThreadId: string | null
+    activeThreadSelectionId: number
+}
+
+function findLatestAttempt(detail: OmcPlanDetailResponse | null | undefined) {
+    return [...(detail?.attempts ?? [])]
+        .sort((left, right) => right.attemptNumber - left.attemptNumber || right.updatedAt - left.updatedAt)[0]
+        ?? null
+}
+
+function rankLivePlan(runtime: OmcPlanRuntime | null | undefined): number {
+    if (!runtime) {
+        return 7
+    }
+    if (runtime.reviewRequired) {
+        return 0
+    }
+    if (runtime.loopStatus === 'running' || runtime.column === 'Running') {
+        return 1
+    }
+    if (runtime.mergeStatus === 'blocked' || runtime.mergeStatus === 'conflict') {
+        return 2
+    }
+    if (runtime.mergeStatus === 'ready') {
+        return 3
+    }
+    if (runtime.column === 'Review') {
+        return 4
+    }
+    if (runtime.column === 'Planning') {
+        return 5
+    }
+    return 6
+}
+
+function buildLiveThreadPlanKeyMap(input: {
+    snapshot: PrototypeScenarioSnapshot
+    index: OmcPlanningIndexResponse
+    runtimeByPlanKey: Record<string, OmcPlanRuntime>
+}): Record<string, string> {
+    const mapping: Record<string, string> = {}
+
+    for (const phase of input.index.phases) {
+        const primaryPlan = [...phase.plans]
+            .sort((left, right) => {
+                const rankDelta =
+                    rankLivePlan(input.runtimeByPlanKey[left.planKey])
+                    - rankLivePlan(input.runtimeByPlanKey[right.planKey])
+                if (rankDelta !== 0) {
+                    return rankDelta
+                }
+
+                return right.lastModifiedAt - left.lastModifiedAt
+            })[0]
+
+        if (primaryPlan) {
+            mapping[`status:${phase.phaseKey}`] = primaryPlan.planKey
+            mapping[`direction:${phase.phaseKey}`] = primaryPlan.planKey
+        }
+    }
+
+    for (const item of input.snapshot.approvalBatches.today.items) {
+        mapping[`approval:${item.id}`] = item.id
+    }
+
+    for (const risk of input.snapshot.risks) {
+        const threadId = risk.id.startsWith('risk:') ? risk.id : `risk:${risk.id}`
+        const planKey = risk.id.replace(/^risk:/, '')
+        mapping[threadId] = planKey
+    }
+
+    return mapping
+}
+
+async function loadLiveProjection(
+    api: NonNullable<ReturnType<typeof usePrototypeRemoteApiOptional>>,
+    preferredProgramId?: string | null,
+): Promise<LiveProjection> {
+    const programsResponse = await api.getPrograms()
+    const programs = programsResponse.programs.map((program) => ({
+        id: program.id,
+        name: program.name,
+        repoRoot: program.repoRoot,
+    }))
+    const programId =
+        (preferredProgramId
+            ? programsResponse.programs.find((program) => program.id === preferredProgramId)?.id
+            : null)
+        ?? programsResponse.programs.find((program) => program.id === 'omc-default')?.id
+        ?? programsResponse.programs[0]?.id
+
+    if (!programId) {
+        throw new Error('No OMC program available. Attach or seed a repo first.')
+    }
+
+    const [overview, planningState, index, runtimeResponse] = await Promise.all([
+        api.getProgram(programId),
+        api.getGuidedPlanningState(programId),
+        api.getPlanningIndex(programId),
+        api.getPlanRuntimes(programId),
+    ])
+
+    const detailEntries = await Promise.all(
+        index.phases
+            .flatMap((phase) => phase.plans)
+            .map(async (plan) => [plan.planKey, await api.getPlanDetail(programId, plan.planKey)] as const),
+    )
+
+    const details = Object.fromEntries(detailEntries)
+    const runtimes = runtimeResponse.runtimes
+    const snapshot = buildPrototypeSnapshotFromOmc({
+        overview,
+        index,
+        runtimes,
+        planningRun: planningState.run,
+        details,
+    })
+    const worldModel = buildWorldModelFromOmc({
+        overview,
+        index,
+        runtimes,
+        planningRun: planningState.run,
+        details,
+    })
+    const runtimeByPlanKey = Object.fromEntries(
+        runtimes.map((runtime) => [runtime.planKey, runtime] as const),
+    )
+    const sessionIdByPlanKey = Object.fromEntries(
+        Object.entries(details).map(([planKey, detail]) => [planKey, findLatestAttempt(detail)?.sessionId ?? null] as const),
+    )
+    const threadPlanKeyById = buildLiveThreadPlanKeyMap({
+        snapshot,
+        index,
+        runtimeByPlanKey,
+    })
+
+    return {
+        programId,
+        programs,
+        overview,
+        index,
+        runtimes,
+        planningRun: planningState.run,
+        details,
+        snapshot,
+        worldModel,
+        runtimeByPlanKey,
+        sessionIdByPlanKey,
+        threadPlanKeyById,
+    }
+}
+
+function PrototypeDemoStoreProvider(props: { children: React.ReactNode }) {
     const [state, dispatch] = useReducer(reducer, undefined, buildInitialState)
 
     useEffect(() => {
@@ -1532,6 +2059,12 @@ export function PrototypeStoreProvider(props: { children: React.ReactNode }) {
         },
         setActiveThread(id) {
             dispatch({ type: 'set-active-thread', id })
+        },
+        openPlanTrace(input) {
+            dispatch({ type: 'open-plan-trace', input })
+        },
+        clearPlanTrace() {
+            dispatch({ type: 'clear-plan-trace' })
         },
         performQuickAction(threadId, actionId) {
             const thread = state.threadsById[threadId]
@@ -1650,6 +2183,8 @@ export function PrototypeStoreProvider(props: { children: React.ReactNode }) {
         },
         threads: Object.values(state.threadsById),
         activeThread: state.activeThreadId ? state.threadsById[state.activeThreadId] ?? null : null,
+        activeThreadSelectionId: state.activeThreadSelectionId,
+        live: null,
     }), [actions, dataSource, state])
 
     return (
@@ -1657,6 +2192,484 @@ export function PrototypeStoreProvider(props: { children: React.ReactNode }) {
             {props.children}
         </PrototypeStoreContext.Provider>
     )
+}
+
+function LivePrototypeStoreProvider(props: {
+    api: NonNullable<ReturnType<typeof usePrototypeRemoteApiOptional>>
+    children: React.ReactNode
+}) {
+    const [projection, setProjection] = useState<LiveProjection | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [selectedProgramId, setSelectedProgramId] = useState<string | null>(() => {
+        if (typeof window === 'undefined') {
+            return null
+        }
+
+        try {
+            return window.localStorage.getItem(LIVE_PROGRAM_STORAGE_KEY)
+        } catch {
+            return null
+        }
+    })
+    const [windowState, setWindowState] = useState<PrototypeTimeWindow>('today')
+    const [traceSelection, setTraceSelection] = useState<TraceSelection | null>(null)
+    const [threadState, setThreadState] = useState<LiveThreadState>({
+        threadsById: {},
+        messagesByThread: {},
+        activeThreadId: null,
+        activeThreadSelectionId: 0,
+    })
+    const requestIdRef = useRef(0)
+    const selectedProgramIdRef = useRef(selectedProgramId)
+    const loadedProgramIdRef = useRef<string | null>(null)
+
+    useEffect(() => {
+        selectedProgramIdRef.current = selectedProgramId
+    }, [selectedProgramId])
+
+    const refreshProjection = useCallback(async (options?: { silent?: boolean; preferredProgramId?: string | null }) => {
+        const requestId = requestIdRef.current + 1
+        requestIdRef.current = requestId
+        const targetProgramId = options?.preferredProgramId ?? selectedProgramIdRef.current
+        const fallbackProgramId = loadedProgramIdRef.current
+        if (!options?.silent) {
+            setLoading(true)
+        }
+
+        try {
+            const nextProjection = await loadLiveProjection(props.api, targetProgramId)
+            if (requestIdRef.current !== requestId) {
+                return
+            }
+
+            loadedProgramIdRef.current = nextProjection.programId
+            setProjection(nextProjection)
+            setSelectedProgramId(nextProjection.programId)
+            setError(null)
+        } catch (refreshError) {
+            if (requestIdRef.current !== requestId) {
+                return
+            }
+
+            setError(refreshError instanceof Error ? refreshError.message : 'Failed to load OMC runtime')
+            if (targetProgramId && targetProgramId !== fallbackProgramId) {
+                setSelectedProgramId(fallbackProgramId)
+            }
+        } finally {
+            if (requestIdRef.current === requestId) {
+                setLoading(false)
+            }
+        }
+    }, [props.api])
+
+    useEffect(() => {
+        void refreshProjection()
+    }, [refreshProjection])
+
+    useEffect(() => {
+        const persistedProgramId = projection?.programId ?? null
+        if (!persistedProgramId || typeof window === 'undefined') {
+            return
+        }
+
+        try {
+            window.localStorage.setItem(LIVE_PROGRAM_STORAGE_KEY, persistedProgramId)
+        } catch {
+        }
+    }, [projection?.programId])
+
+    useEffect(() => {
+        const eventSource = new EventSource(props.api.createEventsUrl())
+        let timer: number | null = null
+
+        eventSource.onmessage = (message) => {
+            try {
+                const event = JSON.parse(message.data) as SyncEvent
+                if (event.type === 'message-received') {
+                    ingestSessionMessages(event.sessionId, [event.message])
+                    return
+                }
+
+                if (!event.type?.startsWith('omc-')) {
+                    return
+                }
+
+                if (timer !== null) {
+                    window.clearTimeout(timer)
+                }
+                timer = window.setTimeout(() => {
+                    void refreshProjection({ silent: true })
+                }, 250)
+            } catch {
+            }
+        }
+
+        return () => {
+            if (timer !== null) {
+                window.clearTimeout(timer)
+            }
+            eventSource.close()
+        }
+    }, [props.api, refreshProjection])
+
+    useEffect(() => {
+        if (!projection) {
+            return
+        }
+
+        setThreadState((previous) => {
+            const { bundle, activeThreadId } = syncOperatorThreadBundle({
+                snapshot: projection.snapshot,
+                previousState: {
+                    threadsById: previous.threadsById,
+                    messagesByThread: previous.messagesByThread,
+                    activeThreadId: previous.activeThreadId,
+                },
+                decisionTopics: projection.worldModel.decisionTopics,
+            })
+
+            return {
+                ...previous,
+                threadsById: bundle.threadsById,
+                messagesByThread: bundle.messagesByThread,
+                activeThreadId,
+            }
+        })
+    }, [projection])
+
+    const appendConversationMessages = useCallback((threadId: string, userBody: string | null, agentBody: string, role: OperatorMessage['role'] = 'agent') => {
+        setThreadState((previous) => {
+            const nextMessages: OperatorMessage[] = []
+            if (userBody) {
+                nextMessages.push(createChatMessage('user', userBody, threadId))
+            }
+            nextMessages.push(createChatMessage(role, agentBody, threadId))
+
+            return {
+                ...previous,
+                messagesByThread: appendChatMessages(previous.messagesByThread, threadId, ...nextMessages),
+            }
+        })
+    }, [])
+
+    const setActiveThread = useCallback((id: string) => {
+        setTraceSelection(null)
+        setThreadState((previous) => ({
+            ...previous,
+            threadsById: markThreadRead(previous.threadsById, id),
+            activeThreadId: id,
+            activeThreadSelectionId: previous.activeThreadSelectionId + 1,
+        }))
+    }, [])
+
+    const ensureActiveSessionForPlan = useCallback(async (planKey: string): Promise<string | null> => {
+        if (!projection) {
+            return null
+        }
+
+        const preferredSessionId = projection.sessionIdByPlanKey[planKey] ?? null
+        if (preferredSessionId) {
+            try {
+                const session = await props.api.getSession(preferredSessionId)
+                if (session.session.active) {
+                    return preferredSessionId
+                }
+            } catch {
+            }
+
+            try {
+                return await props.api.resumeSession(preferredSessionId)
+            } catch {
+            }
+        }
+
+        const takeover = await props.api.takeoverPlan(projection.programId, planKey)
+        return takeover.sessionId ?? takeover.attempt?.sessionId ?? null
+    }, [projection, props.api])
+
+    const runThreadReply = useCallback(async (threadId: string, text: string) => {
+        const currentProjection = projection
+        const thread = threadState.threadsById[threadId]
+        if (!currentProjection || !thread) {
+            return
+        }
+
+        const planKey = currentProjection.threadPlanKeyById[threadId] ?? null
+        const runtime = planKey ? currentProjection.runtimeByPlanKey[planKey] ?? null : null
+        const sessionId = planKey ? currentProjection.sessionIdByPlanKey[planKey] ?? null : null
+        const intent = resolveThreadIntent({
+            thread,
+            text,
+            runtime,
+            sessionId,
+        })
+
+        try {
+            switch (intent.kind) {
+                case 'approve-review':
+                    await props.api.approveReview(currentProjection.programId, intent.planKey)
+                    appendConversationMessages(threadId, text, `已批准 ${intent.planKey} 的 review 边界，状态机会继续推进。`)
+                    await refreshProjection({ silent: true })
+                    return
+                case 'approve-merge': {
+                    const result = await props.api.approveMerge(currentProjection.programId, intent.planKey)
+                    const summary =
+                        result.merge.outcome === 'merged'
+                            ? `已批准 ${intent.planKey} 合并，变更已并入 ${result.merge.targetBranch ?? '目标分支'}。`
+                            : result.merge.blockedReason
+                                ? `已尝试推进 ${intent.planKey} 合并，但仍被阻塞：${result.merge.blockedReason}`
+                                : `已触发 ${intent.planKey} 的 merge 流程，当前结果：${result.merge.outcome}。`
+                    appendConversationMessages(threadId, text, summary)
+                    await refreshProjection({ silent: true })
+                    return
+                }
+                case 'reopen-review':
+                    await props.api.reopenReview(currentProjection.programId, intent.planKey, intent.action)
+                    appendConversationMessages(
+                        threadId,
+                        text,
+                        intent.action === 'back_to_planning'
+                            ? `已把 ${intent.planKey} 退回 planning，下一轮会重新规划。`
+                            : `已把 ${intent.planKey} 退回执行环，agent 会继续补一轮。`,
+                    )
+                    await refreshProjection({ silent: true })
+                    return
+                case 'send-session-message': {
+                    let ensuredSessionId: string | null = null
+                    if (planKey) {
+                        ensuredSessionId = await ensureActiveSessionForPlan(planKey)
+                    } else {
+                        try {
+                            const session = await props.api.getSession(intent.sessionId)
+                            ensuredSessionId = session.session.active
+                                ? intent.sessionId
+                                : await props.api.resumeSession(intent.sessionId)
+                        } catch {
+                            ensuredSessionId = await props.api.resumeSession(intent.sessionId)
+                        }
+                    }
+                    if (!ensuredSessionId) {
+                        throw new Error('No live session available for this thread.')
+                    }
+
+                    await props.api.sendMessage(ensuredSessionId, intent.text)
+                    appendConversationMessages(threadId, text, `已把指令转发到运行中的 agent 会话。`)
+                    await refreshProjection({ silent: true })
+                    return
+                }
+                case 'no-op':
+                    if (planKey) {
+                        const ensuredSessionId = await ensureActiveSessionForPlan(planKey)
+                        if (!ensuredSessionId) {
+                            throw new Error('No live session available for this thread.')
+                        }
+
+                        await props.api.sendMessage(ensuredSessionId, text)
+                        appendConversationMessages(threadId, text, '已把你的指令转发给当前主线 agent。')
+                        await refreshProjection({ silent: true })
+                        return
+                    }
+
+                    appendConversationMessages(threadId, text, '这条回复还没有映射到具体 runtime 动作。', 'system')
+                    return
+            }
+        } catch (sendError) {
+            appendConversationMessages(
+                threadId,
+                text,
+                sendError instanceof Error ? sendError.message : 'Runtime action failed',
+                'system',
+            )
+        }
+    }, [appendConversationMessages, ensureActiveSessionForPlan, projection, props.api, refreshProjection, threadState.threadsById])
+
+    const performQuickAction = useCallback((threadId: string, actionId: string) => {
+        const thread = threadState.threadsById[threadId]
+        const quickAction = thread?.quickActions.find((item) => item.id === actionId)
+        if (!thread || !quickAction) {
+            return
+        }
+
+        switch (quickAction.operation.type) {
+            case 'approval-approve':
+                void runThreadReply(threadId, '好，直接合并')
+                return
+            case 'approval-defer':
+                appendConversationMessages(threadId, '先放这里，我稍后再处理。', '已记录为稍后处理，后端状态暂时不变。')
+                return
+            case 'approval-guide':
+                void runThreadReply(threadId, `请按${labelDirection(quickAction.operation.direction)}处理，再跑一轮。`)
+                return
+            case 'risk-acknowledge':
+                void runThreadReply(threadId, '已知风险，继续当前路线。')
+                return
+            case 'risk-defer':
+                appendConversationMessages(threadId, '先记下这条风险，暂不处理。', '已记下这条风险，后端状态暂时不变。')
+                return
+            case 'risk-guide':
+                void runThreadReply(threadId, `请按${labelDirection(quickAction.operation.direction)}处理这条风险。`)
+                return
+            case 'direction-set':
+                void runThreadReply(threadId, `路线调整：${labelDirection(quickAction.operation.direction)}。`)
+                return
+            case 'priority-set':
+                void runThreadReply(threadId, `优先级调整：${labelPriority(quickAction.operation.priority)}。`)
+                return
+        }
+    }, [appendConversationMessages, runThreadReply, threadState.threadsById])
+
+    const actions = useMemo<PrototypeActionDispatcher>(() => ({
+        attachDemoProgram() {
+        },
+        selectProgram(programId) {
+            if (programId === loadedProgramIdRef.current) {
+                void refreshProjection()
+                return
+            }
+            setTraceSelection(null)
+            setError(null)
+            setLoading(true)
+            void refreshProjection({ preferredProgramId: programId })
+        },
+        setActiveThread,
+        openPlanTrace(input) {
+            setTraceSelection(input)
+        },
+        clearPlanTrace() {
+            setTraceSelection(null)
+        },
+        performQuickAction,
+        sendThreadReply(threadId, text) {
+            void runThreadReply(threadId, text)
+        },
+        approveBatchItem(id) {
+            void runThreadReply(`approval:${id}`, '好，直接合并')
+        },
+        deferBatchItem(id) {
+            appendConversationMessages(`approval:${id}`, '先放这里，我稍后再处理。', '已记下，后端状态暂时不变。')
+        },
+        guideApproval(id, goalId, direction) {
+            void goalId
+            void runThreadReply(`approval:${id}`, `请按${labelDirection(direction)}处理，再跑一轮。`)
+        },
+        submitApprovalGuidance(id, goalId, text) {
+            void goalId
+            void runThreadReply(`approval:${id}`, text)
+        },
+        acknowledgeRisk(id) {
+            const threadId = id.startsWith('risk:') ? id : `risk:${id}`
+            void runThreadReply(threadId, '已知风险，继续当前路线。')
+        },
+        deferRisk(id) {
+            const threadId = id.startsWith('risk:') ? id : `risk:${id}`
+            appendConversationMessages(threadId, '先记下这条风险，暂不处理。', '已记下，后端状态暂时不变。')
+        },
+        guideRisk(id, goalId, direction) {
+            void goalId
+            const threadId = id.startsWith('risk:') ? id : `risk:${id}`
+            void runThreadReply(threadId, `请按${labelDirection(direction)}处理这条风险。`)
+        },
+        submitRiskGuidance(id, goalId, text) {
+            void goalId
+            const threadId = id.startsWith('risk:') ? id : `risk:${id}`
+            void runThreadReply(threadId, text)
+        },
+        sendChatMessage(goalId, threadId, text) {
+            void goalId
+            void runThreadReply(threadId, text)
+        },
+        setClockCheckpoint() {
+        },
+        nextCheckpoint() {
+        },
+        previousCheckpoint() {
+        },
+        setTimeWindow(window) {
+            setWindowState(window)
+        },
+        setAutoplay() {
+        },
+        setGoalPriority(goalId, priority) {
+            void runThreadReply(`direction:${goalId}`, `优先级调整：${labelPriority(priority)}。`)
+        },
+        setGoalDirection(goalId, direction) {
+            void runThreadReply(`direction:${goalId}`, `路线调整：${labelDirection(direction)}。`)
+        },
+    }), [appendConversationMessages, performQuickAction, refreshProjection, runThreadReply, setActiveThread])
+
+    if (loading && !projection) {
+        return <div className="prototype-empty">正在接入真实 OMC runtime…</div>
+    }
+
+    if (error && !projection) {
+        return (
+            <div className="prototype-empty">
+                <p>{error}</p>
+                <button type="button" className="prototype-button--ghost" onClick={() => void refreshProjection()}>
+                    重试
+                </button>
+            </div>
+        )
+    }
+
+    const snapshot = projection?.snapshot ?? getPrototypeSnapshot('intake')
+    const state: PrototypeUiState = {
+        attachedProgramId: projection?.programId ?? null,
+        checkpoint: snapshot.checkpoint.id,
+        window: windowState,
+        autoplay: false,
+        worldModel: projection?.worldModel ?? createSeededWorldModel('intake'),
+        decisionTopics: projection?.worldModel.decisionTopics ?? {},
+        approvalStates: {},
+        riskStates: {},
+        goalPriorities: {},
+        goalDirections: {},
+        goalGuidance: {},
+        threadsById: threadState.threadsById,
+        messagesByThread: threadState.messagesByThread,
+        activeThreadId: threadState.activeThreadId,
+        activeThreadSelectionId: threadState.activeThreadSelectionId,
+        traceSelection,
+        lastReaction: null,
+    }
+    const dataSource = createDataSourceFromSnapshot(snapshot)
+    const value: PrototypeStoreValue = {
+        state,
+        dataSource,
+        actions,
+        clock: {
+            checkpoint: state.checkpoint,
+            autoplay: false,
+            window: windowState,
+        },
+        threads: Object.values(threadState.threadsById),
+        activeThread: state.activeThreadId ? state.threadsById[state.activeThreadId] ?? null : null,
+        activeThreadSelectionId: threadState.activeThreadSelectionId,
+        live: {
+            programs: projection?.programs ?? [],
+            selectedProgramId: selectedProgramId ?? projection?.programId ?? null,
+            error,
+            planning: projection?.overview.planning ?? null,
+            planningRun: projection?.planningRun ?? null,
+            sessionIdByPlanKey: projection?.sessionIdByPlanKey ?? {},
+        },
+    }
+
+    return (
+        <PrototypeStoreContext.Provider value={value}>
+            {props.children}
+        </PrototypeStoreContext.Provider>
+    )
+}
+
+export function PrototypeStoreProvider(props: { children: React.ReactNode }) {
+    const remoteApi = usePrototypeRemoteApiOptional()
+    if (remoteApi) {
+        return <LivePrototypeStoreProvider api={remoteApi}>{props.children}</LivePrototypeStoreProvider>
+    }
+
+    return <PrototypeDemoStoreProvider>{props.children}</PrototypeDemoStoreProvider>
 }
 
 export function usePrototypeStore(): PrototypeStoreValue {

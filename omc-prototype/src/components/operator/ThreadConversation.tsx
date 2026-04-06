@@ -6,6 +6,7 @@ import {
 } from '@assistant-ui/react'
 import { memo } from 'react'
 import ThreadHeader from '@/components/operator/ThreadHeader'
+import { OperatorMessageCard, getOperatorMessageRootClass } from '@/components/operator/OperatorMessageCard'
 import ThreadQuickActions from '@/components/operator/ThreadQuickActions'
 import { MarkdownMessagePart } from '@/components/MarkdownRenderer'
 import { useOmcAssistantRuntime } from '@/lib/omcAssistantRuntime'
@@ -18,30 +19,30 @@ const MESSAGE_PARTS = {
 
 const ThreadAssistantMessage = memo(function ThreadAssistantMessage() {
     return (
-        <MessagePrimitive.Root className="prototype-thread-message prototype-thread-message--agent">
-            <div className="prototype-thread-bubble prototype-thread-bubble--agent">
+        <MessagePrimitive.Root className={getOperatorMessageRootClass('assistant')}>
+            <OperatorMessageCard role="assistant">
                 <MessagePrimitive.Content components={MESSAGE_PARTS} />
-            </div>
+            </OperatorMessageCard>
         </MessagePrimitive.Root>
     )
 })
 
 const ThreadUserMessage = memo(function ThreadUserMessage() {
     return (
-        <MessagePrimitive.Root className="prototype-thread-message prototype-thread-message--user">
-            <div className="prototype-thread-bubble prototype-thread-bubble--user">
+        <MessagePrimitive.Root className={getOperatorMessageRootClass('user')}>
+            <OperatorMessageCard role="user">
                 <MessagePrimitive.Content components={MESSAGE_PARTS} />
-            </div>
+            </OperatorMessageCard>
         </MessagePrimitive.Root>
     )
 })
 
 const ThreadSystemMessage = memo(function ThreadSystemMessage() {
     return (
-        <MessagePrimitive.Root className="prototype-thread-message prototype-thread-message--system">
-            <div className="prototype-thread-bubble prototype-thread-bubble--system">
+        <MessagePrimitive.Root className={getOperatorMessageRootClass('system')}>
+            <OperatorMessageCard role="system">
                 <MessagePrimitive.Content components={MESSAGE_PARTS} />
-            </div>
+            </OperatorMessageCard>
         </MessagePrimitive.Root>
     )
 })
@@ -51,6 +52,8 @@ const THREAD_COMPONENTS = {
     AssistantMessage: ThreadAssistantMessage,
     SystemMessage: ThreadSystemMessage,
 } as const
+
+const OPERATOR_COMPOSER_PLACEHOLDER = '继续追问，或直接告诉 Agent 要怎么做'
 
 export default function ThreadConversation(props: {
     thread: OperatorThread
@@ -66,33 +69,35 @@ export default function ThreadConversation(props: {
 
     return (
         <AssistantRuntimeProvider runtime={runtime}>
-            <section className="prototype-thread-shell">
+            <section className="prototype-chat-thread">
                 <ThreadHeader thread={props.thread} />
 
-                <ThreadPrimitive.Root className="prototype-thread-root">
-                    <ThreadPrimitive.Viewport className="prototype-thread-viewport" autoScroll>
-                        <div className="prototype-thread-message-list">
+                <ThreadPrimitive.Root className="prototype-chat-thread__root">
+                    <ThreadPrimitive.Viewport className="prototype-chat-thread__viewport" autoScroll>
+                        <div className="prototype-chat-thread__messages">
                             <ThreadPrimitive.Messages components={THREAD_COMPONENTS} />
                         </div>
                     </ThreadPrimitive.Viewport>
                 </ThreadPrimitive.Root>
 
-                <ThreadQuickActions thread={props.thread} />
+                <div className="prototype-chat-thread__controls">
+                    <ThreadQuickActions thread={props.thread} />
 
-                <ComposerPrimitive.Root className="prototype-thread-composer">
-                    <ComposerPrimitive.Input
-                        className="prototype-thread-composer__input"
-                        placeholder="继续追问，或直接告诉 Agent 你要它怎么做"
-                        submitOnEnter
-                        maxRows={8}
-                    />
-                    <div className="prototype-thread-composer__footer">
-                        <small>Enter 发送，Shift+Enter 换行</small>
-                        <ComposerPrimitive.Send className="prototype-primary-button">
-                            发送
-                        </ComposerPrimitive.Send>
-                    </div>
-                </ComposerPrimitive.Root>
+                    <ComposerPrimitive.Root className="prototype-chat-compose">
+                        <div className="prototype-chat-compose__row">
+                            <ComposerPrimitive.Input
+                                className="prototype-chat-compose__input"
+                                aria-label="回复这条线程"
+                                placeholder={OPERATOR_COMPOSER_PLACEHOLDER}
+                                submitOnEnter
+                                maxRows={4}
+                            />
+                            <ComposerPrimitive.Send className="prototype-primary-button prototype-chat-compose__send">
+                                发送
+                            </ComposerPrimitive.Send>
+                        </div>
+                    </ComposerPrimitive.Root>
+                </div>
             </section>
         </AssistantRuntimeProvider>
     )

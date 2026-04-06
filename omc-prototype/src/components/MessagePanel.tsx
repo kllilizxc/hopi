@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from '@tanstack/react-router'
-import ThreadConversation from '@/components/operator/ThreadConversation'
-import ThreadInbox from '@/components/operator/ThreadInbox'
-import { Glyph } from '@/components/Visuals'
+import MessageWorkspace from '@/components/operator/MessageWorkspace'
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import { usePrototypeStore } from '@/prototype/store'
 import type { OperatorThread } from '@/prototype/types'
 
@@ -22,6 +21,24 @@ function parseRouteContext(pathname: string): RouteContext {
 function rankThread(thread: OperatorThread, context: RouteContext) {
     let score = 0
 
+    switch (thread.lifecycle) {
+        case 'pending':
+            score += 48
+            break
+        case 'waiting':
+            score += 36
+            break
+        case 'in-progress':
+            score += 22
+            break
+        case 'silent':
+            score += 10
+            break
+        case 'resolved':
+            score += 0
+            break
+    }
+
     if (thread.goalId && context.goalId && thread.goalId === context.goalId) {
         score += 50
     }
@@ -30,6 +47,8 @@ function rankThread(thread: OperatorThread, context: RouteContext) {
     }
     if (!thread.passive) {
         score += 10
+    } else {
+        score -= 8
     }
     if (thread.unread) {
         score += 4
@@ -49,21 +68,13 @@ function sortThreads(threads: OperatorThread[], context: RouteContext) {
 }
 
 function headingForContext(context: RouteContext) {
-    if (context.streamId) {
-        return {
-            title: '执行线程',
-            summary: '当前执行流相关的话题会优先浮到前面，其余线程仍留在收件箱。',
-        }
-    }
-    if (context.goalId) {
-        return {
-            title: '目标线程',
-            summary: '围绕当前目标的审批、风险和路线线程会优先显示。',
-        }
-    }
     return {
-        title: '消息流',
-        summary: '真正需要你判断的事进收件箱；点开线程后再继续和 Agent 聊。',
+        title: '收件箱',
+        summary: context.streamId
+            ? '先处理这条执行流相关的话题，静默更新放在后面。'
+            : context.goalId
+                ? '围绕当前目标的话题会优先排前，默认先看列表。'
+                : '先从待处理线程开始，静默更新会留在列表下方。',
     }
 }
 
@@ -72,91 +83,78 @@ export default function MessagePanel(props: {
     onClose?: () => void
 }) {
     const location = useLocation()
-    const { state, threads, activeThread, actions } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
+    const { state, threads, activeThread, activeThreadSelectionId, actions } = usePrototypeStore()
     const [showHandled, setShowHandled] = useState(false)
-    const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
-    const context = parseRouteContext(location.pathname)
-    const copy = headingForContext(context)
+    const [dismissedThreadSelectionId, setDismissedThreadSelectionId] = useState<number | null>(null)
+    const context = useMemo(() => parseRouteContext(location.pathname), [location.pathname])
+    const copy = useMemo(() => headingForContext(context), [context])
+    const didMount = useRef(false)
+    const traceSelection = state.traceSelection
+    const sessionLogSelection = operatorSurface.activeSessionLog
 
     const orderedThreads = useMemo(
         () => sortThreads(threads, context),
         [context, threads],
     )
 
-    const selectedThread = selectedThreadId
-        ? state.threadsById[selectedThreadId] ?? null
+    const selectedThread = !traceSelection && activeThread && activeThreadSelectionId !== dismissedThreadSelectionId
+        ? activeThread
         : null
+    const mode: 'inbox' | 'thread' | 'trace' | 'session-log' = sessionLogSelection
+        ? 'session-log'
+        : traceSelection
+            ? 'trace'
+            : selectedThread
+                ? 'thread'
+                : 'inbox'
+
+    function backToList() {
+        if (mode === 'session-log') {
+            operatorSurface.clearSessionLog()
+            return
+        }
+
+        if (mode === 'trace') {
+            actions.clearPlanTrace()
+            return
+        }
+
+        setDismissedThreadSelectionId(activeThreadSelectionId)
+    }
 
     useEffect(() => {
-        setSelectedThreadId(null)
+        setDismissedThreadSelectionId(activeThreadSelectionId)
     }, [location.pathname])
 
     useEffect(() => {
-        if (selectedThreadId && !state.threadsById[selectedThreadId]) {
-            setSelectedThreadId(null)
+        if (didMount.current) {
+            return
         }
-    }, [selectedThreadId, state.threadsById])
 
-    const activeMessages = selectedThread
-        ? state.messagesByThread[selectedThread.id] ?? []
-        : []
+        didMount.current = true
+    }, [activeThread, activeThreadSelectionId])
 
     return (
-        <aside className={props.className ? `prototype-message-panel ${props.className}` : 'prototype-message-panel'}>
-            <div className="prototype-message-panel__head">
-                <div className="prototype-icon-pill prototype-icon-pill--small">
-                    <Glyph name="digest" />
-                </div>
-                <div>
-                    <h2>{copy.title}</h2>
-                    <p>{copy.summary}</p>
-                </div>
-                {props.onClose ? (
-                    <button type="button" className="prototype-message-panel__close" onClick={props.onClose} aria-label="关闭消息面板">
-                        <Glyph name="close" />
-                    </button>
-                ) : null}
-            </div>
-
-            {selectedThread ? (
-                <div className="prototype-message-panel__body">
-                    <section className="prototype-thread-detail">
-                        <button
-                            type="button"
-                            className="prototype-thread-detail__back"
-                            onClick={() => setSelectedThreadId(null)}
-                        >
-                            <Glyph name="back" />
-                            <span>返回消息列表</span>
-                        </button>
-                        <ThreadConversation thread={selectedThread} messages={activeMessages} />
-                    </section>
-                </div>
-            ) : (
-                <div className="prototype-message-panel__body prototype-message-panel__body--inbox">
-                    <ThreadInbox
-                        threads={orderedThreads}
-                        activeThreadId={activeThread?.id ?? null}
-                        showHandled={showHandled}
-                        onToggleHandled={() => setShowHandled((current) => !current)}
-                        onSelect={(threadId) => {
-                            actions.setActiveThread(threadId)
-                            setSelectedThreadId(threadId)
-                        }}
-                    />
-                    {!orderedThreads.length ? (
-                        <section className="prototype-thread-empty">
-                            <div className="prototype-icon-pill prototype-icon-pill--small">
-                                <Glyph name="digest" />
-                            </div>
-                            <div>
-                                <h3>暂无线程</h3>
-                                <p>当前没有需要你介入的话题。系统会继续静默推进。</p>
-                            </div>
-                        </section>
-                    ) : null}
-                </div>
-            )}
-        </aside>
+        <MessageWorkspace
+            className={props.className}
+            heading={copy}
+            threads={orderedThreads}
+            messagesByThread={state.messagesByThread}
+            selectedThread={selectedThread}
+            mode={mode}
+            traceSelection={traceSelection}
+            sessionLogSelection={sessionLogSelection}
+            showHandled={showHandled}
+            onToggleHandled={() => setShowHandled((current) => !current)}
+            onSelectThread={(threadId) => {
+                operatorSurface.clearSessionLog()
+                actions.clearPlanTrace()
+                actions.setActiveThread(threadId)
+                setDismissedThreadSelectionId(null)
+            }}
+            onBackToList={backToList}
+            onClose={props.onClose}
+        />
     )
 }

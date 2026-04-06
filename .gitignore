@@ -47,3 +47,5 @@ cli/npm/main/
 
 # Local scratch temp
 /.tmp/
+
+.codex

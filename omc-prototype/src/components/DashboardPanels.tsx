@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import {
     goalGlyph,
     goalPresentation,
@@ -23,7 +24,8 @@ export function GoalPortfolioPanel(props: {
     goals: PrototypeGoal[]
     checkpointId: PrototypeCheckpointId
 }) {
-    const { threads, actions } = usePrototypeStore()
+    const { threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
 
     return (
         <section className="prototype-panel prototype-panel--portfolio">
@@ -52,6 +54,7 @@ export function GoalPortfolioPanel(props: {
                                         </div>
                                         <div className="prototype-goal-card__title-copy">
                                             <h3>{view.title}</h3>
+                                            <p>{view.headline}</p>
                                         </div>
                                     </div>
                                     <GoalStatusBadge status={goal.status} />
@@ -62,15 +65,21 @@ export function GoalPortfolioPanel(props: {
                                 <span>{view.progressLabel}</span>
                                 <div className="prototype-inline-actions prototype-inline-actions--compact">
                                     {relatedThreads.length > 0 ? (
-                                        <MetaBadge tone={unresolvedCount > 0 ? 'accent' : 'neutral'}>
+                                        <MetaBadge tone="neutral">
                                             {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
                                         </MetaBadge>
                                     ) : null}
+                                    <Link
+                                        to="/goals/$goalId"
+                                        params={{ goalId: goal.id }}
+                                    >
+                                        查看目标
+                                    </Link>
                                     {primaryThread ? (
                                         <button
                                             type="button"
                                             className="prototype-button--ghost"
-                                            onClick={() => actions.setActiveThread(primaryThread.id)}
+                                            onClick={() => operatorSurface.openThread(primaryThread.id)}
                                         >
                                             打开线程
                                         </button>
@@ -124,7 +133,8 @@ export function StreamsOverviewPanel(props: {
     streams: PrototypeStream[]
     checkpointId: PrototypeCheckpointId
 }) {
-    const { threads, actions } = usePrototypeStore()
+    const { threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
     const [expandedId, setExpandedId] = useState<string | null>(props.streams[0]?.id ?? null)
 
     return (
@@ -167,8 +177,9 @@ export function StreamsOverviewPanel(props: {
 
                             {expanded ? (
                                 <div className="prototype-stream-card__body">
+                                    <p className="prototype-stream-card__summary">{view.summary}</p>
                                     <div className="prototype-inline-note">
-                                        <span>最新动作</span>
+                                        <span>当前推进</span>
                                         <strong>{view.latestMove}</strong>
                                     </div>
                                     {view.dependencyLabel ? (
@@ -179,7 +190,7 @@ export function StreamsOverviewPanel(props: {
                                     ) : null}
                                     <div className="prototype-inline-actions">
                                         {relatedThreads.length > 0 ? (
-                                            <MetaBadge tone={unresolvedCount > 0 ? 'accent' : 'neutral'}>
+                                            <MetaBadge tone="neutral">
                                                 {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
                                             </MetaBadge>
                                         ) : null}
@@ -187,17 +198,19 @@ export function StreamsOverviewPanel(props: {
                                             <button
                                                 type="button"
                                                 className="prototype-button--ghost"
-                                                onClick={() => actions.setActiveThread(primaryThread.id)}
+                                                onClick={() => operatorSurface.openThread(primaryThread.id)}
                                             >
                                                 打开线程
                                             </button>
                                         ) : null}
                                         <Link to="/goals/$goalId/execution/$streamId" params={{ goalId: stream.goalId, streamId: stream.id }}>
-                                            查看执行明细
+                                            看执行明细
                                         </Link>
                                     </div>
                                 </div>
-                            ) : null}
+                            ) : (
+                                <p className="prototype-stream-card__summary">{view.summary}</p>
+                            )}
                         </article>
                     )
                 })}

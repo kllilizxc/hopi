@@ -1,3 +1,4 @@
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import ExecutionBoard from '@/components/ExecutionBoard'
 import { MetaBadge, StreamStatusBadge } from '@/components/StatusBadge'
 import { Glyph } from '@/components/Visuals'
@@ -6,7 +7,8 @@ import { countUnresolvedThreads, getPrimaryRelatedThread, getRelatedThreads } fr
 import { usePrototypeStore } from '@/prototype/store'
 
 export default function ExecutionDetailPage(props: { goalId: string; streamId: string }) {
-    const { dataSource, state, threads, actions } = usePrototypeStore()
+    const { dataSource, state, threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
     const detail = dataSource.getExecutionDrilldown({
         goalId: props.goalId,
         streamId: props.streamId
@@ -29,7 +31,10 @@ export default function ExecutionDetailPage(props: { goalId: string; streamId: s
                         <div className="prototype-icon-pill prototype-icon-pill--large">
                             <Glyph name="kanban" />
                         </div>
-                        <h2>{view.title}</h2>
+                        <div>
+                            <h2>{view.title}</h2>
+                            <p>{view.summary}</p>
+                        </div>
                     </div>
                     <div className="prototype-execution-header__actions">
                         <span className="prototype-execution-inline-label">完成度 {detail.stream.progress}%</span>
@@ -38,7 +43,7 @@ export default function ExecutionDetailPage(props: { goalId: string; streamId: s
                 <div className="prototype-badge-row">
                     <StreamStatusBadge status={detail.stream.status} />
                     {relatedThreads.length > 0 ? (
-                        <MetaBadge tone={unresolvedCount > 0 ? 'accent' : 'neutral'}>
+                        <MetaBadge tone="neutral">
                             {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
                         </MetaBadge>
                     ) : null}
@@ -46,11 +51,16 @@ export default function ExecutionDetailPage(props: { goalId: string; streamId: s
                         <button
                             type="button"
                             className="prototype-button--ghost"
-                            onClick={() => actions.setActiveThread(primaryThread.id)}
+                            onClick={() => operatorSurface.openThread(primaryThread.id)}
                         >
                             打开线程
                         </button>
                     ) : null}
+                </div>
+
+                <div className="prototype-execution-header__note">
+                    <span>为什么现在看这条流</span>
+                    <p>{view.whyNow}</p>
                 </div>
             </section>
 

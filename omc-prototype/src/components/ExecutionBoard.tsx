@@ -5,6 +5,7 @@ import {
     phasePresentation,
     planPresentation
 } from '@/prototype/presenter'
+import { useOperatorSurface } from './operator/OperatorSurfaceContext'
 import type { PrototypePhase, PrototypePlanCard, PrototypePlanColumn } from '@/prototype/types'
 import { MetaBadge } from './StatusBadge'
 import { Glyph } from './Visuals'
@@ -15,6 +16,8 @@ export default function ExecutionBoard(props: {
     phases: PrototypePhase[]
     planCards: PrototypePlanCard[]
 }) {
+    const operatorSurface = useOperatorSurface()
+
     return (
         <div className="prototype-board-shell">
             <section className="prototype-panel prototype-panel--compact">
@@ -36,6 +39,7 @@ export default function ExecutionBoard(props: {
                                     </MetaBadge>
                                 </div>
                                 <h3>{view.title}</h3>
+                                <p className="prototype-phase-chip__summary">{phase.summary}</p>
                             </article>
                         )
                     })}
@@ -54,21 +58,31 @@ export default function ExecutionBoard(props: {
                                 .filter((card) => card.column === column)
                                 .map((card) => {
                                     const view = planPresentation(card)
+                                    const isActiveTrace = operatorSurface.activeTrace?.planId === card.id
 
                                     return (
-                                        <article key={card.id} className="prototype-plan-card prototype-card">
+                                        <button
+                                            key={card.id}
+                                            type="button"
+                                            className={`prototype-plan-card prototype-card prototype-plan-card--interactive${isActiveTrace ? ' is-active' : ''}`}
+                                            aria-pressed={isActiveTrace}
+                                            onClick={() => operatorSurface.openTrace({ planId: card.id, streamId: card.streamId })}
+                                        >
                                             <div className="prototype-plan-card__header">
                                                 <div className="prototype-icon-pill">
                                                     <Glyph name="kanban" />
                                                 </div>
+                                                <span>{card.updatedAt}</span>
                                             </div>
                                             <h4>{view.title}</h4>
+                                            <p className="prototype-plan-card__summary">{card.summary}</p>
+                                            <strong className="prototype-plan-card__signal">{card.signal}</strong>
                                             <div className="prototype-badge-row">
                                                 {card.badges.map((badge) => (
                                                     <MetaBadge key={badge}>{labelPlanBadge(badge)}</MetaBadge>
                                                 ))}
                                             </div>
-                                        </article>
+                                        </button>
                                     )
                                 })}
                         </div>

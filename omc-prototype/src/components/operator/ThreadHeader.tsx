@@ -16,23 +16,18 @@ function labelRefKind(kind: OperatorThread['refs'][number]['kind']) {
 }
 
 export default function ThreadHeader(props: { thread: OperatorThread }) {
-    return (
-        <header className="prototype-thread-header">
-            <div className="prototype-thread-header__title">
-                <div>
-                    <span className="prototype-thread-header__status">{props.thread.statusLabel}</span>
-                    <h3>{props.thread.title}</h3>
-                </div>
-                <small>{props.thread.updatedAt}</small>
-            </div>
+    const contextRefs = props.thread.refs
+        .filter((ref) => ref.kind !== 'impact')
+        .slice(0, 3)
+    const contextLine = contextRefs
+        .map((ref) => `${labelRefKind(ref.kind)}：${ref.label}`)
+        .join(' · ')
 
-            <div className="prototype-thread-header__refs">
-                {props.thread.refs.map((ref) => (
-                    <span key={`${ref.kind}:${ref.id}`} className="prototype-thread-ref">
-                        <strong>{labelRefKind(ref.kind)}</strong>
-                        <span>{ref.label}</span>
-                    </span>
-                ))}
+    return (
+        <header className="prototype-chat-thread__header">
+            <div className="prototype-chat-thread__meta">
+                <span className="prototype-chat-thread__status">{props.thread.statusLabel}</span>
+                {contextLine ? <p className="prototype-chat-thread__context">{contextLine}</p> : null}
             </div>
         </header>
     )

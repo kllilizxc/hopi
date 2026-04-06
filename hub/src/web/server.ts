@@ -66,6 +66,10 @@ function findOmcDistDir(): SpaDistBundle {
     return findSpaDistDir('OMC-client', 'OMC client', 'bun run build:omc')
 }
 
+function findOmcPrototypeDistDir(): SpaDistBundle {
+    return findSpaDistDir('omc-prototype', 'OMC prototype', 'bun run build:omc-prototype')
+}
+
 function serveEmbeddedAsset(asset: EmbeddedWebAsset): Response {
     return new Response(Bun.file(asset.sourcePath), {
         headers: {
@@ -256,6 +260,7 @@ from GitHub Pages instead of through the relay tunnel.
 
     const webBundle = findWebappDistDir()
     const omcBundle = findOmcDistDir()
+    const omcPrototypeBundle = findOmcPrototypeDistDir()
 
     app.use('*', async (c, next) => {
         if (c.req.path.startsWith('/api')) {
@@ -272,6 +277,13 @@ from GitHub Pages instead of through the relay tunnel.
             const omcAsset = tryServeBundleAsset(omcBundle, c.req.path, '/omc')
             if (omcAsset) {
                 return omcAsset
+            }
+        }
+
+        if (c.req.path === '/omc-prototype' || c.req.path.startsWith('/omc-prototype/')) {
+            const omcPrototypeAsset = tryServeBundleAsset(omcPrototypeBundle, c.req.path, '/omc-prototype')
+            if (omcPrototypeAsset) {
+                return omcPrototypeAsset
             }
         }
 
@@ -294,6 +306,19 @@ from GitHub Pages instead of through the relay tunnel.
         }
 
         return serveBundleIndex(omcBundle)
+    })
+
+    app.get('/omc-prototype', () => {
+        return serveBundleIndex(omcPrototypeBundle)
+    })
+
+    app.get('/omc-prototype/*', async (c, next) => {
+        if (c.req.path.startsWith('/api')) {
+            await next()
+            return
+        }
+
+        return serveBundleIndex(omcPrototypeBundle)
     })
 
     app.get('*', async (c, next) => {

@@ -21,7 +21,7 @@ export default defineConfig({
     server: {
         host: true,
         port: webPort ?? undefined,
-        allowedHosts: ['hopidev.weishu.me', 'macbook-pro-2.tailfbf761.ts.net'],
+        allowedHosts: ['hopidev.weishu.me', 'macbook-pro-2.tailfbf761.ts.net', 'macbook-pro-2.tailfbf761.ts.net'],
         // Only enforce strict port when caller explicitly pinned the port (preview mode).
         strictPort: Boolean(webPortEnv),
         proxy: {

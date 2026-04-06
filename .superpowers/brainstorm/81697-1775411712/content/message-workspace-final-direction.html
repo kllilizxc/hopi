@@ -1,0 +1,386 @@
+<style>
+  .hero {
+    margin-bottom: 20px;
+  }
+  .hero p {
+    color: #475569;
+    margin: 6px 0 0;
+  }
+  .mockup {
+    background:
+      radial-gradient(circle at 78% 8%, rgba(52, 211, 153, 0.18), transparent 24%),
+      radial-gradient(circle at 14% 0%, rgba(255, 255, 255, 0.92), transparent 30%),
+      linear-gradient(180deg, #eff7f2 0%, #e8f1eb 100%);
+  }
+  .mockup-body {
+    padding: 0;
+  }
+  .shell {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 16px;
+    min-height: 620px;
+    padding: 18px;
+  }
+  .panel {
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    background: rgba(255, 255, 255, 0.46);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.5),
+      0 22px 54px rgba(17, 38, 28, 0.08);
+    backdrop-filter: blur(24px);
+  }
+  .sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .sidebar-head,
+  .thread-head {
+    padding: 18px 18px 12px;
+    border-bottom: 1px solid rgba(26, 46, 36, 0.07);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #6b7c74;
+  }
+  .eyebrow-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #39b48b 0%, #1f8a64 100%);
+  }
+  .title {
+    margin: 10px 0 6px;
+    font-size: 28px;
+    line-height: 1.05;
+    letter-spacing: -0.04em;
+    color: #16251b;
+  }
+  .sub {
+    margin: 0;
+    color: #5a6c63;
+    line-height: 1.5;
+  }
+  .list {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+  }
+  .thread-row {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.68);
+    background: rgba(255,255,255,0.34);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+  }
+  .thread-row.active {
+    background: rgba(255,255,255,0.52);
+    border-color: rgba(31, 138, 100, 0.14);
+  }
+  .thread-row__top,
+  .thread-row__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .thread-row__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #16251b;
+    font-weight: 700;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #1f8a64;
+    box-shadow: 0 0 0 6px rgba(31, 138, 100, 0.12);
+  }
+  .caption,
+  .meta {
+    font-size: 12px;
+    color: #6b7c74;
+  }
+  .preview {
+    min-height: 30px;
+    color: #46574f;
+    line-height: 1.45;
+  }
+  .workspace {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  .thread-head {
+    display: grid;
+    gap: 12px;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(26, 46, 36, 0.08);
+    background: rgba(255,255,255,0.46);
+    color: #365649;
+    font-size: 12px;
+    line-height: 28px;
+  }
+  .thread-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .thread-title {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.04;
+    letter-spacing: -0.04em;
+    color: #122017;
+  }
+  .status {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.52);
+    border: 1px solid rgba(26, 46, 36, 0.08);
+    color: #21483a;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .briefing {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 0 18px 14px;
+  }
+  .brief {
+    padding: 16px;
+    min-height: 116px;
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.72);
+    background: rgba(255,255,255,0.42);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+  }
+  .brief h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #6c7d76;
+  }
+  .brief p {
+    margin: 0;
+    color: #20352b;
+    line-height: 1.55;
+  }
+  .brief.action {
+    background: linear-gradient(180deg, rgba(255,255,255,0.42) 0%, rgba(244, 252, 249, 0.56) 100%);
+  }
+  .conversation {
+    padding: 6px 18px 18px;
+    overflow: hidden;
+  }
+  .conversation-core {
+    display: grid;
+    gap: 12px;
+    height: 100%;
+    padding: 16px;
+    border-radius: 24px;
+    border: 1px solid rgba(255,255,255,0.76);
+    background: rgba(255,255,255,0.54);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+  .bubble-row {
+    display: flex;
+  }
+  .bubble-row.user {
+    justify-content: flex-end;
+  }
+  .bubble {
+    max-width: 72%;
+    padding: 13px 14px;
+    border-radius: 20px;
+    line-height: 1.5;
+  }
+  .bubble.agent {
+    background: rgba(255,255,255,0.88);
+    border: 1px solid rgba(24, 42, 34, 0.07);
+    color: #22372d;
+  }
+  .bubble.user {
+    background: linear-gradient(135deg, #173d31 0%, #255d4a 100%);
+    color: rgba(255,255,255,0.92);
+    box-shadow: 0 18px 26px rgba(16, 43, 33, 0.16);
+  }
+  .dock {
+    display: grid;
+    gap: 10px;
+    padding: 0 18px 18px;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .action {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(26, 46, 36, 0.08);
+    background: rgba(255,255,255,0.56);
+    color: #26493d;
+    font-size: 13px;
+    line-height: 36px;
+  }
+  .action.primary {
+    background: rgba(222, 245, 235, 0.7);
+    border-color: rgba(31, 138, 100, 0.12);
+  }
+  .composer {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.76);
+    background: rgba(255,255,255,0.7);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.56);
+  }
+  .input {
+    flex: 1;
+    height: 48px;
+    border-radius: 16px;
+    background: rgba(148, 163, 184, 0.12);
+  }
+  .send {
+    width: 86px;
+    height: 48px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #1d7256 0%, #299e75 100%);
+  }
+</style>
+
+<div class="hero">
+  <h2>Chosen Direction</h2>
+  <p>A1 雾感玻璃 + 方案 2：外层轻盈，conversation core 和 action dock 轻微收实，保住聊天沉浸感，也避免内容发飘。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Preview: OMC message workspace</div>
+  <div class="mockup-body">
+    <div class="shell">
+      <section class="panel sidebar">
+        <div class="sidebar-head">
+          <div class="eyebrow"><span class="eyebrow-dot"></span> Message workspace</div>
+          <h3 class="title">收件箱</h3>
+          <p class="sub">列表和详情都保持轻雾玻璃感，但主会话仍有可读性锚点。</p>
+        </div>
+        <div class="list">
+          <div class="thread-row active">
+            <div class="thread-row__top">
+              <div class="thread-row__title"><span class="dot"></span>评审边界还要不要收紧</div>
+              <div class="caption">2m</div>
+            </div>
+            <div class="preview">reviewer 把范围扩大了半步，manager 需要你现在拍板。</div>
+            <div class="thread-row__meta">
+              <span class="meta">待处理</span>
+              <span class="meta">执行流 / 计划</span>
+            </div>
+          </div>
+          <div class="thread-row">
+            <div class="thread-row__top">
+              <div class="thread-row__title">测试缺口需要补到哪一层</div>
+              <div class="caption">9m</div>
+            </div>
+            <div class="preview">当前方案能过 smoke，但 regression 仍有空洞。</div>
+            <div class="thread-row__meta">
+              <span class="meta">等你回复</span>
+              <span class="meta">风险</span>
+            </div>
+          </div>
+          <div class="thread-row">
+            <div class="thread-row__top">
+              <div class="thread-row__title">线程说明已同步</div>
+              <div class="caption">18m</div>
+            </div>
+            <div class="preview">背景信息已归档，系统继续静默推进。</div>
+            <div class="thread-row__meta">
+              <span class="meta">静默</span>
+              <span class="meta">状态</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel workspace">
+        <div class="thread-head">
+          <div class="chips">
+            <span class="chip">目标 Checkout</span>
+            <span class="chip">执行流 Review</span>
+            <span class="chip">计划 07</span>
+          </div>
+          <div class="thread-title-row">
+            <div>
+              <h3 class="thread-title">评审边界还要不要收紧</h3>
+              <p class="sub">12:42 更新 · 当前最相关线程已自动置顶</p>
+            </div>
+            <span class="status">待你决策</span>
+          </div>
+        </div>
+
+        <div class="briefing">
+          <section class="brief">
+            <h3>为什么现在需要你</h3>
+            <p>reviewer 认为当前回归面仍偏窄，如果继续执行，可能把风险留到集成阶段才爆出来。</p>
+          </section>
+          <section class="brief action">
+            <h3>执行动作</h3>
+            <p>决定是继续当前范围，还是要求 driver 先补完整验证链路再推进。</p>
+          </section>
+        </div>
+
+        <div class="conversation">
+          <div class="conversation-core">
+            <div class="bubble-row">
+              <div class="bubble agent">当前提交已经稳定，但 reviewer 认为现有验证只覆盖 happy path。</div>
+            </div>
+            <div class="bubble-row">
+              <div class="bubble agent">如果你倾向保守，我会把 work order 拉回验证补强，再继续集成。</div>
+            </div>
+            <div class="bubble-row user">
+              <div class="bubble user">先补验证，再继续。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dock">
+          <div class="actions">
+            <span class="action primary">补验证再继续</span>
+            <span class="action">继续当前范围</span>
+            <span class="action">给出指导意见</span>
+          </div>
+          <div class="composer">
+            <div class="input"></div>
+            <div class="send"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

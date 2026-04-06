@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import StrategyPanel from '@/components/StrategyPanel'
 import { GoalStatusBadge, MetaBadge, StreamStatusBadge } from '@/components/StatusBadge'
 import { Glyph } from '@/components/Visuals'
@@ -11,7 +12,8 @@ import { countUnresolvedThreads, getPrimaryRelatedThread, getRelatedThreads } fr
 import { usePrototypeStore } from '@/prototype/store'
 
 export default function GoalPage(props: { goalId: string }) {
-    const { state, dataSource, threads, actions } = usePrototypeStore()
+    const { state, dataSource, threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
     const detail = dataSource.getGoal(props.goalId, state.window)
 
     if (!detail) {
@@ -33,30 +35,33 @@ export default function GoalPage(props: { goalId: string }) {
                         </div>
                         <div>
                             <h2>{goalView.title}</h2>
+                            <p>{goalView.summary}</p>
                         </div>
                     </div>
                 </div>
 
                 <div className="prototype-badge-row">
                     <GoalStatusBadge status={detail.goal.status} />
-                    <MetaBadge tone={detail.goal.needsApproval ? 'accent' : 'neutral'}>
-                        {detail.goal.needsApproval ? '需要拍板' : '可静默推进'}
-                    </MetaBadge>
                     <MetaBadge tone="neutral">置信 {detail.goal.confidence}%</MetaBadge>
                     {relatedThreads.length > 0 ? (
-                        <MetaBadge tone={unresolvedCount > 0 ? 'accent' : 'neutral'}>
+                        <MetaBadge tone="neutral">
                             {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
                         </MetaBadge>
                     ) : null}
-                    {primaryThread ? (
-                        <button
-                            type="button"
-                            className="prototype-button--ghost"
-                            onClick={() => actions.setActiveThread(primaryThread.id)}
-                        >
-                            打开线程
-                        </button>
+                            {primaryThread ? (
+                                <button
+                                    type="button"
+                                    className="prototype-button--ghost"
+                                    onClick={() => operatorSurface.openThread(primaryThread.id)}
+                                >
+                                    打开线程
+                                </button>
                     ) : null}
+                </div>
+
+                <div className="prototype-execution-hero__meta">
+                    <span>成功信号</span>
+                    <p>{goalView.successSignal}</p>
                 </div>
             </section>
 
@@ -88,6 +93,7 @@ export default function GoalPage(props: { goalId: string }) {
                                     </div>
                                     <StreamStatusBadge status={stream.status} />
                                 </div>
+                                <p className="prototype-stream-card__summary">{view.summary}</p>
                                 <div className="prototype-inline-actions">
                                     <Link to="/goals/$goalId/execution/$streamId" params={{ goalId: detail.goal.id, streamId: stream.id }}>
                                         查看执行明细

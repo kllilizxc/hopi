@@ -19,22 +19,41 @@ import type {
     OperatorFirstMessage,
     OperatorMessage,
     OperatorThread,
+    DecisionTopic,
     QuickActionSpec,
     PrototypeApprovalItem,
-    PrototypeCheckpointId,
     PrototypeGoal,
     PrototypePhase,
     PrototypePlanCard,
     PrototypeRisk,
     PrototypeScenarioSnapshot,
     PrototypeStream,
+    PrototypeTimeWindow,
     ThreadContextRef,
+    ThreadDetailSection,
     ThreadLifecycleState,
     ThreadPriority,
 } from './types'
 
 type ThreadSeed = Omit<OperatorThread, 'unread'> & {
     introMessage: OperatorMessage
+}
+
+function overlayDecisionTopic(seed: ThreadSeed, topic: DecisionTopic | null): ThreadSeed {
+    if (!topic || topic.kind !== seed.kind) {
+        return seed
+    }
+
+    const lifecycle = topic.lifecycle
+    return {
+        ...seed,
+        goalId: topic.goalId ?? seed.goalId,
+        lifecycle,
+        statusLabel: lifecycleLabel(lifecycle),
+        tone: lifecycle === 'pending'
+            ? (seed.kind === 'risk' ? 'warning' : seed.kind === 'status' ? 'default' : 'accent')
+            : 'default',
+    }
 }
 
 type ExistingThreadState = {
@@ -118,11 +137,16 @@ function pushRef(list: ThreadContextRef[], ref: ThreadContextRef | null) {
     list.push(ref)
 }
 
+function goalDisplayLabel(goal: PrototypeGoal) {
+    const title = goalTitle(goal.id)
+    return title === goal.id ? goal.title : title
+}
+
 function goalRef(goal: PrototypeGoal): ThreadContextRef {
     return {
         kind: 'goal',
         id: goal.id,
-        label: goalTitle(goal.id),
+        label: goalDisplayLabel(goal),
     }
 }
 
@@ -158,6 +182,187 @@ function impactRef(id: string, label: string): ThreadContextRef {
     }
 }
 
+function normalizeMatchText(value: string) {
+    return value.toLowerCase()
+}
+
+function tokenizeMatchText(value: string) {
+    return Array.from(new Set(normalizeMatchText(value).match(/[a-z0-9]+/g) ?? [])).filter((token) => token.length >= 3)
+}
+
+function scoreMatch(queryTexts: Array<string | null | undefined>, candidateTexts: Array<string | null | undefined>) {
+    const queryTokens = new Set(queryTexts.flatMap((text) => tokenizeMatchText(text ?? '')))
+    const candidateText = candidateTexts
+        .filter((text): text is string => Boolean(text && text.trim()))
+        .map((text) => normalizeMatchText(text))
+        .join(' ')
+
+    let score = 0
+    for (const token of queryTokens) {
+        if (candidateText.includes(token)) {
+            score += 1
+        }
+    }
+    return score
+}
+
+function chooseBestStream(snapshot: PrototypeScenarioSnapshot, goalId: string, queryTexts: Array<string | null | undefined>) {
+    const streams = snapshot.streams.filter((stream) => stream.goalId === goalId)
+    if (streams.length === 0) {
+        return null
+    }
+
+    const scored = streams.map((stream) => {
+        const phases = snapshot.phases.filter((phase) => phase.streamId === stream.id)
+        const plans = snapshot.planCards.filter((plan) => plan.streamId === stream.id)
+
+        return {
+            stream,
+            score: scoreMatch(queryTexts, [
+                stream.title,
+                stream.summary,
+                stream.whyNow,
+                stream.latestMove,
+                stream.dependencyLabel,
+                ...phases.map((phase) => `${phase.title} ${phase.summary}`),
+                ...plans.map((plan) => `${plan.title} ${plan.summary} ${plan.signal}`),
+            ]),
+        }
+    })
+
+    scored.sort((left, right) => {
+        const scoreDiff = right.score - left.score
+        if (scoreDiff !== 0) {
+            return scoreDiff
+        }
+        return left.stream.title.localeCompare(right.stream.title, 'zh-Hans')
+    })
+
+    const best = scored[0]
+    if (!best || best.score === 0) {
+        // Generic fallback: keep the first stream for the goal when text matching is too weak to distinguish topics.
+        return streams[0]
+    }
+
+    return best.stream
+}
+
+function chooseBestPhase(snapshot: PrototypeScenarioSnapshot, streamId: string, queryTexts: Array<string | null | undefined>) {
+    const phases = snapshot.phases.filter((phase) => phase.streamId === streamId)
+    if (phases.length === 0) {
+        return null
+    }
+
+    const scored = phases.map((phase) => ({
+        phase,
+        score: scoreMatch(queryTexts, [phase.title, phase.summary]),
+    }))
+
+    scored.sort((left, right) => {
+        const scoreDiff = right.score - left.score
+        if (scoreDiff !== 0) {
+            return scoreDiff
+        }
+        const leftDone = left.phase.status === 'Done' ? 1 : 0
+        const rightDone = right.phase.status === 'Done' ? 1 : 0
+        if (leftDone !== rightDone) {
+            return leftDone - rightDone
+        }
+        return left.phase.title.localeCompare(right.phase.title, 'zh-Hans')
+    })
+
+    const best = scored[0]
+    if (!best || best.score === 0) {
+        return phases.find((phase) => phase.status !== 'Done') ?? phases[0]
+    }
+
+    return best.phase
+}
+
+function chooseBestPlan(snapshot: PrototypeScenarioSnapshot, streamId: string, phaseId: string | null, queryTexts: Array<string | null | undefined>) {
+    const plans = snapshot.planCards.filter((plan) => plan.streamId === streamId && (!phaseId || plan.phaseId === phaseId))
+    if (plans.length === 0) {
+        return null
+    }
+
+    const scored = plans.map((plan) => ({
+        plan,
+        score: scoreMatch(queryTexts, [plan.title, plan.summary, plan.signal, plan.badges.join(' ')]),
+    }))
+
+    scored.sort((left, right) => {
+        const scoreDiff = right.score - left.score
+        if (scoreDiff !== 0) {
+            return scoreDiff
+        }
+        const leftDone = left.plan.column === 'Done' ? 1 : 0
+        const rightDone = right.plan.column === 'Done' ? 1 : 0
+        if (leftDone !== rightDone) {
+            return leftDone - rightDone
+        }
+        return left.plan.title.localeCompare(right.plan.title, 'zh-Hans')
+    })
+
+    const best = scored[0]
+    if (!best || best.score === 0) {
+        return plans.find((plan) => plan.column !== 'Done') ?? plans[0]
+    }
+
+    return best.plan
+}
+
+function buildTopicContextRefs(snapshot: PrototypeScenarioSnapshot, goalId: string, queryTexts: Array<string | null | undefined>, impact: ThreadContextRef): ThreadContextRef[] {
+    const refs: ThreadContextRef[] = []
+    const goal = findGoal(snapshot, goalId)
+    if (goal) {
+        pushRef(refs, goalRef(goal))
+    }
+
+    const stream = chooseBestStream(snapshot, goalId, queryTexts)
+    const phase = stream ? chooseBestPhase(snapshot, stream.id, queryTexts) : null
+    const plan = stream ? chooseBestPlan(snapshot, stream.id, phase?.id ?? null, queryTexts) : null
+
+    pushRef(refs, stream ? streamRef(stream) : null)
+    pushRef(refs, phase ? phaseRef(phase) : null)
+    pushRef(refs, plan ? planRef(plan) : null)
+    pushRef(refs, impact)
+    return refs
+}
+
+function compactLines(lines: Array<string | null | undefined>) {
+    return lines.filter((line): line is string => Boolean(line && line.trim())).map((line) => line.trim()).join('\n')
+}
+
+function createDetailSection(title: ThreadDetailSection['title'], body: string, refs: ThreadContextRef[]): ThreadDetailSection | null {
+    const trimmedBody = body.trim()
+    if (!trimmedBody && refs.length === 0) {
+        return null
+    }
+    return {
+        title,
+        body: trimmedBody,
+        refs,
+    }
+}
+
+function buildDetailSections(params: {
+    background: string
+    impactLines: Array<string | null | undefined>
+    planBody: string
+    refs: ThreadContextRef[]
+}): ThreadDetailSection[] {
+    const baseRefs = params.refs.filter((ref) => ref.kind !== 'impact' && ref.kind !== 'plan')
+    const impactRefs = params.refs.filter((ref) => ref.kind === 'impact')
+    const planRefs = params.refs.filter((ref) => ref.kind === 'plan')
+    const sections = [
+        createDetailSection('查看依据', params.background, baseRefs),
+        createDetailSection('查看影响', compactLines(params.impactLines), impactRefs),
+        createDetailSection('看关联计划', params.planBody, planRefs),
+    ]
+
+    return sections.filter((section): section is ThreadDetailSection => Boolean(section))
+}
+
 function findGoal(snapshot: PrototypeScenarioSnapshot, goalId: string) {
     return snapshot.goals.find((goal) => goal.id === goalId) ?? null
 }
@@ -191,45 +396,20 @@ function findPrimaryPlan(snapshot: PrototypeScenarioSnapshot, streamId: string |
 }
 
 function approvalRefs(snapshot: PrototypeScenarioSnapshot, item: PrototypeApprovalItem): ThreadContextRef[] {
-    const refs: ThreadContextRef[] = []
-    const goal = findGoal(snapshot, item.goalId)
-    if (goal) {
-        pushRef(refs, goalRef(goal))
-    }
-
-    const streamId = item.goalId === 'goal-portfolio-foundation'
-        ? 'stream-ingest-contracts'
-        : 'stream-weekly-brief-outline'
-    const stream = findPrimaryStream(snapshot, item.goalId, streamId)
-    const phase = findPrimaryPhase(snapshot, stream?.id ?? null)
-    const plan = findPrimaryPlan(snapshot, stream?.id ?? null, phase?.id ?? null)
-    pushRef(refs, stream ? streamRef(stream) : null)
-    pushRef(refs, phase ? phaseRef(phase) : null)
-    pushRef(refs, plan ? planRef(plan) : null)
-    pushRef(refs, impactRef(`impact:${item.id}`, item.kind === 'branch-promotion' ? '影响主线放行' : '影响路线和范围'))
-    return refs
+    return buildTopicContextRefs(snapshot, item.goalId, [
+        item.title,
+        item.summary,
+        item.branchName,
+        item.kind === 'branch-promotion' ? 'branch promotion review lane hardening' : 'scope reduction direction change',
+    ], impactRef(`impact:${item.id}`, item.kind === 'branch-promotion' ? '影响主线放行' : '影响路线和范围'))
 }
 
 function riskRefs(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRisk): ThreadContextRef[] {
-    const refs: ThreadContextRef[] = []
-    const goal = findGoal(snapshot, risk.goalId)
-    if (goal) {
-        pushRef(refs, goalRef(goal))
-    }
-
-    const streamId = risk.goalId === 'goal-portfolio-foundation'
-        ? risk.id === 'risk-scope-first-broker'
-            ? 'stream-ingest-contracts'
-            : 'stream-holdings-normalization'
-        : 'stream-weekly-brief-outline'
-    const stream = findPrimaryStream(snapshot, risk.goalId, streamId)
-    const phase = findPrimaryPhase(snapshot, stream?.id ?? null)
-    const plan = findPrimaryPlan(snapshot, stream?.id ?? null, phase?.id ?? null)
-    pushRef(refs, stream ? streamRef(stream) : null)
-    pushRef(refs, phase ? phaseRef(phase) : null)
-    pushRef(refs, plan ? planRef(plan) : null)
-    pushRef(refs, impactRef(`impact:${risk.id}`, '影响当前自动推进路线'))
-    return refs
+    return buildTopicContextRefs(snapshot, risk.goalId, [
+        risk.title,
+        risk.summary,
+        risk.signal,
+    ], impactRef(`impact:${risk.id}`, '影响当前自动推进路线'))
 }
 
 function statusRefs(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal): ThreadContextRef[] {
@@ -237,10 +417,11 @@ function statusRefs(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal): T
     const stream = findPrimaryStream(snapshot, goal.id, null)
     const phase = findPrimaryPhase(snapshot, stream?.id ?? null)
     const plan = findPrimaryPlan(snapshot, stream?.id ?? null, phase?.id ?? null)
+    const goalView = goalPresentation(goal, snapshot.checkpoint.id)
     pushRef(refs, stream ? streamRef(stream) : null)
     pushRef(refs, phase ? phaseRef(phase) : null)
     pushRef(refs, plan ? planRef(plan) : null)
-    pushRef(refs, impactRef(`impact:${goal.id}:status`, goal.progressLabel))
+    pushRef(refs, impactRef(`impact:${goal.id}:status`, goalView.progressLabel))
     return refs
 }
 
@@ -250,29 +431,82 @@ function directionRefs(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal)
     return refs
 }
 
-function renderFirstMessage(firstMessage: OperatorFirstMessage) {
-    const consequenceLines = [
-        firstMessage.confirmEffect ? `- 确认后：${firstMessage.confirmEffect}` : null,
-        firstMessage.deferEffect ? `- 稍后后：${firstMessage.deferEffect}` : null,
-        firstMessage.continueSilentlyEffect ? `- 继续静默跑：${firstMessage.continueSilentlyEffect}` : null,
-        firstMessage.changeDirectionEffect ? `- 改路线后：${firstMessage.changeDirectionEffect}` : null,
-    ].filter(Boolean).join('\n')
+function approvalWindowOrder(): PrototypeTimeWindow[] {
+    return ['today', 'last24h', 'yesterday']
+}
 
+function collectApprovalItems(snapshot: PrototypeScenarioSnapshot) {
+    const seen = new Set<string>()
+    const items: PrototypeApprovalItem[] = []
+
+    for (const window of approvalWindowOrder()) {
+        const batch = snapshot.approvalBatches[window]
+        if (!batch) {
+            continue
+        }
+        for (const item of batch.items) {
+            if (seen.has(item.id)) {
+                continue
+            }
+            seen.add(item.id)
+            items.push(item)
+        }
+    }
+
+    return items
+}
+
+function threadMeaningfulSignature(thread: Pick<OperatorThread, 'title' | 'preview' | 'updatedAt' | 'firstMessage' | 'detailSections'>) {
     return [
-        '### 现状',
+        thread.title,
+        thread.preview,
+        thread.updatedAt,
+        thread.firstMessage.currentStatus,
+        thread.firstMessage.background,
+        thread.firstMessage.whyNow,
+        thread.firstMessage.suggestedAction,
+        thread.firstMessage.freeformInvite,
+        thread.firstMessage.confirmEffect ?? '',
+        thread.firstMessage.deferEffect ?? '',
+        thread.firstMessage.continueSilentlyEffect ?? '',
+        thread.firstMessage.changeDirectionEffect ?? '',
+        ...thread.detailSections.map((section) => `${section.title}:${section.body}:${section.refs.map((ref) => `${ref.kind}:${ref.id}`).join('|')}`),
+    ].join('||')
+}
+
+function renderFirstMessage(firstMessage: OperatorFirstMessage) {
+    return Array.from(new Set([
         firstMessage.currentStatus,
-        '',
-        '### 背景',
-        firstMessage.background,
-        '',
-        '### 为什么现在找你',
-        firstMessage.whyNow,
-        '',
-        '### 建议动作',
         firstMessage.suggestedAction,
-        consequenceLines ? `\n### 结果对比\n${consequenceLines}\n` : '',
         firstMessage.freeformInvite,
-    ].filter(Boolean).join('\n')
+    ].filter(Boolean))).join('\n\n')
+}
+
+function statusThreadTitle(goal: PrototypeGoal) {
+    return `${goalDisplayLabel(goal)} · 当前主线`
+}
+
+function directionThreadTitle(goal: PrototypeGoal) {
+    return `${goalDisplayLabel(goal)} · 路线调整`
+}
+
+function approvalThreadTitle(item: PrototypeApprovalItem) {
+    switch (item.kind) {
+        case 'branch-promotion':
+            return '放行导入分支'
+        case 'direction-change':
+            return '调整周报路线'
+        case 'scope-change':
+            return '收窄周报范围'
+    }
+}
+
+function riskThreadTitle(risk: PrototypeRisk) {
+    return riskPresentation(risk).title
+}
+
+function riskThreadId(risk: PrototypeRisk) {
+    return risk.id.startsWith('risk:') ? risk.id : `risk:${risk.id}`
 }
 
 function createStatusThread(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal): ThreadSeed {
@@ -281,23 +515,23 @@ function createStatusThread(snapshot: PrototypeScenarioSnapshot, goal: Prototype
     const lifecycle: ThreadLifecycleState = goal.status === 'intake' ? 'waiting' : 'in-progress'
     const refs = statusRefs(snapshot, goal)
     const firstMessage: OperatorFirstMessage = {
-        currentStatus: `${goalTitle(goal.id)}当前处于${labelGoalStatus(goal.status)}，置信 ${goal.confidence}%。`,
+        currentStatus: `${goalDisplayLabel(goal)}现在在${labelGoalStatus(goal.status)}，置信 ${goal.confidence}%。`,
         background: strategy?.thesis ?? goalView.summary,
         whyNow: goal.needsApproval
-            ? '虽然这是一条状态线程，但相关的审批或风险已经进入收件箱，你可以先从这里问我要全局判断。'
-            : '这条线程负责持续告诉你系统现在在做什么，以及为什么这么排。',
+            ? '相关审批或风险已经进入收件箱，从这里先看全局判断最省事。'
+            : '这条线程负责持续告诉你系统现在在做什么。',
         suggestedAction: goal.needsApproval
-            ? '如果你只想看全局判断，可以先看这条；如果你要真正做决定，优先打开右边待处理线程。'
-            : '当前不需要你立刻拍板；如果你想追问主线原因或要求我改排，也可以直接在这里说。',
-        freeformInvite: '你可以直接问我：为什么这样排、下一步准备做什么，或者要求我改路线和优先级。',
+            ? '真正要拍板的事已经单独进收件箱。'
+            : '想问我为什么这么排，直接回我。',
+        freeformInvite: '也可以直接叫我改路线或改优先级。',
     }
 
     return {
         id: `status:${goal.id}`,
         kind: 'status',
         goalId: goal.id,
-        title: `${goalTitle(goal.id)} · 当前现状`,
-        preview: goal.headline,
+        title: statusThreadTitle(goal),
+        preview: goalView.headline,
         updatedAt: formatMoment(goal.lastWorkedAt),
         lifecycle,
         priority: 'low',
@@ -314,6 +548,12 @@ function createStatusThread(snapshot: PrototypeScenarioSnapshot, goal: Prototype
             body: renderFirstMessage(firstMessage),
             createdAt: formatMoment(goal.lastWorkedAt),
         }),
+        detailSections: buildDetailSections({
+            background: firstMessage.background,
+            impactLines: [firstMessage.whyNow, firstMessage.suggestedAction],
+            planBody: goalView.summary,
+            refs,
+        }),
     }
 }
 
@@ -324,15 +564,15 @@ function createDirectionThread(snapshot: PrototypeScenarioSnapshot, goal: Protot
         : 'resolved'
     const refs = directionRefs(snapshot, goal)
     const firstMessage: OperatorFirstMessage = {
-        currentStatus: `${goalTitle(goal.id)}当前路线是「${labelDirection(goal.direction)}」，优先级是「${labelPriority(goal.priority)}」。`,
+        currentStatus: `${goalDisplayLabel(goal)}现在的路线是「${labelDirection(goal.direction)}」，优先级是「${labelPriority(goal.priority)}」。`,
         background: strategy?.reason ?? '系统已经形成一条当前路线，但仍保留手动改排空间。',
         whyNow: lifecycle === 'pending'
-            ? '当前目标的状态或信心发生了变化，路线和优先级都可能需要你重新拍板。'
+            ? '当前目标的状态或信心发生了变化，路线和优先级都可能要重新拍板。'
             : '这条方向线程已经稳定，但你仍然可以随时改路线或调优先级。',
         suggestedAction: lifecycle === 'pending'
-            ? '如果你认同当前路线，就保持不动；如果不认同，直接选一条更合适的方向。'
-            : '当前不需要你强制干预；如果你想压快、收紧或让出火力，也可以直接说。',
-        freeformInvite: '如果这些按钮不够，直接告诉我你想怎么改，比如“先收紧范围，别抢主线火力”。',
+            ? '认同就先不动；不认同就直接改。'
+            : '现在不用强制干预，但你随时可以改。',
+        freeformInvite: '不想点按钮的话，直接告诉我要怎么改。',
         changeDirectionEffect: '系统会按新的路线和优先级重排执行流、风险语气和后续摘要。',
     }
 
@@ -340,7 +580,7 @@ function createDirectionThread(snapshot: PrototypeScenarioSnapshot, goal: Protot
         id: `direction:${goal.id}`,
         kind: 'direction',
         goalId: goal.id,
-        title: `${goalTitle(goal.id)} · 路线与优先级`,
+        title: directionThreadTitle(goal),
         preview: strategy?.thesis ?? goal.headline,
         updatedAt: formatMoment(goal.lastWorkedAt),
         lifecycle,
@@ -389,13 +629,18 @@ function createDirectionThread(snapshot: PrototypeScenarioSnapshot, goal: Protot
             body: renderFirstMessage(firstMessage),
             createdAt: formatMoment(goal.lastWorkedAt),
         }),
+        detailSections: buildDetailSections({
+            background: firstMessage.background,
+            impactLines: [firstMessage.whyNow, firstMessage.changeDirectionEffect, firstMessage.suggestedAction],
+            planBody: strategy?.reason ?? goal.summary,
+            refs,
+        }),
     }
 }
 
 function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: PrototypeApprovalItem): ThreadSeed {
     const view = approvalPresentation(item)
     const context = approvalContextPresentation(item)
-    const goal = findGoal(snapshot, item.goalId)
     const lifecycle: ThreadLifecycleState = item.state === 'pending'
         ? 'pending'
         : item.state === 'deferred'
@@ -403,11 +648,11 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
             : 'resolved'
     const refs = approvalRefs(snapshot, item)
     const firstMessage: OperatorFirstMessage = {
-        currentStatus: `当前待你确认：${view.title}。`,
+        currentStatus: `现在要你拍板：${view.title}。`,
         background: context.background,
-        whyNow: '这条审批已经进入明确的判断边界；继续自动推进会跨过你的经营决策。 ',
+        whyNow: '这条审批已经到明确的判断边界；继续自动推进会跨过你的经营决策。',
         suggestedAction: context.systemDecision,
-        freeformInvite: '如果你不想直接点按钮，也可以回复“先再加固一轮”或“别今天放行”。',
+        freeformInvite: '不想点按钮的话，直接告诉我要怎么做。',
         confirmEffect: context.approveEffect,
         deferEffect: context.deferEffect,
     }
@@ -440,7 +685,7 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
         id: `approval:${item.id}`,
         kind: 'approval',
         goalId: item.goalId,
-        title: view.title,
+        title: approvalThreadTitle(item),
         preview: item.summary,
         updatedAt: formatMoment(item.requestedAt),
         lifecycle,
@@ -458,6 +703,16 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
             body: renderFirstMessage(firstMessage),
             createdAt: formatMoment(item.requestedAt),
         }),
+        detailSections: buildDetailSections({
+            background: firstMessage.background,
+            impactLines: [
+                firstMessage.whyNow,
+                firstMessage.confirmEffect,
+                firstMessage.deferEffect,
+            ],
+            planBody: item.summary,
+            refs,
+        }),
     }
 }
 
@@ -471,21 +726,21 @@ function createRiskThread(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRi
             : 'resolved'
     const refs = riskRefs(snapshot, risk)
     const firstMessage: OperatorFirstMessage = {
-        currentStatus: `当前风险：${view.title}（${labelRiskSeverity(risk.severity)}风险）。`,
+        currentStatus: `现在要先处理这条风险：${view.title}（${labelRiskSeverity(risk.severity)}风险）。`,
         background: context.background,
-        whyNow: '这条风险会直接改变系统接下来是继续静默跑，还是先收紧路线。 ',
+        whyNow: '这条风险会直接改变接下来是继续静默跑，还是先收紧路线。',
         suggestedAction: context.systemDecision,
-        freeformInvite: '如果这些按钮不够，你也可以直接说你想怎么处理这条风险。',
+        freeformInvite: '不想点按钮的话，直接告诉我要怎么处理。',
         continueSilentlyEffect: context.continueEffect,
         deferEffect: context.deferEffect,
         changeDirectionEffect: '系统会立刻把路线收紧到更保守的执行姿态。',
     }
 
     return {
-        id: `risk:${risk.id}`,
+        id: riskThreadId(risk),
         kind: 'risk',
         goalId: risk.goalId,
-        title: view.title,
+        title: riskThreadTitle(risk),
         preview: view.signal,
         updatedAt: formatMoment(snapshot.checkpoint.stamp),
         lifecycle,
@@ -516,11 +771,22 @@ function createRiskThread(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRi
         ],
         statusLabel: lifecycleLabel(lifecycle),
         introMessage: createThreadMessage({
-            id: createMessageId('intro', `risk:${risk.id}`),
-            threadId: `risk:${risk.id}`,
+            id: createMessageId('intro', riskThreadId(risk)),
+            threadId: riskThreadId(risk),
             role: 'agent',
             body: renderFirstMessage(firstMessage),
             createdAt: formatMoment(snapshot.checkpoint.stamp),
+        }),
+        detailSections: buildDetailSections({
+            background: firstMessage.background,
+            impactLines: [
+                firstMessage.whyNow,
+                firstMessage.continueSilentlyEffect,
+                firstMessage.deferEffect,
+                firstMessage.changeDirectionEffect,
+            ],
+            planBody: risk.summary,
+            refs,
         }),
     }
 }
@@ -533,10 +799,8 @@ export function buildOperatorThreadSeeds(snapshot: PrototypeScenarioSnapshot): T
         seeds.push(createDirectionThread(snapshot, goal))
     }
 
-    for (const batch of Object.values(snapshot.approvalBatches)) {
-        for (const item of batch.items) {
-            seeds.push(createApprovalThread(snapshot, item))
-        }
+    for (const item of collectApprovalItems(snapshot)) {
+        seeds.push(createApprovalThread(snapshot, item))
     }
 
     for (const risk of snapshot.risks) {
@@ -559,12 +823,29 @@ export function buildOperatorThreadSeeds(snapshot: PrototypeScenarioSnapshot): T
     })
 }
 
-function shouldMarkUnread(seed: ThreadSeed, previous: OperatorThread | undefined, activeThreadId: string | null) {
+function shouldMarkUnread(
+    seed: ThreadSeed,
+    previous: OperatorThread | undefined,
+    activeThreadId: string | null,
+    decisionTopic: DecisionTopic | null,
+) {
     if (seed.id === activeThreadId) {
         return false
     }
+    if (
+        decisionTopic
+        && decisionTopic.kind === 'approval'
+        && decisionTopic.lifecycle === 'pending'
+        && previous
+        && (previous.lifecycle === 'resolved' || previous.lifecycle === 'silent' || previous.unread === false)
+    ) {
+        return true
+    }
     if (!previous) {
         return lifecycleRank(seed.lifecycle) < lifecycleRank('resolved')
+    }
+    if (threadMeaningfulSignature(seed) !== threadMeaningfulSignature(previous)) {
+        return true
     }
     if ((previous.lifecycle === 'resolved' || previous.lifecycle === 'silent') && lifecycleRank(seed.lifecycle) < lifecycleRank('resolved')) {
         return true
@@ -589,15 +870,23 @@ export function selectDefaultActiveThreadId(threads: OperatorThread[], currentTh
 export function syncOperatorThreadBundle(params: {
     snapshot: PrototypeScenarioSnapshot
     previousState: ExistingThreadState
+    decisionTopics?: Record<string, DecisionTopic>
 }): { bundle: { threadsById: Record<string, OperatorThread>; messagesByThread: Record<string, OperatorMessage[]> }; activeThreadId: string | null } {
-    const seeds = buildOperatorThreadSeeds(params.snapshot)
+    const seeds = buildOperatorThreadSeeds(params.snapshot).map((seed) => (
+        overlayDecisionTopic(seed, params.decisionTopics?.[seed.id] ?? null)
+    ))
     const nextThreadsById: Record<string, OperatorThread> = {}
     const nextMessagesByThread: Record<string, OperatorMessage[]> = {}
 
     for (const seed of seeds) {
         const previousThread = params.previousState.threadsById[seed.id]
         const previousMessages = params.previousState.messagesByThread[seed.id] ?? []
-        const unread = shouldMarkUnread(seed, previousThread, params.previousState.activeThreadId)
+        const unread = shouldMarkUnread(
+            seed,
+            previousThread,
+            params.previousState.activeThreadId,
+            params.decisionTopics?.[seed.id] ?? null,
+        )
         const introMessage = seed.introMessage
         const restMessages = previousMessages.filter((message) => message.id !== introMessage.id)
 

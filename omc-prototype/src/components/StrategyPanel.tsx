@@ -37,10 +37,34 @@ export default function StrategyPanel(props: {
                 <div className="prototype-icon-pill prototype-icon-pill--large">
                     <Glyph name="strategy" />
                 </div>
-                <div>
+                <div className="prototype-strategy-callout__copy">
                     <h3>{view.thesis}</h3>
                     <p>{view.reason}</p>
                 </div>
+            </div>
+
+            <div className="prototype-strategy-grid">
+                <section className="prototype-subpanel">
+                    <div className="prototype-subpanel__head">
+                        <h3>当前焦点</h3>
+                    </div>
+                    <div className="prototype-token-list">
+                        {view.focusAreas.map((item) => (
+                            <span key={item} className="prototype-token">{item}</span>
+                        ))}
+                    </div>
+                </section>
+
+                <section className="prototype-subpanel">
+                    <div className="prototype-subpanel__head">
+                        <h3>今天动作</h3>
+                    </div>
+                    <div className="prototype-token-list">
+                        {view.todayMoves.map((item) => (
+                            <span key={item} className="prototype-token">{item}</span>
+                        ))}
+                    </div>
+                </section>
             </div>
         </section>
     )
