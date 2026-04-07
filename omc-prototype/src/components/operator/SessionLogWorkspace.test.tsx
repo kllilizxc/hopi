@@ -12,6 +12,33 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver
 }
 
+class FakeEventSource {
+    static instances: FakeEventSource[] = []
+
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+
+    constructor(_url: string) {
+        FakeEventSource.instances.push(this)
+    }
+
+    close() {
+        FakeEventSource.instances = FakeEventSource.instances.filter((instance) => instance !== this)
+    }
+
+    static emit(payload: unknown) {
+        const event = { data: JSON.stringify(payload) } as MessageEvent<string>
+        for (const instance of FakeEventSource.instances) {
+            instance.onmessage?.(event)
+        }
+    }
+
+    static reset() {
+        FakeEventSource.instances = []
+    }
+}
+
+vi.stubGlobal('EventSource', FakeEventSource)
+
 const mockUsePrototypeRemoteApi = vi.fn()
 const mockUseSessionMessages = vi.fn()
 const appendOptimisticMessage = vi.fn()
@@ -65,6 +92,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
 describe('SessionLogWorkspace', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        FakeEventSource.reset()
         mockUseSessionMessages.mockReturnValue({
             messages: [
                 {
@@ -96,6 +124,7 @@ describe('SessionLogWorkspace', () => {
             getSession: vi.fn().mockResolvedValue({ session: createSession() }),
             resumeSession: vi.fn().mockResolvedValue('session-1'),
             sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
             createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
         })
     })
@@ -127,6 +156,7 @@ describe('SessionLogWorkspace', () => {
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: false }) }),
             resumeSession: vi.fn().mockResolvedValue('session-1'),
             sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
             createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
         })
 
@@ -150,6 +180,7 @@ describe('SessionLogWorkspace', () => {
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: true, thinking: true }) }),
             resumeSession: vi.fn().mockResolvedValue('session-1'),
             sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
             createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
         })
 
@@ -172,11 +203,95 @@ describe('SessionLogWorkspace', () => {
         expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).not.toBeNull()
     })
 
+    it('stops the breathing tail when a session-updated event clears thinking', async () => {
+        mockUsePrototypeRemoteApi.mockReturnValue({
+            getSession: vi.fn().mockResolvedValue({ session: createSession({ active: true, thinking: true }) }),
+            resumeSession: vi.fn().mockResolvedValue('session-1'),
+            sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
+            createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
+        })
+
+        const { container } = render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Lock runtime foundation',
+                    subtitle: '01-01',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        expect(await screen.findByText('first planning update')).toBeInTheDocument()
+        expect(screen.getByText('底层 Agent 正在继续输出')).toBeInTheDocument()
+
+        FakeEventSource.emit({
+            type: 'session-updated',
+            sessionId: 'session-1',
+            data: {
+                active: true,
+                thinking: false,
+            },
+        })
+
+        await waitFor(() => {
+            expect(screen.getByText('会话仍在线，等待下一步')).toBeInTheDocument()
+        })
+        expect(screen.queryByText('底层 Agent 正在继续输出')).toBeNull()
+        expect(container.querySelector('.prototype-session-log__tail--live')).not.toBeNull()
+        expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).toBeNull()
+    })
+
+    it('refetches the session state when a session-updated event only carries a sid', async () => {
+        const getSession = vi.fn()
+            .mockResolvedValueOnce({ session: createSession({ active: true, thinking: true }) })
+            .mockResolvedValueOnce({ session: createSession({ active: true, thinking: false }) })
+        mockUsePrototypeRemoteApi.mockReturnValue({
+            getSession,
+            resumeSession: vi.fn().mockResolvedValue('session-1'),
+            sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
+            createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
+        })
+
+        render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Lock runtime foundation',
+                    subtitle: '01-01',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        expect(await screen.findByText('底层 Agent 正在继续输出')).toBeInTheDocument()
+
+        FakeEventSource.emit({
+            type: 'session-updated',
+            sessionId: 'session-1',
+            data: {
+                sid: 'session-1',
+            },
+        })
+
+        await waitFor(() => {
+            expect(getSession).toHaveBeenCalledTimes(2)
+        })
+        await waitFor(() => {
+            expect(screen.getByText('会话仍在线，等待下一步')).toBeInTheDocument()
+        })
+    })
+
     it('marks the transcript tail as ended once the session has stopped', async () => {
         mockUsePrototypeRemoteApi.mockReturnValue({
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: false, thinking: false }) }),
             resumeSession: vi.fn().mockResolvedValue('session-1'),
             sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
             createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
         })
 
@@ -204,6 +319,7 @@ describe('SessionLogWorkspace', () => {
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: false }) }),
             resumeSession: vi.fn().mockResolvedValue('session-2'),
             sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
             createSessionTerminalUrl: vi.fn().mockImplementation((sessionId: string) => `http://localhost:3006/sessions/${sessionId}/terminal`),
         }
         mockUsePrototypeRemoteApi.mockReturnValue(api)

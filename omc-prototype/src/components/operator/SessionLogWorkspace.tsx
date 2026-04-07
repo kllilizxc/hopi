@@ -5,7 +5,7 @@ import {
     type NormalizedAgentContent,
     type NormalizedMessage,
 } from '@hopi/protocol'
-import type { Session } from '@hopi/protocol/types'
+import type { Session, SyncEvent } from '@hopi/protocol/types'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { OperatorMessageCard, getOperatorMessageRootClass } from '@/components/operator/OperatorMessageCard'
 import { PrototypeToolCard } from '@/components/operator/PrototypeToolCard'
@@ -256,6 +256,33 @@ function getErrorMessage(error: unknown): string {
     return message || '底层 Session 操作失败'
 }
 
+function extractSessionStatePatch(data: unknown): Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'modelMode' | 'permissionMode'>> | null {
+    if (!data || typeof data !== 'object') {
+        return null
+    }
+
+    const record = data as Record<string, unknown>
+    const patch: Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'modelMode' | 'permissionMode'>> = {}
+
+    if (typeof record.active === 'boolean') {
+        patch.active = record.active
+    }
+    if (typeof record.thinking === 'boolean') {
+        patch.thinking = record.thinking
+    }
+    if (typeof record.activeAt === 'number') {
+        patch.activeAt = record.activeAt
+    }
+    if (typeof record.modelMode === 'string') {
+        patch.modelMode = record.modelMode as Session['modelMode']
+    }
+    if (typeof record.permissionMode === 'string') {
+        patch.permissionMode = record.permissionMode as Session['permissionMode']
+    }
+
+    return Object.keys(patch).length ? patch : null
+}
+
 function buildSessionLogTailState(params: {
     session: Session | null
     pendingCount: number
@@ -344,6 +371,48 @@ export default function SessionLogWorkspace(props: {
     useEffect(() => {
         void loadSession(resolvedSessionId)
     }, [loadSession, resolvedSessionId])
+
+    useEffect(() => {
+        const eventSource = new EventSource(api.createEventsUrl())
+
+        eventSource.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data) as SyncEvent
+                if (!('sessionId' in payload) || payload.sessionId !== resolvedSessionId) {
+                    return
+                }
+
+                if (payload.type === 'session-removed') {
+                    setSession((previous) => previous ? {
+                        ...previous,
+                        active: false,
+                        thinking: false,
+                    } : previous)
+                    return
+                }
+
+                if (payload.type !== 'session-updated' && payload.type !== 'session-added') {
+                    return
+                }
+
+                const patch = extractSessionStatePatch(payload.data)
+                if (patch) {
+                    setSession((previous) => previous ? {
+                        ...previous,
+                        ...patch,
+                    } : previous)
+                    return
+                }
+
+                void loadSession(resolvedSessionId)
+            } catch {
+            }
+        }
+
+        return () => {
+            eventSource.close()
+        }
+    }, [api, loadSession, resolvedSessionId])
 
     const entries = useMemo(
         () => normalizeSessionLogEntries(messages),
