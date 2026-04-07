@@ -49,3 +49,5 @@ cli/npm/main/
 /.tmp/
 
 .codex
+.claude
+.agents

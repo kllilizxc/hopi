@@ -107,9 +107,8 @@ export default function MessageWorkspace(props: {
 }) {
     const mode = props.mode ?? (props.selectedThread ? 'thread' : 'inbox')
     const className = [
-        'prototype-message-panel',
+        'flex flex-col h-full bg-white border-l border-zinc-200 overflow-hidden w-full max-w-[500px] shadow-xl md:shadow-none transition-all duration-300',
         props.className,
-        mode !== 'inbox' ? 'prototype-message-panel--detail-mode' : null,
     ].filter(Boolean).join(' ')
     const operatorSurface = useOperatorSurface()
     const { state, dataSource, live } = usePrototypeStore()
@@ -167,59 +166,63 @@ export default function MessageWorkspace(props: {
 
     return (
         <aside className={className}>
-            <div className={`prototype-message-panel__head${mode !== 'inbox' ? ' prototype-message-panel__head--detail' : ''}`}>
-                {mode === 'inbox' ? (
-                    <div className="prototype-icon-pill prototype-icon-pill--small">
-                        <Glyph name="digest" />
-                    </div>
-                ) : (
-                    <button
-                        type="button"
-                        className="prototype-thread-detail__back"
-                        onClick={props.onBackToList}
-                    >
-                        <Glyph name="back" />
-                        <span>返回列表</span>
-                    </button>
-                )}
-                <div className="prototype-message-panel__title">
+            <div className={`flex flex-col px-6 py-5 bg-white border-b border-zinc-200 relative z-10 flex-shrink-0 ${mode !== 'inbox' ? 'gap-3' : 'gap-4'}`}>
+                <div className="flex items-center justify-between w-full">
+                    {mode === 'inbox' ? (
+                        <div className="flex items-center justify-center w-8 h-8 rounded bg-zinc-100 text-zinc-600">
+                            <Glyph name="digest" />
+                        </div>
+                    ) : (
+                        <button
+                            type="button"
+                            className="flex items-center gap-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded p-1 -ml-1"
+                            onClick={props.onBackToList}
+                        >
+                            <Glyph name="back" />
+                            <span>返回列表</span>
+                        </button>
+                    )}
+
+                    {props.onClose ? (
+                        <button
+                            type="button"
+                            className="flex items-center justify-center w-8 h-8 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            onClick={props.onClose}
+                            aria-label="关闭消息面板"
+                        >
+                            <Glyph name="close" />
+                        </button>
+                    ) : null}
+                </div>
+
+                <div className="flex flex-col min-w-0">
                     {mode === 'thread' && props.selectedThread ? (
-                        <p className="prototype-message-panel__eyebrow">
+                        <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">
                             {threadKindLabel(props.selectedThread.kind)}
                         </p>
                     ) : null}
-                    <div className="prototype-message-panel__title-row">
-                        <h2>{props.selectedThread ? props.selectedThread.title : props.heading.title}</h2>
+                    <div className="flex items-center gap-3 w-full">
+                        <h2 className="text-xl font-bold text-zinc-900 truncate leading-tight break-all whitespace-normal">{props.selectedThread ? props.selectedThread.title : props.heading.title}</h2>
                     </div>
                     {mode === 'thread' && props.selectedThread ? (
-                        <p className="prototype-message-panel__meta">
-                            <span>{props.selectedThread.statusLabel}</span>
+                        <div className="flex items-center gap-3 mt-2 text-xs font-medium text-zinc-500">
+                            <span className="px-2 py-0.5 bg-zinc-100 rounded-md text-zinc-700">{props.selectedThread.statusLabel}</span>
                             <span>{props.selectedThread.updatedAt}</span>
-                        </p>
+                        </div>
                     ) : props.heading.summary ? (
-                        <p className="prototype-message-panel__meta">{props.heading.summary}</p>
+                        <p className="text-sm text-zinc-500 mt-1 line-clamp-2 leading-relaxed break-all whitespace-normal">{props.heading.summary}</p>
                     ) : null}
                 </div>
-                {props.onClose ? (
-                    <button
-                        type="button"
-                        className="prototype-message-panel__close"
-                        onClick={props.onClose}
-                        aria-label="关闭消息面板"
-                    >
-                        <Glyph name="close" />
-                    </button>
-                ) : null}
             </div>
 
             {props.selectedThread ? (
-                <div className="prototype-message-panel__body prototype-message-panel__body--detail">
-                    <section className="prototype-message-panel__detail">
+                <div className="flex-1 overflow-hidden relative bg-white min-h-0">
+                    <section className="absolute inset-0 flex flex-col min-h-0">
                         <ThreadConversation thread={props.selectedThread} messages={activeMessages} />
                     </section>
                 </div>
             ) : (
-                <div className="prototype-message-panel__body prototype-message-panel__body--inbox">
+                <div className="flex-1 flex flex-col overflow-hidden bg-zinc-50/50 min-h-0">
                     <ThreadInbox
                         threads={props.threads}
                         activeThreadId={null}
@@ -228,14 +231,12 @@ export default function MessageWorkspace(props: {
                         onSelect={props.onSelectThread}
                     />
                     {!props.threads.length ? (
-                        <section className="prototype-thread-empty">
-                            <div className="prototype-icon-pill prototype-icon-pill--small">
+                        <section className="flex flex-col items-center justify-center p-8 text-center text-zinc-500 h-full">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-zinc-100 text-zinc-400 mb-4">
                                 <Glyph name="digest" />
                             </div>
-                            <div>
-                                <h3>暂无线程</h3>
-                                <p>当前没有进入经营边界的话题。系统会继续静默推进。</p>
-                            </div>
+                            <h3 className="text-base font-medium text-zinc-900 mb-2">暂无线程</h3>
+                            <p className="text-sm max-w-[240px] leading-relaxed">当前没有进入经营边界的话题。系统会继续静默推进。</p>
                         </section>
                     ) : null}
                 </div>

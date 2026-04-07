@@ -130,13 +130,13 @@ export function LinearMeter(props: { value: number; label?: string; showValue?: 
     const showValue = props.showValue ?? true
 
     return (
-        <div className="prototype-linear-meter">
-            <div className="prototype-linear-meter__head">
-                {showValue ? <strong>{value}</strong> : <strong aria-hidden="true" className="prototype-linear-meter__ghost">.</strong>}
-                <span>{props.label ?? '置信'}</span>
+        <div className="flex flex-col gap-1">
+            <div className="flex items-end justify-between text-xs font-medium">
+                {showValue ? <strong className="text-zinc-900">{value}</strong> : <strong aria-hidden="true" className="invisible">.</strong>}
+                <span className="text-zinc-500">{props.label ?? '置信'}</span>
             </div>
-            <div className="prototype-linear-meter__track" aria-hidden="true">
-                <span className="prototype-linear-meter__value" style={{ width: `${value}%` }} />
+            <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden" aria-hidden="true">
+                <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${value}%` }} />
             </div>
         </div>
     )
@@ -147,11 +147,11 @@ export function SparkBar(props: { value: number }) {
     const active = Math.max(1, Math.round((props.value / 100) * bars.length))
 
     return (
-        <div className="prototype-sparkbar" aria-hidden="true">
+        <div className="flex items-end gap-[2px] h-3 w-4" aria-hidden="true">
             {bars.map((height, index) => (
                 <span
                     key={`${height}-${index}`}
-                    className={index < active ? 'is-active' : undefined}
+                    className={`w-0.5 rounded-t-[1px] transition-colors ${index < active ? 'bg-blue-500' : 'bg-zinc-200'}`}
                     style={{ height: `${height * 100}%` }}
                 />
             ))}

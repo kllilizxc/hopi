@@ -141,19 +141,20 @@ export default function LiveWorkspaceBar(props: LiveWorkspaceBarProps) {
 
     return (
         <>
-            <div className="prototype-workspace-bar-shell">
-                <div className="prototype-workspace-bar">
-                    <div className="prototype-workspace-bar__identity">
-                        <p className="prototype-eyebrow">One-Man-Company 2.0</p>
-                        <strong>{props.programName}</strong>
-                        <span>{props.repoRoot}</span>
+            <div className="flex flex-col border-b border-zinc-200">
+                <div className="flex items-center justify-between px-6 py-4 bg-white">
+                    <div className="flex flex-col">
+                        <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">One-Man-Company 2.0</p>
+                        <strong className="text-lg font-bold text-zinc-900">{props.programName}</strong>
+                        <span className="text-xs text-zinc-400 font-mono truncate max-w-[200px]">{props.repoRoot}</span>
                     </div>
 
-                    <label className="prototype-program-picker">
-                        <span>项目</span>
+                    <label className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-zinc-600">项目</span>
                         <select
                             value={props.selectedProgramId}
                             onChange={(event) => handleProgramChange(event.target.value)}
+                            className="bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2 hover:bg-zinc-100 transition-colors cursor-pointer"
                         >
                             {props.programs.map((program) => (
                                 <option key={program.id} value={program.id}>
@@ -163,38 +164,40 @@ export default function LiveWorkspaceBar(props: LiveWorkspaceBarProps) {
                         </select>
                     </label>
 
-                    <div className="prototype-workspace-bar__status">
-                        <span>{props.checkpointLabel}</span>
-                        <small>{props.checkpointSynopsis}</small>
+                    <div className="flex flex-col items-center px-4">
+                        <span className="text-sm font-medium text-zinc-900">{props.checkpointLabel}</span>
+                        <small className="text-xs text-zinc-500">{props.checkpointSynopsis}</small>
                     </div>
 
-                    <div className="prototype-workspace-bar__actions">
-                        <button type="button" className="prototype-button--ghost" onClick={openModal}>
+                    <div className="flex items-center gap-3">
+                        <button type="button" className="px-4 py-2 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-md hover:bg-zinc-50 shadow-sm transition-colors cursor-pointer whitespace-nowrap min-w-[80px]" onClick={openModal}>
                             新建项目
                         </button>
                         <button
                             type="button"
-                            className="prototype-message-toggle prototype-message-toggle--header"
+                            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-md shadow-sm transition-colors relative whitespace-nowrap"
                             onClick={props.onOpenInbox}
                         >
                             <Glyph name="digest" />
                             <span>消息</span>
-                            {props.activeInboxCount > 0 ? <strong>{props.activeInboxCount}</strong> : null}
+                            {props.activeInboxCount > 0 ? <strong className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[20px] h-[20px] px-1 rounded-full bg-red-500 text-white text-[10px] shadow-sm">{props.activeInboxCount}</strong> : null}
                         </button>
                     </div>
                 </div>
 
                 {successMessage ? (
-                    <div className="prototype-workspace-bar__toast" aria-live="polite" aria-atomic="true">
-                        <p className="prototype-workspace-bar__success" role="status">
+                    <div className="bg-green-50 px-6 py-2 border-t border-green-100" aria-live="polite" aria-atomic="true">
+                        <p className="text-sm text-green-700 flex items-center gap-2" role="status">
+                            <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
                             {successMessage}
                         </p>
                     </div>
                 ) : null}
 
                 {live?.error ? (
-                    <div className="prototype-workspace-bar__toast">
-                        <p className="prototype-workspace-bar__error" role="alert">
+                    <div className="bg-red-50 px-6 py-2 border-t border-red-100">
+                        <p className="text-sm text-red-700 flex items-center gap-2" role="alert">
+                            <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span>
                             切换项目失败：{live.error}。当前仍显示已加载项目。
                         </p>
                     </div>

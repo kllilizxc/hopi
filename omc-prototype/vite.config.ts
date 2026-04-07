@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
 
 const prototypePortEnv = process.env.HOPI_OMC_PROTOTYPE_PORT?.trim()
@@ -8,7 +9,10 @@ const hubUrl = process.env.HOPI_HUB_URL?.trim() || ''
 const defaultHubUrl = 'http://127.0.0.1:3006'
 
 export default defineConfig({
-    plugins: [react()],
+    plugins: [
+        react(),
+        tailwindcss()
+    ],
     base: '/',
     server: {
         host: true,

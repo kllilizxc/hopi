@@ -34,19 +34,20 @@ export default function DashboardPage() {
             : `主线在 ${topGoalLabel}，其余动作都在静默推进。`
 
     return (
-        <div className="prototype-dashboard">
-            <section className="prototype-dashboard-hero prototype-panel">
-                <div className="prototype-dashboard-hero__topline">
-                    <div className="prototype-dashboard-hero__copy">
-                        <div className="prototype-icon-pill prototype-icon-pill--large">
+        <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto">
+            <section className="flex flex-col gap-4 p-8 bg-white border border-zinc-200 rounded-xl shadow-sm relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-transparent opacity-50 pointer-events-none"></div>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+                    <div className="flex items-start gap-4">
+                        <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-zinc-900 text-white shadow-sm flex-shrink-0">
                             <Glyph name="repo" />
                         </div>
-                        <div>
-                            <p className="prototype-eyebrow">{portfolio.program.name}</p>
-                            <h2>目标经营盘</h2>
+                        <div className="flex flex-col">
+                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">{portfolio.program.name}</p>
+                            <h2 className="text-2xl font-bold text-zinc-900">目标经营盘</h2>
                         </div>
                     </div>
-                    <div className="prototype-dashboard-hero__meta">
+                    <div className="flex flex-wrap items-center gap-3">
                         <MetaBadge tone="neutral">{checkpoint.label}</MetaBadge>
                         <MetaBadge tone="neutral">{portfolio.checkpoint.stamp}</MetaBadge>
                         <MetaBadge tone={unresolvedThreadCount > 0 ? 'neutral' : 'success'}>
@@ -55,7 +56,7 @@ export default function DashboardPage() {
                         {planningSessionId ? (
                             <button
                                 type="button"
-                                className="prototype-button--ghost"
+                                className="px-3 py-1.5 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-md hover:bg-zinc-50 shadow-sm transition-colors ml-auto md:ml-0"
                                 onClick={() => {
                                     operatorSurface.openSessionLog({
                                         sessionId: planningSessionId,
@@ -70,8 +71,8 @@ export default function DashboardPage() {
                         ) : null}
                     </div>
                 </div>
-                <p className="prototype-dashboard-hero__lede">{checkpoint.synopsis}</p>
-                <p className="prototype-dashboard-hero__summary">{summaryLine}</p>
+                <p className="text-base text-zinc-700 max-w-3xl relative z-10 font-medium leading-relaxed">{checkpoint.synopsis}</p>
+                <p className="text-sm text-zinc-500 max-w-3xl relative z-10 leading-relaxed">{summaryLine}</p>
             </section>
 
             {isSeedOnly ? (
@@ -82,7 +83,7 @@ export default function DashboardPage() {
                     planningRun={live?.planningRun ?? null}
                 />
             ) : (
-                <>
+                <div className="flex flex-col gap-8">
                     <GoalPortfolioPanel goals={portfolio.goals} checkpointId={portfolio.checkpoint.id} />
 
                     <DailyDigestPanel
@@ -96,7 +97,7 @@ export default function DashboardPage() {
                         streams={portfolio.streams}
                         checkpointId={portfolio.checkpoint.id}
                     />
-                </>
+                </div>
             )}
         </div>
     )

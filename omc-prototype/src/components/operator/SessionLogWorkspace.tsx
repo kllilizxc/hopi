@@ -524,75 +524,75 @@ export default function SessionLogWorkspace(props: {
 
     if (loadingSession && !session) {
         return (
-            <section className="prototype-session-log">
-                <header className="prototype-session-log__header">
-                    <div className="prototype-session-log__topbar">
+            <section className="flex flex-col h-full bg-white relative">
+                <header className="flex-shrink-0 px-6 py-4 bg-zinc-50 border-b border-zinc-200">
+                    <div className="flex items-center justify-between mb-4">
                         <button
                             type="button"
-                            className="prototype-thread-detail__back"
+                            className="flex items-center gap-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors focus:outline-none focus-visible:underline"
                             onClick={props.onBack}
                             aria-label="返回消息面板"
                         >
-                            返回消息面板
+                            <span>← 返回消息面板</span>
                         </button>
                     </div>
                 </header>
-                <section className="prototype-trace-empty">
-                    <h3>正在连接底层 Session</h3>
-                    <p>系统正在拉取这条运行的原始 transcript。</p>
+                <section className="flex flex-col items-center justify-center p-12 text-center text-zinc-500 h-full">
+                    <h3 className="text-base font-semibold text-zinc-900 mb-2">正在连接底层 Session</h3>
+                    <p className="text-sm max-w-sm">系统正在拉取这条运行的原始 transcript。</p>
                 </section>
             </section>
         )
     }
 
     return (
-            <section className="prototype-session-log">
-                <div className="prototype-session-log__summary">
-                    <header className="prototype-session-log__header">
-                        <div className="prototype-session-log__topbar">
-                            <button
-                                type="button"
-                                className="prototype-thread-detail__back"
-                                onClick={props.onBack}
-                                aria-label="返回消息面板"
-                            >
-                                返回消息面板
-                            </button>
+        <section className="flex flex-col h-full bg-white relative">
+            <div className="flex-shrink-0 border-b border-zinc-200 z-10 bg-white">
+                <header className="px-6 py-5 bg-zinc-50">
+                    <div className="flex items-center justify-between mb-4">
+                        <button
+                            type="button"
+                            className="flex items-center gap-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors focus:outline-none focus-visible:underline"
+                            onClick={props.onBack}
+                            aria-label="返回消息面板"
+                        >
+                            <span>← 返回消息面板</span>
+                        </button>
 
-                            <div className="prototype-session-log__toolbar">
-                                {hasMore ? (
-                                    <button
-                                        type="button"
-                                        className="prototype-button--ghost"
-                                        onClick={() => {
-                                            void loadMore()
-                                        }}
-                                        disabled={isLoadingMore}
-                                    >
-                                        {isLoadingMore ? '加载中…' : '加载更早消息'}
-                                    </button>
-                                ) : null}
-                                <a
-                                    className="prototype-button--ghost"
-                                    href={terminalUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
+                        <div className="flex items-center gap-3">
+                            {hasMore ? (
+                                <button
+                                    type="button"
+                                    className="px-3 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-zinc-500 disabled:opacity-50"
+                                    onClick={() => {
+                                        void loadMore()
+                                    }}
+                                    disabled={isLoadingMore}
                                 >
-                                    打开终端
-                                </a>
-                            </div>
+                                    {isLoadingMore ? '加载中…' : '加载更早消息'}
+                                </button>
+                            ) : null}
+                            <a
+                                className="px-3 py-1.5 text-xs font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                                href={terminalUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                            >
+                                打开终端
+                            </a>
                         </div>
+                    </div>
 
-                        <div className="prototype-session-log__title">
-                            <p className="prototype-message-panel__eyebrow">底层 transcript</p>
-                            <h2>{props.selection.title}</h2>
-                            <p className="prototype-session-log__subtitle">
-                                {props.selection.subtitle ?? resolvedSessionId}
-                            </p>
-                        </div>
-                    </header>
+                    <div className="flex flex-col">
+                        <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">底层 transcript</p>
+                        <h2 className="text-xl font-bold text-zinc-900 mb-1">{props.selection.title}</h2>
+                        <p className="text-sm text-zinc-500 truncate" title={props.selection.subtitle ?? resolvedSessionId}>
+                            {props.selection.subtitle ?? resolvedSessionId}
+                        </p>
+                    </div>
+                </header>
 
-                    <div className="prototype-session-log__meta prototype-session-log__meta--wrapped">
+                <div className="flex flex-wrap gap-2 px-6 py-3 bg-white border-t border-zinc-100">
                     <MetaBadge tone="neutral">{labelSource(props.selection.source)}</MetaBadge>
                     {session?.metadata?.flavor ? (
                         <MetaBadge tone="neutral">{session.metadata.flavor}</MetaBadge>
@@ -606,31 +606,30 @@ export default function SessionLogWorkspace(props: {
                 </div>
 
                 {!session?.active ? (
-                    <div className="prototype-session-log__banner">
+                    <div className="px-6 py-2 bg-amber-50 border-t border-b border-amber-100 text-sm text-amber-800 font-medium">
                         Session 已停止。发送新消息会先自动恢复，再继续写入。
                     </div>
                 ) : null}
 
                 {sessionError ? (
-                    <p className="prototype-seed-panel__error" role="alert">
+                    <p className="px-6 py-3 bg-red-50 text-sm text-red-700 border-t border-b border-red-100" role="alert">
                         {sessionError}
                     </p>
                 ) : null}
 
                 {warning ? (
-                    <p className="prototype-session-log__hint">{warning}</p>
+                    <p className="px-6 py-3 bg-amber-50 text-sm text-amber-700 border-t border-b border-amber-100">{warning}</p>
                 ) : null}
             </div>
 
-            <div className="prototype-session-log__body-shell" data-testid="session-log-scroll-shell">
-                <section className="prototype-chat-thread__root">
-                    <div
-                        ref={viewportRef}
-                        className="prototype-chat-thread__viewport"
-                        onScroll={handleViewportScroll}
-                    >
-                        <div className="prototype-chat-thread__messages prototype-chat-thread__messages--chronological">
-                            {entries.length ? entries.map((entry) => {
+            <div className="flex-1 flex flex-col min-h-0 bg-zinc-50/30 relative" data-testid="session-log-scroll-shell">
+                <div
+                    ref={viewportRef}
+                    className="absolute inset-0 overflow-y-auto px-6 py-6"
+                    onScroll={handleViewportScroll}
+                >
+                    <div className="flex flex-col max-w-3xl mx-auto w-full gap-6 pb-4">
+                        {entries.length ? entries.map((entry) => {
                                 return (
                                     <article key={entry.id} className={getOperatorMessageRootClass(entry.role)}>
                                         <OperatorMessageCard
@@ -653,44 +652,43 @@ export default function SessionLogWorkspace(props: {
                                     </article>
                                 )
                             }) : (
-                                <section className="prototype-trace-empty">
-                                    <h3>{isLoading ? '正在拉取消息' : '还没有 transcript'}</h3>
-                                    <p>{isLoading ? '稍等一下，系统正在同步底层会话。' : '这条 Session 还没有产出可读消息。'}</p>
+                                <section className="flex flex-col items-center justify-center p-12 text-center text-zinc-500">
+                                    <h3 className="text-base font-semibold text-zinc-900 mb-2">{isLoading ? '正在拉取消息' : '还没有 transcript'}</h3>
+                                    <p className="text-sm max-w-sm">{isLoading ? '稍等一下，系统正在同步底层会话。' : '这条 Session 还没有产出可读消息。'}</p>
                                 </section>
                             )}
                             {entries.length && tailState ? (
                                 <div
-                                    className={`prototype-session-log__tail prototype-session-log__tail--${tailState.tone}`}
+                                    className={`flex items-start gap-4 p-4 rounded-xl border mt-4 ${tailState.tone === 'running' ? 'bg-blue-50 border-blue-200' : tailState.tone === 'live' ? 'bg-emerald-50 border-emerald-200' : 'bg-zinc-100 border-zinc-200 opacity-80'}`}
                                     data-testid="session-log-tail"
                                     role="status"
                                     aria-live="polite"
                                 >
                                     <span
                                         aria-hidden="true"
-                                        className={`prototype-session-log__tail-dot${tailState.pulse ? ' prototype-session-log__tail-dot--pulse' : ''}`}
+                                        className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${tailState.tone === 'running' ? 'bg-blue-500' : tailState.tone === 'live' ? 'bg-emerald-500' : 'bg-zinc-400'} ${tailState.pulse ? 'animate-pulse' : ''}`}
                                     />
-                                    <div className="prototype-session-log__tail-copy">
-                                        <p className="prototype-session-log__tail-title">{tailState.title}</p>
-                                        <p className="prototype-session-log__tail-detail">{tailState.detail}</p>
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <p className={`text-sm font-bold ${tailState.tone === 'running' ? 'text-blue-900' : tailState.tone === 'live' ? 'text-emerald-900' : 'text-zinc-700'}`}>{tailState.title}</p>
+                                        <p className={`text-xs ${tailState.tone === 'running' ? 'text-blue-700' : tailState.tone === 'live' ? 'text-emerald-700' : 'text-zinc-500'}`}>{tailState.detail}</p>
                                     </div>
                                 </div>
                             ) : null}
                         </div>
                     </div>
-                </section>
-            </div>
+                </div>
 
-            <form className="prototype-chat-thread__controls" onSubmit={handleSend}>
+            <form className="flex-shrink-0 border-t border-zinc-200 bg-white p-4 z-10" onSubmit={handleSend}>
                 {sendError ? (
-                    <p className="prototype-seed-panel__error" role="alert">
+                    <p className="mb-3 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md" role="alert">
                         {sendError}
                     </p>
                 ) : null}
 
-                <div className="prototype-chat-compose">
-                    <div className="prototype-chat-compose__row">
+                <div className="max-w-3xl mx-auto w-full">
+                    <div className="flex flex-col border border-zinc-300 rounded-xl bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 overflow-hidden transition-all duration-200">
                         <textarea
-                            className="prototype-chat-compose__input"
+                            className="w-full max-h-32 min-h-[44px] px-4 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 bg-transparent resize-none outline-none leading-relaxed"
                             aria-label="发送到底层 Session"
                             placeholder="继续追问，或直接给底层 Agent 一条明确指令"
                             value={composerValue}
@@ -700,13 +698,15 @@ export default function SessionLogWorkspace(props: {
                             }}
                             disabled={sending}
                         />
-                        <button
-                            type="submit"
-                            className="prototype-primary-button prototype-chat-compose__send"
-                            disabled={sending || composerValue.trim().length === 0}
-                        >
-                            {sending ? '发送中…' : '发送'}
-                        </button>
+                        <div className="flex justify-end p-2 bg-zinc-50 border-t border-zinc-100">
+                            <button
+                                type="submit"
+                                className="px-4 py-1.5 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={sending || composerValue.trim().length === 0}
+                            >
+                                {sending ? '发送中…' : '发送'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </form>

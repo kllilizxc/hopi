@@ -72,8 +72,8 @@ function RootLayout() {
 
     return (
         <OperatorSurfaceProvider value={operatorSurface}>
-            <div className="prototype-shell">
-                <header className="prototype-shell__header">
+            <div className="grid grid-rows-[auto_1fr] h-screen w-full bg-zinc-50 text-zinc-900 overflow-hidden">
+                <header className="border-b border-zinc-200 bg-white">
                     {isLive ? (
                         <LiveWorkspaceBar
                             programName={portfolio?.program.name ?? 'OMC Workspace'}
@@ -87,26 +87,26 @@ function RootLayout() {
                             onOpenInbox={operatorSurface.openInbox}
                         />
                     ) : (
-                        <div className="prototype-header-strip">
-                            <div className="prototype-header-strip__brand">
-                                <p className="prototype-eyebrow">One-Man-Company 2.0</p>
-                                <h1>OMC 控制台</h1>
+                        <div className="flex items-center justify-between px-6 py-4">
+                            <div className="flex flex-col">
+                                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">One-Man-Company 2.0</p>
+                                <h1 className="text-xl font-bold">OMC 控制台</h1>
                             </div>
 
-                            <div className="prototype-header-strip__clock">
-                                <span>时间切片</span>
-                                <strong>{portfolio ? checkpoint.label : '未连接'}</strong>
-                                <small>{portfolio ? checkpoint.synopsis : '输入 access token 后接入真实 OMC runtime'}</small>
+                            <div className="flex flex-col items-center">
+                                <span className="text-xs text-zinc-500">时间切片</span>
+                                <strong className="text-sm font-medium">{portfolio ? checkpoint.label : '未连接'}</strong>
+                                <small className="text-xs text-zinc-400">{portfolio ? checkpoint.synopsis : '输入 access token 后接入真实 OMC runtime'}</small>
                             </div>
 
-                            <div className="prototype-header-strip__actions">
-                                <button type="button" className="prototype-button--ghost" onClick={() => actions.previousCheckpoint()}>
+                            <div className="flex items-center gap-3">
+                                <button type="button" className="px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 rounded-md transition-colors" onClick={() => actions.previousCheckpoint()}>
                                     上一步
                                 </button>
-                                <button type="button" className="prototype-button--ghost" onClick={() => actions.nextCheckpoint()}>
+                                <button type="button" className="px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 rounded-md transition-colors" onClick={() => actions.nextCheckpoint()}>
                                     下一步
                                 </button>
-                                <button type="button" onClick={() => actions.setAutoplay(!clock.autoplay)}>
+                                <button type="button" className="px-3 py-1.5 text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-md shadow-sm transition-colors" onClick={() => actions.setAutoplay(!clock.autoplay)}>
                                     {clock.autoplay ? '暂停自动播放' : '自动播放'}
                                 </button>
                             </div>
@@ -117,49 +117,49 @@ function RootLayout() {
                 {portfolio ? (
                     <>
                         {!isLive ? (
-                            <section className="prototype-topbar">
-                                <div className="prototype-topbar__checkpoint">
+                            <section className="flex items-center justify-between px-6 py-3 border-b border-zinc-200 bg-white shadow-sm z-10 relative">
+                                <div className="flex items-center gap-2">
                                     {prototypeCheckpoints.map((checkpointItem) => (
                                         <button
                                             key={checkpointItem.id}
                                             type="button"
-                                            className={checkpointItem.id === clock.checkpoint ? 'is-active' : undefined}
+                                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${checkpointItem.id === clock.checkpoint ? 'bg-blue-50 text-blue-700' : 'text-zinc-600 hover:bg-zinc-100'}`}
                                             onClick={() => actions.setClockCheckpoint(checkpointItem.id)}
                                         >
                                             {labelCheckpoint(checkpointItem.id).label}
                                         </button>
                                     ))}
                                 </div>
-                                <span className="prototype-topbar__window">{labelTimeWindow(clock.window)}</span>
+                                <span className="text-sm font-medium text-zinc-500 bg-zinc-100 px-2.5 py-1 rounded-md">{labelTimeWindow(clock.window)}</span>
                                 <button
                                     type="button"
-                                    className="prototype-message-toggle"
+                                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 rounded-md shadow-sm transition-colors"
                                     onClick={operatorSurface.openInbox}
                                 >
                                     <Glyph name="digest" />
                                     <span>消息</span>
-                                    {activeInboxCount > 0 ? <strong>{activeInboxCount}</strong> : null}
+                                    {activeInboxCount > 0 ? <strong className="flex items-center justify-center min-w-[20px] h-[20px] px-1 rounded-full bg-red-500 text-white text-[10px]">{activeInboxCount}</strong> : null}
                                 </button>
                             </section>
                         ) : null}
 
-                        <div className="prototype-nav-row">
+                        <div className="flex items-center gap-4 px-6 py-3 border-b border-zinc-200 bg-zinc-50/50">
                             {backTarget ? (
-                                <Link className="prototype-back-button" to={backTarget} aria-label="返回上一层" title="返回上一层">
+                                <Link className="flex items-center justify-center w-8 h-8 rounded-full bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm" to={backTarget} aria-label="返回上一层" title="返回上一层">
                                     <Glyph name="back" />
                                 </Link>
                             ) : null}
 
-                            <nav className="prototype-breadcrumbs" aria-label="页面路径">
+                            <nav className="flex items-center gap-2 text-sm text-zinc-500" aria-label="页面路径">
                                 {breadcrumbs.map((crumb, index) => (
-                                    <span key={`${crumb.label}-${crumb.to ?? 'current'}`}>
-                                        {index > 0 ? <span className="prototype-breadcrumbs__sep">/</span> : null}
+                                    <span key={`${crumb.label}-${crumb.to ?? 'current'}`} className="flex items-center gap-2">
+                                        {index > 0 ? <span className="text-zinc-300">/</span> : null}
                                         {crumb.to ? (
-                                            <Link to={crumb.to}>
+                                            <Link to={crumb.to} className="hover:text-zinc-900 transition-colors">
                                                 {crumb.label}
                                             </Link>
                                         ) : (
-                                            <strong>{crumb.label}</strong>
+                                            <strong className="font-semibold text-zinc-900">{crumb.label}</strong>
                                         )}
                                     </span>
                                 ))}
@@ -169,20 +169,23 @@ function RootLayout() {
                     </>
                 ) : null}
 
-                <main className={portfolio ? 'prototype-shell__main prototype-shell__main--with-sidebar' : 'prototype-shell__main'}>
-                    <div className="prototype-shell__content">
+                <main className="flex flex-1 overflow-hidden relative">
+                    <div className="flex-1 overflow-y-auto p-6 bg-zinc-50 relative min-w-0">
                         <Outlet />
                     </div>
                     {portfolio ? (
                         <>
-                            <MessagePanel className="prototype-message-rail" />
+                            <MessagePanel className="hidden lg:flex w-full max-w-[500px] flex-shrink-0 border-l border-zinc-200 bg-white" />
                             <div
-                                className={`prototype-message-overlay${messagePanelOpen ? ' is-open' : ''}`}
+                                className={`fixed inset-0 z-50 bg-black/20 backdrop-blur-sm transition-opacity lg:hidden ${messagePanelOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
                                 onClick={operatorSurface.closePanel}
                             >
-                                <div onClick={(event) => event.stopPropagation()}>
+                                <div
+                                    className={`absolute right-0 top-0 bottom-0 w-full sm:w-[400px] bg-white shadow-2xl transform transition-transform duration-300 ${messagePanelOpen ? 'translate-x-0' : 'translate-x-full'}`}
+                                    onClick={(event) => event.stopPropagation()}
+                                >
                                     <MessagePanel
-                                        className="prototype-message-drawer"
+                                        className="flex h-full w-full"
                                         onClose={operatorSurface.closePanel}
                                     />
                                 </div>

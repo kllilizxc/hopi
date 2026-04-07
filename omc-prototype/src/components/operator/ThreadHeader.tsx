@@ -24,10 +24,10 @@ export default function ThreadHeader(props: { thread: OperatorThread }) {
         .join(' · ')
 
     return (
-        <header className="prototype-chat-thread__header">
-            <div className="prototype-chat-thread__meta">
-                <span className="prototype-chat-thread__status">{props.thread.statusLabel}</span>
-                {!props.thread.briefing && contextLine ? <p className="prototype-chat-thread__context">{contextLine}</p> : null}
+        <header className="flex flex-col px-6 py-4 bg-zinc-50 border-b border-zinc-200">
+            <div className="flex items-center gap-3 w-full">
+                <span className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider bg-white border border-zinc-200 text-zinc-600 rounded shadow-sm">{props.thread.statusLabel}</span>
+                {!props.thread.briefing && contextLine ? <p className="text-sm font-medium text-zinc-500 truncate min-w-0">{contextLine}</p> : null}
             </div>
         </header>
     )

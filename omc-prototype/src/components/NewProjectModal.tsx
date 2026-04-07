@@ -124,7 +124,7 @@ export default function NewProjectModal(props: NewProjectModalProps) {
 
     return (
         <div
-            className="prototype-new-project-modal"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm transition-opacity"
             onClick={() => {
                 if (!props.pending) {
                     props.onClose()
@@ -132,7 +132,7 @@ export default function NewProjectModal(props: NewProjectModalProps) {
             }}
         >
             <section
-                className="prototype-new-project-modal__dialog"
+                className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden transform transition-all"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="new-project-modal-title"
@@ -144,18 +144,19 @@ export default function NewProjectModal(props: NewProjectModalProps) {
                 onKeyDown={focusTrap}
             >
                 <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown}>
-                    <header className="prototype-new-project-modal__header">
-                        <h2 id="new-project-modal-title">新建项目</h2>
-                        <p>
+                    <header className="px-6 py-5 border-b border-zinc-100 bg-zinc-50/50">
+                        <h2 id="new-project-modal-title" className="text-xl font-bold text-zinc-900 mb-1">新建项目</h2>
+                        <p className="text-sm text-zinc-500 leading-relaxed">
                             接入一个已有的本地 Git 仓库，缺少 planning 时会自动创建 seed 运行材料。
                         </p>
                     </header>
 
-                    <div className="prototype-new-project-modal__body">
-                        <label className="prototype-new-project-modal__field">
-                            <span>Repo 路径</span>
+                    <div className="flex flex-col gap-5 px-6 py-6">
+                        <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium text-zinc-700">Repo 路径</span>
                             <input
                                 type="text"
+                                className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-zinc-100 disabled:text-zinc-500 transition-colors"
                                 value={props.repoRoot}
                                 disabled={props.pending}
                                 onChange={(event) => {
@@ -164,10 +165,11 @@ export default function NewProjectModal(props: NewProjectModalProps) {
                             />
                         </label>
 
-                        <label className="prototype-new-project-modal__field">
-                            <span>项目名</span>
+                        <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium text-zinc-700">项目名</span>
                             <input
                                 type="text"
+                                className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-zinc-100 disabled:text-zinc-500 transition-colors"
                                 value={props.name}
                                 disabled={props.pending}
                                 onChange={(event) => {
@@ -177,19 +179,19 @@ export default function NewProjectModal(props: NewProjectModalProps) {
                         </label>
 
                         {props.error ? (
-                            <p className="prototype-new-project-modal__error" role="alert" aria-live="assertive" aria-atomic="true">
+                            <p className="text-sm text-red-600 bg-red-50 p-3 rounded-md border border-red-100" role="alert" aria-live="assertive" aria-atomic="true">
                                 {props.error}
                             </p>
                         ) : null}
 
                         {props.partialSuccess ? (
-                            <div className="prototype-new-project-modal__partial-success">
-                                <p>
+                            <div className="flex items-center justify-between p-3 bg-amber-50 rounded-md border border-amber-100">
+                                <p className="text-sm text-amber-800 font-medium">
                                     seed 已部分完成：{props.partialSuccess.programName}
                                 </p>
                                 <button
                                     type="button"
-                                    className="prototype-button--ghost"
+                                    className="px-3 py-1.5 text-sm font-medium text-amber-700 bg-white border border-amber-200 rounded-md hover:bg-amber-50 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap min-w-[80px]"
                                     onClick={props.onRetrySeed}
                                     disabled={props.pending}
                                 >
@@ -199,21 +201,21 @@ export default function NewProjectModal(props: NewProjectModalProps) {
                         ) : null}
                     </div>
 
-                    <footer className="prototype-new-project-modal__actions">
-                        <button
-                            type="submit"
-                            className="prototype-primary-button"
-                            disabled={isSubmitDisabled}
-                        >
-                            创建项目
-                        </button>
+                    <footer className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-100 bg-zinc-50">
                         <button
                             type="button"
-                            className="prototype-button--ghost"
+                            className="px-4 py-2 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-md hover:bg-zinc-50 shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-zinc-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap min-w-[80px]"
                             onClick={props.onClose}
                             disabled={props.pending}
                         >
                             取消
+                        </button>
+                        <button
+                            type="submit"
+                            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md shadow-sm hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 disabled:bg-zinc-300 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap min-w-[100px]"
+                            disabled={isSubmitDisabled}
+                        >
+                            创建项目
                         </button>
                     </footer>
                 </form>

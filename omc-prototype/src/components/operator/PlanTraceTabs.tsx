@@ -24,7 +24,7 @@ export default function PlanTraceTabs(props: {
     onChange: (tab: PlanTraceTab) => void
 }) {
     return (
-        <div className="prototype-tab-row prototype-trace-tabs" role="tablist" aria-label="Plan trace sections">
+        <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-lg w-full" role="tablist" aria-label="Plan trace sections">
             {TABS.map((tab) => (
                 <button
                     key={tab.id}
@@ -34,7 +34,7 @@ export default function PlanTraceTabs(props: {
                     aria-selected={props.activeTab === tab.id}
                     aria-controls={`prototype-trace-panel-${tab.id}`}
                     tabIndex={props.activeTab === tab.id ? 0 : -1}
-                    className={props.activeTab === tab.id ? 'is-active' : undefined}
+                    className={`flex-1 py-1.5 text-sm font-medium text-center rounded-md transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${props.activeTab === tab.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50'}`}
                     onClick={() => props.onChange(tab.id)}
                     onKeyDown={(event) => {
                         if (event.key === 'ArrowRight') {

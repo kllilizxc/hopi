@@ -74,50 +74,62 @@ export default function ThreadConversation(props: {
 
     return (
         <AssistantRuntimeProvider runtime={runtime}>
-            <section className="prototype-chat-thread">
-                <ThreadHeader thread={props.thread} />
-
-                {props.thread.briefing ? (
-                    <DecisionBriefingCard
-                        briefing={props.thread.briefing}
-                        onOpenSessionLog={sessionId ? () => operatorSurface.openSessionLog({
-                            sessionId,
-                            source: 'plan-runtime',
-                            title: props.thread.briefing?.identity.planLabel ?? props.thread.title,
-                            subtitle: planRef?.id ?? null,
-                        }) : undefined}
-                        onOpenTrace={planRef ? () => operatorSurface.openTrace({
-                            planId: planRef.id,
-                            streamId: planRef.id,
-                        }) : undefined}
-                    />
-                ) : null}
-
-                <ThreadPrimitive.Root className="prototype-chat-thread__root">
-                    <ThreadPrimitive.Viewport className="prototype-chat-thread__viewport" autoScroll>
-                        <div className="prototype-chat-thread__messages">
-                            <ThreadPrimitive.Messages components={THREAD_COMPONENTS} />
+            <section className="flex flex-col h-full bg-white relative">
+                <ThreadPrimitive.Root className="flex flex-col flex-1 min-h-0 bg-zinc-50/30">
+                    <div className="flex flex-col h-full">
+                        <div className="flex-shrink-0 z-20 bg-white border-b border-zinc-200">
+                            <ThreadHeader thread={props.thread} />
                         </div>
-                    </ThreadPrimitive.Viewport>
+
+                        <div className="flex-1 min-h-0 relative">
+                            <ThreadPrimitive.Viewport className="absolute inset-0 overflow-y-auto" autoScroll>
+                                <div className="flex flex-col max-w-3xl mx-auto w-full">
+                                    {props.thread.briefing ? (
+                                        <div className="px-6 py-4">
+                                            <DecisionBriefingCard
+                                                briefing={props.thread.briefing}
+                                                onOpenSessionLog={sessionId ? () => operatorSurface.openSessionLog({
+                                                    sessionId,
+                                                    source: 'plan-runtime',
+                                                    title: props.thread.briefing?.identity.planLabel ?? props.thread.title,
+                                                    subtitle: planRef?.id ?? null,
+                                                }) : undefined}
+                                                onOpenTrace={planRef ? () => operatorSurface.openTrace({
+                                                    planId: planRef.id,
+                                                    streamId: planRef.id,
+                                                }) : undefined}
+                                            />
+                                        </div>
+                                    ) : null}
+
+                                    <div className="flex flex-col w-full gap-8 px-6 pt-4 pb-8">
+                                        <ThreadPrimitive.Messages components={THREAD_COMPONENTS} />
+                                    </div>
+                                </div>
+                            </ThreadPrimitive.Viewport>
+                        </div>
+                    </div>
                 </ThreadPrimitive.Root>
 
-                <div className="prototype-chat-thread__controls">
-                    <ThreadQuickActions thread={props.thread} />
+                <div className="flex-shrink-0 border-t border-zinc-200 bg-white p-4 z-20">
+                    <div className="max-w-3xl mx-auto w-full flex flex-col gap-3">
+                        <ThreadQuickActions thread={props.thread} />
 
-                    <ComposerPrimitive.Root className="prototype-chat-compose">
-                        <div className="prototype-chat-compose__row">
-                            <ComposerPrimitive.Input
-                                className="prototype-chat-compose__input"
-                                aria-label="回复这条线程"
-                                placeholder={OPERATOR_COMPOSER_PLACEHOLDER}
-                                submitOnEnter
-                                maxRows={4}
-                            />
-                            <ComposerPrimitive.Send className="prototype-primary-button prototype-chat-compose__send">
-                                发送
-                            </ComposerPrimitive.Send>
-                        </div>
-                    </ComposerPrimitive.Root>
+                        <ComposerPrimitive.Root className="flex flex-col border border-zinc-300 rounded-xl bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 overflow-hidden transition-all duration-200">
+                            <div className="flex items-end bg-white w-full p-2 relative">
+                                <ComposerPrimitive.Input
+                                    className="flex-1 max-h-32 min-h-[44px] px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 bg-transparent resize-none outline-none leading-relaxed"
+                                    aria-label="回复这条线程"
+                                    placeholder={OPERATOR_COMPOSER_PLACEHOLDER}
+                                    submitOnEnter
+                                    maxRows={4}
+                                />
+                                <ComposerPrimitive.Send className="flex items-center justify-center h-9 px-4 mb-1 mr-1 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    发送
+                                </ComposerPrimitive.Send>
+                            </div>
+                        </ComposerPrimitive.Root>
+                    </div>
                 </div>
             </section>
         </AssistantRuntimeProvider>

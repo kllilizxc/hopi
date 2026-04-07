@@ -24,44 +24,40 @@ export default function StrategyPanel(props: {
     )
 
     return (
-        <section className="prototype-panel">
-            <div className="prototype-section-head">
-                <h2>路线</h2>
-                <div className="prototype-badge-row">
+        <section className="flex flex-col gap-5 p-6 bg-white border border-zinc-200 rounded-xl shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
+                <h2 className="text-xl font-semibold text-zinc-900">路线</h2>
+                <div className="flex flex-wrap items-center gap-2">
                     <MetaBadge tone="neutral">优先级 · {labelPriority(props.goal.priority)}</MetaBadge>
                     <MetaBadge tone="neutral">路线 · {labelDirection(props.goal.direction)}</MetaBadge>
                 </div>
             </div>
 
-            <div className="prototype-strategy-callout">
-                <div className="prototype-icon-pill prototype-icon-pill--large">
+            <div className="flex items-start gap-4 p-4 sm:p-5 bg-indigo-50 border border-indigo-100 rounded-xl">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-indigo-100 text-indigo-600 flex-shrink-0 shadow-sm border border-indigo-200/50">
                     <Glyph name="strategy" />
                 </div>
-                <div className="prototype-strategy-callout__copy">
-                    <h3>{view.thesis}</h3>
-                    <p>{view.reason}</p>
+                <div className="flex flex-col gap-1 min-w-0">
+                    <h3 className="text-base font-bold text-indigo-900 leading-tight">{view.thesis}</h3>
+                    <p className="text-sm text-indigo-700 leading-relaxed mt-1">{view.reason}</p>
                 </div>
             </div>
 
-            <div className="prototype-strategy-grid">
-                <section className="prototype-subpanel">
-                    <div className="prototype-subpanel__head">
-                        <h3>当前焦点</h3>
-                    </div>
-                    <div className="prototype-token-list">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-2">
+                <section className="flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold text-zinc-700 uppercase tracking-wider">当前焦点</h3>
+                    <div className="flex flex-wrap gap-2">
                         {view.focusAreas.map((item) => (
-                            <span key={item} className="prototype-token">{item}</span>
+                            <span key={item} className="px-2.5 py-1 text-sm font-medium text-zinc-700 bg-zinc-100 border border-zinc-200 rounded-md whitespace-nowrap">{item}</span>
                         ))}
                     </div>
                 </section>
 
-                <section className="prototype-subpanel">
-                    <div className="prototype-subpanel__head">
-                        <h3>今天动作</h3>
-                    </div>
-                    <div className="prototype-token-list">
+                <section className="flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold text-zinc-700 uppercase tracking-wider">今天动作</h3>
+                    <div className="flex flex-wrap gap-2">
                         {view.todayMoves.map((item) => (
-                            <span key={item} className="prototype-token">{item}</span>
+                            <span key={item} className="px-2.5 py-1 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md whitespace-nowrap">{item}</span>
                         ))}
                     </div>
                 </section>
