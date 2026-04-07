@@ -5,7 +5,9 @@ import {
     ThreadPrimitive,
 } from '@assistant-ui/react'
 import { memo } from 'react'
+import DecisionBriefingCard from '@/components/operator/DecisionBriefingCard'
 import ThreadHeader from '@/components/operator/ThreadHeader'
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import { OperatorMessageCard, getOperatorMessageRootClass } from '@/components/operator/OperatorMessageCard'
 import ThreadQuickActions from '@/components/operator/ThreadQuickActions'
 import { MarkdownMessagePart } from '@/components/MarkdownRenderer'
@@ -59,18 +61,37 @@ export default function ThreadConversation(props: {
     thread: OperatorThread
     messages: OperatorMessage[]
 }) {
-    const { actions } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
+    const { actions, live } = usePrototypeStore()
     const runtime = useOmcAssistantRuntime({
         messages: props.messages,
         onSend(text) {
             actions.sendThreadReply(props.thread.id, text)
         },
     })
+    const planRef = props.thread.refs.find((ref) => ref.kind === 'plan') ?? null
+    const sessionId = props.thread.briefing?.identity.sessionId ?? (planRef ? live?.sessionIdByPlanKey?.[planRef.id] ?? null : null)
 
     return (
         <AssistantRuntimeProvider runtime={runtime}>
             <section className="prototype-chat-thread">
                 <ThreadHeader thread={props.thread} />
+
+                {props.thread.briefing ? (
+                    <DecisionBriefingCard
+                        briefing={props.thread.briefing}
+                        onOpenSessionLog={sessionId ? () => operatorSurface.openSessionLog({
+                            sessionId,
+                            source: 'plan-runtime',
+                            title: props.thread.briefing?.identity.planLabel ?? props.thread.title,
+                            subtitle: planRef?.id ?? null,
+                        }) : undefined}
+                        onOpenTrace={planRef ? () => operatorSurface.openTrace({
+                            planId: planRef.id,
+                            streamId: planRef.id,
+                        }) : undefined}
+                    />
+                ) : null}
 
                 <ThreadPrimitive.Root className="prototype-chat-thread__root">
                     <ThreadPrimitive.Viewport className="prototype-chat-thread__viewport" autoScroll>

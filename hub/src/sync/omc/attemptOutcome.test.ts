@@ -42,6 +42,35 @@ describe('parseOmcAttemptOutcome', () => {
 
         expect(outcome).toBeNull()
     })
+
+    it('parses a codex-wrapped assistant message payload from persisted session history', () => {
+        const outcome = parseOmcAttemptOutcome({
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: `OMC_ATTEMPT_OUTCOME
+\`\`\`json
+{
+  "status": "progressed",
+  "summary": "Added expedition contracts and prototype content.",
+  "changedFiles": ["src/game/types/expedition.ts"],
+  "checks": [{ "label": "bun run build", "result": "failed", "detail": "vite missing" }],
+  "nextSuggestedStep": "Implement the persistence helpers."
+}
+\`\`\``,
+                    id: 'msg-1'
+                }
+            }
+        })
+
+        expect(outcome).not.toBeNull()
+        expect(outcome?.status).toBe('progressed')
+        expect(outcome?.summary).toContain('expedition contracts')
+        expect(outcome?.changedFiles).toEqual(['src/game/types/expedition.ts'])
+        expect(outcome?.checks[0]?.result).toBe('failed')
+    })
 })
 
 describe('parseOmcFallbackTerminationMessage', () => {

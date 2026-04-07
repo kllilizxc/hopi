@@ -662,6 +662,140 @@ Purpose: Validate that guided-planning polling can reconcile into a completed ha
         expect(body.evidence).toHaveLength(0)
     })
 
+    it('reconciles a persisted codex attempt outcome when reading plan detail', async () => {
+        const store = new Store(':memory:')
+        const fixture = makeWorkspaceFixture()
+        const program = store.omcRuntime.upsertProgram({
+            id: 'program-1',
+            namespace: 'default',
+            name: 'OMC Workspace',
+            repoRoot: fixture.repoRoot,
+            planningRoot: fixture.planningRoot
+        })
+        const persistedSession = store.sessions.getOrCreateSession(
+            'running-loop',
+            {
+                path: fixture.repoRoot,
+                machineId: 'machine-1',
+                worktree: {
+                    basePath: fixture.repoRoot,
+                    worktreePath: `${fixture.repoRoot}-worktree`,
+                    branch: 'hopi-omc-01-01'
+                }
+            },
+            null,
+            'default'
+        )
+
+        store.omcRuntime.upsertPlanRuntime('default', {
+            programId: program.id,
+            planKey: '01-01',
+            planPath: '.planning/phases/01-omc-foundation/01-01-PLAN.md',
+            phaseKey: '01-omc-foundation',
+            phaseLabel: '01 OMC Foundation',
+            column: 'Running',
+            loopStatus: 'running',
+            currentLoopRunId: 'loop-1',
+            currentWorktreePath: `${fixture.repoRoot}-worktree`,
+            currentBranch: 'hopi-omc-01-01',
+            targetBranch: 'main',
+            attemptCount: 1,
+            latestEvidenceSummary: 'Context pack sent to codex session.'
+        })
+        store.omcRuntime.addAttempt('default', {
+            id: 'attempt-1',
+            programId: program.id,
+            planKey: '01-01',
+            planPath: '.planning/phases/01-omc-foundation/01-01-PLAN.md',
+            loopRunId: 'loop-1',
+            sessionId: persistedSession.id,
+            attemptNumber: 1,
+            status: 'running',
+            summary: 'Attempt started via codex.'
+        })
+        store.messages.addMessage(persistedSession.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: `OMC_ATTEMPT_OUTCOME
+\`\`\`json
+{
+  "status": "progressed",
+  "summary": "Added the adapter seam.",
+  "changedFiles": ["hub/src/sync/omc/runtimeAdapter.ts"],
+  "checks": [{ "label": "bun run typecheck:hub", "result": "passed", "detail": "tsc clean" }],
+  "nextSuggestedStep": "Wire the event subscriber."
+}
+\`\`\``,
+                    id: 'codex-msg-1'
+                }
+            }
+        })
+
+        let spawnCount = 0
+        const engine = {
+            getMachineByNamespace() {
+                return undefined
+            },
+            getOnlineMachinesByNamespace() {
+                return [{ id: 'machine-1', active: true }]
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return { type: 'success' as const, sessionId: `session-${spawnCount}` }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+                return
+            },
+            getSessionByNamespace(sessionId: string) {
+                return {
+                    metadata: {
+                        path: fixture.repoRoot,
+                        machineId: 'machine-1',
+                        worktree: {
+                            basePath: fixture.repoRoot,
+                            worktreePath: `${fixture.repoRoot}-worktree`,
+                            branch: `hopi-omc-${sessionId}`
+                        }
+                    }
+                }
+            },
+            async sendMessage() {
+                return
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '' }
+            },
+            handleRealtimeEvent() {
+                return
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request('/api/omc/programs/program-1/plans/01-01')
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            runtime: { attemptCount: number; latestEvidenceSummary: string | null; loopStatus: string }
+            attempts: Array<{ attemptNumber: number; status: string; completedAt: number | null }>
+        }
+
+        expect(body.runtime.loopStatus).toBe('running')
+        expect(body.runtime.attemptCount).toBe(2)
+        expect(body.runtime.latestEvidenceSummary).toBe('Added the adapter seam.')
+        expect(body.attempts).toHaveLength(2)
+        expect(body.attempts[0]?.attemptNumber).toBe(2)
+        expect(body.attempts[0]?.status).toBe('running')
+        expect(body.attempts[1]?.attemptNumber).toBe(1)
+        expect(body.attempts[1]?.status).toBe('progressed')
+        expect(body.attempts[1]?.completedAt).not.toBeNull()
+    })
+
     it('returns attempt detail with evidence', async () => {
         const store = new Store(':memory:')
         const fixture = makeWorkspaceFixture()

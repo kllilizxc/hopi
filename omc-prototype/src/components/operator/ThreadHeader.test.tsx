@@ -57,4 +57,41 @@ describe('ThreadHeader', () => {
         expect(screen.getByText('待处理')).toBeInTheDocument()
         expect(screen.queryByText(/目标：/)).not.toBeInTheDocument()
     })
+
+    it('hides the lightweight context line when a briefing card will render below', () => {
+        render(
+            <ThreadHeader
+                thread={buildThread({
+                    briefing: {
+                        title: '执行中断，等待恢复确认',
+                        identity: {
+                            projectLabel: 'CardGame',
+                            goalLabel: '01 First Playable Expedition',
+                            planLabel: 'Establish expedition domain',
+                            attemptNumber: 3,
+                            sessionId: 'session-cardgame-1',
+                        },
+                        summaryRows: {
+                            whatHappened: '发生了什么',
+                            whyEscalated: '为什么会找你',
+                            recommendedAction: '系统建议',
+                            currentImpact: '当前影响',
+                        },
+                        primaryAction: null,
+                        secondaryAction: null,
+                        rawEvidence: {
+                            summary: 'raw',
+                            terminationReason: 'session-inactive',
+                            nextSuggestedStep: null,
+                            failureFingerprint: null,
+                            defaultExpanded: false,
+                        },
+                    },
+                })}
+            />,
+        )
+
+        expect(screen.getByText('待处理')).toBeInTheDocument()
+        expect(screen.queryByText('计划：排期计划 · 目标：目标总览 · 阶段：发现阶段')).not.toBeInTheDocument()
+    })
 })

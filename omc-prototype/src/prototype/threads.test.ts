@@ -124,15 +124,62 @@ describe('operator threads', () => {
         expect(threads.some((thread) => thread.kind === 'status')).toBe(true)
     })
 
+    it('builds readable briefing cards for approval, risk, direction, and status threads', () => {
+        const snapshot = getPrototypeSnapshot('approval')
+        const threads = buildOperatorThreadSeeds(snapshot)
+
+        const statusThread = threads.find((thread) => thread.id === 'status:goal-portfolio-foundation')
+        const directionThread = threads.find((thread) => thread.id === 'direction:goal-weekly-brief')
+        const approvalThread = threads.find((thread) => thread.id === 'approval:approval-branch-ingest')
+        const riskThread = threads.find((thread) => thread.id === 'risk:risk-post-promo-creep')
+        const portfolioGoal = snapshot.goals.find((goal) => goal.id === 'goal-portfolio-foundation')
+
+        expect(statusThread?.briefing?.title).toBe(statusThread?.title)
+        expect(statusThread?.briefing?.identity.projectLabel).toBe(snapshot.program.name)
+        expect(statusThread?.briefing?.summaryRows.whatHappened).toContain('把持仓导入跑稳')
+        expect(statusThread?.briefing?.summaryRows.currentImpact).toBe(goalPresentation(portfolioGoal!, snapshot.checkpoint.id).progressLabel)
+
+        expect(directionThread?.briefing?.title).toBe(directionThread?.title)
+        expect(directionThread?.briefing?.summaryRows.whyEscalated).toBe(directionThread?.firstMessage.whyNow)
+        expect(directionThread?.briefing?.primaryAction?.label).toBe(directionThread?.quickActions[0]?.label)
+        expect(directionThread?.briefing?.secondaryAction?.label).toBe(directionThread?.quickActions[1]?.label)
+
+        expect(approvalThread?.briefing?.title).toBe('放行导入分支')
+        expect(approvalThread?.briefing?.summaryRows.whatHappened).toContain('要不要按系统建议放行导入分支')
+        expect(approvalThread?.briefing?.primaryAction?.label).toBe('按建议放行')
+        expect(approvalThread?.briefing?.secondaryAction?.label).toBe('先不放行')
+
+        expect(riskThread?.briefing?.title).toBe(riskThread?.title)
+        expect(riskThread?.briefing?.summaryRows.whatHappened).toContain('风险')
+        expect(riskThread?.briefing?.primaryAction?.label).toBe(riskThread?.quickActions[0]?.label)
+        expect(riskThread?.briefing?.secondaryAction?.label).toBe(riskThread?.quickActions[1]?.label)
+    })
+
     it('keeps the first agent message contract complete for approval threads', () => {
         const snapshot = getPrototypeSnapshot('approval')
         const approvalThread = buildOperatorThreadSeeds(snapshot).find((thread) => thread.id === 'approval:approval-branch-ingest')
+        const scopeApprovalThread = buildOperatorThreadSeeds(snapshot).find((thread) => thread.id === 'approval:approval-scope-brief')
 
         expect(approvalThread).toBeDefined()
+        expect(scopeApprovalThread).toBeDefined()
         expect(approvalThread?.title).toBe('放行导入分支')
         expect(approvalThread?.introMessage.body).toContain(approvalThread!.firstMessage.currentStatus)
         expect(approvalThread?.introMessage.body).toContain(approvalThread!.firstMessage.suggestedAction)
+        expect(approvalThread?.introMessage.body).toContain(`按建议执行后：${approvalThread!.firstMessage.confirmEffect}`)
+        expect(approvalThread?.introMessage.body).toContain(`如果先不处理：${approvalThread!.firstMessage.deferEffect}`)
         expect(approvalThread?.introMessage.body).toContain(approvalThread!.firstMessage.freeformInvite)
+        expect(approvalThread?.introMessage.body).toContain('你要决定的是：要不要按系统建议放行导入分支。')
+        expect(approvalThread?.quickActions.map((action) => action.label)).toEqual([
+            '按建议放行',
+            '先不放行',
+            '继续加固一轮',
+        ])
+        expect(scopeApprovalThread?.introMessage.body).toContain('你要决定的是：要不要按系统建议收紧周报范围。')
+        expect(scopeApprovalThread?.quickActions.map((action) => action.label)).toEqual([
+            '按建议收紧范围',
+            '先保持现状',
+            '不收紧，保持原路线',
+        ])
         expect(approvalThread?.introMessage.body).not.toContain('###')
         expect(approvalThread?.introMessage.body).not.toContain('背景')
         expect(approvalThread?.introMessage.body).not.toContain('为什么')
@@ -148,6 +195,46 @@ describe('operator threads', () => {
         expect(approvalThread?.refs.some((ref) => ref.kind === 'goal')).toBe(true)
         expect(approvalThread?.refs.some((ref) => ref.kind === 'stream')).toBe(true)
         expect(approvalThread?.refs.some((ref) => ref.kind === 'impact')).toBe(true)
+    })
+
+    it('prefers live OMC interruption briefings over demo approval copy', () => {
+        const snapshot = cloneSnapshot(getPrototypeSnapshot('approval'))
+        snapshot.program.id = 'omc-cardgame'
+        snapshot.program.name = 'CardGame'
+
+        const approvalItem = Object.values(snapshot.approvalBatches)
+            .flatMap((batch) => batch.items)
+            .find((item) => item.id === 'approval-scope-brief')
+
+        expect(approvalItem).toBeDefined()
+        approvalItem!.title = 'Establish expedition domain'
+        approvalItem!.summary = 'The linked session became inactive before the attempt reported a structured outcome.'
+        approvalItem!.liveContext = {
+            source: 'omc',
+            category: 'runtime-interruption',
+            projectLabel: 'CardGame',
+            goalLabel: '01 First Playable Expedition',
+            planLabel: 'Establish expedition domain',
+            planKey: '01-01',
+            sessionId: 'session-cardgame-1',
+            attemptNumber: 3,
+            latestSummary: 'The linked session became inactive before the attempt reported a structured outcome.',
+            terminationReason: 'session-inactive',
+            nextSuggestedStep: 'Inspect the session history, then resume the loop when the machine is stable.',
+            failureFingerprint: 'session-inactive',
+        }
+
+        const liveThread = buildOperatorThreadSeeds(snapshot).find((thread) => thread.id === 'approval:approval-scope-brief')
+
+        expect(liveThread?.title).toBe('执行中断，等待恢复确认')
+        expect(liveThread?.preview).toContain('CardGame')
+        expect(liveThread?.briefing?.summaryRows.whatHappened).toContain('Establish expedition domain')
+        expect(liveThread?.briefing?.rawEvidence.summary).toBe('The linked session became inactive before the attempt reported a structured outcome.')
+        expect(liveThread?.quickActions.map((action) => action.label)).toEqual([
+            '重试这一轮',
+            '先保持现状',
+        ])
+        expect(liveThread?.introMessage.body).not.toContain('The linked session became inactive before the attempt reported a structured outcome.')
     })
 
     it('deduplicates approval ids across batch windows', () => {

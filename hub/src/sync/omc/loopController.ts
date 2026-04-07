@@ -12,7 +12,11 @@ import { buildPlanDetail } from './planningIndex'
 import type { SyncEngine } from '../syncEngine'
 import { startOmcPlanAttempt, type OmcPlanAttemptLaunchResult } from './attemptRunner'
 import { collectOmcEvidence, collectSystemOmcAttemptEvidence, mapAttemptStatusToEvidenceStatus } from './evidenceCollector'
-import { buildSystemOmcAttemptOutcome } from './attemptOutcome'
+import {
+    buildSystemOmcAttemptOutcome,
+    parseOmcAttemptOutcome,
+    parseOmcFallbackTerminationMessage
+} from './attemptOutcome'
 import {
     buildOmcAttemptUpdatedEvent,
     buildOmcPlanRuntimeUpdatedEvent
@@ -330,6 +334,64 @@ export class OmcLoopController {
 
     async resumePlan(program: OmcProgram, planKey: string): Promise<OmcPlanControlResponse> {
         return await this.retryPlan(program, planKey)
+    }
+
+    async reconcilePlan(program: OmcProgram, planKey: string): Promise<{
+        runtime: OmcPlanRuntime
+        attempt: OmcAttempt | null
+    }> {
+        const plan = this.resolvePlan(program, planKey)
+        const runtime = this.resolveRuntime(program, plan)
+        const runningAttempt = this.options.store.omcRuntime
+            .listAttempts(program.id, planKey, this.options.namespace)
+            .find((attempt) => attempt.status === 'running' && !attempt.completedAt) ?? null
+
+        if (!runningAttempt?.sessionId) {
+            return {
+                runtime,
+                attempt: this.options.store.omcRuntime.listAttempts(program.id, planKey, this.options.namespace)[0] ?? null
+            }
+        }
+
+        const messages = this.options.store.messages.getMessages(runningAttempt.sessionId, 200)
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index]
+            if (!message) {
+                continue
+            }
+
+            const fallbackMessage = {
+                id: message.id,
+                seq: message.seq,
+                localId: message.localId ?? null,
+                createdAt: message.createdAt,
+                content: message.content
+            }
+            const outcome = parseOmcAttemptOutcome(message.content) ?? parseOmcFallbackTerminationMessage(fallbackMessage)
+            if (!outcome) {
+                continue
+            }
+
+            return await this.handleAttemptOutcome({
+                program,
+                attempt: runningAttempt,
+                outcome
+            })
+        }
+
+        return {
+            runtime,
+            attempt: runningAttempt
+        }
+    }
+
+    async reconcileProgram(program: OmcProgram): Promise<void> {
+        const runtimes = this.options.store.omcRuntime.listPlanRuntimes(program.id, this.options.namespace)
+            .filter((runtime) => runtime.loopStatus === 'running')
+
+        for (const runtime of runtimes) {
+            await this.reconcilePlan(program, runtime.planKey)
+        }
     }
 
     async takeoverPlan(program: OmcProgram, planKey: string): Promise<OmcPlanControlResponse> {

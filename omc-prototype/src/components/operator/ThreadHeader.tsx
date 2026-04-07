@@ -27,7 +27,7 @@ export default function ThreadHeader(props: { thread: OperatorThread }) {
         <header className="prototype-chat-thread__header">
             <div className="prototype-chat-thread__meta">
                 <span className="prototype-chat-thread__status">{props.thread.statusLabel}</span>
-                {contextLine ? <p className="prototype-chat-thread__context">{contextLine}</p> : null}
+                {!props.thread.briefing && contextLine ? <p className="prototype-chat-thread__context">{contextLine}</p> : null}
             </div>
         </header>
     )

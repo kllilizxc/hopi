@@ -248,11 +248,39 @@ function createFakeLiveApi() {
     vi.spyOn(api, 'getPlanningIndex').mockResolvedValue(createPlanningIndex())
     vi.spyOn(api, 'getPlanRuntimes').mockResolvedValue(createPlanRuntimes())
     vi.spyOn(api, 'getPlanDetail').mockResolvedValue(createPlanDetail())
+    const getSession = vi.spyOn(api, 'getSession').mockResolvedValue({
+        session: {
+            id: 'session-running',
+            namespace: 'default',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            activeAt: 1,
+            metadata: {
+                path: '/tmp/omc-fresh',
+                host: 'local',
+                flavor: 'codex',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            active: true,
+            thinking: true,
+            thinkingAt: 1,
+            permissionMode: 'default',
+            modelMode: 'default',
+        },
+    })
+    const resumeSession = vi.spyOn(api, 'resumeSession').mockResolvedValue('session-running')
+    const sendMessage = vi.spyOn(api, 'sendMessage').mockResolvedValue(undefined)
 
     return {
         api,
         getPrograms,
         getProgram,
+        getSession,
+        resumeSession,
+        sendMessage,
     }
 }
 
@@ -389,6 +417,75 @@ describe('live prototype store', () => {
                 summary: 'Queued for the first guided planning pass.',
             }),
         )
+    })
+
+    it('marks a live direction thread handled after sending the chosen route to the active session', async () => {
+        const { api, sendMessage } = createFakeLiveApi()
+
+        vi.spyOn(api, 'getPlanRuntimes').mockResolvedValue({
+            programId: 'omc-fresh',
+            runtimes: [
+                {
+                    ...createPlanRuntimes().runtimes[0]!,
+                    consecutiveFailureCount: 1,
+                    latestEvidenceSummary: 'The phase is drifting and needs a direction check.',
+                    updatedAt: 240,
+                    lastAttemptAt: 235,
+                },
+            ],
+        })
+        vi.spyOn(api, 'getPlanDetail').mockResolvedValue({
+            ...createPlanDetail(),
+            runtime: {
+                ...createPlanDetail().runtime,
+                consecutiveFailureCount: 1,
+                latestEvidenceSummary: 'The phase is drifting and needs a direction check.',
+                updatedAt: 240,
+                lastAttemptAt: 235,
+            },
+            attempts: [
+                {
+                    ...createPlanDetail().attempts[0]!,
+                    sessionId: 'session-running',
+                    status: 'running',
+                    summary: 'The phase is drifting and needs a direction check.',
+                    updatedAt: 240,
+                },
+            ],
+        })
+
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            createElement(
+                PrototypeRemoteApiProvider,
+                { api, children: createElement(PrototypeStoreProvider, { children }) },
+            )
+        )
+
+        const { result } = renderHook(() => usePrototypeStore(), { wrapper })
+
+        await waitFor(() => {
+            expect(result.current.live?.selectedProgramId).toBe('omc-fresh')
+        })
+        await waitFor(() => {
+            const thread = result.current.threads.find((item) => item.id === 'direction:01-foundation')
+            expect(thread?.lifecycle).toBe('pending')
+        })
+
+        act(() => {
+            result.current.actions.performQuickAction('direction:01-foundation', 'direction:01-foundation:maintain')
+        })
+
+        await waitFor(() => {
+            expect(sendMessage).toHaveBeenCalledWith('session-running', '路线调整：保持路线。')
+        })
+        await waitFor(() => {
+            const thread = result.current.threads.find((item) => item.id === 'direction:01-foundation')
+            expect(thread?.lifecycle).toBe('resolved')
+            expect(thread?.statusLabel).toBe('已解决')
+        })
+        expect(result.current.state.messagesByThread['direction:01-foundation']?.some((message) => (
+            message.body.includes('已把指令转发到运行中的 agent 会话。')
+        ))).toBe(true)
     })
 
     it('keeps the live shell mounted while a different program reloads', async () => {

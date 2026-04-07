@@ -19,7 +19,7 @@ export default function ExecutionBoard(props: {
     const operatorSurface = useOperatorSurface()
 
     return (
-        <div className="prototype-board-shell">
+        <div className="prototype-board-shell prototype-board-shell--balanced">
             <section className="prototype-panel prototype-panel--compact">
                 <div className="prototype-section-head">
                     <h2>阶段</h2>
@@ -46,7 +46,7 @@ export default function ExecutionBoard(props: {
                 </div>
             </section>
 
-            <section className="prototype-kanban">
+            <section className="prototype-kanban prototype-kanban--balanced">
                 {COLUMNS.map((column) => (
                     <div key={column} className="prototype-kanban__column">
                         <div className="prototype-kanban__header">

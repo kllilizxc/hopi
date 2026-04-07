@@ -1,3 +1,10 @@
+model_provider = "openai_http"     
+
+[model_providers.openai_http]
+name = "OpenAI HTTP only"
+wire_api = "responses"
+supports_websockets = false
+
 [mcp_servers.chrome-devtools]
 command = "npx"
 args = ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics", "--userDataDir", "/tmp/chrome-devtools-mcp-profile"]

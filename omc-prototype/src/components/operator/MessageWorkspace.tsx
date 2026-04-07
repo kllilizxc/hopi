@@ -105,8 +105,12 @@ export default function MessageWorkspace(props: {
     onBackToList: () => void
     onClose?: () => void
 }) {
-    const className = props.className ? `prototype-message-panel ${props.className}` : 'prototype-message-panel'
     const mode = props.mode ?? (props.selectedThread ? 'thread' : 'inbox')
+    const className = [
+        'prototype-message-panel',
+        props.className,
+        mode !== 'inbox' ? 'prototype-message-panel--detail-mode' : null,
+    ].filter(Boolean).join(' ')
     const operatorSurface = useOperatorSurface()
     const { state, dataSource, live } = usePrototypeStore()
     const activeMessages = props.selectedThread

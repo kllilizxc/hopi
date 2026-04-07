@@ -145,6 +145,60 @@ describe('SessionLogWorkspace', () => {
         expect(await screen.findByText('Session 已停止。发送新消息会先自动恢复，再继续写入。')).toBeInTheDocument()
     })
 
+    it('appends a breathing live tail when the session is still producing output', async () => {
+        mockUsePrototypeRemoteApi.mockReturnValue({
+            getSession: vi.fn().mockResolvedValue({ session: createSession({ active: true, thinking: true }) }),
+            resumeSession: vi.fn().mockResolvedValue('session-1'),
+            sendMessage: vi.fn().mockResolvedValue(undefined),
+            createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
+        })
+
+        const { container } = render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Lock runtime foundation',
+                    subtitle: '01-01',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        expect(await screen.findByText('first planning update')).toBeInTheDocument()
+        expect(screen.getByText('底层 Agent 正在继续输出')).toBeInTheDocument()
+        expect(screen.getByText('新消息会继续追加在这里。')).toBeInTheDocument()
+        expect(container.querySelector('.prototype-session-log__tail--running')).not.toBeNull()
+        expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).not.toBeNull()
+    })
+
+    it('marks the transcript tail as ended once the session has stopped', async () => {
+        mockUsePrototypeRemoteApi.mockReturnValue({
+            getSession: vi.fn().mockResolvedValue({ session: createSession({ active: false, thinking: false }) }),
+            resumeSession: vi.fn().mockResolvedValue('session-1'),
+            sendMessage: vi.fn().mockResolvedValue(undefined),
+            createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
+        })
+
+        const { container } = render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Lock runtime foundation',
+                    subtitle: '01-01',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        expect(await screen.findByText('first planning update')).toBeInTheDocument()
+        expect(screen.getByText('本轮输出已结束')).toBeInTheDocument()
+        expect(screen.getByText('这条 Session 已停止；如果你继续发送，系统会先自动恢复。')).toBeInTheDocument()
+        expect(container.querySelector('.prototype-session-log__tail--stopped')).not.toBeNull()
+        expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).toBeNull()
+    })
+
     it('resumes an inactive session before sending and switches to the resumed session id', async () => {
         const api = {
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: false }) }),
@@ -220,6 +274,26 @@ describe('SessionLogWorkspace', () => {
 
         await screen.findByText('first planning update')
         expect(screen.getByTestId('session-log-scroll-shell')).toBeInTheDocument()
+    })
+
+    it('renders a separate topbar so actions do not squeeze the title column', async () => {
+        const { container } = render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Establish the expedition domain, persistence, and prototype content backbone for Phase 01.',
+                    subtitle: '01-01',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        await screen.findByText('first planning update')
+
+        expect(container.querySelector('.prototype-session-log__topbar')).not.toBeNull()
+        expect(container.querySelector('.prototype-session-log__topbar .prototype-session-log__title')).toBeNull()
+        expect(container.querySelector('.prototype-session-log__meta--wrapped')).not.toBeNull()
     })
 
     it('uses a scroll-safe top-aligned transcript stack instead of bottom-justified chat layout', async () => {

@@ -383,6 +383,15 @@ describe('OMC runtime projection', () => {
         expect(snapshot.approvalBatches.today.items.map((item) => item.id)).toContain('01-02')
         expect(snapshot.approvalBatches.today.items.map((item) => item.id)).toContain('02-01')
         expect(snapshot.risks.some((risk) => risk.id === 'risk:02-01')).toBe(true)
+        expect(snapshot.approvalBatches.today.items.find((item) => item.id === '01-02')).toMatchObject({
+            title: 'Harden review lane',
+            liveContext: {
+                source: 'omc',
+                planLabel: 'Harden review lane',
+                projectLabel: 'HOPI Workspace',
+                category: 'review-approval',
+            },
+        })
     })
 
     it('projects live plan runtimes into work orders, decision topics, and traceable agent events', () => {

@@ -95,7 +95,7 @@ describe('ExecutionBoard', () => {
     })
 
     it('marks the active trace card as pressed', () => {
-        renderWithSurface(
+        const { container } = renderWithSurface(
             <ExecutionBoard {...buildBoardProps()} />,
             {
                 activeTrace: {
@@ -107,5 +107,7 @@ describe('ExecutionBoard', () => {
 
         expect(screen.getByRole('button', { name: /放行导入证明分支/i })).toHaveAttribute('aria-pressed', 'true')
         expect(screen.getByRole('button', { name: /完成持仓证明链/i })).toHaveAttribute('aria-pressed', 'false')
+        expect(container.querySelector('.prototype-board-shell--balanced')).not.toBeNull()
+        expect(container.querySelector('.prototype-kanban--balanced')).not.toBeNull()
     })
 })

@@ -34,6 +34,13 @@ function extractText(value: unknown): string | null {
         return value.text
     }
 
+    if ('data' in value) {
+        const nested = extractText(value.data)
+        if (nested) {
+            return nested
+        }
+    }
+
     if ('content' in value) {
         return extractText(value.content)
     }

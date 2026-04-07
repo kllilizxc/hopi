@@ -526,11 +526,16 @@ export function createOmcRoutes(options: {
         return c.json(buildPlanningIndex(program))
     })
 
-    app.get('/omc/programs/:programId/plan-runtimes', (c) => {
+    app.get('/omc/programs/:programId/plan-runtimes', async (c) => {
         const namespace = c.get('namespace')
         const program = requireProgram(options.store, namespace, c.req.param('programId'))
         if (!program) {
             return c.json({ error: 'Program not found' }, 404)
+        }
+
+        const controller = requireController(namespace)
+        if (controller) {
+            await controller.reconcileProgram(program)
         }
 
         return c.json({
@@ -539,7 +544,7 @@ export function createOmcRoutes(options: {
         })
     })
 
-    app.get('/omc/programs/:programId/plans/:planKey', (c) => {
+    app.get('/omc/programs/:programId/plans/:planKey', async (c) => {
         const namespace = c.get('namespace')
         const program = requireProgram(options.store, namespace, c.req.param('programId'))
         if (!program) {
@@ -549,6 +554,11 @@ export function createOmcRoutes(options: {
         const plan = buildPlanDetail(program, c.req.param('planKey'))
         if (!plan) {
             return c.json({ error: 'Plan not found' }, 404)
+        }
+
+        const controller = requireController(namespace)
+        if (controller) {
+            await controller.reconcilePlan(program, plan.planKey)
         }
 
         const runtime = options.store.omcRuntime.getPlanRuntime(program.id, plan.planKey, namespace)
@@ -577,7 +587,7 @@ export function createOmcRoutes(options: {
         })
     })
 
-    app.get('/omc/programs/:programId/plans/:planKey/runtime', (c) => {
+    app.get('/omc/programs/:programId/plans/:planKey/runtime', async (c) => {
         const namespace = c.get('namespace')
         const program = requireProgram(options.store, namespace, c.req.param('programId'))
         if (!program) {
@@ -587,6 +597,11 @@ export function createOmcRoutes(options: {
         const plan = buildPlanDetail(program, c.req.param('planKey'))
         if (!plan) {
             return c.json({ error: 'Plan not found' }, 404)
+        }
+
+        const controller = requireController(namespace)
+        if (controller) {
+            await controller.reconcilePlan(program, plan.planKey)
         }
 
         const runtime = options.store.omcRuntime.getPlanRuntime(program.id, plan.planKey, namespace)
@@ -607,11 +622,19 @@ export function createOmcRoutes(options: {
         return c.json({ runtime })
     })
 
-    app.get('/omc/programs/:programId/plans/:planKey/attempts', (c) => {
+    app.get('/omc/programs/:programId/plans/:planKey/attempts', async (c) => {
         const namespace = c.get('namespace')
         const program = requireProgram(options.store, namespace, c.req.param('programId'))
         if (!program) {
             return c.json({ error: 'Program not found' }, 404)
+        }
+
+        const plan = buildPlanDetail(program, c.req.param('planKey'))
+        if (plan) {
+            const controller = requireController(namespace)
+            if (controller) {
+                await controller.reconcilePlan(program, plan.planKey)
+            }
         }
 
         return c.json({
@@ -619,7 +642,7 @@ export function createOmcRoutes(options: {
         })
     })
 
-    app.get('/omc/programs/:programId/plans/:planKey/merge-packet', (c) => {
+    app.get('/omc/programs/:programId/plans/:planKey/merge-packet', async (c) => {
         const namespace = c.get('namespace')
         const program = requireProgram(options.store, namespace, c.req.param('programId'))
         if (!program) {
@@ -629,6 +652,11 @@ export function createOmcRoutes(options: {
         const plan = buildPlanDetail(program, c.req.param('planKey'))
         if (!plan) {
             return c.json({ error: 'Plan not found' }, 404)
+        }
+
+        const controller = requireController(namespace)
+        if (controller) {
+            await controller.reconcilePlan(program, plan.planKey)
         }
 
         const runtime = resolvePlanRuntime(options.store, namespace, program.id, {

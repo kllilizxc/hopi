@@ -5,6 +5,8 @@ import type { OperatorMessage, OperatorThread } from '@/prototype/types'
 
 const performQuickAction = vi.fn()
 const sendThreadReply = vi.fn()
+const openSessionLog = vi.fn()
+const openTrace = vi.fn()
 let composerValue = ''
 let currentRuntime: { onSend?: (text: string) => void } = {}
 
@@ -14,6 +16,25 @@ vi.mock('@/prototype/store', () => ({
             performQuickAction,
             sendThreadReply,
         },
+        live: {
+            sessionIdByPlanKey: {
+                'plan-1': 'session-runtime-1',
+            },
+        },
+    }),
+}))
+
+vi.mock('@/components/operator/OperatorSurfaceContext', () => ({
+    useOperatorSurface: () => ({
+        openInbox: vi.fn(),
+        openThread: vi.fn(),
+        openTrace,
+        openSessionLog,
+        clearSessionLog: vi.fn(),
+        closePanel: vi.fn(),
+        isOpen: true,
+        activeTrace: null,
+        activeSessionLog: null,
     }),
 }))
 
@@ -134,6 +155,8 @@ describe('ThreadConversation', () => {
     beforeEach(() => {
         performQuickAction.mockClear()
         sendThreadReply.mockClear()
+        openSessionLog.mockClear()
+        openTrace.mockClear()
         composerValue = ''
         currentRuntime = {}
     })
@@ -231,5 +254,144 @@ describe('ThreadConversation', () => {
 
         fireEvent.click(screen.getByRole('button', { name: '确认放行' }))
         expect(performQuickAction).toHaveBeenCalledWith('approval:branch', 'approve')
+    })
+
+    it('renders a translated briefing card above the transcript and exposes evidence actions', () => {
+        const thread = buildThread({
+            id: 'approval:runtime',
+            kind: 'approval',
+            title: '执行中断，等待恢复确认',
+            refs: [
+                { kind: 'plan', id: 'plan-1', label: 'Establish expedition domain' },
+            ],
+            briefing: {
+                title: '执行中断，等待恢复确认',
+                identity: {
+                    projectLabel: 'CardGame',
+                    goalLabel: '01 First Playable Expedition',
+                    planLabel: 'Establish expedition domain',
+                    attemptNumber: 3,
+                    sessionId: 'session-runtime-1',
+                },
+                summaryRows: {
+                    whatHappened: 'CardGame 的「Establish expedition domain」在执行中失去了关联 session，这一轮还没来得及上报结果。',
+                    whyEscalated: '系统现在无法判断这轮应该继续、重试，还是改方向，所以需要你确认下一步。',
+                    recommendedAction: '建议先查看日志，再决定是否恢复执行。',
+                    currentImpact: '这张计划卡暂时不会继续自动推进。',
+                },
+                primaryAction: { label: '重试这一轮', helper: '建议先打开执行日志确认原因；重试后系统会重新拉起这一轮 attempt。' },
+                secondaryAction: { label: '先保持现状', helper: '保留当前状态，不恢复自动推进。' },
+                rawEvidence: {
+                    summary: 'The linked session became inactive before the attempt reported a structured outcome.',
+                    terminationReason: 'session-inactive',
+                    nextSuggestedStep: 'Inspect the session history, then resume the loop when the machine is stable.',
+                    failureFingerprint: 'session-inactive',
+                    defaultExpanded: false,
+                },
+            },
+            quickActions: [
+                {
+                    id: 'retry',
+                    label: '重试这一轮',
+                    tone: 'primary',
+                    operation: { type: 'approval-approve', approvalId: 'plan-1' },
+                },
+            ],
+        })
+
+        render(
+            <ThreadConversation
+                thread={thread}
+                messages={[
+                    {
+                        id: 'message-runtime',
+                        threadId: thread.id,
+                        role: 'agent',
+                        body: '系统现在无法判断这轮应该继续、重试，还是改方向，所以需要你确认下一步。',
+                        createdAt: '2026-04-07T10:00:00.000Z',
+                    } satisfies OperatorMessage,
+                ]}
+            />,
+        )
+
+        expect(screen.getByText('发生了什么')).toBeInTheDocument()
+        expect(screen.getByText('计划：Establish expedition domain')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '查看原始依据' })).toBeInTheDocument()
+        expect(screen.queryByText('The linked session became inactive before the attempt reported a structured outcome.')).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: '查看原始依据' }))
+        expect(screen.getByText('The linked session became inactive before the attempt reported a structured outcome.')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: '打开执行日志' }))
+        expect(openSessionLog).toHaveBeenCalledWith({
+            sessionId: 'session-runtime-1',
+            source: 'plan-runtime',
+            title: 'Establish expedition domain',
+            subtitle: 'plan-1',
+        })
+
+        fireEvent.click(screen.getByRole('button', { name: '打开原始轨迹' }))
+        expect(openTrace).toHaveBeenCalledWith({
+            planId: 'plan-1',
+            streamId: 'plan-1',
+        })
+    })
+
+    it('reuses the same briefing layout for non-runtime direction threads', () => {
+        const thread = buildThread({
+            briefing: {
+                title: '做出每周投资简报 · 路线调整',
+                identity: {
+                    projectLabel: 'Portfolio Copilot',
+                    goalLabel: '做出每周投资简报',
+                    planLabel: '收紧周报框架',
+                    attemptNumber: null,
+                    sessionId: null,
+                },
+                summaryRows: {
+                    whatHappened: '系统当前路线是先把周报框架收紧，避免一开始就把异常叙事做重。',
+                    whyEscalated: '当前目标信心还不够高，路线和优先级都可能要重新拍板。',
+                    recommendedAction: '如果你认同，就保持当前路线；如果不认同，可以直接改方向。',
+                    currentImpact: '后续执行流会优先补齐框架和栏目边界。',
+                },
+                primaryAction: {
+                    label: '收紧范围',
+                    helper: '系统会按更保守的路线重排执行流、风险语气和后续摘要。',
+                },
+                secondaryAction: {
+                    label: '保持路线',
+                    helper: '维持当前路线和优先级继续推进。',
+                },
+                rawEvidence: {
+                    summary: null,
+                    terminationReason: null,
+                    nextSuggestedStep: null,
+                    failureFingerprint: null,
+                    defaultExpanded: false,
+                },
+            },
+        })
+
+        render(
+            <ThreadConversation
+                thread={thread}
+                messages={[
+                    {
+                        id: 'message-direction',
+                        threadId: thread.id,
+                        role: 'agent',
+                        body: '如果你不改方向，我会按“框架先行”推进。',
+                        createdAt: '2026-04-07T10:00:00.000Z',
+                    } satisfies OperatorMessage,
+                ]}
+            />,
+        )
+
+        expect(screen.getByText('为什么会找你')).toBeInTheDocument()
+        expect(screen.getByText('项目：Portfolio Copilot')).toBeInTheDocument()
+        expect(screen.getByText('目标：做出每周投资简报')).toBeInTheDocument()
+        expect(screen.getByText('计划：收紧周报框架')).toBeInTheDocument()
+        expect(screen.getByText('按钮含义')).toBeInTheDocument()
+        expect(screen.getByText('系统会按更保守的路线重排执行流、风险语气和后续摘要。')).toBeInTheDocument()
     })
 })

@@ -25,7 +25,7 @@ import { resolveThreadIntent } from './omcThreadIntents'
 import { createWorkOrder } from './orchestration'
 import { usePrototypeRemoteApiOptional } from './remoteApi'
 import { resumeAfterDecision } from './workOrderLoop'
-import { syncOperatorThreadBundle } from './threads'
+import { buildOperatorThreadSeeds, syncOperatorThreadBundle } from './threads'
 import { ingestIncomingMessages as ingestSessionMessages } from '@/lib/sessionMessageStore'
 import {
     approvalContextPresentation,
@@ -1884,6 +1884,75 @@ type LiveThreadState = {
     activeThreadSelectionId: number
 }
 
+type LiveDecisionTopicOverride = {
+    topic: DecisionTopic
+    baseUpdatedAt: string
+    basePreview: string
+    baseTitle: string
+}
+
+function createLiveDecisionTopicOverride(thread: OperatorThread, summary: string): LiveDecisionTopicOverride {
+    return {
+        topic: {
+            id: thread.id,
+            kind: thread.kind,
+            title: thread.title,
+            goalId: thread.goalId,
+            workOrderId: null,
+            lifecycle: 'resolved',
+            unread: false,
+            messages: [summary],
+        },
+        baseUpdatedAt: thread.updatedAt,
+        basePreview: thread.preview,
+        baseTitle: thread.title,
+    }
+}
+
+function pruneLiveDecisionTopicOverrides(
+    overrides: Record<string, LiveDecisionTopicOverride>,
+    seeds: ReturnType<typeof buildOperatorThreadSeeds>,
+    serverTopics: Record<string, DecisionTopic>,
+): Record<string, LiveDecisionTopicOverride> {
+    const seedById = new Map(seeds.map((seed) => [seed.id, seed] as const))
+    let changed = false
+    const next: Record<string, LiveDecisionTopicOverride> = {}
+
+    for (const [threadId, override] of Object.entries(overrides)) {
+        if (serverTopics[threadId]) {
+            changed = true
+            continue
+        }
+
+        const seed = seedById.get(threadId)
+        if (!seed) {
+            changed = true
+            continue
+        }
+
+        if (
+            seed.updatedAt !== override.baseUpdatedAt
+            || seed.preview !== override.basePreview
+            || seed.title !== override.baseTitle
+        ) {
+            changed = true
+            continue
+        }
+
+        next[threadId] = override
+    }
+
+    return changed ? next : overrides
+}
+
+function flattenLiveDecisionTopicOverrides(
+    overrides: Record<string, LiveDecisionTopicOverride>,
+): Record<string, DecisionTopic> {
+    return Object.fromEntries(
+        Object.entries(overrides).map(([threadId, override]) => [threadId, override.topic] as const),
+    )
+}
+
 function findLatestAttempt(detail: OmcPlanDetailResponse | null | undefined) {
     return [...(detail?.attempts ?? [])]
         .sort((left, right) => right.attemptNumber - left.attemptNumber || right.updatedAt - left.updatedAt)[0]
@@ -2214,6 +2283,7 @@ function LivePrototypeStoreProvider(props: {
     })
     const [windowState, setWindowState] = useState<PrototypeTimeWindow>('today')
     const [traceSelection, setTraceSelection] = useState<TraceSelection | null>(null)
+    const [liveDecisionTopicOverrides, setLiveDecisionTopicOverrides] = useState<Record<string, LiveDecisionTopicOverride>>({})
     const [threadState, setThreadState] = useState<LiveThreadState>({
         threadsById: {},
         messagesByThread: {},
@@ -2318,6 +2388,21 @@ function LivePrototypeStoreProvider(props: {
             return
         }
 
+        const seeds = buildOperatorThreadSeeds(projection.snapshot)
+        const retainedOverrides = pruneLiveDecisionTopicOverrides(
+            liveDecisionTopicOverrides,
+            seeds,
+            projection.worldModel.decisionTopics,
+        )
+        if (retainedOverrides !== liveDecisionTopicOverrides) {
+            setLiveDecisionTopicOverrides(retainedOverrides)
+        }
+
+        const mergedDecisionTopics = {
+            ...flattenLiveDecisionTopicOverrides(retainedOverrides),
+            ...projection.worldModel.decisionTopics,
+        }
+
         setThreadState((previous) => {
             const { bundle, activeThreadId } = syncOperatorThreadBundle({
                 snapshot: projection.snapshot,
@@ -2326,7 +2411,7 @@ function LivePrototypeStoreProvider(props: {
                     messagesByThread: previous.messagesByThread,
                     activeThreadId: previous.activeThreadId,
                 },
-                decisionTopics: projection.worldModel.decisionTopics,
+                decisionTopics: mergedDecisionTopics,
             })
 
             return {
@@ -2336,7 +2421,7 @@ function LivePrototypeStoreProvider(props: {
                 activeThreadId,
             }
         })
-    }, [projection])
+    }, [liveDecisionTopicOverrides, projection])
 
     const appendConversationMessages = useCallback((threadId: string, userBody: string | null, agentBody: string, role: OperatorMessage['role'] = 'agent') => {
         setThreadState((previous) => {
@@ -2351,6 +2436,17 @@ function LivePrototypeStoreProvider(props: {
                 messagesByThread: appendChatMessages(previous.messagesByThread, threadId, ...nextMessages),
             }
         })
+    }, [])
+
+    const markLiveThreadHandled = useCallback((thread: OperatorThread, summary: string) => {
+        if (thread.kind !== 'direction') {
+            return
+        }
+
+        setLiveDecisionTopicOverrides((previous) => ({
+            ...previous,
+            [thread.id]: createLiveDecisionTopicOverride(thread, summary),
+        }))
     }, [])
 
     const setActiveThread = useCallback((id: string) => {
@@ -2407,6 +2503,11 @@ function LivePrototypeStoreProvider(props: {
 
         try {
             switch (intent.kind) {
+                case 'retry-plan':
+                    await props.api.retryPlan(currentProjection.programId, intent.planKey)
+                    appendConversationMessages(threadId, text, `已请求重试 ${intent.planKey}，系统会重新拉起这一轮执行。`)
+                    await refreshProjection({ silent: true })
+                    return
                 case 'approve-review':
                     await props.api.approveReview(currentProjection.programId, intent.planKey)
                     appendConversationMessages(threadId, text, `已批准 ${intent.planKey} 的 review 边界，状态机会继续推进。`)
@@ -2454,7 +2555,8 @@ function LivePrototypeStoreProvider(props: {
                     }
 
                     await props.api.sendMessage(ensuredSessionId, intent.text)
-                    appendConversationMessages(threadId, text, `已把指令转发到运行中的 agent 会话。`)
+                    appendConversationMessages(threadId, text, '已把指令转发到运行中的 agent 会话。')
+                    markLiveThreadHandled(thread, '已把指令转发到运行中的 agent 会话。')
                     await refreshProjection({ silent: true })
                     return
                 }
@@ -2467,6 +2569,7 @@ function LivePrototypeStoreProvider(props: {
 
                         await props.api.sendMessage(ensuredSessionId, text)
                         appendConversationMessages(threadId, text, '已把你的指令转发给当前主线 agent。')
+                        markLiveThreadHandled(thread, '已把你的指令转发给当前主线 agent。')
                         await refreshProjection({ silent: true })
                         return
                     }
@@ -2482,7 +2585,7 @@ function LivePrototypeStoreProvider(props: {
                 'system',
             )
         }
-    }, [appendConversationMessages, ensureActiveSessionForPlan, projection, props.api, refreshProjection, threadState.threadsById])
+    }, [appendConversationMessages, ensureActiveSessionForPlan, markLiveThreadHandled, projection, props.api, refreshProjection, threadState.threadsById])
 
     const performQuickAction = useCallback((threadId: string, actionId: string) => {
         const thread = threadState.threadsById[threadId]
@@ -2493,7 +2596,10 @@ function LivePrototypeStoreProvider(props: {
 
         switch (quickAction.operation.type) {
             case 'approval-approve':
-                void runThreadReply(threadId, '好，直接合并')
+                void runThreadReply(
+                    threadId,
+                    thread.briefing?.rawEvidence.terminationReason ? '重试这一轮' : '好，直接合并',
+                )
                 return
             case 'approval-defer':
                 appendConversationMessages(threadId, '先放这里，我稍后再处理。', '已记录为稍后处理，后端状态暂时不变。')

@@ -45,6 +45,13 @@ type ToolSessionLogEntry = {
 
 type SessionLogEntry = MessageSessionLogEntry | ToolSessionLogEntry
 
+type SessionLogTailState = {
+    tone: 'running' | 'live' | 'stopped'
+    title: string
+    detail: string
+    pulse: boolean
+}
+
 function labelSource(source: SessionLogSelection['source']): string {
     return source === 'planning-run' ? '规划运行' : '执行会话'
 }
@@ -249,6 +256,42 @@ function getErrorMessage(error: unknown): string {
     return message || '底层 Session 操作失败'
 }
 
+function buildSessionLogTailState(params: {
+    session: Session | null
+    pendingCount: number
+    sending: boolean
+}): SessionLogTailState | null {
+    const { session, pendingCount, sending } = params
+    if (!session) {
+        return null
+    }
+
+    if (!session.active) {
+        return {
+            tone: 'stopped',
+            title: '本轮输出已结束',
+            detail: '这条 Session 已停止；如果你继续发送，系统会先自动恢复。',
+            pulse: false,
+        }
+    }
+
+    if (session.thinking || pendingCount > 0 || sending) {
+        return {
+            tone: 'running',
+            title: '底层 Agent 正在继续输出',
+            detail: '新消息会继续追加在这里。',
+            pulse: true,
+        }
+    }
+
+    return {
+        tone: 'live',
+        title: '会话仍在线，等待下一步',
+        detail: '当前没有新输出，但这条 Session 还没有结束。',
+        pulse: false,
+    }
+}
+
 export default function SessionLogWorkspace(props: {
     selection: SessionLogSelection
     onBack: () => void
@@ -308,6 +351,11 @@ export default function SessionLogWorkspace(props: {
     )
     const terminalUrl = api.createSessionTerminalUrl(resolvedSessionId)
     const lastEntryId = entries.at(-1)?.id ?? null
+    const tailState = buildSessionLogTailState({
+        session,
+        pendingCount,
+        sending,
+    })
 
     const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
         const viewport = viewportRef.current
@@ -409,14 +457,16 @@ export default function SessionLogWorkspace(props: {
         return (
             <section className="prototype-session-log">
                 <header className="prototype-session-log__header">
-                    <button
-                        type="button"
-                        className="prototype-thread-detail__back"
-                        onClick={props.onBack}
-                        aria-label="返回消息面板"
-                    >
-                        返回消息面板
-                    </button>
+                    <div className="prototype-session-log__topbar">
+                        <button
+                            type="button"
+                            className="prototype-thread-detail__back"
+                            onClick={props.onBack}
+                            aria-label="返回消息面板"
+                        >
+                            返回消息面板
+                        </button>
+                    </div>
                 </header>
                 <section className="prototype-trace-empty">
                     <h3>正在连接底层 Session</h3>
@@ -427,51 +477,53 @@ export default function SessionLogWorkspace(props: {
     }
 
     return (
-        <section className="prototype-session-log">
-            <div className="prototype-session-log__summary">
-                <header className="prototype-session-log__header">
-                    <button
-                        type="button"
-                        className="prototype-thread-detail__back"
-                        onClick={props.onBack}
-                        aria-label="返回消息面板"
-                    >
-                        返回消息面板
-                    </button>
-
-                    <div className="prototype-session-log__title">
-                        <p className="prototype-message-panel__eyebrow">底层 transcript</p>
-                        <h2>{props.selection.title}</h2>
-                        <p className="prototype-session-log__subtitle">
-                            {props.selection.subtitle ?? resolvedSessionId}
-                        </p>
-                    </div>
-
-                    <div className="prototype-session-log__toolbar">
-                        {hasMore ? (
+            <section className="prototype-session-log">
+                <div className="prototype-session-log__summary">
+                    <header className="prototype-session-log__header">
+                        <div className="prototype-session-log__topbar">
                             <button
                                 type="button"
-                                className="prototype-button--ghost"
-                                onClick={() => {
-                                    void loadMore()
-                                }}
-                                disabled={isLoadingMore}
+                                className="prototype-thread-detail__back"
+                                onClick={props.onBack}
+                                aria-label="返回消息面板"
                             >
-                                {isLoadingMore ? '加载中…' : '加载更早消息'}
+                                返回消息面板
                             </button>
-                        ) : null}
-                        <a
-                            className="prototype-button--ghost"
-                            href={terminalUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            打开终端
-                        </a>
-                    </div>
-                </header>
 
-                <div className="prototype-session-log__meta">
+                            <div className="prototype-session-log__toolbar">
+                                {hasMore ? (
+                                    <button
+                                        type="button"
+                                        className="prototype-button--ghost"
+                                        onClick={() => {
+                                            void loadMore()
+                                        }}
+                                        disabled={isLoadingMore}
+                                    >
+                                        {isLoadingMore ? '加载中…' : '加载更早消息'}
+                                    </button>
+                                ) : null}
+                                <a
+                                    className="prototype-button--ghost"
+                                    href={terminalUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                >
+                                    打开终端
+                                </a>
+                            </div>
+                        </div>
+
+                        <div className="prototype-session-log__title">
+                            <p className="prototype-message-panel__eyebrow">底层 transcript</p>
+                            <h2>{props.selection.title}</h2>
+                            <p className="prototype-session-log__subtitle">
+                                {props.selection.subtitle ?? resolvedSessionId}
+                            </p>
+                        </div>
+                    </header>
+
+                    <div className="prototype-session-log__meta prototype-session-log__meta--wrapped">
                     <MetaBadge tone="neutral">{labelSource(props.selection.source)}</MetaBadge>
                     {session?.metadata?.flavor ? (
                         <MetaBadge tone="neutral">{session.metadata.flavor}</MetaBadge>
@@ -537,6 +589,23 @@ export default function SessionLogWorkspace(props: {
                                     <p>{isLoading ? '稍等一下，系统正在同步底层会话。' : '这条 Session 还没有产出可读消息。'}</p>
                                 </section>
                             )}
+                            {entries.length && tailState ? (
+                                <div
+                                    className={`prototype-session-log__tail prototype-session-log__tail--${tailState.tone}`}
+                                    data-testid="session-log-tail"
+                                    role="status"
+                                    aria-live="polite"
+                                >
+                                    <span
+                                        aria-hidden="true"
+                                        className={`prototype-session-log__tail-dot${tailState.pulse ? ' prototype-session-log__tail-dot--pulse' : ''}`}
+                                    />
+                                    <div className="prototype-session-log__tail-copy">
+                                        <p className="prototype-session-log__tail-title">{tailState.title}</p>
+                                        <p className="prototype-session-log__tail-detail">{tailState.detail}</p>
+                                    </div>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                 </section>

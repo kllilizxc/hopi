@@ -240,7 +240,7 @@ describe('MessageWorkspace', () => {
     })
 
     it('renders the raw session-log workspace when session-log mode is active', () => {
-        render(
+        const { container } = render(
             <MessageWorkspace
                 heading={{ title: '消息流', summary: 'Inbox summary' }}
                 threads={[]}
@@ -261,5 +261,6 @@ describe('MessageWorkspace', () => {
         )
 
         expect(screen.getByTestId('session-log-workspace')).toHaveTextContent('session-runtime-1')
+        expect(container.querySelector('.prototype-message-panel--detail-mode')).not.toBeNull()
     })
 })

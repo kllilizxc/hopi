@@ -15,7 +15,9 @@ import {
     riskPresentation,
     streamPresentation,
 } from './presenter'
+import { buildDecisionBriefing } from './decisionBriefing'
 import type {
+    DecisionBriefing,
     OperatorFirstMessage,
     OperatorMessage,
     OperatorThread,
@@ -333,6 +335,14 @@ function compactLines(lines: Array<string | null | undefined>) {
     return lines.filter((line): line is string => Boolean(line && line.trim())).map((line) => line.trim()).join('\n')
 }
 
+function renderMessageParagraphs(lines: Array<string | null | undefined>) {
+    return Array.from(new Set(
+        lines
+            .filter((line): line is string => Boolean(line && line.trim()))
+            .map((line) => line.trim()),
+    )).join('\n\n')
+}
+
 function createDetailSection(title: ThreadDetailSection['title'], body: string, refs: ThreadContextRef[]): ThreadDetailSection | null {
     const trimmedBody = body.trim()
     if (!trimmedBody && refs.length === 0) {
@@ -456,7 +466,7 @@ function collectApprovalItems(snapshot: PrototypeScenarioSnapshot) {
     return items
 }
 
-function threadMeaningfulSignature(thread: Pick<OperatorThread, 'title' | 'preview' | 'updatedAt' | 'firstMessage' | 'detailSections'>) {
+function threadMeaningfulSignature(thread: Pick<OperatorThread, 'title' | 'preview' | 'updatedAt' | 'firstMessage' | 'detailSections' | 'briefing'>) {
     return [
         thread.title,
         thread.preview,
@@ -470,16 +480,44 @@ function threadMeaningfulSignature(thread: Pick<OperatorThread, 'title' | 'previ
         thread.firstMessage.deferEffect ?? '',
         thread.firstMessage.continueSilentlyEffect ?? '',
         thread.firstMessage.changeDirectionEffect ?? '',
+        thread.briefing?.title ?? '',
+        thread.briefing?.identity.projectLabel ?? '',
+        thread.briefing?.identity.goalLabel ?? '',
+        thread.briefing?.identity.planLabel ?? '',
+        thread.briefing?.identity.attemptNumber?.toString() ?? '',
+        thread.briefing?.identity.sessionId ?? '',
+        thread.briefing?.summaryRows.whatHappened ?? '',
+        thread.briefing?.summaryRows.whyEscalated ?? '',
+        thread.briefing?.summaryRows.recommendedAction ?? '',
+        thread.briefing?.summaryRows.currentImpact ?? '',
+        thread.briefing?.primaryAction?.label ?? '',
+        thread.briefing?.primaryAction?.helper ?? '',
+        thread.briefing?.secondaryAction?.label ?? '',
+        thread.briefing?.secondaryAction?.helper ?? '',
+        thread.briefing?.rawEvidence.summary ?? '',
+        thread.briefing?.rawEvidence.terminationReason ?? '',
+        thread.briefing?.rawEvidence.nextSuggestedStep ?? '',
+        thread.briefing?.rawEvidence.failureFingerprint ?? '',
         ...thread.detailSections.map((section) => `${section.title}:${section.body}:${section.refs.map((ref) => `${ref.kind}:${ref.id}`).join('|')}`),
     ].join('||')
 }
 
 function renderFirstMessage(firstMessage: OperatorFirstMessage) {
-    return Array.from(new Set([
+    return renderMessageParagraphs([
         firstMessage.currentStatus,
         firstMessage.suggestedAction,
         firstMessage.freeformInvite,
-    ].filter(Boolean))).join('\n\n')
+    ])
+}
+
+function renderApprovalFirstMessage(firstMessage: OperatorFirstMessage) {
+    return renderMessageParagraphs([
+        firstMessage.currentStatus,
+        firstMessage.suggestedAction,
+        firstMessage.confirmEffect ? `按建议执行后：${firstMessage.confirmEffect}` : null,
+        firstMessage.deferEffect ? `如果先不处理：${firstMessage.deferEffect}` : null,
+        firstMessage.freeformInvite,
+    ])
 }
 
 function statusThreadTitle(goal: PrototypeGoal) {
@@ -498,6 +536,199 @@ function approvalThreadTitle(item: PrototypeApprovalItem) {
             return '调整周报路线'
         case 'scope-change':
             return '收窄周报范围'
+    }
+}
+
+function approvalDecisionPrompt(item: PrototypeApprovalItem) {
+    switch (item.kind) {
+        case 'branch-promotion':
+            return '你要决定的是：要不要按系统建议放行导入分支。'
+        case 'direction-change':
+            return '你要决定的是：要不要按系统建议调整周报路线。'
+        case 'scope-change':
+            return '你要决定的是：要不要按系统建议收紧周报范围。'
+    }
+}
+
+function approvalApproveLabel(item: PrototypeApprovalItem) {
+    switch (item.kind) {
+        case 'branch-promotion':
+            return '按建议放行'
+        case 'direction-change':
+            return '按建议调整路线'
+        case 'scope-change':
+            return '按建议收紧范围'
+    }
+}
+
+function approvalDeferLabel(item: PrototypeApprovalItem) {
+    switch (item.kind) {
+        case 'branch-promotion':
+            return '先不放行'
+        case 'direction-change':
+        case 'scope-change':
+            return '先保持现状'
+    }
+}
+
+function approvalGuideLabel(item: PrototypeApprovalItem, label: string | null) {
+    if (!label) {
+        return null
+    }
+
+    if (item.kind === 'branch-promotion') {
+        return label
+    }
+
+    if (label === '保持原路线') {
+        return '不收紧，保持原路线'
+    }
+
+    return label
+}
+
+function findRefLabel(refs: ThreadContextRef[], kind: ThreadContextRef['kind']) {
+    return refs.find((ref) => ref.kind === kind)?.label ?? null
+}
+
+function createThreadIdentity(snapshot: PrototypeScenarioSnapshot, refs: ThreadContextRef[], explicitPlanLabel?: string | null) {
+    return {
+        projectLabel: snapshot.program.name,
+        goalLabel: findRefLabel(refs, 'goal'),
+        planLabel: explicitPlanLabel ?? findRefLabel(refs, 'plan'),
+        attemptNumber: null,
+        sessionId: null,
+    }
+}
+
+function createStatusBriefing(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal, refs: ThreadContextRef[], goalView: ReturnType<typeof goalPresentation>): DecisionBriefing {
+    return {
+        title: statusThreadTitle(goal),
+        identity: createThreadIdentity(snapshot, refs),
+        summaryRows: {
+            whatHappened: `${goalDisplayLabel(goal)} 当前处于${labelGoalStatus(goal.status)}，置信度约 ${goal.confidence}%。`,
+            whyEscalated: goal.needsApproval
+                ? '相关审批或风险已经进入收件箱；这条线程负责给你完整说明当前主线为什么会走到这里。'
+                : '这条线程是当前主线的状态简报，帮助你先理解系统现在在做什么。',
+            recommendedAction: goal.needsApproval
+                ? '真正需要拍板的事项已经单独进入收件箱；这里先帮助你建立背景。'
+                : '如果你想追问为什么这样排，或者想直接改路线、改优先级，可以直接回复。',
+            currentImpact: goalView.progressLabel,
+        },
+        primaryAction: null,
+        secondaryAction: null,
+        rawEvidence: {
+            summary: null,
+            terminationReason: null,
+            nextSuggestedStep: null,
+            failureFingerprint: null,
+            defaultExpanded: false,
+        },
+    }
+}
+
+function createDirectionBriefing(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal, refs: ThreadContextRef[], firstMessage: OperatorFirstMessage): DecisionBriefing {
+    return {
+        title: directionThreadTitle(goal),
+        identity: createThreadIdentity(snapshot, refs),
+        summaryRows: {
+            whatHappened: firstMessage.currentStatus,
+            whyEscalated: firstMessage.whyNow,
+            recommendedAction: firstMessage.suggestedAction,
+            currentImpact: firstMessage.changeDirectionEffect ?? '系统会继续按当前路线和优先级推进。',
+        },
+        primaryAction: {
+            label: '收紧范围',
+            helper: '系统会用更保守的路线重排执行流、风险语气和后续摘要。',
+        },
+        secondaryAction: {
+            label: '保持路线',
+            helper: '维持当前路线和优先级继续推进；如果要更激进，再用下面按钮单独调整。',
+        },
+        rawEvidence: {
+            summary: null,
+            terminationReason: null,
+            nextSuggestedStep: null,
+            failureFingerprint: null,
+            defaultExpanded: false,
+        },
+    }
+}
+
+function createLiveApprovalBriefing(item: PrototypeApprovalItem): DecisionBriefing | null {
+    return buildDecisionBriefing(item.liveContext ?? null)
+}
+
+function liveApprovalTitle(item: PrototypeApprovalItem, briefing: DecisionBriefing | null) {
+    if (!item.liveContext) {
+        return approvalThreadTitle(item)
+    }
+
+    if (item.liveContext.category === 'runtime-interruption') {
+        return briefing?.title ?? item.title
+    }
+
+    return item.title
+}
+
+function createApprovalBriefing(snapshot: PrototypeScenarioSnapshot, item: PrototypeApprovalItem, firstMessage: OperatorFirstMessage, context: ReturnType<typeof approvalContextPresentation>, refs: ThreadContextRef[]): DecisionBriefing {
+    const liveBriefing = createLiveApprovalBriefing(item)
+    if (liveBriefing) {
+        return liveBriefing
+    }
+
+    return {
+        title: approvalThreadTitle(item),
+        identity: createThreadIdentity(snapshot, refs, item.title),
+        summaryRows: {
+            whatHappened: firstMessage.currentStatus,
+            whyEscalated: `${context.background} ${firstMessage.whyNow}`.trim(),
+            recommendedAction: firstMessage.suggestedAction,
+            currentImpact: `${firstMessage.confirmEffect ?? ''} ${firstMessage.deferEffect ?? ''}`.trim(),
+        },
+        primaryAction: {
+            label: approvalApproveLabel(item),
+            helper: firstMessage.confirmEffect ?? context.approveEffect,
+        },
+        secondaryAction: {
+            label: approvalDeferLabel(item),
+            helper: firstMessage.deferEffect ?? context.deferEffect,
+        },
+        rawEvidence: {
+            summary: null,
+            terminationReason: null,
+            nextSuggestedStep: null,
+            failureFingerprint: null,
+            defaultExpanded: false,
+        },
+    }
+}
+
+function createRiskBriefing(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRisk, refs: ThreadContextRef[], view: ReturnType<typeof riskPresentation>, context: ReturnType<typeof riskContextPresentation>, firstMessage: OperatorFirstMessage): DecisionBriefing {
+    return {
+        title: riskThreadTitle(risk),
+        identity: createThreadIdentity(snapshot, refs),
+        summaryRows: {
+            whatHappened: `${view.title}，当前被系统判定为${labelRiskSeverity(risk.severity)}风险。`,
+            whyEscalated: `${context.background} ${firstMessage.whyNow}`.trim(),
+            recommendedAction: firstMessage.suggestedAction,
+            currentImpact: firstMessage.changeDirectionEffect ?? firstMessage.continueSilentlyEffect ?? firstMessage.deferEffect ?? risk.summary,
+        },
+        primaryAction: {
+            label: context.guideLabel,
+            helper: firstMessage.changeDirectionEffect ?? '系统会按更保守的方式处理这条风险。',
+        },
+        secondaryAction: {
+            label: '已知，继续跑',
+            helper: firstMessage.continueSilentlyEffect ?? '系统会继续按当前路线推进，但会把这条风险记账。',
+        },
+        rawEvidence: {
+            summary: null,
+            terminationReason: null,
+            nextSuggestedStep: null,
+            failureFingerprint: null,
+            defaultExpanded: false,
+        },
     }
 }
 
@@ -525,6 +756,7 @@ function createStatusThread(snapshot: PrototypeScenarioSnapshot, goal: Prototype
             : '想问我为什么这么排，直接回我。',
         freeformInvite: '也可以直接叫我改路线或改优先级。',
     }
+    const briefing = createStatusBriefing(snapshot, goal, refs, goalView)
 
     return {
         id: `status:${goal.id}`,
@@ -541,6 +773,7 @@ function createStatusThread(snapshot: PrototypeScenarioSnapshot, goal: Prototype
         firstMessage,
         quickActions: [],
         statusLabel: lifecycleLabel(lifecycle),
+        briefing,
         introMessage: createThreadMessage({
             id: createMessageId('intro', `status:${goal.id}`),
             threadId: `status:${goal.id}`,
@@ -575,6 +808,7 @@ function createDirectionThread(snapshot: PrototypeScenarioSnapshot, goal: Protot
         freeformInvite: '不想点按钮的话，直接告诉我要怎么改。',
         changeDirectionEffect: '系统会按新的路线和优先级重排执行流、风险语气和后续摘要。',
     }
+    const briefing = createDirectionBriefing(snapshot, goal, refs, firstMessage)
 
     return {
         id: `direction:${goal.id}`,
@@ -622,6 +856,7 @@ function createDirectionThread(snapshot: PrototypeScenarioSnapshot, goal: Protot
             },
         ],
         statusLabel: lifecycleLabel(lifecycle),
+        briefing,
         introMessage: createThreadMessage({
             id: createMessageId('intro', `direction:${goal.id}`),
             threadId: `direction:${goal.id}`,
@@ -647,35 +882,47 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
             ? 'silent'
             : 'resolved'
     const refs = approvalRefs(snapshot, item)
-    const firstMessage: OperatorFirstMessage = {
-        currentStatus: `现在要你拍板：${view.title}。`,
+    const baseFirstMessage: OperatorFirstMessage = {
+        currentStatus: approvalDecisionPrompt(item),
         background: context.background,
         whyNow: '这条审批已经到明确的判断边界；继续自动推进会跨过你的经营决策。',
-        suggestedAction: context.systemDecision,
-        freeformInvite: '不想点按钮的话，直接告诉我要怎么做。',
+        suggestedAction: `系统建议：${view.summary}`,
+        freeformInvite: '如果这几个按钮都不对，直接回我你希望系统怎么改。',
         confirmEffect: context.approveEffect,
         deferEffect: context.deferEffect,
+    }
+    const briefing = createApprovalBriefing(snapshot, item, baseFirstMessage, context, refs)
+    const firstMessage: OperatorFirstMessage = {
+        currentStatus: briefing.summaryRows.whatHappened,
+        background: briefing.summaryRows.whyEscalated,
+        whyNow: briefing.summaryRows.currentImpact,
+        suggestedAction: briefing.summaryRows.recommendedAction,
+        freeformInvite: baseFirstMessage.freeformInvite,
+        confirmEffect: briefing.primaryAction?.helper ?? context.approveEffect,
+        deferEffect: briefing.secondaryAction?.helper ?? context.deferEffect,
     }
 
     const quickActions: QuickActionSpec[] = [
         {
             id: `approval:${item.id}:approve`,
-            label: item.kind === 'branch-promotion' ? '确认放行' : '确认调整',
+            label: briefing.primaryAction?.label ?? approvalApproveLabel(item),
             tone: 'primary',
             operation: { type: 'approval-approve', approvalId: item.id },
         },
         {
             id: `approval:${item.id}:defer`,
-            label: '稍后处理',
+            label: briefing.secondaryAction?.label ?? approvalDeferLabel(item),
             tone: 'secondary',
             operation: { type: 'approval-defer', approvalId: item.id },
         },
     ]
 
-    if (context.guideLabel && context.guideDirection) {
+    const guideLabel = approvalGuideLabel(item, context.guideLabel)
+
+    if (!item.liveContext && guideLabel && context.guideDirection) {
         quickActions.push({
             id: `approval:${item.id}:guide`,
-            label: context.guideLabel,
+            label: guideLabel,
             tone: 'secondary',
             operation: { type: 'approval-guide', approvalId: item.id, goalId: item.goalId, direction: context.guideDirection },
         })
@@ -685,8 +932,8 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
         id: `approval:${item.id}`,
         kind: 'approval',
         goalId: item.goalId,
-        title: approvalThreadTitle(item),
-        preview: item.summary,
+        title: liveApprovalTitle(item, briefing),
+        preview: briefing.summaryRows.whatHappened,
         updatedAt: formatMoment(item.requestedAt),
         lifecycle,
         priority: item.kind === 'branch-promotion' ? 'critical' : 'high',
@@ -696,21 +943,23 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
         firstMessage,
         quickActions,
         statusLabel: lifecycleLabel(lifecycle),
+        briefing,
         introMessage: createThreadMessage({
             id: createMessageId('intro', `approval:${item.id}`),
             threadId: `approval:${item.id}`,
             role: 'agent',
-            body: renderFirstMessage(firstMessage),
+            body: renderApprovalFirstMessage(firstMessage),
             createdAt: formatMoment(item.requestedAt),
         }),
         detailSections: buildDetailSections({
             background: firstMessage.background,
             impactLines: [
                 firstMessage.whyNow,
+                firstMessage.suggestedAction,
                 firstMessage.confirmEffect,
                 firstMessage.deferEffect,
             ],
-            planBody: item.summary,
+            planBody: briefing.rawEvidence.summary ?? item.summary,
             refs,
         }),
     }
@@ -735,6 +984,7 @@ function createRiskThread(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRi
         deferEffect: context.deferEffect,
         changeDirectionEffect: '系统会立刻把路线收紧到更保守的执行姿态。',
     }
+    const briefing = createRiskBriefing(snapshot, risk, refs, view, context, firstMessage)
 
     return {
         id: riskThreadId(risk),
@@ -770,6 +1020,7 @@ function createRiskThread(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRi
             },
         ],
         statusLabel: lifecycleLabel(lifecycle),
+        briefing,
         introMessage: createThreadMessage({
             id: createMessageId('intro', riskThreadId(risk)),
             threadId: riskThreadId(risk),

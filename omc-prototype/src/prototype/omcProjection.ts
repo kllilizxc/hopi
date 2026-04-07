@@ -303,7 +303,39 @@ function approvalKind(runtime: OmcPlanRuntime | null): PrototypeApprovalItem['ki
     return 'scope-change'
 }
 
-function createApprovalItem(bundle: PlanBundle): PrototypeApprovalItem | null {
+function createApprovalLiveContext(bundle: PlanBundle, projectLabel: string): NonNullable<PrototypeApprovalItem['liveContext']> | null {
+    const latest = latestAttempt(bundle.detail)
+    if (!bundle.runtime) {
+        return null
+    }
+
+    const terminationReason = latest?.terminationReason ?? null
+    const category =
+        terminationReason === 'session-inactive' || terminationReason === 'session-removed' || terminationReason === 'runner-offline'
+            ? 'runtime-interruption'
+            : bundle.runtime.mergeStatus === 'ready'
+                ? 'merge-approval'
+                : bundle.runtime.mergeStatus === 'blocked' || bundle.runtime.mergeStatus === 'conflict'
+                    ? 'merge-blocked'
+                    : 'review-approval'
+
+    return {
+        source: 'omc',
+        category,
+        projectLabel,
+        goalLabel: bundle.phase.phaseLabel,
+        planLabel: bundle.plan.planTitle,
+        planKey: bundle.plan.planKey,
+        sessionId: latest?.sessionId ?? null,
+        attemptNumber: latest?.attemptNumber ?? null,
+        latestSummary: latest?.summary ?? bundle.runtime.latestEvidenceSummary ?? bundle.plan.summary,
+        terminationReason,
+        nextSuggestedStep: latest?.nextSuggestedStep ?? null,
+        failureFingerprint: latest?.failureFingerprint ?? bundle.runtime.lastFailureFingerprint ?? null,
+    }
+}
+
+function createApprovalItem(bundle: PlanBundle, projectLabel: string): PrototypeApprovalItem | null {
     const { plan, phase, runtime } = bundle
     if (!runtime) {
         return null
@@ -314,6 +346,7 @@ function createApprovalItem(bundle: PlanBundle): PrototypeApprovalItem | null {
     }
 
     const kind = approvalKind(runtime)
+    const liveContext = createApprovalLiveContext(bundle, projectLabel)
     const summary =
         runtime.mergeStatus === 'blocked' || runtime.mergeStatus === 'conflict'
             ? runtime.mergeBlockedReason ?? runtime.latestEvidenceSummary ?? plan.summary
@@ -330,6 +363,7 @@ function createApprovalItem(bundle: PlanBundle): PrototypeApprovalItem | null {
         branchName: runtime.currentBranch ?? null,
         requestedAt: toIsoString(runtime.updatedAt ?? runtime.lastAttemptAt ?? plan.lastModifiedAt),
         state: 'pending',
+        liveContext,
     }
 }
 
@@ -527,8 +561,8 @@ function buildWorkOrder(bundle: PlanBundle): WorkOrder {
     }
 }
 
-function createApprovalTopic(bundle: PlanBundle, workOrder: WorkOrder): DecisionTopic | null {
-    const approvalItem = createApprovalItem(bundle)
+function createApprovalTopic(bundle: PlanBundle, workOrder: WorkOrder, projectLabel: string): DecisionTopic | null {
+    const approvalItem = createApprovalItem(bundle, projectLabel)
     if (!approvalItem) {
         return null
     }
@@ -695,7 +729,9 @@ export function buildPrototypeSnapshotFromOmc(input: OmcProjectionInput): Protot
     })
     const strategies = input.index.phases.map((phase) => buildStrategy(phase, bundles.filter((bundle) => bundle.phase.phaseKey === phase.phaseKey)))
     const streams = bundles.map(buildStream)
-    const approvalItems = bundles.map(createApprovalItem).filter((item): item is PrototypeApprovalItem => Boolean(item))
+    const approvalItems = bundles
+        .map((bundle) => createApprovalItem(bundle, program.name))
+        .filter((item): item is PrototypeApprovalItem => Boolean(item))
     const risks = bundles.map(createRisk).filter((risk): risk is PrototypeRisk => Boolean(risk))
     const phases = bundles.map(buildPhase)
     const planCards = bundles.map((bundle) => {
@@ -745,7 +781,7 @@ export function buildWorldModelFromOmc(input: OmcProjectionInput): WorldModel {
                 return []
             }
 
-            const topics = [createApprovalTopic(bundle, workOrder), createRiskTopic(bundle, workOrder)]
+            const topics = [createApprovalTopic(bundle, workOrder, input.overview.program.name), createRiskTopic(bundle, workOrder)]
                 .filter((topic): topic is DecisionTopic => Boolean(topic))
 
             return topics.map((topic) => [topic.id, topic] as const)

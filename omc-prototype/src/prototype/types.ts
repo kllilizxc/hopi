@@ -245,6 +245,43 @@ export type OperatorFirstMessage = {
     changeDirectionEffect?: string
 }
 
+export type DecisionSummaryRows = {
+    whatHappened: string
+    whyEscalated: string
+    recommendedAction: string
+    currentImpact: string
+}
+
+export type DecisionEvidence = {
+    summary: string | null
+    terminationReason: string | null
+    nextSuggestedStep: string | null
+    failureFingerprint: string | null
+    defaultExpanded: boolean
+}
+
+export type DecisionActionHint = {
+    label: string
+    helper: string
+}
+
+export type DecisionIdentity = {
+    projectLabel: string | null
+    goalLabel: string | null
+    planLabel: string | null
+    attemptNumber: number | null
+    sessionId: string | null
+}
+
+export type DecisionBriefing = {
+    title: string
+    identity: DecisionIdentity
+    summaryRows: DecisionSummaryRows
+    primaryAction: DecisionActionHint | null
+    secondaryAction: DecisionActionHint | null
+    rawEvidence: DecisionEvidence
+}
+
 export type OperatorMessage = {
     id: string
     threadId: string
@@ -273,6 +310,7 @@ export type OperatorThread = {
     firstMessage: OperatorFirstMessage
     quickActions: QuickActionSpec[]
     statusLabel: string
+    briefing?: DecisionBriefing | null
 }
 
 export type OperatorThreadBundle = {
@@ -353,6 +391,20 @@ export type PrototypeApprovalItem = {
     branchName: string | null
     requestedAt: string
     state: PrototypeApprovalState
+    liveContext?: {
+        source: 'omc'
+        category: 'runtime-interruption' | 'review-approval' | 'merge-approval' | 'merge-blocked'
+        projectLabel: string
+        goalLabel: string | null
+        planLabel: string
+        planKey: string
+        sessionId: string | null
+        attemptNumber: number | null
+        latestSummary: string | null
+        terminationReason: string | null
+        nextSuggestedStep: string | null
+        failureFingerprint: string | null
+    } | null
 }
 
 export type PrototypeApprovalBatch = {

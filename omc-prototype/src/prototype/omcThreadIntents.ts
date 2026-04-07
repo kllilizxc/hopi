@@ -4,6 +4,7 @@ import type { OperatorThread } from './types'
 export type OmcThreadIntent =
     | { kind: 'approve-review'; planKey: string }
     | { kind: 'approve-merge'; planKey: string }
+    | { kind: 'retry-plan'; planKey: string }
     | { kind: 'reopen-review'; planKey: string; action: OmcReviewReopenAction }
     | { kind: 'send-session-message'; sessionId: string; text: string }
     | { kind: 'no-op' }
@@ -61,6 +62,17 @@ function isReworkLanguage(text: string): boolean {
     ])
 }
 
+function isRetryLanguage(text: string): boolean {
+    return includesAny(text, [
+        '重试',
+        'retry',
+        'resume',
+        '恢复',
+        '再试一次',
+        '再跑一轮',
+    ])
+}
+
 function isReplanLanguage(text: string): boolean {
     return includesAny(text, [
         '回规划',
@@ -94,6 +106,16 @@ export function resolveThreadIntent(input: {
     const planKey = resolvePlanKey(input.thread, input.runtime)
 
     if (input.thread.kind === 'approval' && planKey) {
+        if (
+            input.thread.briefing?.rawEvidence.terminationReason
+            && isRetryLanguage(text)
+        ) {
+            return {
+                kind: 'retry-plan',
+                planKey,
+            }
+        }
+
         if (isReplanLanguage(text)) {
             return {
                 kind: 'reopen-review',

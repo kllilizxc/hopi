@@ -292,7 +292,7 @@ export async function startOmcPlanAttempt(options: {
         currentWorktreePath: launch.worktreePath,
         currentBranch: launch.currentBranch,
         targetBranch: launch.targetBranch,
-        latestEvidenceSummary: `Context pack sent to ${adapter.id} session.`,
+        latestEvidenceSummary: options.runtime.latestEvidenceSummary ?? `Context pack sent to ${adapter.id} session.`,
         lastAttemptAt: Date.now(),
         updatedAt: Date.now()
     })
