@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor `omc-prototype` so its internal model matches the long-term OMC design: `Manager + Worker Swarm + Gatekeeper`, `WorkOrder` Ralph loops, and operator-facing `DecisionTopic` threads.
+**Goal:** Refactor `omc-prototype` so its internal model matches the long-term OMC design: `Manager + Worker Swarm + Gatekeeper`, `WorkOrder` Ralph loops, operator-facing `DecisionTopic` threads, and a single operator workspace where goals switch in-place instead of drilling into a second page.
 
-**Architecture:** Introduce a dedicated domain layer for `WorldModel`, `WorkOrder`, `DecisionTopic`, and `AgentEvent`, then make the prototype store derive UI state from that domain instead of directly mutating goal/risk/approval snapshots. Keep the existing screens, but convert them into projections over the new state model so the message workspace becomes a real decision-boundary surface.
+**Architecture:** Introduce a dedicated domain layer for `WorldModel`, `WorkOrder`, `DecisionTopic`, and `AgentEvent`, then make the prototype store derive UI state from that domain instead of directly mutating goal/risk/approval snapshots. Keep goals as the only operator-level switch, rendered as top card-style tabs inside one canonical workspace route; sync the selected goal through `/?goal=<goalId>`; keep plan-card detail inside the right-side trace/message surface instead of a dedicated page; keep legacy goal and plan URLs as compatibility redirects back into the workspace. Treat "execution streams" as derived grouping metadata only when a screen needs clustering or filtering.
 
 **Tech Stack:** React 19, TypeScript, Vitest, Testing Library, Vite, `@assistant-ui/react`
 
@@ -46,7 +46,7 @@ describe('orchestration domain', () => {
         const order = createWorkOrder({
             id: 'wo-import-lane',
             goalId: 'goal-portfolio-foundation',
-            streamId: 'stream-ingest-contracts',
+            planId: 'plan-import-contract',
             summary: 'Lock the first broker import contract and proof path.',
         })
 
@@ -195,7 +195,6 @@ export type AgentEvent =
 export type WorkOrder = {
     id: string
     goalId: string
-    streamId: string | null
     phaseId: string | null
     planId: string | null
     summary: string
@@ -224,7 +223,7 @@ export type DecisionTopic = {
 export type WorldModel = {
     currentFocus: {
         goalId: string | null
-        streamId: string | null
+        planId: string | null
     }
     workOrders: Record<string, WorkOrder>
     decisionTopics: Record<string, DecisionTopic>
@@ -240,12 +239,12 @@ import type { AgentEvent, DecisionTopic, OperatorThreadKind, WorldModel, WorkOrd
 
 export function createInitialWorldModel(input: {
     focusGoalId: string | null
-    focusStreamId?: string | null
+    focusPlanId?: string | null
 }): WorldModel {
     return {
         currentFocus: {
             goalId: input.focusGoalId,
-            streamId: input.focusStreamId ?? null,
+            planId: input.focusPlanId ?? null,
         },
         workOrders: {},
         decisionTopics: {},
@@ -256,7 +255,6 @@ export function createInitialWorldModel(input: {
 export function createWorkOrder(input: {
     id: string
     goalId: string
-    streamId?: string | null
     phaseId?: string | null
     planId?: string | null
     summary: string
@@ -265,7 +263,6 @@ export function createWorkOrder(input: {
     return {
         id: input.id,
         goalId: input.goalId,
-        streamId: input.streamId ?? null,
         phaseId: input.phaseId ?? null,
         planId: input.planId ?? null,
         summary: input.summary,
@@ -759,14 +756,14 @@ function buildDerivedSnapshot(state: PrototypeUiState): PrototypeScenarioSnapsho
             directions: state.goalDirections,
             guidance: state.goalGuidance,
         }),
-        streams: base.streams.map((stream) => {
-            const relatedOrder = Object.values(world.workOrders).find((order) => order.streamId === stream.id)
+        planCards: base.planCards.map((card) => {
+            const relatedOrder = Object.values(world.workOrders).find((order) => order.planId === card.id)
             if (!relatedOrder) {
-                return stream
+                return card
             }
             return {
-                ...stream,
-                latestMove: relatedOrder.loop.lastDriverSummary ?? stream.latestMove,
+                ...card,
+                signal: relatedOrder.loop.lastDriverSummary ?? card.signal,
             }
         }),
     }
@@ -841,6 +838,8 @@ git commit -m "feat: derive prototype state from world model transitions"
 ```
 
 ### Task 5: Project the new domain into the operator UI
+
+Compatibility note: `GoalPage` and `ExecutionDetailPage` remain only as redirect bridges into the root workspace; they are no longer first-class destinations in the operator flow.
 
 **Files:**
 - Modify: `omc-prototype/src/components/MessagePanel.tsx`
@@ -936,8 +935,6 @@ export default function ThreadHeader(props: { thread: OperatorThread }) {
         switch (ref.kind) {
             case 'goal':
                 return `目标：${ref.label}`
-            case 'stream':
-                return `执行流：${ref.label}`
             case 'phase':
                 return `阶段：${ref.label}`
             case 'plan':
@@ -1005,7 +1002,7 @@ export default function ThreadHeader(props: { thread: OperatorThread }) {
 // omc-prototype/src/screens/DashboardPage.tsx
 <GoalPortfolioPanel goals={portfolio.goals} checkpointId={portfolio.checkpoint.id} />
 <DailyDigestPanel window={portfolio.digest.window} headline="今日摘要" summary={checkpoint.synopsis} />
-<StreamsOverviewPanel goals={portfolio.goals} streams={portfolio.streams} checkpointId={portfolio.checkpoint.id} />
+<PlanCardsOverviewPanel goals={portfolio.goals} planCards={portfolio.planCards} checkpointId={portfolio.checkpoint.id} />
 ```
 
 - [ ] **Step 5: Run the operator UI tests and the full prototype test suite**

@@ -1,22 +1,24 @@
 import type { PlanTraceTab } from '@/prototype/types'
 
 const TABS: Array<{ id: PlanTraceTab; label: string }> = [
+    { id: 'logs', label: 'Logs' },
     { id: 'events', label: 'Events' },
     { id: 'state', label: 'State' },
     { id: 'json', label: 'JSON' },
+    { id: 'diff', label: 'Diff' },
 ]
 
 function nextTabId(current: PlanTraceTab, direction: 'next' | 'previous'): PlanTraceTab {
     const currentIndex = TABS.findIndex((tab) => tab.id === current)
     if (currentIndex === -1) {
-        return 'events'
+        return 'logs'
     }
 
     if (direction === 'next') {
-        return TABS[(currentIndex + 1) % TABS.length]?.id ?? 'events'
+        return TABS[(currentIndex + 1) % TABS.length]?.id ?? 'logs'
     }
 
-    return TABS[(currentIndex - 1 + TABS.length) % TABS.length]?.id ?? 'events'
+    return TABS[(currentIndex - 1 + TABS.length) % TABS.length]?.id ?? 'logs'
 }
 
 export default function PlanTraceTabs(props: {
@@ -51,13 +53,13 @@ export default function PlanTraceTabs(props: {
 
                         if (event.key === 'Home') {
                             event.preventDefault()
-                            props.onChange('events')
+                            props.onChange('logs')
                             return
                         }
 
                         if (event.key === 'End') {
                             event.preventDefault()
-                            props.onChange('json')
+                            props.onChange('diff')
                         }
                     }}
                 >

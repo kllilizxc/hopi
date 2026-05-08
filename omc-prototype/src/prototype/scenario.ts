@@ -1325,6 +1325,8 @@ function inferWorkOrderStateForStream(stream: PrototypeStream): WorkOrderState {
     switch (stream.status) {
         case 'mapping':
             return 'queued'
+        case 'waiting-upstream':
+            return 'queued'
         case 'running':
             return 'executing'
         case 'blocked':

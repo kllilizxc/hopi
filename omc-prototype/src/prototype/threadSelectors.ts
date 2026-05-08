@@ -38,12 +38,16 @@ function isUnresolved(thread: OperatorThread) {
 
 function scoreThread(thread: OperatorThread, params: {
     goalId?: string | null
+    planId?: string | null
     streamId?: string | null
 }) {
     let score = 0
 
     if (params.goalId && thread.goalId === params.goalId) {
         score += 40
+    }
+    if (params.planId && thread.refs.some((ref) => ref.kind === 'plan' && ref.id === params.planId)) {
+        score += 35
     }
     if (params.streamId && thread.refs.some((ref) => ref.kind === 'stream' && ref.id === params.streamId)) {
         score += 30
@@ -65,11 +69,15 @@ export function getRelatedThreads(
     threads: OperatorThread[],
     params: {
         goalId?: string | null
+        planId?: string | null
         streamId?: string | null
     }
 ) {
     return threads
         .filter((thread) => {
+            if (params.planId && thread.refs.some((ref) => ref.kind === 'plan' && ref.id === params.planId)) {
+                return true
+            }
             if (params.streamId && thread.refs.some((ref) => ref.kind === 'stream' && ref.id === params.streamId)) {
                 return true
             }
@@ -85,6 +93,7 @@ export function getPrimaryRelatedThread(
     threads: OperatorThread[],
     params: {
         goalId?: string | null
+        planId?: string | null
         streamId?: string | null
     }
 ) {

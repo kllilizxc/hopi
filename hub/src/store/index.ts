@@ -14,10 +14,17 @@ import { WorkspaceStore } from './workspaceStore'
 
 export type {
     OmcAttemptRow,
+    OmcCoordinationAgentStateRow,
+    OmcDecisionTopicRow,
+    OmcDecisionTopicTurnRow,
+    OmcDirectiveLedgerEntryRow,
     OmcEvidenceRow,
+    OmcMailboxMessageRow,
     OmcPlanningRunRow,
     OmcPlanRuntimeRow,
     OmcProgramRow,
+    OmcWorkAttemptRow,
+    OmcWorkOrderRow,
     StoredMachine,
     StoredMessage,
     StoredProject,
@@ -38,7 +45,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 17
+const SCHEMA_VERSION: number = 19
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -52,7 +59,14 @@ const REQUIRED_TABLES = [
     'omc_planning_runs',
     'omc_plan_runtimes',
     'omc_attempts',
-    'omc_evidence'
+    'omc_evidence',
+    'omc_topics',
+    'omc_topic_turns',
+    'omc_mailbox_messages',
+    'omc_work_orders',
+    'omc_work_attempts',
+    'omc_coordination_agents',
+    'omc_directive_ledger',
 ] as const
 
 export class Store {
@@ -172,6 +186,18 @@ export class Store {
 
         if (currentVersion === 7 && SCHEMA_VERSION === 8) {
             this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 17 && SCHEMA_VERSION === 18) {
+            this.migrateFromV17ToV18()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 18 && SCHEMA_VERSION === 19) {
+            this.migrateFromV18ToV19()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -543,6 +569,134 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_omc_evidence_plan ON omc_evidence(program_id, namespace, plan_key, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_omc_evidence_attempt ON omc_evidence(attempt_id, namespace, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_topics (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                goal_id TEXT,
+                plan_key TEXT,
+                work_order_id TEXT,
+                lifecycle TEXT NOT NULL,
+                unread INTEGER NOT NULL DEFAULT 1,
+                bridge_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_program ON omc_topics(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_bridge_session ON omc_topics(namespace, bridge_session_id);
+
+            CREATE TABLE IF NOT EXISTS omc_topic_turns (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                author TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                session_id TEXT,
+                session_message_id TEXT,
+                reply_state TEXT NOT NULL DEFAULT 'none',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, topic_id) REFERENCES omc_topics(namespace, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topic_turns_topic ON omc_topic_turns(namespace, topic_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_mailbox_messages (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_recipient ON omc_mailbox_messages(program_id, namespace, to_agent, read_at, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_thread ON omc_mailbox_messages(program_id, namespace, thread_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_work_orders (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                goal_id TEXT,
+                plan_key TEXT,
+                title TEXT NOT NULL,
+                owner TEXT,
+                status TEXT NOT NULL,
+                current_attempt_id TEXT,
+                reviewer_verdict TEXT,
+                blocked_reason TEXT,
+                latest_accepted_attempt_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_program ON omc_work_orders(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_plan ON omc_work_orders(program_id, namespace, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_work_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                work_order_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                source_mailbox_message_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE CASCADE,
+                FOREIGN KEY (source_mailbox_message_id) REFERENCES omc_mailbox_messages(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_order ON omc_work_attempts(program_id, namespace, work_order_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_session ON omc_work_attempts(namespace, session_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_coordination_agents (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                role TEXT NOT NULL,
+                busy INTEGER NOT NULL DEFAULT 0,
+                current_work_order_id TEXT,
+                active_session_id TEXT,
+                model TEXT,
+                mode TEXT,
+                last_heartbeat INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, role),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, current_work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_coordination_agents_program ON omc_coordination_agents(program_id, namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_directive_ledger (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                source_topic_id TEXT,
+                key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_text TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, source_topic_id) REFERENCES omc_topics(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
         `)
     }
 
@@ -679,6 +833,12 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 17) {
             this.migrateFromV16ToV17()
+        }
+        if (SCHEMA_VERSION >= 18) {
+            this.migrateFromV17ToV18()
+        }
+        if (SCHEMA_VERSION >= 19) {
+            this.migrateFromV18ToV19()
         }
     }
 
@@ -996,6 +1156,142 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_program ON omc_planning_runs(program_id, namespace, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_session ON omc_planning_runs(session_id, namespace, created_at DESC);
+        `)
+    }
+
+    private migrateFromV17ToV18(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_topics (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                goal_id TEXT,
+                plan_key TEXT,
+                work_order_id TEXT,
+                lifecycle TEXT NOT NULL,
+                unread INTEGER NOT NULL DEFAULT 1,
+                bridge_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_program ON omc_topics(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_bridge_session ON omc_topics(namespace, bridge_session_id);
+
+            CREATE TABLE IF NOT EXISTS omc_topic_turns (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                author TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                session_id TEXT,
+                session_message_id TEXT,
+                reply_state TEXT NOT NULL DEFAULT 'none',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, topic_id) REFERENCES omc_topics(namespace, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topic_turns_topic ON omc_topic_turns(namespace, topic_id, created_at ASC);
+        `)
+    }
+
+    private migrateFromV18ToV19(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_mailbox_messages (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_recipient ON omc_mailbox_messages(program_id, namespace, to_agent, read_at, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_thread ON omc_mailbox_messages(program_id, namespace, thread_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_work_orders (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                goal_id TEXT,
+                plan_key TEXT,
+                title TEXT NOT NULL,
+                owner TEXT,
+                status TEXT NOT NULL,
+                current_attempt_id TEXT,
+                reviewer_verdict TEXT,
+                blocked_reason TEXT,
+                latest_accepted_attempt_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_program ON omc_work_orders(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_plan ON omc_work_orders(program_id, namespace, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_work_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                work_order_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                source_mailbox_message_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE CASCADE,
+                FOREIGN KEY (source_mailbox_message_id) REFERENCES omc_mailbox_messages(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_order ON omc_work_attempts(program_id, namespace, work_order_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_session ON omc_work_attempts(namespace, session_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_coordination_agents (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                role TEXT NOT NULL,
+                busy INTEGER NOT NULL DEFAULT 0,
+                current_work_order_id TEXT,
+                active_session_id TEXT,
+                model TEXT,
+                mode TEXT,
+                last_heartbeat INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, role),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, current_work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_coordination_agents_program ON omc_coordination_agents(program_id, namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_directive_ledger (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                source_topic_id TEXT,
+                key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_text TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, source_topic_id) REFERENCES omc_topics(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
         `)
     }
 

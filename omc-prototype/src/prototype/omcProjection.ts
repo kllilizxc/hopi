@@ -2,10 +2,14 @@ import type {
     OmcAttempt,
     OmcEvidence,
     OmcGuidedPlanningRun,
+    OmcProgramRuntimeStateResponse,
     OmcPlanDetailResponse,
     OmcPlanRuntime,
     OmcPlanningIndexResponse,
     OmcProgramOverviewResponse,
+    OmcReviewVerdict,
+    OmcWorkAttempt,
+    OmcWorkOrder,
 } from '@hopi/protocol/types'
 import type {
     AgentEvent,
@@ -36,6 +40,7 @@ import type {
 
 type OmcProjectionInput = {
     overview: OmcProgramOverviewResponse
+    runtimeState?: OmcProgramRuntimeStateResponse | null
     index: OmcPlanningIndexResponse
     runtimes: OmcPlanRuntime[]
     planningRun?: OmcGuidedPlanningRun | null
@@ -50,6 +55,8 @@ type PlanBundle = {
     plan: IndexedPlan
     phase: IndexedPhase
     runtime: OmcPlanRuntime | null
+    runtimeWorkOrder: OmcWorkOrder | null
+    runtimeState: OmcProgramRuntimeStateResponse | null
     detail: OmcPlanDetailResponse | null
 }
 
@@ -124,11 +131,18 @@ function getPlanDetailMap(details: Record<string, OmcPlanDetailResponse> | undef
 function collectPlanBundles(input: OmcProjectionInput): PlanBundle[] {
     const runtimeByPlan = getRuntimeMap(input.runtimes)
     const detailByPlan = getPlanDetailMap(input.details)
+    const runtimeWorkOrderByPlan = new Map(
+        (input.runtimeState?.workOrders ?? [])
+            .filter((workOrder): workOrder is OmcWorkOrder & { planKey: string } => Boolean(workOrder.planKey))
+            .map((workOrder) => [workOrder.planKey, workOrder] as const),
+    )
 
     return input.index.phases.flatMap((phase) => phase.plans.map((plan) => ({
         plan,
         phase,
         runtime: runtimeByPlan.get(plan.planKey) ?? null,
+        runtimeWorkOrder: runtimeWorkOrderByPlan.get(plan.planKey) ?? null,
+        runtimeState: input.runtimeState ?? null,
         detail: detailByPlan.get(plan.planKey) ?? null,
     })))
 }
@@ -138,16 +152,11 @@ function deriveCheckpointId(input: OmcProjectionInput, bundles: PlanBundle[]): P
         return 'intake'
     }
 
-    if (bundles.some(({ runtime }) =>
-        runtime?.reviewRequired
-        || runtime?.mergeStatus === 'ready'
-        || runtime?.mergeStatus === 'blocked'
-        || runtime?.mergeStatus === 'conflict',
-    )) {
+    if (bundles.some((bundle) => bundleHasApprovalBoundary(bundle) || bundleIsBlocked(bundle))) {
         return 'approval'
     }
 
-    if (bundles.some(({ runtime }) => runtime?.loopStatus === 'running' || runtime?.column === 'Running')) {
+    if (bundles.some((bundle) => bundleIsRunning(bundle))) {
         return 'execution'
     }
 
@@ -169,11 +178,11 @@ function deriveGoalStatus(planBundles: PlanBundle[]): PrototypeGoalStatus {
         return 'intake'
     }
 
-    if (planBundles.some(({ runtime }) => runtime?.mergeStatus === 'blocked' || runtime?.mergeStatus === 'conflict')) {
+    if (planBundles.some((bundle) => bundleIsBlocked(bundle))) {
         return 'blocked'
     }
 
-    if (planBundles.some(({ runtime }) => runtime?.reviewRequired || runtime?.mergeStatus === 'ready')) {
+    if (planBundles.some((bundle) => bundleHasApprovalBoundary(bundle))) {
         return 'ready-for-approval'
     }
 
@@ -190,10 +199,11 @@ function deriveGoalConfidence(planBundles: PlanBundle[]): number {
     }
 
     const totals = planBundles.reduce(
-        (acc, { plan, runtime }) => {
+        (acc, bundle) => {
+            const { plan } = bundle
             acc.total += Math.max(plan.checklistTotal, 1)
             acc.done += plan.checklistDone
-            if (runtime?.column === 'Done' || runtime?.doneAt) {
+            if (isPlanDone(bundle)) {
                 acc.done += 1
                 acc.total += 1
             }
@@ -208,8 +218,8 @@ function deriveGoalConfidence(planBundles: PlanBundle[]): number {
 function buildGoal(phase: IndexedPhase, planBundles: PlanBundle[], programId: string, index: number): PrototypeGoal {
     const status = deriveGoalStatus(planBundles)
     const primary = planBundles[0]?.plan
-    const lastWorkedAt = Math.max(...planBundles.map(({ runtime, plan }) => runtime?.updatedAt ?? runtime?.lastAttemptAt ?? plan.lastModifiedAt))
-    const openPlans = planBundles.filter(({ runtime }) => runtime?.column !== 'Done' && !runtime?.doneAt).length
+    const lastWorkedAt = Math.max(...planBundles.map(({ runtime, runtimeWorkOrder, plan }) => runtimeWorkOrder?.updatedAt ?? runtime?.updatedAt ?? runtime?.lastAttemptAt ?? plan.lastModifiedAt))
+    const openPlans = planBundles.filter((bundle) => !isPlanDone(bundle)).length
 
     return {
         id: phase.phaseKey,
@@ -225,7 +235,7 @@ function buildGoal(phase: IndexedPhase, planBundles: PlanBundle[], programId: st
         direction: status === 'blocked' || status === 'at-risk' ? 'tighten-scope' : 'maintain',
         headline: primary?.firstOpenItem ?? primary?.summary ?? `${phase.phaseLabel} 正在推进。`,
         progressLabel: `${planBundles.length - openPlans}/${planBundles.length} 个计划已收口`,
-        needsApproval: planBundles.some(({ runtime }) => runtime?.reviewRequired || runtime?.mergeStatus === 'ready' || runtime?.mergeStatus === 'blocked' || runtime?.mergeStatus === 'conflict'),
+        needsApproval: planBundles.some((bundle) => bundleHasApprovalBoundary(bundle) || bundleIsBlocked(bundle)),
         lastWorkedAt: toIsoString(lastWorkedAt),
     }
 }
@@ -245,55 +255,240 @@ function buildStrategy(phase: IndexedPhase, planBundles: PlanBundle[]): Prototyp
         focusAreas: planBundles.map(({ plan }) => plan.planTitle),
         todayMoves: planBundles.map(({ plan }) => plan.firstOpenItem ?? plan.summary).slice(0, 3),
         nextQuestions: planBundles
-            .filter(({ runtime }) => runtime?.reviewRequired || runtime?.mergeStatus === 'blocked' || runtime?.mergeStatus === 'conflict')
-            .map(({ plan, runtime }) => runtime?.mergeBlockedReason ?? `如何处理 ${plan.planTitle} 的 review / merge 边界？`)
+            .filter((bundle) => bundleHasApprovalBoundary(bundle) || bundleIsBlocked(bundle))
+            .map((bundle) => bundle.runtimeWorkOrder?.blockedReason ?? bundle.runtime?.mergeBlockedReason ?? `如何处理 ${bundle.plan.planTitle} 的 review / merge 边界？`)
             .slice(0, 3),
     }
 }
 
-function deriveStreamStatus(runtime: OmcPlanRuntime | null): PrototypeStreamStatus {
+function getBundleMap(bundles: PlanBundle[]): Map<string, PlanBundle> {
+    return new Map(bundles.map((bundle) => [bundle.plan.planKey, bundle] as const))
+}
+
+function isPlanDone(bundle: PlanBundle | null | undefined): boolean {
+    if (!bundle) {
+        return false
+    }
+
+    if (bundle.runtimeWorkOrder?.status === 'done') {
+        return true
+    }
+
+    if (bundle.runtime?.mergeStatus === 'merged' || bundle.runtime?.column === 'Done' || Boolean(bundle.runtime?.doneAt)) {
+        return true
+    }
+
+    return bundle.plan.checklistOpen === 0
+}
+
+function runtimeWorkOrderNeedsApproval(workOrder: OmcWorkOrder | null): boolean {
+    if (!workOrder) {
+        return false
+    }
+
+    return workOrder.status === 'waiting_user' || workOrder.status === 'replanning'
+}
+
+function runtimeWorkOrderIsBlocked(workOrder: OmcWorkOrder | null): boolean {
+    if (!workOrder) {
+        return false
+    }
+
+    return workOrder.status === 'blocked'
+}
+
+function runtimeWorkOrderIsRunning(workOrder: OmcWorkOrder | null): boolean {
+    if (!workOrder) {
+        return false
+    }
+
+    return workOrder.status === 'in_progress'
+}
+
+function mapRuntimeWorkOrderColumn(workOrder: OmcWorkOrder | null): PrototypePlanColumn | null {
+    if (!workOrder) {
+        return null
+    }
+
+    switch (workOrder.status) {
+        case 'ready':
+            return 'Planning'
+        case 'in_progress':
+            return 'Running'
+        case 'in_review':
+        case 'waiting_user':
+        case 'replanning':
+        case 'blocked':
+            return 'Review'
+        case 'done':
+            return 'Done'
+    }
+}
+
+function getLatestBundleRuntimeWorkAttempt(
+    bundle: PlanBundle,
+    role: OmcWorkAttempt['role'],
+): OmcWorkAttempt | null {
+    if (!bundle.runtimeState || !bundle.runtimeWorkOrder) {
+        return null
+    }
+
+    return getLatestRuntimeWorkAttempt(bundle.runtimeState, bundle.runtimeWorkOrder.id, role)
+}
+
+function getBundleDirectiveSummary(bundle: PlanBundle): string | null {
+    if (!bundle.runtimeState || !bundle.runtimeWorkOrder) {
+        return null
+    }
+
+    return getLatestDirectiveSummary(bundle.runtimeState, bundle.runtimeWorkOrder)
+}
+
+function getBundlePlanColumn(bundle: PlanBundle): PrototypePlanColumn {
+    return mapRuntimeWorkOrderColumn(bundle.runtimeWorkOrder) ?? (bundle.runtime?.column ?? 'Planning') as PrototypePlanColumn
+}
+
+function bundleHasApprovalBoundary(bundle: PlanBundle): boolean {
+    if (bundle.runtime?.mergeStatus === 'ready' || bundle.runtime?.mergeStatus === 'blocked' || bundle.runtime?.mergeStatus === 'conflict') {
+        return true
+    }
+
+    if (bundle.runtimeWorkOrder) {
+        return runtimeWorkOrderNeedsApproval(bundle.runtimeWorkOrder)
+    }
+
+    return Boolean(bundle.runtime?.reviewRequired)
+}
+
+function bundleIsBlocked(bundle: PlanBundle): boolean {
+    if (bundle.runtime?.mergeStatus === 'blocked' || bundle.runtime?.mergeStatus === 'conflict') {
+        return true
+    }
+
+    if (bundle.runtimeWorkOrder) {
+        return runtimeWorkOrderIsBlocked(bundle.runtimeWorkOrder)
+    }
+
+    return (bundle.runtime?.consecutiveFailureCount ?? 0) > 0
+}
+
+function bundleIsRunning(bundle: PlanBundle): boolean {
+    if (bundle.runtimeWorkOrder) {
+        return runtimeWorkOrderIsRunning(bundle.runtimeWorkOrder)
+    }
+
+    return bundle.runtime?.loopStatus === 'running' || bundle.runtime?.column === 'Running'
+}
+
+function getBundleLatestSummary(bundle: PlanBundle): string | null {
+    const runtimeWorkOrderSummary = bundle.runtimeWorkOrder?.blockedReason
+        ?? getLatestBundleRuntimeWorkAttempt(bundle, 'reviewer')?.summary
+        ?? getLatestBundleRuntimeWorkAttempt(bundle, 'driver')?.summary
+        ?? getBundleDirectiveSummary(bundle)
+        ?? null
+
+    return runtimeWorkOrderSummary
+        ?? bundle.runtime?.latestEvidenceSummary
+        ?? latestAttempt(bundle.detail)?.summary
+        ?? bundle.plan.firstOpenItem
+        ?? bundle.plan.summary
+}
+
+function isPlanNotStarted(runtime: OmcPlanRuntime | null): boolean {
+    if (!runtime) {
+        return true
+    }
+
+    return runtime.column === 'Planning'
+        && runtime.loopStatus === 'idle'
+        && runtime.attemptCount === 0
+        && !runtime.reviewRequired
+        && runtime.mergeStatus === 'idle'
+        && !runtime.doneAt
+        && !runtime.lastAttemptAt
+}
+
+function getPendingDependencyKeys(bundle: PlanBundle, bundlesByPlan: Map<string, PlanBundle>): string[] {
+    return (bundle.plan.dependsOn ?? []).filter((planKey) => !isPlanDone(bundlesByPlan.get(planKey)))
+}
+
+function formatPlanKeys(planKeys: string[]): string {
+    return planKeys.join('、')
+}
+
+function deriveStreamStatus(bundle: PlanBundle, bundlesByPlan: Map<string, PlanBundle>): PrototypeStreamStatus {
+    const { runtime } = bundle
+    const pendingDependencies = getPendingDependencyKeys(bundle, bundlesByPlan)
+
+    if (isPlanNotStarted(runtime) && pendingDependencies.length > 0) {
+        return 'waiting-upstream'
+    }
+
     if (!runtime) {
         return 'mapping'
     }
-    if (runtime.reviewRequired || runtime.mergeStatus === 'ready') {
+    if (bundleHasApprovalBoundary(bundle)) {
         return 'ready-for-approval'
     }
-    if (runtime.mergeStatus === 'blocked' || runtime.mergeStatus === 'conflict' || runtime.consecutiveFailureCount > 0) {
+    if (bundleIsBlocked(bundle)) {
         return 'blocked'
     }
-    if (runtime.loopStatus === 'running' || runtime.column === 'Running') {
+    if (bundleIsRunning(bundle)) {
         return 'running'
     }
-    if (runtime.column === 'Review') {
+    if (getBundlePlanColumn(bundle) === 'Review') {
         return 'watching'
     }
     return 'mapping'
 }
 
-function buildStream(bundle: PlanBundle): PrototypeStream {
+function buildStream(bundle: PlanBundle, bundlesByPlan: Map<string, PlanBundle>): PrototypeStream {
     const { plan, phase, runtime } = bundle
     const checklistTotal = Math.max(plan.checklistTotal, 1)
     const progress = Math.max(0, Math.min(100, Math.round((plan.checklistDone / checklistTotal) * 100)))
+    const pendingDependencies = getPendingDependencyKeys(bundle, bundlesByPlan)
+    const dependencyList = formatPlanKeys(pendingDependencies)
+    const status = deriveStreamStatus(bundle, bundlesByPlan)
+    const waitingSummary = pendingDependencies.length > 0
+        ? `这条还没开始，正在等 ${dependencyList} 完成。`
+        : null
+    const waitingWhyNow = pendingDependencies.length > 0
+        ? `按计划顺序，得先完成 ${dependencyList}，才能轮到这条。`
+        : null
+    const waitingLatestMove = pendingDependencies.length > 0
+        ? `暂无 attempt；当前被 ${dependencyList} 挡住。`
+        : null
 
     return {
         id: plan.planKey,
         goalId: phase.phaseKey,
         title: plan.planTitle,
-        summary: plan.summary,
-        status: deriveStreamStatus(runtime),
+        summary: waitingSummary ?? plan.summary,
+        status,
         progress,
-        whyNow: runtime?.reviewRequired
+        whyNow: waitingWhyNow ?? (
+            bundleHasApprovalBoundary(bundle)
             ? 'review 已完成，等待人工边界决策。'
             : runtime?.mergeStatus === 'blocked' || runtime?.mergeStatus === 'conflict'
                 ? runtime.mergeBlockedReason ?? 'merge 边界被阻塞。'
-                : plan.firstOpenItem ?? plan.summary,
-        latestMove: runtime?.latestEvidenceSummary ?? plan.firstOpenItem ?? plan.summary,
-        dependencyLabel: runtime?.targetBranch ? `目标分支 ${runtime.targetBranch}` : null,
+                : plan.firstOpenItem ?? plan.summary
+        ),
+        latestMove: waitingLatestMove ?? getBundleLatestSummary(bundle) ?? plan.summary,
+        dependencyLabel: pendingDependencies.length > 0
+            ? `依赖 ${dependencyList}`
+            : runtime?.targetBranch
+                ? `目标分支 ${runtime.targetBranch}`
+                : null,
         phaseIds: [phaseIdForPlan(plan.planKey)],
     }
 }
 
-function approvalKind(runtime: OmcPlanRuntime | null): PrototypeApprovalItem['kind'] {
+function approvalKind(bundle: PlanBundle): PrototypeApprovalItem['kind'] {
+    if (runtimeWorkOrderNeedsApproval(bundle.runtimeWorkOrder)) {
+        return 'direction-change'
+    }
+
+    const runtime = bundle.runtime
     if (runtime?.mergeStatus === 'ready' || runtime?.mergeStatus === 'blocked' || runtime?.mergeStatus === 'conflict') {
         return 'branch-promotion'
     }
@@ -305,6 +500,9 @@ function approvalKind(runtime: OmcPlanRuntime | null): PrototypeApprovalItem['ki
 
 function createApprovalLiveContext(bundle: PlanBundle, projectLabel: string): NonNullable<PrototypeApprovalItem['liveContext']> | null {
     const latest = latestAttempt(bundle.detail)
+    const latestDriverAttempt = getLatestBundleRuntimeWorkAttempt(bundle, 'driver')
+    const latestReviewerAttempt = getLatestBundleRuntimeWorkAttempt(bundle, 'reviewer')
+    const runtimeWorkOrder = bundle.runtimeWorkOrder
     if (!bundle.runtime) {
         return null
     }
@@ -326,12 +524,22 @@ function createApprovalLiveContext(bundle: PlanBundle, projectLabel: string): No
         goalLabel: bundle.phase.phaseLabel,
         planLabel: bundle.plan.planTitle,
         planKey: bundle.plan.planKey,
-        sessionId: latest?.sessionId ?? null,
-        attemptNumber: latest?.attemptNumber ?? null,
-        latestSummary: latest?.summary ?? bundle.runtime.latestEvidenceSummary ?? bundle.plan.summary,
+        planSummary: bundle.plan.summary,
+        sessionId: latestDriverAttempt?.sessionId ?? latest?.sessionId ?? null,
+        attemptNumber: latest?.attemptNumber
+            ?? (runtimeWorkOrder && bundle.runtimeState
+                ? getRuntimeWorkAttempts(bundle.runtimeState, runtimeWorkOrder.id).filter((attempt) => attempt.role === 'driver').length
+                : null),
+        latestSummary: runtimeWorkOrder?.blockedReason
+            ?? latestReviewerAttempt?.summary
+            ?? latestDriverAttempt?.summary
+            ?? latest?.summary
+            ?? bundle.runtime.latestEvidenceSummary
+            ?? bundle.plan.summary,
         terminationReason,
         nextSuggestedStep: latest?.nextSuggestedStep ?? null,
         failureFingerprint: latest?.failureFingerprint ?? bundle.runtime.lastFailureFingerprint ?? null,
+        changedFiles: latest?.changedFiles ?? [],
     }
 }
 
@@ -341,17 +549,23 @@ function createApprovalItem(bundle: PlanBundle, projectLabel: string): Prototype
         return null
     }
 
-    if (!runtime.reviewRequired && runtime.mergeStatus !== 'ready' && runtime.mergeStatus !== 'blocked' && runtime.mergeStatus !== 'conflict') {
+    if (!bundleHasApprovalBoundary(bundle)) {
         return null
     }
 
-    const kind = approvalKind(runtime)
+    const kind = approvalKind(bundle)
     const liveContext = createApprovalLiveContext(bundle, projectLabel)
     const summary =
         runtime.mergeStatus === 'blocked' || runtime.mergeStatus === 'conflict'
             ? runtime.mergeBlockedReason ?? runtime.latestEvidenceSummary ?? plan.summary
-            : runtime.reviewRequired
-                ? runtime.latestEvidenceSummary ?? `Review 接受了 ${plan.planTitle}，需要你决定是否继续。`
+            : runtimeWorkOrderNeedsApproval(bundle.runtimeWorkOrder)
+                ? bundle.runtimeWorkOrder?.blockedReason
+                    ?? getLatestBundleRuntimeWorkAttempt(bundle, 'reviewer')?.summary
+                    ?? getLatestBundleRuntimeWorkAttempt(bundle, 'driver')?.summary
+                    ?? runtime.latestEvidenceSummary
+                    ?? `Review 接受了 ${plan.planTitle}，需要你决定是否继续。`
+                : runtime.reviewRequired
+                    ? runtime.latestEvidenceSummary ?? `Review 接受了 ${plan.planTitle}，需要你决定是否继续。`
                 : runtime.latestEvidenceSummary ?? `准备把 ${plan.planTitle} 合并到 ${runtime.targetBranch ?? '目标分支'}。`
 
     return {
@@ -388,6 +602,7 @@ function createRisk(bundle: PlanBundle): PrototypeRisk | null {
         || runtime.mergeStatus === 'conflict'
         || runtime.consecutiveFailureCount > 0
         || Boolean(runtime.lastFailureFingerprint)
+        || runtimeWorkOrderIsBlocked(bundle.runtimeWorkOrder)
 
     if (!risky) {
         return null
@@ -411,25 +626,31 @@ function phaseIdForPlan(planKey: string): string {
 
 function buildPhase(bundle: PlanBundle): PrototypePhase {
     const { plan, phase, runtime } = bundle
+    const column = getBundlePlanColumn(bundle)
     return {
         id: phaseIdForPlan(plan.planKey),
         goalId: phase.phaseKey,
         streamId: plan.planKey,
         title: phase.phaseLabel,
-        status: runtime?.column === 'Planning' || !runtime ? 'Planned' : runtime.column,
+        status: !runtime || column === 'Planning' ? 'Planned' : column,
         summary: plan.summary,
     }
 }
 
-function buildPlanBadges(runtime: OmcPlanRuntime | null, approvalItem: PrototypeApprovalItem | null, risk: PrototypeRisk | null): string[] {
+function buildPlanBadges(bundle: PlanBundle, approvalItem: PrototypeApprovalItem | null, risk: PrototypeRisk | null, bundlesByPlan: Map<string, PlanBundle>): string[] {
     const badges: string[] = []
+    const { runtime } = bundle
 
     if (!runtime) {
         badges.push('strategy-forming')
         return badges
     }
 
-    if (runtime.loopStatus === 'running') {
+    if (isPlanNotStarted(runtime) && getPendingDependencyKeys(bundle, bundlesByPlan).length > 0) {
+        badges.push('dependent')
+    }
+
+    if (bundleIsRunning(bundle)) {
         badges.push('autonomous')
     }
     if (approvalItem) {
@@ -439,29 +660,35 @@ function buildPlanBadges(runtime: OmcPlanRuntime | null, approvalItem: Prototype
     if (risk) {
         badges.push('at-risk')
     }
-    if (runtime.column === 'Done' || runtime.doneAt) {
+    if (isPlanDone(bundle)) {
         badges.push('done')
     }
-    if (runtime.column === 'Running') {
+    if (getBundlePlanColumn(bundle) === 'Running') {
         badges.push('critical-path')
     }
 
     return badges
 }
 
-function buildPlanCard(bundle: PlanBundle, approvalItem: PrototypeApprovalItem | null, risk: PrototypeRisk | null): PrototypePlanCard {
+function buildPlanCard(bundle: PlanBundle, approvalItem: PrototypeApprovalItem | null, risk: PrototypeRisk | null, bundlesByPlan: Map<string, PlanBundle>): PrototypePlanCard {
     const { plan, phase, runtime } = bundle
+    const pendingDependencies = getPendingDependencyKeys(bundle, bundlesByPlan)
+    const dependencyList = formatPlanKeys(pendingDependencies)
+    const column = getBundlePlanColumn(bundle)
+
     return {
         id: plan.planKey,
         goalId: phase.phaseKey,
         streamId: plan.planKey,
         phaseId: phaseIdForPlan(plan.planKey),
         title: plan.planTitle,
-        column: (runtime?.column ?? 'Planning') as PrototypePlanColumn,
+        column,
         summary: plan.summary,
-        signal: runtime?.latestEvidenceSummary ?? plan.firstOpenItem ?? plan.summary,
-        updatedAt: toIsoString(runtime?.updatedAt ?? runtime?.lastAttemptAt ?? plan.lastModifiedAt),
-        badges: buildPlanBadges(runtime, approvalItem, risk),
+        signal: pendingDependencies.length > 0 && isPlanNotStarted(runtime)
+            ? `等待 ${dependencyList} 完成`
+            : getBundleLatestSummary(bundle) ?? plan.summary,
+        updatedAt: toIsoString(bundle.runtimeWorkOrder?.updatedAt ?? runtime?.updatedAt ?? runtime?.lastAttemptAt ?? plan.lastModifiedAt),
+        badges: buildPlanBadges(bundle, approvalItem, risk, bundlesByPlan),
     }
 }
 
@@ -494,6 +721,235 @@ function latestEvidence(detail: OmcPlanDetailResponse | null): OmcEvidence | nul
     return [...(detail?.evidence ?? [])]
         .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))[0]
         ?? null
+}
+
+function mapRuntimeReviewVerdict(
+    verdict: OmcReviewVerdict | null | undefined,
+    status: OmcWorkOrder['status'],
+): WorkOrder['loop']['reviewerVerdict'] {
+    if (verdict === 'accepted') {
+        return 'accepted'
+    }
+    if (verdict === 'revision_needed') {
+        return 'revision_needed'
+    }
+    if (verdict === 'needs_user') {
+        return 'needs_decision'
+    }
+    if (verdict === 'replan_needed') {
+        return 'replanning_needed'
+    }
+    if (status === 'blocked') {
+        return 'blocked'
+    }
+    return null
+}
+
+function mapRuntimeWorkOrderState(status: OmcWorkOrder['status']): WorkOrderState {
+    switch (status) {
+        case 'ready':
+            return 'queued'
+        case 'in_progress':
+            return 'executing'
+        case 'in_review':
+            return 'reviewer_check'
+        case 'waiting_user':
+            return 'waiting_user'
+        case 'replanning':
+            return 'replanning_needed'
+        case 'blocked':
+            return 'blocked'
+        case 'done':
+            return 'integrated'
+    }
+}
+
+function getRuntimeWorkAttempts(runtimeState: OmcProgramRuntimeStateResponse | null | undefined, workOrderId: string): OmcWorkAttempt[] {
+    return [...(runtimeState?.workAttempts ?? [])]
+        .filter((attempt) => attempt.workOrderId === workOrderId)
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+}
+
+function getLatestRuntimeWorkAttempt(
+    runtimeState: OmcProgramRuntimeStateResponse | null | undefined,
+    workOrderId: string,
+    role: OmcWorkAttempt['role'],
+): OmcWorkAttempt | null {
+    return getRuntimeWorkAttempts(runtimeState, workOrderId)
+        .filter((attempt) => attempt.role === role)
+        .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))[0]
+        ?? null
+}
+
+function getLatestDirectiveSummary(
+    runtimeState: OmcProgramRuntimeStateResponse | null | undefined,
+    workOrder: OmcWorkOrder,
+): string | null {
+    const directive = [...(runtimeState?.directives ?? [])]
+        .filter((entry) =>
+            (entry.scopeType === 'work_order' && entry.scopeId === workOrder.id)
+            || (entry.scopeType === 'plan' && workOrder.planKey && entry.scopeId === workOrder.planKey),
+        )
+        .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))[0]
+        ?? null
+
+    return directive?.summary ?? null
+}
+
+function buildRuntimeTaskBoardWorkOrder(
+    runtimeWorkOrder: OmcWorkOrder,
+    bundle: PlanBundle | null,
+    runtimeState: OmcProgramRuntimeStateResponse,
+): WorkOrder {
+    const driverAttempt = getLatestRuntimeWorkAttempt(runtimeState, runtimeWorkOrder.id, 'driver')
+    const reviewerAttempt = getLatestRuntimeWorkAttempt(runtimeState, runtimeWorkOrder.id, 'reviewer')
+    const state = mapRuntimeWorkOrderState(runtimeWorkOrder.status)
+    const directiveSummary = getLatestDirectiveSummary(runtimeState, runtimeWorkOrder)
+
+    return {
+        id: runtimeWorkOrder.id,
+        goalId: runtimeWorkOrder.goalId ?? bundle?.phase.phaseKey ?? 'unassigned',
+        streamId: runtimeWorkOrder.planKey ?? null,
+        phaseId: runtimeWorkOrder.planKey ? phaseIdForPlan(runtimeWorkOrder.planKey) : null,
+        planId: runtimeWorkOrder.planKey ?? null,
+        summary: runtimeWorkOrder.blockedReason
+            ?? reviewerAttempt?.summary
+            ?? driverAttempt?.summary
+            ?? runtimeWorkOrder.title,
+        state,
+        constraints: [
+            runtimeWorkOrder.owner ? `owner:${runtimeWorkOrder.owner}` : null,
+            bundle?.runtime?.currentBranch ? `branch:${bundle.runtime.currentBranch}` : null,
+            bundle?.runtime?.targetBranch ? `target:${bundle.runtime.targetBranch}` : null,
+            bundle?.plan.firstOpenItem ? `next:${bundle.plan.firstOpenItem}` : null,
+        ].filter((value): value is string => Boolean(value)),
+        loop: {
+            round: getRuntimeWorkAttempts(runtimeState, runtimeWorkOrder.id).filter((attempt) => attempt.role === 'driver').length,
+            reviewerVerdict: mapRuntimeReviewVerdict(runtimeWorkOrder.reviewerVerdict, runtimeWorkOrder.status),
+            lastDriverSummary: driverAttempt?.summary ?? null,
+            lastReviewerSummary: reviewerAttempt?.summary ?? null,
+            lastDecisionSummary: directiveSummary,
+        },
+        waitingOnTopicId: runtimeWorkOrder.status === 'waiting_user'
+            ? `approval:${runtimeWorkOrder.planKey ?? runtimeWorkOrder.id}`
+            : null,
+    }
+}
+
+function createRuntimeProposalEvent(message: OmcProgramRuntimeStateResponse['mailbox'][number]): AgentEvent | null {
+    if (message.kind !== 'task-assignment' && message.kind !== 'review-request') {
+        return null
+    }
+
+    return {
+        id: `mailbox:${message.id}`,
+        kind: 'Proposal',
+        workOrderId: message.thread,
+        emittedBy: message.from === 'manager' ? 'manager' : 'driver',
+        createdAt: toIsoString(message.createdAt),
+        payload: { summary: message.body },
+    }
+}
+
+function createRuntimeObservationEvent(attempt: OmcWorkAttempt): AgentEvent | null {
+    if (attempt.role !== 'driver' || !attempt.summary?.trim()) {
+        return null
+    }
+
+    return {
+        id: `runtime-attempt:${attempt.id}`,
+        kind: 'Observation',
+        workOrderId: attempt.workOrderId,
+        emittedBy: 'driver',
+        createdAt: toIsoString(attempt.updatedAt),
+        payload: { summary: attempt.summary.trim() },
+    }
+}
+
+function createRuntimeReviewerEvent(workOrder: OmcWorkOrder, runtimeState: OmcProgramRuntimeStateResponse): AgentEvent | null {
+    const latestReviewerAttempt = getLatestRuntimeWorkAttempt(runtimeState, workOrder.id, 'reviewer')
+    const verdict = mapRuntimeReviewVerdict(workOrder.reviewerVerdict, workOrder.status)
+    if (!verdict) {
+        return null
+    }
+
+    return {
+        id: `runtime-reviewer:${latestReviewerAttempt?.id ?? workOrder.id}`,
+        kind: 'ReviewerVerdict',
+        workOrderId: workOrder.id,
+        emittedBy: 'reviewer',
+        createdAt: toIsoString(latestReviewerAttempt?.updatedAt ?? workOrder.updatedAt),
+        payload: {
+            verdict,
+            summary: latestReviewerAttempt?.summary ?? workOrder.blockedReason ?? workOrder.title,
+        },
+    }
+}
+
+function createRuntimeManagerDecisionEvent(workOrder: OmcWorkOrder, runtimeState: OmcProgramRuntimeStateResponse): AgentEvent | null {
+    const directiveSummary = getLatestDirectiveSummary(runtimeState, workOrder)
+    const decision =
+        workOrder.status === 'waiting_user'
+            ? 'escalate_to_user'
+            : workOrder.status === 'replanning'
+                ? 'replan'
+                : workOrder.status === 'done'
+                    ? 'accept'
+                    : null
+
+    if (!decision) {
+        return null
+    }
+
+    return {
+        id: `runtime-manager:${workOrder.id}:${decision}`,
+        kind: 'ManagerDecision',
+        workOrderId: workOrder.id,
+        emittedBy: 'manager',
+        createdAt: toIsoString(workOrder.updatedAt),
+        payload: {
+            decision,
+            summary: directiveSummary ?? workOrder.blockedReason ?? workOrder.title,
+        },
+    }
+}
+
+function createRuntimeDirectiveEvent(workOrder: OmcWorkOrder, runtimeState: OmcProgramRuntimeStateResponse): AgentEvent | null {
+    const directive = [...runtimeState.directives]
+        .filter((entry) =>
+            (entry.scopeType === 'work_order' && entry.scopeId === workOrder.id)
+            || (entry.scopeType === 'plan' && workOrder.planKey && entry.scopeId === workOrder.planKey),
+        )
+        .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id))[0]
+        ?? null
+
+    if (!directive) {
+        return null
+    }
+
+    return {
+        id: `directive:${directive.id}`,
+        kind: 'Resolution',
+        workOrderId: workOrder.id,
+        emittedBy: 'manager',
+        createdAt: toIsoString(directive.updatedAt),
+        payload: { summary: directive.summary },
+    }
+}
+
+function createRuntimeConflictEvent(workOrder: OmcWorkOrder): AgentEvent | null {
+    if (workOrder.status !== 'blocked' || !workOrder.blockedReason?.trim()) {
+        return null
+    }
+
+    return {
+        id: `runtime-conflict:${workOrder.id}`,
+        kind: 'Conflict',
+        workOrderId: workOrder.id,
+        emittedBy: 'gatekeeper',
+        createdAt: toIsoString(workOrder.updatedAt),
+        payload: { summary: workOrder.blockedReason.trim() },
+    }
 }
 
 function buildWorkOrderState(bundle: PlanBundle): WorkOrderState {
@@ -720,6 +1176,7 @@ function chooseFocus(bundles: PlanBundle[]): { goalId: string | null; streamId: 
 
 export function buildPrototypeSnapshotFromOmc(input: OmcProjectionInput): PrototypeScenarioSnapshot {
     const bundles = collectPlanBundles(input)
+    const bundlesByPlan = getBundleMap(bundles)
     const checkpointId = deriveCheckpointId(input, bundles)
     const checkpoint = buildCheckpoint(checkpointId, input)
     const program = createProgram(input.overview)
@@ -728,7 +1185,7 @@ export function buildPrototypeSnapshotFromOmc(input: OmcProjectionInput): Protot
         return buildGoal(phase, phaseBundles, program.id, index)
     })
     const strategies = input.index.phases.map((phase) => buildStrategy(phase, bundles.filter((bundle) => bundle.phase.phaseKey === phase.phaseKey)))
-    const streams = bundles.map(buildStream)
+    const streams = bundles.map((bundle) => buildStream(bundle, bundlesByPlan))
     const approvalItems = bundles
         .map((bundle) => createApprovalItem(bundle, program.name))
         .filter((item): item is PrototypeApprovalItem => Boolean(item))
@@ -737,7 +1194,7 @@ export function buildPrototypeSnapshotFromOmc(input: OmcProjectionInput): Protot
     const planCards = bundles.map((bundle) => {
         const approvalItem = approvalItems.find((item) => item.id === bundle.plan.planKey) ?? null
         const risk = risks.find((item) => item.id === `risk:${bundle.plan.planKey}`) ?? null
-        return buildPlanCard(bundle, approvalItem, risk)
+        return buildPlanCard(bundle, approvalItem, risk, bundlesByPlan)
     })
 
     const approvalBatch: PrototypeApprovalBatch = {
@@ -769,14 +1226,31 @@ export function buildPrototypeSnapshotFromOmc(input: OmcProjectionInput): Protot
 
 export function buildWorldModelFromOmc(input: OmcProjectionInput): WorldModel {
     const bundles = collectPlanBundles(input)
-    const workOrders = Object.fromEntries(bundles.map((bundle) => {
-        const order = buildWorkOrder(bundle)
-        return [order.id, order] as const
-    }))
+    const bundlesByPlan = getBundleMap(bundles)
+    const runtimeState = input.runtimeState ?? null
+    const runtimeWorkOrders = runtimeState?.workOrders.length
+        ? runtimeState.workOrders.map((runtimeWorkOrder) => {
+            const bundle = runtimeWorkOrder.planKey ? bundlesByPlan.get(runtimeWorkOrder.planKey) ?? null : null
+            return buildRuntimeTaskBoardWorkOrder(runtimeWorkOrder, bundle, runtimeState)
+        })
+        : []
+    const workOrders = Object.fromEntries(
+        (runtimeWorkOrders.length > 0
+            ? runtimeWorkOrders
+            : bundles.map((bundle) => buildWorkOrder(bundle)))
+            .map((order) => [order.id, order] as const),
+    )
+    const primaryWorkOrderByPlanKey = new Map<string, WorkOrder>()
+    for (const order of runtimeWorkOrders) {
+        if (!order.planId || primaryWorkOrderByPlanKey.has(order.planId)) {
+            continue
+        }
+        primaryWorkOrderByPlanKey.set(order.planId, order)
+    }
 
     const decisionTopics = Object.fromEntries(
         bundles.flatMap((bundle) => {
-            const workOrder = workOrders[bundle.plan.planKey]
+            const workOrder = primaryWorkOrderByPlanKey.get(bundle.plan.planKey) ?? workOrders[bundle.plan.planKey]
             if (!workOrder) {
                 return []
             }
@@ -788,13 +1262,29 @@ export function buildWorldModelFromOmc(input: OmcProjectionInput): WorldModel {
         }),
     )
 
-    const agentEvents = bundles.flatMap((bundle) => {
-        const workOrderId = bundle.plan.planKey
-        const observation = createObservationEvent(workOrderId, latestAttempt(bundle.detail), bundle.runtime)
-        const reviewer = createReviewerEvent(workOrderId, bundle)
-        const conflict = createConflictEvent(workOrderId, bundle)
-        return [observation, reviewer, conflict].filter((event): event is AgentEvent => Boolean(event))
-    })
+    const agentEvents = runtimeState?.workOrders.length
+        ? [
+            ...runtimeState.mailbox
+                .map((message) => createRuntimeProposalEvent(message))
+                .filter((event): event is AgentEvent => Boolean(event)),
+            ...runtimeState.workAttempts
+                .map((attempt) => createRuntimeObservationEvent(attempt))
+                .filter((event): event is AgentEvent => Boolean(event)),
+            ...runtimeState.workOrders.flatMap((workOrder) => {
+                const reviewer = createRuntimeReviewerEvent(workOrder, runtimeState)
+                const managerDecision = createRuntimeManagerDecisionEvent(workOrder, runtimeState)
+                const directive = createRuntimeDirectiveEvent(workOrder, runtimeState)
+                const conflict = createRuntimeConflictEvent(workOrder)
+                return [reviewer, managerDecision, directive, conflict].filter((event): event is AgentEvent => Boolean(event))
+            }),
+        ]
+        : bundles.flatMap((bundle) => {
+            const workOrderId = bundle.plan.planKey
+            const observation = createObservationEvent(workOrderId, latestAttempt(bundle.detail), bundle.runtime)
+            const reviewer = createReviewerEvent(workOrderId, bundle)
+            const conflict = createConflictEvent(workOrderId, bundle)
+            return [observation, reviewer, conflict].filter((event): event is AgentEvent => Boolean(event))
+        })
 
     return {
         currentFocus: chooseFocus(bundles),

@@ -232,7 +232,7 @@ describe('operator threads', () => {
         expect(liveThread?.briefing?.rawEvidence.summary).toBe('The linked session became inactive before the attempt reported a structured outcome.')
         expect(liveThread?.quickActions.map((action) => action.label)).toEqual([
             '重试这一轮',
-            '先保持现状',
+            '先停在这里',
         ])
         expect(liveThread?.introMessage.body).not.toContain('The linked session became inactive before the attempt reported a structured outcome.')
     })

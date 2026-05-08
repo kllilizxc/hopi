@@ -1,11 +1,18 @@
 import type {
     OmcAttempt,
+    OmcCoordinationAgentState,
+    OmcDecisionTopic,
+    OmcDecisionTopicTurn,
+    OmcDirectiveLedgerEntry,
     OmcEvidence,
     OmcGuidedPlanningRun,
+    OmcMailboxMessage,
     OmcMergePacket,
     OmcPlanRuntime,
     OmcProgram,
     OmcProgramPlanningState,
+    OmcWorkAttempt,
+    OmcWorkOrder,
     SyncEvent
 } from '@hopi/protocol/types'
 
@@ -119,5 +126,115 @@ export function buildOmcMergeUpdatedEvent(runtime: OmcPlanRuntime, namespace: st
             runtime,
             packet
         }
+    }
+}
+
+export function buildOmcTopicUpdatedEvent(topic: OmcDecisionTopic, namespace: string): SyncEvent {
+    return {
+        type: 'omc-topic-updated',
+        namespace,
+        programId: topic.programId,
+        topicId: topic.id,
+        data: {
+            topicId: topic.id,
+            topic,
+        },
+    }
+}
+
+export function buildOmcTopicTurnAddedEvent(topic: OmcDecisionTopic, turn: OmcDecisionTopicTurn, namespace: string): SyncEvent {
+    return {
+        type: 'omc-topic-turn-added',
+        namespace,
+        programId: topic.programId,
+        topicId: topic.id,
+        turnId: turn.id,
+        data: {
+            topicId: topic.id,
+            turnId: turn.id,
+            turn,
+        },
+    }
+}
+
+export function buildOmcMailboxMessageAddedEvent(message: OmcMailboxMessage, namespace: string): SyncEvent {
+    return {
+        type: 'omc-mailbox-message-added',
+        namespace,
+        programId: message.programId,
+        messageId: message.id,
+        data: {
+            messageId: message.id,
+            message,
+        },
+    }
+}
+
+export function buildOmcWorkOrderUpdatedEvent(workOrder: OmcWorkOrder, namespace: string): SyncEvent {
+    return {
+        type: 'omc-work-order-updated',
+        namespace,
+        programId: workOrder.programId,
+        workOrderId: workOrder.id,
+        data: {
+            workOrderId: workOrder.id,
+            workOrder,
+        },
+    }
+}
+
+export function buildOmcWorkAttemptAddedEvent(workAttempt: OmcWorkAttempt, namespace: string): SyncEvent {
+    return {
+        type: 'omc-work-attempt-added',
+        namespace,
+        programId: workAttempt.programId,
+        workOrderId: workAttempt.workOrderId,
+        workAttemptId: workAttempt.id,
+        data: {
+            workOrderId: workAttempt.workOrderId,
+            workAttemptId: workAttempt.id,
+            workAttempt,
+        },
+    }
+}
+
+export function buildOmcWorkAttemptUpdatedEvent(workAttempt: OmcWorkAttempt, namespace: string): SyncEvent {
+    return {
+        type: 'omc-work-attempt-updated',
+        namespace,
+        programId: workAttempt.programId,
+        workOrderId: workAttempt.workOrderId,
+        workAttemptId: workAttempt.id,
+        data: {
+            workOrderId: workAttempt.workOrderId,
+            workAttemptId: workAttempt.id,
+            workAttempt,
+        },
+    }
+}
+
+export function buildOmcCoordinationAgentUpdatedEvent(agent: OmcCoordinationAgentState, namespace: string): SyncEvent {
+    return {
+        type: 'omc-coordination-agent-updated',
+        namespace,
+        programId: agent.programId,
+        role: agent.role,
+        data: {
+            role: agent.role,
+            agent,
+        },
+    }
+}
+
+export function buildOmcDirectiveLedgerUpdatedEvent(directive: OmcDirectiveLedgerEntry, namespace: string): SyncEvent {
+    return {
+        type: 'omc-directive-ledger-updated',
+        namespace,
+        programId: directive.programId,
+        directiveId: directive.id,
+        data: {
+            directiveId: directive.id,
+            directive,
+        },
     }
 }

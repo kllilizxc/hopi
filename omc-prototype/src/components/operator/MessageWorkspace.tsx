@@ -3,9 +3,11 @@ import ThreadConversation from '@/components/operator/ThreadConversation'
 import ThreadInbox from '@/components/operator/ThreadInbox'
 import PlanTraceWorkspace from '@/components/operator/PlanTraceWorkspace'
 import SessionLogWorkspace from '@/components/operator/SessionLogWorkspace'
+import { MetaBadge } from '@/components/StatusBadge'
 import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
 import { Glyph } from '@/components/Visuals'
 import { buildPlanTraceInspection } from '@/prototype/planTrace'
+import { getThreadInterventionMeta } from '@/prototype/presenter'
 import { getPrototypeSnapshot } from '@/prototype/scenario'
 import { usePrototypeStore } from '@/prototype/store'
 import type {
@@ -107,6 +109,8 @@ export default function MessageWorkspace(props: {
 }) {
     const mode = props.mode ?? (props.selectedThread ? 'thread' : 'inbox')
     const className = [
+        'prototype-message-panel',
+        mode !== 'inbox' ? 'prototype-message-panel--detail-mode' : null,
         'flex flex-col h-full bg-white border-l border-zinc-200 overflow-hidden w-full max-w-[500px] shadow-xl md:shadow-none transition-all duration-300',
         props.className,
     ].filter(Boolean).join(' ')
@@ -115,6 +119,7 @@ export default function MessageWorkspace(props: {
     const activeMessages = props.selectedThread
         ? props.messagesByThread[props.selectedThread.id] ?? []
         : []
+    const intervention = props.selectedThread ? getThreadInterventionMeta(props.selectedThread) : null
     const snapshot = dataSource?.getSnapshot ? dataSource.getSnapshot() : getPrototypeSnapshot(state.checkpoint)
 
     const traceInspection = useMemo(
@@ -205,8 +210,11 @@ export default function MessageWorkspace(props: {
                         <h2 className="text-xl font-bold text-zinc-900 truncate leading-tight break-all whitespace-normal">{props.selectedThread ? props.selectedThread.title : props.heading.title}</h2>
                     </div>
                     {mode === 'thread' && props.selectedThread ? (
-                        <div className="flex items-center gap-3 mt-2 text-xs font-medium text-zinc-500">
+                        <div className="flex items-center gap-3 mt-2 text-xs font-medium text-zinc-500 flex-wrap">
                             <span className="px-2 py-0.5 bg-zinc-100 rounded-md text-zinc-700">{props.selectedThread.statusLabel}</span>
+                            {intervention ? (
+                                <MetaBadge tone={intervention.tone}>{intervention.label}</MetaBadge>
+                            ) : null}
                             <span>{props.selectedThread.updatedAt}</span>
                         </div>
                     ) : props.heading.summary ? (
@@ -216,13 +224,13 @@ export default function MessageWorkspace(props: {
             </div>
 
             {props.selectedThread ? (
-                <div className="flex-1 overflow-hidden relative bg-white min-h-0">
-                    <section className="absolute inset-0 flex flex-col min-h-0">
+                <div className="prototype-message-panel__body prototype-message-panel__body--detail flex-1 overflow-hidden relative bg-white min-h-0">
+                    <section className="prototype-message-panel__detail absolute inset-0 flex flex-col min-h-0">
                         <ThreadConversation thread={props.selectedThread} messages={activeMessages} />
                     </section>
                 </div>
             ) : (
-                <div className="flex-1 flex flex-col overflow-hidden bg-zinc-50/50 min-h-0">
+                <div className="prototype-message-panel__body flex-1 flex flex-col overflow-hidden bg-zinc-50/50 min-h-0">
                     <ThreadInbox
                         threads={props.threads}
                         activeThreadId={null}

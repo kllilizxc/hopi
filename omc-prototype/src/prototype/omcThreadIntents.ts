@@ -19,10 +19,13 @@ function includesAny(text: string, phrases: string[]): boolean {
 
 function isApproveLanguage(text: string): boolean {
     return includesAny(text, [
+        '认可',
         '放行',
         '批准',
         '通过',
         '可以',
+        '继续下一步',
+        '继续尝试推进',
         'ok',
         'okay',
         'approve',
@@ -36,6 +39,7 @@ function isApproveLanguage(text: string): boolean {
 function isMergeLanguage(text: string): boolean {
     return includesAny(text, [
         '合并',
+        '目标分支',
         'merge',
         '直接上',
         '直接发',

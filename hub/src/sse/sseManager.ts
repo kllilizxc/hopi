@@ -290,6 +290,14 @@ function getEventCategory(event: SyncEvent): SSEEventCategory | null {
         case 'omc-evidence-added':
         case 'omc-review-updated':
         case 'omc-merge-updated':
+        case 'omc-topic-updated':
+        case 'omc-topic-turn-added':
+        case 'omc-mailbox-message-added':
+        case 'omc-work-order-updated':
+        case 'omc-work-attempt-added':
+        case 'omc-work-attempt-updated':
+        case 'omc-coordination-agent-updated':
+        case 'omc-directive-ledger-updated':
             return null
         default: {
             const _exhaustive: never = event

@@ -7,6 +7,36 @@ import type {
     WorkOrder,
 } from '@/prototype/types'
 
+vi.mock('./SessionLogWorkspace', () => ({
+    default: function MockSessionLogWorkspace(props: {
+        selection: {
+            sessionId: string
+            source: string
+            title: string
+            subtitle?: string | null
+        }
+    }) {
+        return (
+            <div data-testid="mock-session-log-workspace">
+                Session log · {props.selection.sessionId} · {props.selection.source} · {props.selection.title}
+            </div>
+        )
+    },
+}))
+
+vi.mock('./PlanTraceDiffWorkspace', () => ({
+    default: function MockPlanTraceDiffWorkspace(props: {
+        sessionId?: string | null
+        planTitle: string
+    }) {
+        return (
+            <div data-testid="mock-plan-diff-workspace">
+                Diff workspace · {props.sessionId ?? 'no-session'} · {props.planTitle}
+            </div>
+        )
+    },
+}))
+
 function buildInspectionFixture(
     overrides: Partial<PlanTraceInspection> = {},
 ): PlanTraceInspection {
@@ -95,18 +125,22 @@ function buildInspectionFixture(
 }
 
 describe('PlanTraceWorkspace', () => {
-    it('renders Events / State / JSON tabs and defaults to Events', () => {
+    it('renders Logs / Events / State / JSON / Diff tabs and defaults to Logs', () => {
         const inspection = buildInspectionFixture()
 
         render(
             <PlanTraceWorkspace
                 inspection={inspection}
+                sessionId="session-runtime-1"
                 onBackToInbox={() => {}}
                 onOpenThread={() => {}}
             />,
         )
 
-        expect(screen.getByRole('tab', { name: 'Events' })).toHaveAttribute('aria-selected', 'true')
+        expect(screen.getByRole('tab', { name: 'Logs' })).toHaveAttribute('aria-selected', 'true')
+        expect(screen.getByTestId('mock-session-log-workspace')).toHaveTextContent('session-runtime-1')
+
+        fireEvent.click(screen.getByRole('tab', { name: 'Events' }))
         expect(screen.getByText('ReviewerVerdict')).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole('tab', { name: 'State' }))
@@ -114,6 +148,9 @@ describe('PlanTraceWorkspace', () => {
 
         fireEvent.click(screen.getByRole('tab', { name: 'JSON' }))
         expect(screen.getByText('work-order:approval-branch-ingest')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('tab', { name: 'Diff' }))
+        expect(screen.getByTestId('mock-plan-diff-workspace')).toHaveTextContent('Lock broker CSV contract')
     })
 
     it('supports keyboard tab switching with linked tabpanel semantics', () => {
@@ -127,12 +164,15 @@ describe('PlanTraceWorkspace', () => {
             />,
         )
 
-        const eventsTab = screen.getByRole('tab', { name: 'Events' })
-        fireEvent.keyDown(eventsTab, { key: 'ArrowRight' })
+        const logsTab = screen.getByRole('tab', { name: 'Logs' })
+        fireEvent.keyDown(logsTab, { key: 'ArrowRight' })
 
-        const stateTab = screen.getByRole('tab', { name: 'State' })
-        expect(stateTab).toHaveAttribute('aria-selected', 'true')
-        expect(screen.getByRole('tabpanel', { name: /state/i })).toHaveAttribute('aria-labelledby', 'prototype-trace-tab-state')
+        const eventsTab = screen.getByRole('tab', { name: 'Events' })
+        expect(eventsTab).toHaveAttribute('aria-selected', 'true')
+        expect(screen.getByRole('tabpanel', { name: /events/i })).toHaveAttribute('aria-labelledby', 'prototype-trace-tab-events')
+
+        fireEvent.keyDown(eventsTab, { key: 'End' })
+        expect(screen.getByRole('tab', { name: 'Diff' })).toHaveAttribute('aria-selected', 'true')
     })
 
     it('shows inferred-match warning and linked decision topics', () => {
@@ -170,6 +210,7 @@ describe('PlanTraceWorkspace', () => {
             />,
         )
 
+        fireEvent.click(screen.getByRole('tab', { name: 'Events' }))
         expect(screen.getByText('这张卡还没有运行态输出，当前只有计划信息。')).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole('tab', { name: 'State' }))
@@ -179,7 +220,7 @@ describe('PlanTraceWorkspace', () => {
         expect(screen.getByRole('tabpanel', { name: /json/i })).toBeInTheDocument()
     })
 
-    it('explains that raw runtime logs appear only after a real attempt session exists', () => {
+    it('explains in the default Logs tab that raw runtime logs appear only after a real attempt session exists', () => {
         const inspection = buildInspectionFixture({
             events: [],
             emptyState: {
@@ -196,10 +237,11 @@ describe('PlanTraceWorkspace', () => {
             />,
         )
 
+        expect(screen.getByRole('tab', { name: 'Logs' })).toHaveAttribute('aria-selected', 'true')
         expect(screen.getByText('这张 plan 还没创建 runtime session。真正启动执行后，才会出现底层日志。')).toBeInTheDocument()
     })
 
-    it('surfaces a raw session-log entry point when a runtime session is available', () => {
+    it('still offers a standalone session-log entry point when a runtime session is available', () => {
         const inspection = buildInspectionFixture()
         const onOpenSessionLog = vi.fn()
 
@@ -213,7 +255,7 @@ describe('PlanTraceWorkspace', () => {
             />,
         )
 
-        fireEvent.click(screen.getByRole('button', { name: '查看底层日志' }))
+        fireEvent.click(screen.getByRole('button', { name: '独立打开日志' }))
         expect(onOpenSessionLog).toHaveBeenCalledTimes(1)
     })
 

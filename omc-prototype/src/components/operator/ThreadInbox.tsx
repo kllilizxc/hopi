@@ -1,3 +1,5 @@
+import { MetaBadge } from '@/components/StatusBadge'
+import { getThreadInterventionMeta } from '@/prototype/presenter'
 import type { OperatorThread, ThreadLifecycleState } from '@/prototype/types'
 
 function labelForSection(state: ThreadLifecycleState) {
@@ -42,6 +44,7 @@ function toneClass(thread: OperatorThread) {
 
 function renderRow(thread: OperatorThread, activeThreadId: string | null, onSelect: (threadId: string) => void) {
     const context = contextForThread(thread)
+    const intervention = getThreadInterventionMeta(thread)
     const isActive = thread.id === activeThreadId
     const isWarning = thread.tone === 'warning'
     const isAccent = thread.tone === 'accent'
@@ -64,8 +67,11 @@ function renderRow(thread: OperatorThread, activeThreadId: string | null, onSele
                 <span className="text-xs text-zinc-400 whitespace-nowrap">{thread.updatedAt}</span>
             </div>
             <p className="text-sm text-zinc-500 line-clamp-2 leading-relaxed mb-2">{previewForThread(thread)}</p>
-            <div className="flex items-center gap-2 text-xs font-medium text-zinc-500 mt-auto">
+            <div className="flex items-center gap-2 text-xs font-medium text-zinc-500 mt-auto flex-wrap">
                 <span className={`px-2 py-0.5 rounded-md whitespace-nowrap min-w-max ${isWarning ? 'bg-amber-100 text-amber-800' : isAccent ? 'bg-indigo-100 text-indigo-800' : 'bg-zinc-100 text-zinc-700'}`}>{thread.statusLabel}</span>
+                {intervention ? (
+                    <MetaBadge tone={intervention.tone}>{intervention.label}</MetaBadge>
+                ) : null}
                 {context ? <span className="truncate">{context}</span> : null}
             </div>
         </button>

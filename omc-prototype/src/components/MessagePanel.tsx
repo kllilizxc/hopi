@@ -7,14 +7,17 @@ import type { OperatorThread } from '@/prototype/types'
 
 type RouteContext = {
     goalId: string | null
-    streamId: string | null
+    planId: string | null
 }
 
-function parseRouteContext(pathname: string): RouteContext {
+function parseRouteContext(pathname: string, searchStr: string): RouteContext {
     const segments = pathname.split('/').filter(Boolean)
+    const searchParams = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
+    const queryGoalId = searchParams.get('goal')
+
     return {
-        goalId: segments[0] === 'goals' ? segments[1] ?? null : null,
-        streamId: segments[2] === 'execution' ? segments[3] ?? null : null,
+        goalId: (segments[0] === 'goals' ? segments[1] : queryGoalId) ?? null,
+        planId: segments[2] === 'plans' ? segments[3] ?? null : null,
     }
 }
 
@@ -42,7 +45,7 @@ function rankThread(thread: OperatorThread, context: RouteContext) {
     if (thread.goalId && context.goalId && thread.goalId === context.goalId) {
         score += 50
     }
-    if (context.streamId && thread.refs.some((ref) => ref.kind === 'stream' && ref.id === context.streamId)) {
+    if (context.planId && thread.refs.some((ref) => ref.kind === 'plan' && ref.id === context.planId)) {
         score += 30
     }
     if (!thread.passive) {
@@ -70,8 +73,8 @@ function sortThreads(threads: OperatorThread[], context: RouteContext) {
 function headingForContext(context: RouteContext) {
     return {
         title: '收件箱',
-        summary: context.streamId
-            ? '先处理这条执行流相关的话题，静默更新放在后面。'
+        summary: context.planId
+            ? '先处理这张计划卡相关的话题，静默更新放在后面。'
             : context.goalId
                 ? '围绕当前目标的话题会优先排前，默认先看列表。'
                 : '先从待处理线程开始，静默更新会留在列表下方。',
@@ -87,7 +90,8 @@ export default function MessagePanel(props: {
     const { state, threads, activeThread, activeThreadSelectionId, actions } = usePrototypeStore()
     const [showHandled, setShowHandled] = useState(false)
     const [dismissedThreadSelectionId, setDismissedThreadSelectionId] = useState<number | null>(null)
-    const context = useMemo(() => parseRouteContext(location.pathname), [location.pathname])
+    const searchStr = (location as { searchStr?: string }).searchStr ?? ''
+    const context = useMemo(() => parseRouteContext(location.pathname, searchStr), [location.pathname, searchStr])
     const copy = useMemo(() => headingForContext(context), [context])
     const didMount = useRef(false)
     const traceSelection = state.traceSelection

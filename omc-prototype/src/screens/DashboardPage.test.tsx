@@ -6,9 +6,14 @@ import DashboardPage from './DashboardPage'
 
 const mockUsePrototypeStore = vi.fn()
 const mockUseOperatorSurface = vi.fn()
+const mockUseSearch = vi.fn()
 
 vi.mock('@/prototype/store', () => ({
     usePrototypeStore: () => mockUsePrototypeStore(),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+    useSearch: () => mockUseSearch(),
 }))
 
 vi.mock('@/components/operator/OperatorSurfaceContext', () => ({
@@ -20,9 +25,18 @@ vi.mock('@/components/DemoAttachPanel', () => ({
 }))
 
 vi.mock('@/components/DashboardPanels', () => ({
-    GoalPortfolioPanel: () => <div data-testid="goal-portfolio-panel">goal portfolio</div>,
+    GoalPortfolioPanel: (props: { selectedGoalId: string | null }) => (
+        <div data-testid="goal-portfolio-panel">{`goal portfolio:${props.selectedGoalId ?? 'none'}`}</div>
+    ),
     DailyDigestPanel: () => <div data-testid="daily-digest-panel">daily digest</div>,
-    StreamsOverviewPanel: () => <div data-testid="streams-overview-panel">streams overview</div>,
+}))
+
+vi.mock('@/components/StrategyPanel', () => ({
+    default: (props: { goal: { id: string } }) => <div data-testid="strategy-panel">{`strategy:${props.goal.id}`}</div>,
+}))
+
+vi.mock('@/components/ExecutionBoard', () => ({
+    default: (props: { planCards: Array<{ id: string }> }) => <div data-testid="execution-board">{`board:${props.planCards.length}`}</div>,
 }))
 
 vi.mock('@/components/SeedPlanningPanel', () => ({
@@ -33,6 +47,12 @@ type DashboardStoreMockInput = {
     attachedProgramId: string | null
     hasPlans: boolean
     planningSessionId?: string | null
+    portfolioGoals?: Array<{
+        id: string
+        title: string
+        confidence: number
+        priority: 'highest' | 'high' | 'medium' | 'low'
+    }>
 }
 
 function createDashboardStoreMock(input: DashboardStoreMockInput) {
@@ -56,10 +76,85 @@ function createDashboardStoreMock(input: DashboardStoreMockInput) {
                     name: 'CardGame',
                     repoRoot: '/tmp/card-game',
                 },
-                goals: [],
-                streams: [],
+                goals: input.portfolioGoals?.map((goal) => ({
+                    id: goal.id,
+                    programId: 'program-123',
+                    title: goal.title,
+                    summary: 'summary',
+                    successSignal: 'signal',
+                    status: 'on-track',
+                    confidence: goal.confidence,
+                    priority: goal.priority,
+                    direction: 'maintain',
+                    headline: 'headline',
+                    progressLabel: 'progress',
+                    needsApproval: false,
+                    lastWorkedAt: '2026-04-07T12:00:00.000Z',
+                })) ?? [],
+                planCards: [],
                 digest: {
                     window: 'today',
+                },
+            }),
+            getGoal: (goalId: string) => ({
+                goal: {
+                    id: goalId,
+                    programId: 'program-123',
+                    title: goalId,
+                    summary: 'summary',
+                    successSignal: 'signal',
+                    status: 'on-track',
+                    confidence: 90,
+                    priority: 'highest',
+                    direction: 'maintain',
+                    headline: 'headline',
+                    progressLabel: 'progress',
+                    needsApproval: false,
+                    lastWorkedAt: '2026-04-07T12:00:00.000Z',
+                },
+                strategy: {
+                    goalId,
+                    thesis: 'thesis',
+                    reason: 'reason',
+                    changedAt: '2026-04-07T12:00:00.000Z',
+                    confidenceDelta: '+1',
+                    focusAreas: [],
+                    todayMoves: [],
+                    nextQuestions: [],
+                },
+                streams: [],
+                phases: [
+                    {
+                        id: `phase:${goalId}`,
+                        goalId,
+                        streamId: `stream:${goalId}`,
+                        title: 'Phase 01',
+                        status: 'Running',
+                        summary: 'phase summary',
+                    },
+                ],
+                planCards: [
+                    {
+                        id: `plan:${goalId}`,
+                        goalId,
+                        streamId: `stream:${goalId}`,
+                        phaseId: `phase:${goalId}`,
+                        title: 'Plan',
+                        column: 'Running',
+                        summary: 'plan summary',
+                        signal: 'signal',
+                        updatedAt: 'today',
+                        badges: [],
+                    },
+                ],
+                risks: [],
+                digest: {
+                    window: 'today',
+                    headline: 'Today',
+                    summary: 'digest',
+                    highlights: [],
+                    decisions: [],
+                    watchlist: [],
                 },
             }),
         },
@@ -90,6 +185,7 @@ function createDashboardStoreMock(input: DashboardStoreMockInput) {
 describe('DashboardPage', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mockUseSearch.mockReturnValue({})
         mockUseOperatorSurface.mockReturnValue({
             openSessionLog: vi.fn(),
         })
@@ -104,23 +200,107 @@ describe('DashboardPage', () => {
         render(<DashboardPage />)
 
         expect(screen.getByTestId('seed-planning-panel')).toBeInTheDocument()
-        expect(screen.queryByTestId('streams-overview-panel')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('plan-cards-overview-panel')).not.toBeInTheDocument()
         expect(screen.queryByTestId('goal-portfolio-panel')).not.toBeInTheDocument()
     })
 
-    it('keeps the normal dashboard panels once plans exist', () => {
+    it('defaults to the first goal workspace once plans exist', () => {
         mockUsePrototypeStore.mockReturnValue(createDashboardStoreMock({
             attachedProgramId: 'program-123',
             hasPlans: true,
             planningSessionId: 'planning-session-1',
+            portfolioGoals: [
+                {
+                    id: 'goal-portfolio-foundation',
+                    title: 'Portfolio Foundation',
+                    confidence: 90,
+                    priority: 'highest',
+                },
+            ],
         }))
 
         render(<DashboardPage />)
 
         expect(screen.queryByTestId('seed-planning-panel')).not.toBeInTheDocument()
-        expect(screen.getByTestId('goal-portfolio-panel')).toBeInTheDocument()
+        expect(screen.getByTestId('goal-portfolio-panel')).toHaveTextContent('goal portfolio:goal-portfolio-foundation')
+        expect(screen.getByTestId('strategy-panel')).toHaveTextContent('strategy:goal-portfolio-foundation')
         expect(screen.getByTestId('daily-digest-panel')).toBeInTheDocument()
-        expect(screen.getByTestId('streams-overview-panel')).toBeInTheDocument()
+        expect(screen.getByTestId('execution-board')).toHaveTextContent('board:1')
+        expect(screen.queryByTestId('plan-cards-overview-panel')).not.toBeInTheDocument()
+    })
+
+    it('renders the selected goal workspace inline on the root page when a goal query is present', () => {
+        const checkpointId: PrototypeCheckpointId = 'intake'
+        mockUseSearch.mockReturnValue({
+            goal: 'goal-weekly-brief',
+        })
+        mockUsePrototypeStore.mockReturnValue({
+            ...createDashboardStoreMock({
+                attachedProgramId: 'program-123',
+                hasPlans: true,
+            }),
+            dataSource: {
+                getPortfolio: () => ({
+                    checkpoint: {
+                        id: checkpointId,
+                        label: '目标接入',
+                        synopsis: '系统刚接到目标，先收窄边界与主路线。',
+                        stamp: '2026-04-06T12:00:00.000Z',
+                    },
+                    program: {
+                        id: 'program-123',
+                        name: 'CardGame',
+                        repoRoot: '/tmp/card-game',
+                    },
+                    goals: [
+                        {
+                            id: 'goal-portfolio-foundation',
+                            programId: 'program-123',
+                            title: 'portfolio',
+                            summary: 'summary',
+                            successSignal: 'signal',
+                            status: 'on-track',
+                            confidence: 90,
+                            priority: 'highest',
+                            direction: 'maintain',
+                            headline: 'headline',
+                            progressLabel: 'progress',
+                            needsApproval: false,
+                            lastWorkedAt: '2026-04-07T12:00:00.000Z',
+                        },
+                        {
+                            id: 'goal-weekly-brief',
+                            programId: 'program-123',
+                            title: 'brief',
+                            summary: 'summary',
+                            successSignal: 'signal',
+                            status: 'on-track',
+                            confidence: 80,
+                            priority: 'high',
+                            direction: 'maintain',
+                            headline: 'headline',
+                            progressLabel: 'progress',
+                            needsApproval: false,
+                            lastWorkedAt: '2026-04-07T12:00:00.000Z',
+                        },
+                    ],
+                    planCards: [],
+                    digest: {
+                        window: 'today',
+                    },
+                }),
+                getGoal: createDashboardStoreMock({
+                    attachedProgramId: 'program-123',
+                    hasPlans: true,
+                }).dataSource.getGoal,
+            },
+        })
+
+        render(<DashboardPage />)
+
+        expect(screen.getByTestId('goal-portfolio-panel')).toHaveTextContent('goal portfolio:goal-weekly-brief')
+        expect(screen.getByTestId('strategy-panel')).toHaveTextContent('strategy:goal-weekly-brief')
+        expect(screen.getByTestId('execution-board')).toHaveTextContent('board:1')
     })
 
     it('keeps a persistent planning-log entry point in the hero when the latest run has a session id', () => {

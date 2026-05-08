@@ -26,14 +26,14 @@ function getStateClasses(state: PrototypeToolState): string {
 function renderBlock(block: ToolDisplayBlock) {
     if (block.mode === 'markdown') {
         return (
-            <div className="prose prose-sm prose-zinc max-w-none">
+            <div className="prose prose-sm prose-zinc max-w-none overflow-x-hidden [overflow-wrap:anywhere] prose-pre:overflow-x-hidden prose-pre:whitespace-pre-wrap prose-pre:break-words prose-code:break-all">
                 <MarkdownRenderer content={block.content} />
             </div>
         )
     }
 
     return (
-        <pre className="p-3 bg-zinc-950 text-zinc-300 font-mono text-xs rounded-md overflow-x-auto whitespace-pre-wrap break-words">
+        <pre className="max-w-full p-3 bg-zinc-950 text-zinc-300 font-mono text-xs rounded-md overflow-x-hidden whitespace-pre-wrap break-all">
             <code>{block.content}</code>
         </pre>
     )
@@ -60,7 +60,7 @@ export function PrototypeToolCard(props: {
     })
 
     return (
-        <section className="flex flex-col w-full bg-zinc-50 border border-zinc-200 rounded-lg overflow-hidden my-2 shadow-sm">
+        <section className="prototype-session-log__tool-card flex flex-col w-full bg-zinc-50 border border-zinc-200 rounded-lg overflow-hidden my-2 shadow-sm">
             <header className="flex items-center justify-between gap-4 p-3 bg-white border-b border-zinc-200">
                 <div className="flex flex-col min-w-0">
                     <h3 className="text-sm font-bold text-zinc-900 font-mono truncate">{presentation.title}</h3>

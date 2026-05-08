@@ -266,6 +266,7 @@ describe('ThreadConversation', () => {
             ],
             briefing: {
                 title: '执行中断，等待恢复确认',
+                decisionQuestion: '这一轮是否要在环境恢复后重试，还是先停在这里。',
                 identity: {
                     projectLabel: 'CardGame',
                     goalLabel: '01 First Playable Expedition',
@@ -280,7 +281,7 @@ describe('ThreadConversation', () => {
                     currentImpact: '这张计划卡暂时不会继续自动推进。',
                 },
                 primaryAction: { label: '重试这一轮', helper: '建议先打开执行日志确认原因；重试后系统会重新拉起这一轮 attempt。' },
-                secondaryAction: { label: '先保持现状', helper: '保留当前状态，不恢复自动推进。' },
+                secondaryAction: { label: '先停在这里', helper: '保留当前状态，不恢复自动推进。' },
                 rawEvidence: {
                     summary: 'The linked session became inactive before the attempt reported a structured outcome.',
                     terminationReason: 'session-inactive',
@@ -315,6 +316,7 @@ describe('ThreadConversation', () => {
         )
 
         expect(screen.getByText('发生了什么')).toBeInTheDocument()
+        expect(screen.getByText('你现在要确认的是')).toBeInTheDocument()
         expect(screen.getByText('计划：Establish expedition domain')).toBeInTheDocument()
         expect(screen.getByRole('button', { name: '查看原始依据' })).toBeInTheDocument()
         expect(screen.queryByText('The linked session became inactive before the attempt reported a structured outcome.')).not.toBeInTheDocument()
@@ -341,6 +343,7 @@ describe('ThreadConversation', () => {
         const thread = buildThread({
             briefing: {
                 title: '做出每周投资简报 · 路线调整',
+                decisionQuestion: null,
                 identity: {
                     projectLabel: 'Portfolio Copilot',
                     goalLabel: '做出每周投资简报',

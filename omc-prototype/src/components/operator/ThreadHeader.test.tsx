@@ -42,6 +42,7 @@ describe('ThreadHeader', () => {
         render(<ThreadHeader thread={buildThread()} />)
 
         expect(screen.getByText('待处理')).toBeInTheDocument()
+        expect(screen.getByText('可并行处理')).toBeInTheDocument()
         expect(screen.getByText('计划：排期计划 · 目标：目标总览 · 阶段：发现阶段')).toBeInTheDocument()
         expect(screen.queryByText('目标')).not.toBeInTheDocument()
         expect(screen.queryByText('阶段')).not.toBeInTheDocument()
@@ -55,7 +56,14 @@ describe('ThreadHeader', () => {
         render(<ThreadHeader thread={buildThread({ refs: [] })} />)
 
         expect(screen.getByText('待处理')).toBeInTheDocument()
+        expect(screen.getByText('可并行处理')).toBeInTheDocument()
         expect(screen.queryByText(/目标：/)).not.toBeInTheDocument()
+    })
+
+    it('shows the blocking label for approval threads', () => {
+        render(<ThreadHeader thread={buildThread({ kind: 'approval' })} />)
+
+        expect(screen.getByText('阻塞当前计划')).toBeInTheDocument()
     })
 
     it('hides the lightweight context line when a briefing card will render below', () => {
@@ -64,6 +72,7 @@ describe('ThreadHeader', () => {
                 thread={buildThread({
                     briefing: {
                         title: '执行中断，等待恢复确认',
+                        decisionQuestion: '这一轮是否要在环境恢复后重试，还是先停在这里。',
                         identity: {
                             projectLabel: 'CardGame',
                             goalLabel: '01 First Playable Expedition',

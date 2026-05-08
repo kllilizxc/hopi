@@ -1,4 +1,5 @@
 import type {
+    OperatorThread,
     PrototypeApprovalItem,
     PrototypeApprovalState,
     PrototypeCheckpointId,
@@ -87,6 +88,8 @@ export function labelStreamStatus(status: PrototypeStreamStatus): string {
     switch (status) {
         case 'mapping':
             return '建模中'
+        case 'waiting-upstream':
+            return '等待上游'
         case 'running':
             return '运行中'
         case 'watching':
@@ -119,6 +122,27 @@ export function labelApprovalState(state: PrototypeApprovalState): string {
             return '已延后'
         case 'guided':
             return '已指导'
+    }
+}
+
+export function getThreadInterventionMeta(thread: Pick<OperatorThread, 'kind'>): {
+    label: string
+    tone: 'danger' | 'neutral'
+} | null {
+    switch (thread.kind) {
+        case 'approval':
+            return {
+                label: '阻塞当前计划',
+                tone: 'danger',
+            }
+        case 'direction':
+        case 'risk':
+            return {
+                label: '可并行处理',
+                tone: 'neutral',
+            }
+        case 'status':
+            return null
     }
 }
 
@@ -444,6 +468,7 @@ export function streamPresentation(
 
     const genericSummary: Record<PrototypeStreamStatus, string> = {
         mapping: '系统还在定义边界，暂时不扩大工作面。',
+        'waiting-upstream': '这条流还没开始，正在等上游先完成。',
         running: '系统正在静默推进这条执行流。',
         watching: '这条流被保留观察，但不抢主目标火力。',
         blocked: '这条流已暂停，等待信号或路线收束。',
@@ -481,14 +506,14 @@ export function streamPresentation(
 
     return {
         title: titles[stream.id] ?? stream.title,
-        summary: genericSummary[stream.status],
-        whyNow: genericWhyNow[stream.id] ?? '系统认为这条流值得保持推进。',
-        latestMove: genericMove[checkpoint]?.[stream.id] ?? '系统仍在推进中。',
+        summary: titles[stream.id] ? genericSummary[stream.status] : stream.summary,
+        whyNow: genericWhyNow[stream.id] ?? stream.whyNow,
+        latestMove: genericMove[checkpoint]?.[stream.id] ?? stream.latestMove,
         dependencyLabel: stream.dependencyLabel
             ? ({
                 'stream-holdings-normalization': '依赖上游导入证明继续为真。',
                 'stream-weekly-brief-outline': '依赖主目标先稳住信号质量。'
-            })[stream.id] ?? '依赖上游信号后再继续。'
+            })[stream.id] ?? stream.dependencyLabel
             : null
     }
 }

@@ -1450,4 +1450,141 @@ Purpose: Validate that guided-planning polling can reconcile into a completed ha
         expect(body.merge.sessionUrl).toBe('/sessions/session-1/terminal')
         expect(body.packet.blockers).toContain(body.runtime.mergeBlockedReason as string)
     })
+
+    it('persists topic replies, relays them into the manager mailbox, and exposes runtime state', async () => {
+        const store = new Store(':memory:')
+        const fixture = makeWorkspaceFixture()
+        store.omcRuntime.upsertProgram({
+            id: 'program-1',
+            namespace: 'default',
+            name: 'OMC Workspace',
+            repoRoot: fixture.repoRoot,
+            planningRoot: fixture.planningRoot,
+            targetBranch: 'main',
+        })
+        store.omcRuntime.upsertPlanRuntime('default', {
+            programId: 'program-1',
+            planKey: '01-01',
+            planPath: '.planning/phases/01-omc-foundation/01-01-PLAN.md',
+            phaseKey: '01-omc-foundation',
+            phaseLabel: '01 OMC Foundation',
+            column: 'Running',
+            loopStatus: 'running',
+            currentLoopRunId: 'loop-1',
+            currentWorktreePath: `${fixture.repoRoot}-worktree`,
+            currentBranch: 'hopi-omc-01-01',
+            targetBranch: 'main',
+            attemptCount: 1,
+            latestEvidenceSummary: 'Building the first playable expedition slice.',
+        })
+        store.omcRuntime.addAttempt('default', {
+            id: 'attempt-1',
+            programId: 'program-1',
+            planKey: '01-01',
+            planPath: '.planning/phases/01-omc-foundation/01-01-PLAN.md',
+            loopRunId: 'loop-1',
+            sessionId: 'session-1',
+            attemptNumber: 1,
+            status: 'running',
+            summary: 'Building the first playable expedition slice.',
+        })
+
+        const engine = {
+            getSessionByNamespace(sessionId: string) {
+                return {
+                    id: sessionId,
+                    namespace: 'default',
+                    metadata: {
+                        path: fixture.repoRoot,
+                        machineId: 'machine-1',
+                    },
+                    active: true,
+                }
+            },
+            handleRealtimeEvent() {
+                return
+            },
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const reply = await app.request('/api/omc/programs/program-1/topics/reply', {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                topicId: 'status:01-omc-foundation',
+                kind: 'status',
+                title: '01 OMC Foundation · 当前主线为什么先压导入',
+                goalId: '01-omc-foundation',
+                planKey: '01-01',
+                sessionId: 'session-1',
+                text: '怎么到了山门节点入口中间什么都没有，符合预期吗',
+            }),
+        })
+
+        expect(reply.status).toBe(200)
+        const replyBody = await reply.json() as {
+            topic: {
+                id: string
+                lifecycle: string
+                bridgeSessionId: string | null
+            }
+            turns: Array<{
+                author: string
+                kind: string
+                body: string
+            }>
+        }
+
+        expect(replyBody.topic.id).toBe('status:01-omc-foundation')
+        expect(replyBody.topic.bridgeSessionId).toBe('session-1')
+        expect(replyBody.topic.lifecycle).toBe('in-progress')
+        expect(replyBody.turns.map((turn) => turn.author)).toEqual(['user', 'manager'])
+        expect(replyBody.turns[0]?.body).toContain('山门节点入口')
+        expect(replyBody.turns[1]?.body).toContain('转给当前执行会话')
+
+        const topicsResponse = await app.request('/api/omc/programs/program-1/topics')
+        expect(topicsResponse.status).toBe(200)
+        const topicsBody = await topicsResponse.json() as {
+            topics: Array<{
+                id: string
+                lifecycle: string
+                turns: Array<{
+                    author: string
+                    body: string
+                }>
+            }>
+        }
+
+        expect(topicsBody.topics).toHaveLength(1)
+        expect(topicsBody.topics[0]?.id).toBe('status:01-omc-foundation')
+        expect(topicsBody.topics[0]?.turns.map((turn) => turn.author)).toEqual(['user', 'manager'])
+        expect(topicsBody.topics[0]?.turns[0]?.body).toContain('符合预期吗')
+
+        const runtimeResponse = await app.request('/api/omc/programs/program-1/runtime')
+        expect(runtimeResponse.status).toBe(200)
+        const runtimeBody = await runtimeResponse.json() as {
+            programId: string
+            mailbox: Array<{
+                to: string
+                kind: string
+                body: string
+            }>
+            workOrders: Array<unknown>
+            workAttempts: Array<unknown>
+            agents: Array<unknown>
+            directives: Array<unknown>
+        }
+
+        expect(runtimeBody.programId).toBe('program-1')
+        expect(runtimeBody.mailbox).toHaveLength(1)
+        expect(runtimeBody.mailbox[0]?.to).toBe('manager')
+        expect(runtimeBody.mailbox[0]?.kind).toBe('user-reply')
+        expect(runtimeBody.mailbox[0]?.body).toContain('符合预期吗')
+        expect(runtimeBody.workOrders).toEqual([])
+        expect(runtimeBody.workAttempts).toEqual([])
+        expect(runtimeBody.agents).toEqual([])
+        expect(runtimeBody.directives).toEqual([])
+    })
 })

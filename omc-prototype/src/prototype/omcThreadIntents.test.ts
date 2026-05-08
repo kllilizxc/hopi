@@ -107,6 +107,57 @@ describe('OMC thread intents', () => {
         })
     })
 
+    it('treats the human-readable review approval label as review approval intent', () => {
+        const intent = resolveThreadIntent({
+            thread: baseThread,
+            text: '认可当前结果，继续下一步',
+            runtime: createRuntime({
+                programId: 'omc-default',
+                planKey: '01-02',
+                planPath: 'plan.md',
+                phaseKey: '01-foundation',
+                phaseLabel: '01 Foundation',
+                column: 'Review',
+                loopStatus: 'review',
+                attemptCount: 2,
+                reviewRequired: true,
+                mergeStatus: 'idle',
+            }),
+            sessionId: 'session-review',
+        })
+
+        expect(intent).toEqual({
+            kind: 'approve-review',
+            planKey: '01-02',
+        })
+    })
+
+    it('treats the human-readable merge recovery label as merge approval intent', () => {
+        const intent = resolveThreadIntent({
+            thread: baseThread,
+            text: '继续尝试推进',
+            runtime: createRuntime({
+                programId: 'omc-default',
+                planKey: '01-02',
+                planPath: 'plan.md',
+                phaseKey: '01-foundation',
+                phaseLabel: '01 Foundation',
+                column: 'Review',
+                loopStatus: 'review',
+                attemptCount: 2,
+                reviewRequired: false,
+                reviewApprovedAt: 123,
+                mergeStatus: 'blocked',
+            }),
+            sessionId: 'session-review',
+        })
+
+        expect(intent).toEqual({
+            kind: 'approve-merge',
+            planKey: '01-02',
+        })
+    })
+
     it('turns rework language into a resume-loop review reopen', () => {
         const intent = resolveThreadIntent({
             thread: baseThread,

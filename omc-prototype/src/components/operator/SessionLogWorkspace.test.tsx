@@ -12,6 +12,14 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver
 }
 
+if (typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.scrollTo === 'undefined') {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        writable: true,
+        value() {},
+    })
+}
+
 class FakeEventSource {
     static instances: FakeEventSource[] = []
 
@@ -175,6 +183,44 @@ describe('SessionLogWorkspace', () => {
         expect(await screen.findByText('Session 已停止。发送新消息会先自动恢复，再继续写入。')).toBeInTheDocument()
     })
 
+    it('humanizes a recycled-session error instead of surfacing raw session-not-found text', async () => {
+        mockUseSessionMessages.mockReturnValue({
+            messages: [],
+            warning: null,
+            isLoading: false,
+            isLoadingMore: false,
+            hasMore: false,
+            pendingCount: 0,
+            messagesVersion: 1,
+            loadMore: vi.fn(),
+            refetch: vi.fn(),
+            flushPending: vi.fn(),
+            setAtBottom: vi.fn(),
+        })
+        mockUsePrototypeRemoteApi.mockReturnValue({
+            getSession: vi.fn().mockRejectedValue(new Error('Session not found')),
+            resumeSession: vi.fn().mockResolvedValue('session-1'),
+            sendMessage: vi.fn().mockResolvedValue(undefined),
+            createEventsUrl: vi.fn().mockReturnValue('http://localhost:3006/api/events'),
+            createSessionTerminalUrl: vi.fn().mockReturnValue('http://localhost:3006/sessions/session-1/terminal'),
+        })
+
+        render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'plan-runtime',
+                    title: 'Connect battle nodes',
+                    subtitle: '01-03',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        expect(await screen.findByText('这条底层 transcript 对应的旧 session 已被回收。')).toBeInTheDocument()
+        expect(screen.queryByText('Session not found')).toBeNull()
+    })
+
     it('appends a breathing live tail when the session is still producing output', async () => {
         mockUsePrototypeRemoteApi.mockReturnValue({
             getSession: vi.fn().mockResolvedValue({ session: createSession({ active: true, thinking: true }) }),
@@ -197,8 +243,7 @@ describe('SessionLogWorkspace', () => {
         )
 
         expect(await screen.findByText('first planning update')).toBeInTheDocument()
-        expect(screen.getByText('底层 Agent 正在继续输出')).toBeInTheDocument()
-        expect(screen.getByText('新消息会继续追加在这里。')).toBeInTheDocument()
+        expect(screen.getByText('正在输出…')).toBeInTheDocument()
         expect(container.querySelector('.prototype-session-log__tail--running')).not.toBeNull()
         expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).not.toBeNull()
     })
@@ -225,7 +270,7 @@ describe('SessionLogWorkspace', () => {
         )
 
         expect(await screen.findByText('first planning update')).toBeInTheDocument()
-        expect(screen.getByText('底层 Agent 正在继续输出')).toBeInTheDocument()
+        expect(screen.getByText('正在输出…')).toBeInTheDocument()
 
         FakeEventSource.emit({
             type: 'session-updated',
@@ -237,9 +282,9 @@ describe('SessionLogWorkspace', () => {
         })
 
         await waitFor(() => {
-            expect(screen.getByText('会话仍在线，等待下一步')).toBeInTheDocument()
+            expect(screen.getByText('在线，等待下一条输出')).toBeInTheDocument()
         })
-        expect(screen.queryByText('底层 Agent 正在继续输出')).toBeNull()
+        expect(screen.queryByText('正在输出…')).toBeNull()
         expect(container.querySelector('.prototype-session-log__tail--live')).not.toBeNull()
         expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).toBeNull()
     })
@@ -268,7 +313,7 @@ describe('SessionLogWorkspace', () => {
             />,
         )
 
-        expect(await screen.findByText('底层 Agent 正在继续输出')).toBeInTheDocument()
+        expect(await screen.findByText('正在输出…')).toBeInTheDocument()
 
         FakeEventSource.emit({
             type: 'session-updated',
@@ -282,7 +327,7 @@ describe('SessionLogWorkspace', () => {
             expect(getSession).toHaveBeenCalledTimes(2)
         })
         await waitFor(() => {
-            expect(screen.getByText('会话仍在线，等待下一步')).toBeInTheDocument()
+            expect(screen.getByText('在线，等待下一条输出')).toBeInTheDocument()
         })
     })
 
@@ -308,8 +353,7 @@ describe('SessionLogWorkspace', () => {
         )
 
         expect(await screen.findByText('first planning update')).toBeInTheDocument()
-        expect(screen.getByText('本轮输出已结束')).toBeInTheDocument()
-        expect(screen.getByText('这条 Session 已停止；如果你继续发送，系统会先自动恢复。')).toBeInTheDocument()
+        expect(screen.getByText('本轮已结束')).toBeInTheDocument()
         expect(container.querySelector('.prototype-session-log__tail--stopped')).not.toBeNull()
         expect(container.querySelector('.prototype-session-log__tail-dot--pulse')).toBeNull()
     })
@@ -390,6 +434,7 @@ describe('SessionLogWorkspace', () => {
 
         await screen.findByText('first planning update')
         expect(screen.getByTestId('session-log-scroll-shell')).toBeInTheDocument()
+        expect(screen.getByTestId('session-log-scroll-shell').firstElementChild).toHaveClass('overflow-x-hidden')
     })
 
     it('renders a separate topbar so actions do not squeeze the title column', async () => {
@@ -427,6 +472,127 @@ describe('SessionLogWorkspace', () => {
 
         await screen.findByText('first planning update')
         expect(container.querySelector('.prototype-chat-thread__messages--chronological')).not.toBeNull()
+    })
+
+    it('keeps auto-scrolling to the bottom when new transcript entries arrive', async () => {
+        const requestAnimationFrameSpy = vi
+            .spyOn(window, 'requestAnimationFrame')
+            .mockImplementation((callback: FrameRequestCallback) => {
+                callback(0)
+                return 1
+            })
+        const scrollToSpy = vi.spyOn(HTMLElement.prototype, 'scrollTo')
+
+        const flushPending = vi.fn()
+        const setAtBottom = vi.fn()
+
+        mockUseSessionMessages.mockReturnValue({
+            messages: [
+                {
+                    id: 'message-1',
+                    seq: 1,
+                    localId: null,
+                    createdAt: Date.UTC(2026, 3, 6, 10, 0, 0),
+                    content: {
+                        role: 'assistant',
+                        content: {
+                            type: 'text',
+                            text: 'first planning update',
+                        },
+                    },
+                },
+            ],
+            warning: null,
+            isLoading: false,
+            isLoadingMore: false,
+            hasMore: false,
+            pendingCount: 0,
+            messagesVersion: 1,
+            loadMore: vi.fn(),
+            refetch: vi.fn(),
+            flushPending,
+            setAtBottom,
+        })
+
+        const { rerender } = render(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'planning-run',
+                    title: 'CardGame',
+                    subtitle: 'guided planning',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        await screen.findByText('first planning update')
+        const viewport = screen.getByTestId('session-log-scroll-shell').firstElementChild as HTMLDivElement
+        scrollToSpy.mockClear()
+
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 500 })
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 120 })
+        Object.defineProperty(viewport, 'scrollTop', { configurable: true, writable: true, value: 0 })
+
+        fireEvent.scroll(viewport)
+
+        mockUseSessionMessages.mockReturnValue({
+            messages: [
+                {
+                    id: 'message-1',
+                    seq: 1,
+                    localId: null,
+                    createdAt: Date.UTC(2026, 3, 6, 10, 0, 0),
+                    content: {
+                        role: 'assistant',
+                        content: {
+                            type: 'text',
+                            text: 'first planning update',
+                        },
+                    },
+                },
+                {
+                    id: 'message-2',
+                    seq: 2,
+                    localId: null,
+                    createdAt: Date.UTC(2026, 3, 6, 10, 0, 3),
+                    content: {
+                        role: 'assistant',
+                        content: {
+                            type: 'text',
+                            text: 'second planning update',
+                        },
+                    },
+                },
+            ],
+            warning: null,
+            isLoading: false,
+            isLoadingMore: false,
+            hasMore: false,
+            pendingCount: 0,
+            messagesVersion: 2,
+            loadMore: vi.fn(),
+            refetch: vi.fn(),
+            flushPending,
+            setAtBottom,
+        })
+
+        rerender(
+            <SessionLogWorkspace
+                selection={{
+                    sessionId: 'session-1',
+                    source: 'planning-run',
+                    title: 'CardGame',
+                    subtitle: 'guided planning',
+                }}
+                onBack={() => {}}
+            />,
+        )
+
+        await screen.findByText('second planning update')
+        expect(scrollToSpy).toHaveBeenCalled()
+
+        requestAnimationFrameSpy.mockRestore()
     })
 
     it('renders codex markdown messages as rich text instead of raw payload JSON', async () => {
@@ -647,6 +813,7 @@ describe('SessionLogWorkspace', () => {
         await screen.findByText('Created the first executable planning cards.')
         expect(screen.getByText('Terminal')).toBeInTheDocument()
         expect(screen.getAllByText('pwd').length).toBeGreaterThan(0)
+        expect(document.querySelector('.prototype-session-log__tool-card pre')).toHaveClass('overflow-x-hidden')
         expect(screen.queryByText(/Tool Call:/)).toBeNull()
         expect(screen.queryByText(/Tool Result:/)).toBeNull()
         expect(screen.queryByText(/hasAssistantReply/)).toBeNull()

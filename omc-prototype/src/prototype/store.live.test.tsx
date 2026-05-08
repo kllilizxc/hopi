@@ -248,6 +248,16 @@ function createFakeLiveApi() {
     vi.spyOn(api, 'getPlanningIndex').mockResolvedValue(createPlanningIndex())
     vi.spyOn(api, 'getPlanRuntimes').mockResolvedValue(createPlanRuntimes())
     vi.spyOn(api, 'getPlanDetail').mockResolvedValue(createPlanDetail())
+    const getDecisionTopics = vi.fn().mockResolvedValue({ topics: [] })
+    const replyDecisionTopic = vi.fn().mockResolvedValue({ topic: null, turns: [] })
+    ;(api as unknown as {
+        getDecisionTopics: typeof getDecisionTopics
+        replyDecisionTopic: typeof replyDecisionTopic
+    }).getDecisionTopics = getDecisionTopics
+    ;(api as unknown as {
+        getDecisionTopics: typeof getDecisionTopics
+        replyDecisionTopic: typeof replyDecisionTopic
+    }).replyDecisionTopic = replyDecisionTopic
     const getSession = vi.spyOn(api, 'getSession').mockResolvedValue({
         session: {
             id: 'session-running',
@@ -278,6 +288,8 @@ function createFakeLiveApi() {
         api,
         getPrograms,
         getProgram,
+        getDecisionTopics,
+        replyDecisionTopic,
         getSession,
         resumeSession,
         sendMessage,
@@ -419,8 +431,8 @@ describe('live prototype store', () => {
         )
     })
 
-    it('marks a live direction thread handled after sending the chosen route to the active session', async () => {
-        const { api, sendMessage } = createFakeLiveApi()
+    it('marks a live direction thread handled after routing the chosen route through the topic API', async () => {
+        const { api, sendMessage, replyDecisionTopic } = createFakeLiveApi()
 
         vi.spyOn(api, 'getPlanRuntimes').mockResolvedValue({
             programId: 'omc-fresh',
@@ -476,16 +488,23 @@ describe('live prototype store', () => {
         })
 
         await waitFor(() => {
-            expect(sendMessage).toHaveBeenCalledWith('session-running', '路线调整：保持路线。')
+            expect(replyDecisionTopic).toHaveBeenCalledWith(
+                'omc-fresh',
+                expect.objectContaining({
+                    topicId: 'direction:01-foundation',
+                    kind: 'direction',
+                    planKey: '01-01',
+                    sessionId: 'session-running',
+                    text: '路线调整：保持路线。',
+                }),
+            )
         })
+        expect(sendMessage).not.toHaveBeenCalled()
         await waitFor(() => {
             const thread = result.current.threads.find((item) => item.id === 'direction:01-foundation')
             expect(thread?.lifecycle).toBe('resolved')
             expect(thread?.statusLabel).toBe('已解决')
         })
-        expect(result.current.state.messagesByThread['direction:01-foundation']?.some((message) => (
-            message.body.includes('已把指令转发到运行中的 agent 会话。')
-        ))).toBe(true)
     })
 
     it('keeps the live shell mounted while a different program reloads', async () => {
@@ -628,5 +647,129 @@ describe('live prototype store', () => {
         expect(screen.getByTestId('attached-program')).toHaveTextContent(currentProgram.id)
         expect(screen.getByTestId('live-error')).toHaveTextContent('Next program failed to load')
         expect(screen.queryByText('正在接入真实 OMC runtime…')).not.toBeInTheDocument()
+    })
+
+    it('hydrates persisted topic turns into the live thread and routes replies through the topic API', async () => {
+        const { api, sendMessage } = createFakeLiveApi()
+        const getDecisionTopics = vi.fn().mockResolvedValue({
+            topics: [
+                {
+                    id: 'status:01-foundation',
+                    kind: 'status',
+                    title: '01 Foundation · 当前主线为什么先压导入',
+                    goalId: '01-foundation',
+                    planKey: '01-01',
+                    workOrderId: '01-01',
+                    lifecycle: 'waiting',
+                    unread: false,
+                    bridgeSessionId: 'session-running',
+                    turns: [
+                        {
+                            id: 'topic-turn-1',
+                            topicId: 'status:01-foundation',
+                            author: 'user',
+                            kind: 'question',
+                            body: '怎么到了山门节点入口中间什么都没有，符合预期吗',
+                            sessionId: null,
+                            sessionMessageId: null,
+                            replyState: 'none',
+                            createdAt: 220,
+                        },
+                        {
+                            id: 'topic-turn-2',
+                            topicId: 'status:01-foundation',
+                            author: 'agent',
+                            kind: 'answer',
+                            body: '目前这里还是非战斗节点入口骨架，空白不是最终预期，后续会补节点说明和可操作内容。',
+                            sessionId: 'session-running',
+                            sessionMessageId: 'session-msg-2',
+                            replyState: 'linked',
+                            createdAt: 221,
+                        },
+                    ],
+                },
+            ],
+        })
+        const replyDecisionTopic = vi.fn().mockResolvedValue({
+            topic: {
+                id: 'status:01-foundation',
+                kind: 'status',
+                title: '01 Foundation · 当前主线为什么先压导入',
+                goalId: '01-foundation',
+                planKey: '01-01',
+                workOrderId: '01-01',
+                lifecycle: 'in-progress',
+                unread: false,
+                bridgeSessionId: 'session-running',
+            },
+            turns: [
+                {
+                    id: 'topic-turn-3',
+                    topicId: 'status:01-foundation',
+                    author: 'user',
+                    kind: 'directive',
+                    body: '那这里先补一个节点说明吧',
+                    sessionId: null,
+                    sessionMessageId: null,
+                    replyState: 'forwarded',
+                    createdAt: 222,
+                },
+                {
+                    id: 'topic-turn-4',
+                    topicId: 'status:01-foundation',
+                    author: 'manager',
+                    kind: 'ack',
+                    body: '已转给当前执行会话，收到结果后会回流到这个线程。',
+                    sessionId: 'session-running',
+                    sessionMessageId: null,
+                    replyState: 'forwarded',
+                    createdAt: 223,
+                },
+            ],
+        })
+
+        ;(api as unknown as {
+            getDecisionTopics: typeof getDecisionTopics
+            replyDecisionTopic: typeof replyDecisionTopic
+        }).getDecisionTopics = getDecisionTopics
+        ;(api as unknown as {
+            getDecisionTopics: typeof getDecisionTopics
+            replyDecisionTopic: typeof replyDecisionTopic
+        }).replyDecisionTopic = replyDecisionTopic
+
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            createElement(
+                PrototypeRemoteApiProvider,
+                { api, children: createElement(PrototypeStoreProvider, { children }) },
+            )
+        )
+
+        const { result } = renderHook(() => usePrototypeStore(), { wrapper })
+
+        await waitFor(() => {
+            expect(result.current.live?.selectedProgramId).toBe('omc-fresh')
+        })
+        await waitFor(() => {
+            const messages = result.current.state.messagesByThread['status:01-foundation'] ?? []
+            expect(messages.some((message) => message.body.includes('山门节点入口中间什么都没有'))).toBe(true)
+            expect(messages.some((message) => message.body.includes('空白不是最终预期'))).toBe(true)
+        })
+
+        act(() => {
+            result.current.actions.sendThreadReply('status:01-foundation', '那这里先补一个节点说明吧')
+        })
+
+        await waitFor(() => {
+            expect(replyDecisionTopic).toHaveBeenCalledWith(
+                'omc-fresh',
+                expect.objectContaining({
+                    topicId: 'status:01-foundation',
+                    planKey: '01-01',
+                    sessionId: 'session-running',
+                    text: '那这里先补一个节点说明吧',
+                }),
+            )
+        })
+        expect(sendMessage).not.toHaveBeenCalled()
     })
 })

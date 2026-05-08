@@ -1,7 +1,6 @@
 import {
     labelDirection,
-    labelPriority,
-    strategyPresentation
+    labelPriority
 } from '@/prototype/presenter'
 import type {
     PrototypeCheckpointId,
@@ -16,12 +15,7 @@ export default function StrategyPanel(props: {
     strategy: PrototypeStrategySnapshot
     checkpointId: PrototypeCheckpointId
 }) {
-    const view = strategyPresentation(
-        props.goal.id,
-        props.checkpointId,
-        props.goal.direction,
-        props.goal.priority
-    )
+    void props.checkpointId
 
     return (
         <section className="flex flex-col gap-5 p-6 bg-white border border-zinc-200 rounded-xl shadow-sm">
@@ -38,8 +32,8 @@ export default function StrategyPanel(props: {
                     <Glyph name="strategy" />
                 </div>
                 <div className="flex flex-col gap-1 min-w-0">
-                    <h3 className="text-base font-bold text-indigo-900 leading-tight">{view.thesis}</h3>
-                    <p className="text-sm text-indigo-700 leading-relaxed mt-1">{view.reason}</p>
+                    <h3 className="text-base font-bold text-indigo-900 leading-tight">{props.strategy.thesis}</h3>
+                    <p className="text-sm text-indigo-700 leading-relaxed mt-1">{props.strategy.reason}</p>
                 </div>
             </div>
 
@@ -47,7 +41,7 @@ export default function StrategyPanel(props: {
                 <section className="flex flex-col gap-3">
                     <h3 className="text-sm font-semibold text-zinc-700 uppercase tracking-wider">当前焦点</h3>
                     <div className="flex flex-wrap gap-2">
-                        {view.focusAreas.map((item) => (
+                        {props.strategy.focusAreas.map((item) => (
                             <span key={item} className="px-2.5 py-1 text-sm font-medium text-zinc-700 bg-zinc-100 border border-zinc-200 rounded-md whitespace-nowrap">{item}</span>
                         ))}
                     </div>
@@ -56,7 +50,7 @@ export default function StrategyPanel(props: {
                 <section className="flex flex-col gap-3">
                     <h3 className="text-sm font-semibold text-zinc-700 uppercase tracking-wider">今天动作</h3>
                     <div className="flex flex-wrap gap-2">
-                        {view.todayMoves.map((item) => (
+                        {props.strategy.todayMoves.map((item) => (
                             <span key={item} className="px-2.5 py-1 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md whitespace-nowrap">{item}</span>
                         ))}
                     </div>

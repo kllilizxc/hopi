@@ -1,12 +1,17 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
+    OmcDecisionTopicListResponse,
+    OmcDecisionTopicThread,
+    OmcDecisionTopicTurn,
     OmcGuidedPlanningRun,
     OmcPlanDetailResponse,
     OmcPlanRuntime,
     OmcPlanningIndexResponse,
     OmcProgramPlanningState,
+    OmcProgramRuntimeStateResponse,
     OmcProgramSummary,
     OmcProgramOverviewResponse,
+    OmcWorkOrder,
     SyncEvent,
 } from '@hopi/protocol/types'
 import {
@@ -46,6 +51,7 @@ import type {
     PrototypeGoalDetail,
     PrototypeGoalPriority,
     PrototypePhase,
+    PrototypePlanCardDetail,
     PrototypePortfolioView,
     PrototypeRisk,
     PrototypeRiskState,
@@ -88,6 +94,7 @@ type PrototypeUiState = {
 type PrototypeAction =
     | { type: 'attach-demo-program' }
     | { type: 'set-active-thread'; id: string }
+    | { type: 'clear-active-thread' }
     | { type: 'open-plan-trace'; input: TraceSelection }
     | { type: 'clear-plan-trace' }
     | { type: 'approve-batch-item'; id: string }
@@ -121,6 +128,7 @@ type PrototypeStoreValue = {
         error: string | null
         planning: OmcProgramPlanningState | null
         planningRun: OmcGuidedPlanningRun | null
+        runtimeState: OmcProgramRuntimeStateResponse | null
         sessionIdByPlanKey: Record<string, string | null>
     }
 }
@@ -721,6 +729,8 @@ function reducer(state: PrototypeUiState, action: PrototypeAction): PrototypeUiS
                 threadsById: markThreadRead(state.threadsById, action.id),
                 traceSelection: null,
             }, action.id)
+        case 'clear-active-thread':
+            return selectThreadState(state, null)
         case 'open-plan-trace':
             return openPlanTraceState(state, action.input)
         case 'clear-plan-trace':
@@ -1330,10 +1340,12 @@ function streamStatusWeight(status: PrototypeStream['status']): number {
             return 1
         case 'blocked':
             return 2
-        case 'watching':
+        case 'waiting-upstream':
             return 3
-        case 'mapping':
+        case 'watching':
             return 4
+        case 'mapping':
+            return 5
     }
 }
 
@@ -1813,6 +1825,7 @@ function createDataSourceFromSnapshot(snapshot: PrototypeScenarioSnapshot): Prot
                 goals: snapshot.goals,
                 strategies: snapshot.strategies,
                 streams: snapshot.streams,
+                planCards: snapshot.planCards,
                 digest: snapshot.digests[window],
                 approvalBatch: getBatch(window),
                 risks: snapshot.risks
@@ -1829,6 +1842,8 @@ function createDataSourceFromSnapshot(snapshot: PrototypeScenarioSnapshot): Prot
                 goal,
                 strategy,
                 streams: snapshot.streams.filter((item) => item.goalId === goalId),
+                phases: snapshot.phases.filter((item) => item.goalId === goalId),
+                planCards: snapshot.planCards.filter((item) => item.goalId === goalId),
                 risks: snapshot.risks.filter((item) => item.goalId === goalId),
                 digest: snapshot.digests[window]
             }
@@ -1854,6 +1869,23 @@ function createDataSourceFromSnapshot(snapshot: PrototypeScenarioSnapshot): Prot
                 phases: snapshot.phases.filter((phase) => phase.streamId === stream.id),
                 planCards: snapshot.planCards.filter((card) => card.streamId === stream.id)
             }
+        },
+        getPlanDrilldown(input): PrototypePlanCardDetail | null {
+            const goal = snapshot.goals.find((item) => item.id === input.goalId)
+            const strategy = snapshot.strategies.find((item) => item.goalId === input.goalId)
+            const planCard = snapshot.planCards.find((item) => item.id === input.planId && item.goalId === input.goalId)
+
+            if (!goal || !strategy || !planCard) {
+                return null
+            }
+
+            return {
+                goal,
+                strategy,
+                planCard,
+                phases: snapshot.phases.filter((phase) => phase.streamId === planCard.streamId),
+                siblingPlanCards: snapshot.planCards.filter((card) => card.streamId === planCard.streamId),
+            }
         }
     }
 }
@@ -1866,6 +1898,7 @@ type LiveProjection = {
     programId: string
     programs: Array<Pick<OmcProgramSummary, 'id' | 'name' | 'repoRoot'>>
     overview: OmcProgramOverviewResponse
+    runtimeState: OmcProgramRuntimeStateResponse
     index: OmcPlanningIndexResponse
     runtimes: OmcPlanRuntime[]
     planningRun: OmcGuidedPlanningRun | null
@@ -1875,6 +1908,9 @@ type LiveProjection = {
     runtimeByPlanKey: Record<string, OmcPlanRuntime>
     sessionIdByPlanKey: Record<string, string | null>
     threadPlanKeyById: Record<string, string>
+    persistedDecisionTopics: Record<string, DecisionTopic>
+    topicMessagesByThreadId: Record<string, OperatorMessage[]>
+    topicPlanKeyByThreadId: Record<string, string>
 }
 
 type LiveThreadState = {
@@ -1953,13 +1989,230 @@ function flattenLiveDecisionTopicOverrides(
     )
 }
 
+function toTopicOperatorRole(author: OmcDecisionTopicTurn['author']): OperatorMessage['role'] {
+    if (author === 'user') {
+        return 'user'
+    }
+
+    if (author === 'agent') {
+        return 'agent'
+    }
+
+    return 'system'
+}
+
+function normalizePersistedTopicThread(thread: OmcDecisionTopicThread | {
+    topic?: {
+        id: string
+        kind: DecisionTopic['kind']
+        title: string
+        goalId?: string | null
+        planKey?: string | null
+        workOrderId?: string | null
+        lifecycle: DecisionTopic['lifecycle']
+        unread: boolean
+    }
+    turns?: OmcDecisionTopicTurn[]
+}): {
+    topic: {
+        id: string
+        kind: DecisionTopic['kind']
+        title: string
+        goalId: string | null
+        planKey: string | null
+        workOrderId: string | null
+        lifecycle: DecisionTopic['lifecycle']
+        unread: boolean
+    }
+    turns: OmcDecisionTopicTurn[]
+} {
+    const nested = thread as {
+        topic?: {
+            id: string
+            kind: DecisionTopic['kind']
+            title: string
+            goalId?: string | null
+            planKey?: string | null
+            workOrderId?: string | null
+            lifecycle: DecisionTopic['lifecycle']
+            unread: boolean
+        }
+        turns?: OmcDecisionTopicTurn[]
+    }
+    if (nested.topic) {
+        return {
+            topic: {
+                id: nested.topic.id,
+                kind: nested.topic.kind,
+                title: nested.topic.title,
+                goalId: nested.topic.goalId ?? null,
+                planKey: nested.topic.planKey ?? null,
+                workOrderId: nested.topic.workOrderId ?? null,
+                lifecycle: nested.topic.lifecycle,
+                unread: nested.topic.unread,
+            },
+            turns: nested.turns ?? [],
+        }
+    }
+
+    const flat = thread as OmcDecisionTopicThread
+    return {
+        topic: {
+            id: flat.id,
+            kind: flat.kind,
+            title: flat.title,
+            goalId: flat.goalId ?? null,
+            planKey: flat.planKey ?? null,
+            workOrderId: flat.workOrderId ?? null,
+            lifecycle: flat.lifecycle,
+            unread: flat.unread,
+        },
+        turns: flat.turns ?? [],
+    }
+}
+
+function toTopicMessage(threadId: string, turn: OmcDecisionTopicTurn): OperatorMessage {
+    return {
+        id: `topic-turn:${turn.id}`,
+        threadId,
+        role: toTopicOperatorRole(turn.author),
+        body: turn.body,
+        createdAt: new Date(turn.createdAt).toISOString(),
+        status: turn.author === 'user' ? 'sent' : 'read',
+    }
+}
+
+function toPersistedDecisionTopic(thread: OmcDecisionTopicThread): DecisionTopic {
+    const normalized = normalizePersistedTopicThread(thread)
+    return {
+        id: normalized.topic.id,
+        kind: normalized.topic.kind,
+        title: normalized.topic.title,
+        goalId: normalized.topic.goalId ?? null,
+        workOrderId: normalized.topic.workOrderId ?? null,
+        lifecycle: normalized.topic.lifecycle,
+        unread: normalized.topic.unread,
+        messages: normalized.turns.map((turn) => turn.body),
+    }
+}
+
+function buildPersistedTopicBundle(response: OmcDecisionTopicListResponse): {
+    decisionTopics: Record<string, DecisionTopic>
+    messagesByThreadId: Record<string, OperatorMessage[]>
+    planKeyByThreadId: Record<string, string>
+} {
+    return response.topics.reduce<{
+        decisionTopics: Record<string, DecisionTopic>
+        messagesByThreadId: Record<string, OperatorMessage[]>
+        planKeyByThreadId: Record<string, string>
+    }>((acc, thread) => {
+        const normalized = normalizePersistedTopicThread(thread)
+        acc.decisionTopics[normalized.topic.id] = toPersistedDecisionTopic(thread)
+        acc.messagesByThreadId[normalized.topic.id] = normalized.turns.map((turn) => toTopicMessage(normalized.topic.id, turn))
+        if (normalized.topic.planKey) {
+            acc.planKeyByThreadId[normalized.topic.id] = normalized.topic.planKey
+        }
+        return acc
+    }, {
+        decisionTopics: {},
+        messagesByThreadId: {},
+        planKeyByThreadId: {},
+    })
+}
+
 function findLatestAttempt(detail: OmcPlanDetailResponse | null | undefined) {
     return [...(detail?.attempts ?? [])]
         .sort((left, right) => right.attemptNumber - left.attemptNumber || right.updatedAt - left.updatedAt)[0]
         ?? null
 }
 
-function rankLivePlan(runtime: OmcPlanRuntime | null | undefined): number {
+function isLiveWorkAttemptStatus(status: OmcProgramRuntimeStateResponse['workAttempts'][number]['status']): boolean {
+    return status === 'running' || status === 'closing' || status === 'reviewing'
+}
+
+export function buildRuntimeSessionIdByPlanKey(input: {
+    runtimeState: OmcProgramRuntimeStateResponse
+    details: Record<string, OmcPlanDetailResponse>
+}): Record<string, string | null> {
+    const workOrdersWithPlan = input.runtimeState.workOrders.filter(
+        (workOrder): workOrder is typeof workOrder & { planKey: string } => Boolean(workOrder.planKey),
+    )
+    const planKeyByWorkOrderId = new Map(workOrdersWithPlan.map((workOrder) => [workOrder.id, workOrder.planKey] as const))
+    const workOrderIdsByPlanKey = new Map(workOrdersWithPlan.map((workOrder) => [workOrder.planKey, workOrder.id] as const))
+    const workAttemptsById = new Map(
+        input.runtimeState.workAttempts.map((attempt) => [attempt.id, attempt] as const),
+    )
+    const activeSessionIdByWorkOrderId = new Map<string, string>()
+
+    for (const agent of [...input.runtimeState.agents].sort((left, right) => right.lastHeartbeat - left.lastHeartbeat)) {
+        if (!agent.currentWorkOrderId || !agent.activeSessionId || activeSessionIdByWorkOrderId.has(agent.currentWorkOrderId)) {
+            continue
+        }
+        activeSessionIdByWorkOrderId.set(agent.currentWorkOrderId, agent.activeSessionId)
+    }
+
+    const latestLiveAttemptSessionIdByWorkOrderId = new Map<string, string>()
+    for (const attempt of [...input.runtimeState.workAttempts].sort((left, right) => right.updatedAt - left.updatedAt)) {
+        if (!attempt.sessionId || !isLiveWorkAttemptStatus(attempt.status) || latestLiveAttemptSessionIdByWorkOrderId.has(attempt.workOrderId)) {
+            continue
+        }
+        latestLiveAttemptSessionIdByWorkOrderId.set(attempt.workOrderId, attempt.sessionId)
+    }
+
+    const mapping: Record<string, string | null> = {}
+    for (const workOrder of workOrdersWithPlan) {
+        const currentAttempt = workOrder.currentAttemptId
+            ? workAttemptsById.get(workOrder.currentAttemptId) ?? null
+            : null
+        const sessionId =
+            activeSessionIdByWorkOrderId.get(workOrder.id)
+            ?? (
+                currentAttempt?.sessionId && isLiveWorkAttemptStatus(currentAttempt.status)
+                    ? currentAttempt.sessionId
+                    : null
+            )
+            ?? latestLiveAttemptSessionIdByWorkOrderId.get(workOrder.id)
+            ?? null
+
+        if (sessionId) {
+            mapping[workOrder.planKey] = sessionId
+        }
+    }
+
+    for (const [planKey, detail] of Object.entries(input.details)) {
+        if (mapping[planKey] || workOrderIdsByPlanKey.has(planKey)) {
+            continue
+        }
+        mapping[planKey] = findLatestAttempt(detail)?.sessionId ?? null
+    }
+
+    return mapping
+}
+
+export function rankLivePlan(input: {
+    runtime: OmcPlanRuntime | null | undefined
+    workOrder?: OmcWorkOrder | null
+}): number {
+    const workOrder = input.workOrder ?? null
+    if (workOrder) {
+        switch (workOrder.status) {
+            case 'waiting_user':
+            case 'replanning':
+                return 0
+            case 'in_progress':
+                return 1
+            case 'blocked':
+                return 2
+            case 'in_review':
+                return 4
+            case 'ready':
+                return 5
+            case 'done':
+                return 6
+        }
+    }
+
+    const runtime = input.runtime
     if (!runtime) {
         return 7
     }
@@ -1984,19 +2237,31 @@ function rankLivePlan(runtime: OmcPlanRuntime | null | undefined): number {
     return 6
 }
 
-function buildLiveThreadPlanKeyMap(input: {
+export function buildLiveThreadPlanKeyMap(input: {
     snapshot: PrototypeScenarioSnapshot
     index: OmcPlanningIndexResponse
     runtimeByPlanKey: Record<string, OmcPlanRuntime>
+    runtimeState?: OmcProgramRuntimeStateResponse | null
 }): Record<string, string> {
     const mapping: Record<string, string> = {}
+    const workOrderByPlanKey = new Map(
+        (input.runtimeState?.workOrders ?? [])
+            .filter((workOrder): workOrder is OmcWorkOrder & { planKey: string } => Boolean(workOrder.planKey))
+            .map((workOrder) => [workOrder.planKey, workOrder] as const),
+    )
 
     for (const phase of input.index.phases) {
         const primaryPlan = [...phase.plans]
             .sort((left, right) => {
                 const rankDelta =
-                    rankLivePlan(input.runtimeByPlanKey[left.planKey])
-                    - rankLivePlan(input.runtimeByPlanKey[right.planKey])
+                    rankLivePlan({
+                        runtime: input.runtimeByPlanKey[left.planKey],
+                        workOrder: workOrderByPlanKey.get(left.planKey) ?? null,
+                    })
+                    - rankLivePlan({
+                        runtime: input.runtimeByPlanKey[right.planKey],
+                        workOrder: workOrderByPlanKey.get(right.planKey) ?? null,
+                    })
                 if (rankDelta !== 0) {
                     return rankDelta
                 }
@@ -2044,11 +2309,18 @@ async function loadLiveProjection(
         throw new Error('No OMC program available. Attach or seed a repo first.')
     }
 
-    const [overview, planningState, index, runtimeResponse] = await Promise.all([
+    const topicPromise = api.getDecisionTopics(programId).catch((): OmcDecisionTopicListResponse => ({
+        programId,
+        topics: [],
+    }))
+
+    const [overview, runtimeState, planningState, index, runtimeResponse, topicResponse] = await Promise.all([
         api.getProgram(programId),
+        api.getProgramRuntimeState(programId),
         api.getGuidedPlanningState(programId),
         api.getPlanningIndex(programId),
         api.getPlanRuntimes(programId),
+        topicPromise,
     ])
 
     const detailEntries = await Promise.all(
@@ -2061,6 +2333,7 @@ async function loadLiveProjection(
     const runtimes = runtimeResponse.runtimes
     const snapshot = buildPrototypeSnapshotFromOmc({
         overview,
+        runtimeState,
         index,
         runtimes,
         planningRun: planningState.run,
@@ -2068,6 +2341,7 @@ async function loadLiveProjection(
     })
     const worldModel = buildWorldModelFromOmc({
         overview,
+        runtimeState,
         index,
         runtimes,
         planningRun: planningState.run,
@@ -2076,19 +2350,20 @@ async function loadLiveProjection(
     const runtimeByPlanKey = Object.fromEntries(
         runtimes.map((runtime) => [runtime.planKey, runtime] as const),
     )
-    const sessionIdByPlanKey = Object.fromEntries(
-        Object.entries(details).map(([planKey, detail]) => [planKey, findLatestAttempt(detail)?.sessionId ?? null] as const),
-    )
+    const sessionIdByPlanKey = buildRuntimeSessionIdByPlanKey({ runtimeState, details })
     const threadPlanKeyById = buildLiveThreadPlanKeyMap({
         snapshot,
         index,
         runtimeByPlanKey,
+        runtimeState,
     })
+    const persistedTopicBundle = buildPersistedTopicBundle(topicResponse)
 
     return {
         programId,
         programs,
         overview,
+        runtimeState,
         index,
         runtimes,
         planningRun: planningState.run,
@@ -2097,7 +2372,13 @@ async function loadLiveProjection(
         worldModel,
         runtimeByPlanKey,
         sessionIdByPlanKey,
-        threadPlanKeyById,
+        threadPlanKeyById: {
+            ...threadPlanKeyById,
+            ...persistedTopicBundle.planKeyByThreadId,
+        },
+        persistedDecisionTopics: persistedTopicBundle.decisionTopics,
+        topicMessagesByThreadId: persistedTopicBundle.messagesByThreadId,
+        topicPlanKeyByThreadId: persistedTopicBundle.planKeyByThreadId,
     }
 }
 
@@ -2128,6 +2409,9 @@ function PrototypeDemoStoreProvider(props: { children: React.ReactNode }) {
         },
         setActiveThread(id) {
             dispatch({ type: 'set-active-thread', id })
+        },
+        clearActiveThread() {
+            dispatch({ type: 'clear-active-thread' })
         },
         openPlanTrace(input) {
             dispatch({ type: 'open-plan-trace', input })
@@ -2392,7 +2676,10 @@ function LivePrototypeStoreProvider(props: {
         const retainedOverrides = pruneLiveDecisionTopicOverrides(
             liveDecisionTopicOverrides,
             seeds,
-            projection.worldModel.decisionTopics,
+            {
+                ...projection.persistedDecisionTopics,
+                ...projection.worldModel.decisionTopics,
+            },
         )
         if (retainedOverrides !== liveDecisionTopicOverrides) {
             setLiveDecisionTopicOverrides(retainedOverrides)
@@ -2400,6 +2687,7 @@ function LivePrototypeStoreProvider(props: {
 
         const mergedDecisionTopics = {
             ...flattenLiveDecisionTopicOverrides(retainedOverrides),
+            ...projection.persistedDecisionTopics,
             ...projection.worldModel.decisionTopics,
         }
 
@@ -2412,6 +2700,7 @@ function LivePrototypeStoreProvider(props: {
                     activeThreadId: previous.activeThreadId,
                 },
                 decisionTopics: mergedDecisionTopics,
+                persistedMessagesByThread: projection.topicMessagesByThreadId,
             })
 
             return {
@@ -2422,6 +2711,16 @@ function LivePrototypeStoreProvider(props: {
             }
         })
     }, [liveDecisionTopicOverrides, projection])
+
+    const mergedDecisionTopics = useMemo(() => (
+        projection
+            ? {
+                ...flattenLiveDecisionTopicOverrides(liveDecisionTopicOverrides),
+                ...projection.persistedDecisionTopics,
+                ...projection.worldModel.decisionTopics,
+            }
+            : {}
+    ), [liveDecisionTopicOverrides, projection])
 
     const appendConversationMessages = useCallback((threadId: string, userBody: string | null, agentBody: string, role: OperatorMessage['role'] = 'agent') => {
         setThreadState((previous) => {
@@ -2554,8 +2853,15 @@ function LivePrototypeStoreProvider(props: {
                         throw new Error('No live session available for this thread.')
                     }
 
-                    await props.api.sendMessage(ensuredSessionId, intent.text)
-                    appendConversationMessages(threadId, text, '已把指令转发到运行中的 agent 会话。')
+                    await props.api.replyDecisionTopic(currentProjection.programId, {
+                        topicId: threadId,
+                        kind: thread.kind,
+                        title: thread.title,
+                        goalId: thread.goalId ?? null,
+                        planKey,
+                        sessionId: ensuredSessionId,
+                        text: intent.text,
+                    })
                     markLiveThreadHandled(thread, '已把指令转发到运行中的 agent 会话。')
                     await refreshProjection({ silent: true })
                     return
@@ -2567,8 +2873,15 @@ function LivePrototypeStoreProvider(props: {
                             throw new Error('No live session available for this thread.')
                         }
 
-                        await props.api.sendMessage(ensuredSessionId, text)
-                        appendConversationMessages(threadId, text, '已把你的指令转发给当前主线 agent。')
+                        await props.api.replyDecisionTopic(currentProjection.programId, {
+                            topicId: threadId,
+                            kind: thread.kind,
+                            title: thread.title,
+                            goalId: thread.goalId ?? null,
+                            planKey,
+                            sessionId: ensuredSessionId,
+                            text,
+                        })
                         markLiveThreadHandled(thread, '已把你的指令转发给当前主线 agent。')
                         await refreshProjection({ silent: true })
                         return
@@ -2596,13 +2909,10 @@ function LivePrototypeStoreProvider(props: {
 
         switch (quickAction.operation.type) {
             case 'approval-approve':
-                void runThreadReply(
-                    threadId,
-                    thread.briefing?.rawEvidence.terminationReason ? '重试这一轮' : '好，直接合并',
-                )
+                void runThreadReply(threadId, thread.briefing?.primaryAction?.label ?? quickAction.label)
                 return
             case 'approval-defer':
-                appendConversationMessages(threadId, '先放这里，我稍后再处理。', '已记录为稍后处理，后端状态暂时不变。')
+                appendConversationMessages(threadId, thread.briefing?.secondaryAction?.label ?? quickAction.label, '已记录为稍后处理，后端状态暂时不变。')
                 return
             case 'approval-guide':
                 void runThreadReply(threadId, `请按${labelDirection(quickAction.operation.direction)}处理，再跑一轮。`)
@@ -2639,6 +2949,13 @@ function LivePrototypeStoreProvider(props: {
             void refreshProjection({ preferredProgramId: programId })
         },
         setActiveThread,
+        clearActiveThread() {
+            setThreadState((previous) => ({
+                ...previous,
+                activeThreadId: null,
+                activeThreadSelectionId: previous.activeThreadSelectionId + 1,
+            }))
+        },
         openPlanTrace(input) {
             setTraceSelection(input)
         },
@@ -2650,10 +2967,12 @@ function LivePrototypeStoreProvider(props: {
             void runThreadReply(threadId, text)
         },
         approveBatchItem(id) {
-            void runThreadReply(`approval:${id}`, '好，直接合并')
+            const thread = threadState.threadsById[`approval:${id}`]
+            void runThreadReply(`approval:${id}`, thread?.briefing?.primaryAction?.label ?? '按建议执行')
         },
         deferBatchItem(id) {
-            appendConversationMessages(`approval:${id}`, '先放这里，我稍后再处理。', '已记下，后端状态暂时不变。')
+            const thread = threadState.threadsById[`approval:${id}`]
+            appendConversationMessages(`approval:${id}`, thread?.briefing?.secondaryAction?.label ?? '先不处理', '已记下，后端状态暂时不变。')
         },
         guideApproval(id, goalId, direction) {
             void goalId
@@ -2702,7 +3021,7 @@ function LivePrototypeStoreProvider(props: {
         setGoalDirection(goalId, direction) {
             void runThreadReply(`direction:${goalId}`, `路线调整：${labelDirection(direction)}。`)
         },
-    }), [appendConversationMessages, performQuickAction, refreshProjection, runThreadReply, setActiveThread])
+    }), [appendConversationMessages, performQuickAction, refreshProjection, runThreadReply, setActiveThread, threadState.threadsById])
 
     if (loading && !projection) {
         return <div className="prototype-empty">正在接入真实 OMC runtime…</div>
@@ -2726,7 +3045,7 @@ function LivePrototypeStoreProvider(props: {
         window: windowState,
         autoplay: false,
         worldModel: projection?.worldModel ?? createSeededWorldModel('intake'),
-        decisionTopics: projection?.worldModel.decisionTopics ?? {},
+        decisionTopics: mergedDecisionTopics,
         approvalStates: {},
         riskStates: {},
         goalPriorities: {},
@@ -2758,6 +3077,7 @@ function LivePrototypeStoreProvider(props: {
             error,
             planning: projection?.overview.planning ?? null,
             planningRun: projection?.planningRun ?? null,
+            runtimeState: projection?.runtimeState ?? null,
             sessionIdByPlanKey: projection?.sessionIdByPlanKey ?? {},
         },
     }

@@ -1,9 +1,11 @@
 import {
     OmcAttachLocalRepoRequestSchema,
+    OmcDecisionTopicReplyRequestSchema,
     OmcAttachPlanningRootRequestSchema,
     OmcCreatePlanningSeedRequestSchema,
     OmcGuidedPlanningStartRequestSchema,
     OmcGuidedPlanningStateResponseSchema,
+    OmcProgramRuntimeStateResponseSchema,
     OmcReviewReopenRequestSchema
 } from '@hopi/protocol/schemas'
 import type {
@@ -17,8 +19,10 @@ import type {
 import { Hono } from 'hono'
 import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
+import { OmcManagerController } from '../../sync/omc/manager'
 import { OmcLoopController } from '../../sync/omc/loopController'
 import { OmcPlanningRunController } from '../../sync/omc/planningRunController'
+import { OmcTopicController } from '../../sync/omc/topicController'
 import {
     OmcReviewController,
     OmcReviewControllerPreconditionError
@@ -28,7 +32,7 @@ import {
     buildOmcProgramUpdatedEvent,
     buildOmcMergeUpdatedEvent,
     buildOmcPlanRuntimeUpdatedEvent,
-    buildOmcReviewUpdatedEvent
+    buildOmcReviewUpdatedEvent,
 } from '../../sync/omc/events'
 import { buildPlanDetail, buildPlanningIndex } from '../../sync/omc/planningIndex'
 import { buildRepoLocalOmcPlanningRoot, resolveOmcPlanningRoot } from '../../sync/omc/programPaths'
@@ -265,6 +269,27 @@ export function createOmcRoutes(options: {
             store: options.store,
             engine,
             namespace
+        })
+    }
+
+    function createManagerController(namespace: string): OmcManagerController {
+        return new OmcManagerController({
+            store: options.store,
+            namespace,
+            engine: options.getSyncEngine?.() ?? null,
+        })
+    }
+
+    function requireTopicController(namespace: string): OmcTopicController | null {
+        const engine = options.getSyncEngine?.() ?? null
+        if (!engine) {
+            return null
+        }
+
+        return new OmcTopicController({
+            store: options.store,
+            engine,
+            namespace,
         })
     }
 
@@ -585,6 +610,57 @@ export function createOmcRoutes(options: {
             attempts,
             evidence
         })
+    })
+
+    app.get('/omc/programs/:programId/topics', (c) => {
+        const namespace = c.get('namespace')
+        const program = requireProgram(options.store, namespace, c.req.param('programId'))
+        if (!program) {
+            return c.json({ error: 'Program not found' }, 404)
+        }
+
+        const controller = requireTopicController(namespace)
+        if (!controller) {
+            return c.json({ error: 'Sync engine is not available for OMC topics.' }, 503)
+        }
+
+        return c.json({
+            programId: program.id,
+            topics: controller.listTopics(program.id),
+        })
+    })
+
+    app.post('/omc/programs/:programId/topics/reply', async (c) => {
+        const namespace = c.get('namespace')
+        const program = requireProgram(options.store, namespace, c.req.param('programId'))
+        if (!program) {
+            return c.json({ error: 'Program not found' }, 404)
+        }
+
+        const payload = await c.req.json().catch(() => null)
+        const parsed = OmcDecisionTopicReplyRequestSchema.safeParse(payload)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid topic reply payload.' }, 400)
+        }
+
+        try {
+            const manager = createManagerController(namespace)
+            return c.json(manager.consumeTopicReplyAsMailboxMessage(program, parsed.data))
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to handle OMC topic reply'
+            return c.json({ error: message }, 500)
+        }
+    })
+
+    app.get('/omc/programs/:programId/runtime', (c) => {
+        const namespace = c.get('namespace')
+        const program = requireProgram(options.store, namespace, c.req.param('programId'))
+        if (!program) {
+            return c.json({ error: 'Program not found' }, 404)
+        }
+
+        const manager = createManagerController(namespace)
+        return c.json(OmcProgramRuntimeStateResponseSchema.parse(manager.getProgramRuntimeState(program.id)))
     })
 
     app.get('/omc/programs/:programId/plans/:planKey/runtime', async (c) => {

@@ -9,7 +9,7 @@ export default function ThreadQuickActions(props: { thread: OperatorThread }) {
     }
 
     return (
-        <div className="flex flex-col gap-2 p-4 bg-zinc-50 border border-zinc-200 rounded-xl mt-2 shadow-sm">
+        <div className="prototype-thread-quick-actions flex flex-col gap-2 p-4 bg-zinc-50 border border-zinc-200 rounded-xl mt-2 shadow-sm">
             <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">建议动作</span>
             <div className="flex flex-wrap items-center gap-2">
                 {props.thread.quickActions.map((action) => (

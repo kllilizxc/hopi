@@ -19,7 +19,7 @@ import { prototypeCheckpoints } from '@/prototype/scenario'
 import {
     goalTitle,
     labelCheckpoint,
-    labelTimeWindow
+    labelTimeWindow,
 } from '@/prototype/presenter'
 import { usePrototypeStore } from '@/prototype/store'
 import type { PrototypePortfolioView, SessionLogSelection } from '@/prototype/types'
@@ -143,28 +143,30 @@ function RootLayout() {
                             </section>
                         ) : null}
 
-                        <div className="flex items-center gap-4 px-6 py-3 border-b border-zinc-200 bg-zinc-50/50">
-                            {backTarget ? (
-                                <Link className="flex items-center justify-center w-8 h-8 rounded-full bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm" to={backTarget} aria-label="返回上一层" title="返回上一层">
-                                    <Glyph name="back" />
-                                </Link>
-                            ) : null}
+                        {breadcrumbs.length > 1 ? (
+                            <div className="flex items-center gap-4 px-6 py-3 border-b border-zinc-200 bg-zinc-50/50">
+                                {backTarget ? (
+                                    <Link className="flex items-center justify-center w-8 h-8 rounded-full bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm" to={backTarget} aria-label="返回上一层" title="返回上一层">
+                                        <Glyph name="back" />
+                                    </Link>
+                                ) : null}
 
-                            <nav className="flex items-center gap-2 text-sm text-zinc-500" aria-label="页面路径">
-                                {breadcrumbs.map((crumb, index) => (
-                                    <span key={`${crumb.label}-${crumb.to ?? 'current'}`} className="flex items-center gap-2">
-                                        {index > 0 ? <span className="text-zinc-300">/</span> : null}
-                                        {crumb.to ? (
-                                            <Link to={crumb.to} className="hover:text-zinc-900 transition-colors">
-                                                {crumb.label}
-                                            </Link>
-                                        ) : (
-                                            <strong className="font-semibold text-zinc-900">{crumb.label}</strong>
-                                        )}
-                                    </span>
-                                ))}
-                            </nav>
-                        </div>
+                                <nav className="flex items-center gap-2 text-sm text-zinc-500" aria-label="页面路径">
+                                    {breadcrumbs.map((crumb, index) => (
+                                        <span key={`${crumb.label}-${crumb.to ?? 'current'}`} className="flex items-center gap-2">
+                                            {index > 0 ? <span className="text-zinc-300">/</span> : null}
+                                            {crumb.to ? (
+                                                <Link to={crumb.to} className="hover:text-zinc-900 transition-colors">
+                                                    {crumb.label}
+                                                </Link>
+                                            ) : (
+                                                <strong className="font-semibold text-zinc-900">{crumb.label}</strong>
+                                            )}
+                                        </span>
+                                    ))}
+                                </nav>
+                            </div>
+                        ) : null}
 
                     </>
                 ) : null}
@@ -208,10 +210,7 @@ function buildBreadcrumbs(
 
     const segments = pathname.split('/').filter(Boolean)
     const goalId = segments[1]
-    const streamId = segments[3]
-
     const goal = portfolio.goals.find((item) => item.id === goalId)
-    const stream = portfolio.streams.find((item) => item.id === streamId)
 
     const crumbs: Array<{ label: string; to?: string }> = [
         { label: '总览', to: '/' }
@@ -226,14 +225,6 @@ function buildBreadcrumbs(
         to: `/goals/${goal.id}`
     })
 
-    if (!stream) {
-        return crumbs
-    }
-
-    if (segments[2] === 'execution') {
-        crumbs.push({ label: '执行明细' })
-    }
-
     return crumbs
 }
 
@@ -243,8 +234,8 @@ function GoalRoutePage() {
 }
 
 function ExecutionRoutePage() {
-    const { goalId, streamId } = RouteExecution.useParams()
-    return <ExecutionDetailPage goalId={goalId} streamId={streamId} />
+    const { goalId, planId } = RouteExecution.useParams()
+    return <ExecutionDetailPage goalId={goalId} planId={planId} />
 }
 
 const rootRoute = createRootRoute({
@@ -254,6 +245,13 @@ const rootRoute = createRootRoute({
 const RouteIndex = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
+    validateSearch: (search: Record<string, unknown>): { goal?: string } => {
+        const goal = typeof search.goal === 'string' && search.goal.length > 0
+            ? search.goal
+            : undefined
+
+        return goal ? { goal } : {}
+    },
     component: DashboardPage
 })
 
@@ -271,7 +269,7 @@ const RouteGoal = createRoute({
 
 const RouteExecution = createRoute({
     getParentRoute: () => rootRoute,
-    path: '/goals/$goalId/execution/$streamId',
+    path: '/goals/$goalId/plans/$planId',
     component: ExecutionRoutePage
 })
 

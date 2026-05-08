@@ -15,6 +15,7 @@ type ParsedPlanRecord = {
     planPath: string
     phaseKey: string
     phaseLabel: string
+    dependsOn: string[]
     planTitle: string
     summary: string
     checklist: OmcPlanChecklistItem[]
@@ -23,20 +24,26 @@ type ParsedPlanRecord = {
     summaryExists: boolean
 }
 
-function parseFrontmatter(content: string): { frontmatter?: Record<string, unknown>; body: string } {
+function parseFrontmatter(content: string): { frontmatter?: Record<string, unknown>; rawFrontmatter?: string; body: string } {
     const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
     if (!match) {
         return { body: content }
     }
 
+    const rawFrontmatter = match[1] ?? ''
+
     try {
-        const frontmatter = parseYaml(match[1] ?? '') as Record<string, unknown> | null
+        const frontmatter = parseYaml(rawFrontmatter) as Record<string, unknown> | null
         return {
             frontmatter: frontmatter ?? undefined,
+            rawFrontmatter,
             body: match[2] ?? ''
         }
     } catch {
-        return { body: content }
+        return {
+            rawFrontmatter,
+            body: match[2] ?? ''
+        }
     }
 }
 
@@ -155,6 +162,41 @@ function deriveSummary(body: string): string {
     return objectiveLines[1] ?? objectiveLines[0] ?? ''
 }
 
+function parseInlineStringArray(rawValue: string): string[] {
+    const trimmed = rawValue.trim()
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
+        return []
+    }
+
+    return trimmed
+        .slice(1, -1)
+        .split(',')
+        .map((value) => value.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean)
+}
+
+function deriveDependsOn(frontmatter?: Record<string, unknown>, rawFrontmatter?: string): string[] {
+    const candidate = frontmatter?.depends_on ?? frontmatter?.dependsOn
+    if (!Array.isArray(candidate)) {
+        const line = rawFrontmatter
+            ?.split('\n')
+            .map((item) => item.trim())
+            .find((item) => item.startsWith('depends_on:') || item.startsWith('dependsOn:'))
+
+        if (!line) {
+            return []
+        }
+
+        const rawValue = line.slice(line.indexOf(':') + 1)
+        return parseInlineStringArray(rawValue)
+    }
+
+    return candidate
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter(Boolean)
+}
+
 function buildRefs(planningRoot: string, phaseDir: string): OmcPlanDetailResponse['plan']['refs'] {
     const phasePrefix = basename(phaseDir).split('-')[0] ?? ''
     const workspaceRoot = dirname(planningRoot)
@@ -175,7 +217,7 @@ function buildRefs(planningRoot: string, phaseDir: string): OmcPlanDetailRespons
 
 function parsePlanFile(planningRoot: string, absolutePath: string): ParsedPlanRecord {
     const content = readFileSync(absolutePath, 'utf8')
-    const { frontmatter, body } = parseFrontmatter(content)
+    const { frontmatter, rawFrontmatter, body } = parseFrontmatter(content)
     const phaseDir = dirname(absolutePath)
     const phaseKey = basename(phaseDir)
     const workspaceRoot = dirname(planningRoot)
@@ -189,6 +231,7 @@ function parsePlanFile(planningRoot: string, absolutePath: string): ParsedPlanRe
         planPath: relative(workspaceRoot, absolutePath),
         phaseKey,
         phaseLabel: formatPhaseLabel(phaseKey),
+        dependsOn: deriveDependsOn(frontmatter, rawFrontmatter),
         planTitle: derivePlanTitle(body, frontmatter),
         summary: deriveSummary(body),
         checklist,
@@ -219,6 +262,7 @@ export function buildPlanningIndex(program: OmcProgram): OmcPlanningIndexRespons
             planPath: plan.planPath,
             phaseKey: plan.phaseKey,
             phaseLabel: plan.phaseLabel,
+            dependsOn: plan.dependsOn,
             planTitle: plan.planTitle,
             summary: plan.summary,
             checklistTotal: plan.checklist.length,

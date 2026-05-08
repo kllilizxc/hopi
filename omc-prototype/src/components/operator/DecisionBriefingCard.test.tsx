@@ -11,6 +11,7 @@ describe('DecisionBriefingCard', () => {
             <DecisionBriefingCard
                 briefing={{
                     title: '执行中断，等待恢复确认',
+                    decisionQuestion: '这一轮是否要在环境恢复后重试，还是先停在这里。',
                     identity: {
                         projectLabel: 'CardGame',
                         goalLabel: '01 First Playable Expedition',
@@ -19,6 +20,8 @@ describe('DecisionBriefingCard', () => {
                         sessionId: 'session-cardgame-1',
                     },
                     summaryRows: {
+                        targetOutcome: '把 expedition domain 的基础状态、持久化与原型内容骨架先搭起来。',
+                        changeSummary: '这轮已经补上 stash / run 持久化，并改动了 src/game/state/ExpeditionState.ts、src/game/services/RunPersistence.ts。',
                         whatHappened: 'CardGame 的「Establish expedition domain」在执行中失去了关联 session，这一轮还没来得及上报结果。',
                         whyEscalated: '系统现在无法判断这轮应该继续、重试，还是改方向，所以需要你确认下一步。',
                         recommendedAction: '建议先查看日志，再决定是否恢复执行。',
@@ -40,7 +43,14 @@ describe('DecisionBriefingCard', () => {
         )
 
         expect(screen.getByText('项目：CardGame')).toBeInTheDocument()
+        expect(screen.getByText('你现在要确认的是')).toBeInTheDocument()
+        expect(screen.getByText(/这一轮是否要在环境恢复后重试/)).toBeInTheDocument()
         expect(screen.getByText('计划：Establish expedition domain')).toBeInTheDocument()
+        expect(screen.getByText('这次目标')).toBeInTheDocument()
+        expect(screen.getByText(/持久化与原型内容骨架/)).toBeInTheDocument()
+        expect(screen.getByText('这轮产出')).toBeInTheDocument()
+        expect(screen.getByText(/ExpeditionState\.ts/)).toBeInTheDocument()
+        expect(screen.getByText('按钮含义')).toBeInTheDocument()
         expect(screen.getByText('发生了什么')).toBeInTheDocument()
         expect(screen.getByRole('button', { name: '查看原始依据' })).toBeInTheDocument()
         expect(screen.queryByText('The linked session became inactive before the attempt reported a structured outcome.')).not.toBeInTheDocument()

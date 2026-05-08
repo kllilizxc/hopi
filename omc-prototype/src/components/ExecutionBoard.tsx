@@ -19,7 +19,7 @@ export default function ExecutionBoard(props: {
     const operatorSurface = useOperatorSurface()
 
     return (
-        <div className="flex flex-col gap-6 h-full overflow-hidden w-full max-w-[1600px] mx-auto">
+        <div className="prototype-board-shell--balanced flex flex-col gap-6 h-full overflow-hidden w-full max-w-[1600px] mx-auto">
             <section className="flex flex-col gap-4 flex-shrink-0">
                 <div className="flex items-center justify-between pb-2 border-b border-zinc-200">
                     <h2 className="text-xl font-semibold text-zinc-900">阶段</h2>
@@ -46,7 +46,7 @@ export default function ExecutionBoard(props: {
                 </div>
             </section>
 
-            <section className="flex gap-6 overflow-x-auto h-full pb-4 items-stretch">
+            <section className="prototype-kanban--balanced flex gap-6 overflow-x-auto h-full pb-4 items-stretch">
                 {COLUMNS.map((column) => (
                     <div key={column} className="flex flex-col gap-4 w-[320px] flex-shrink-0 h-full">
                         <div className="flex items-center justify-between pb-2 border-b border-zinc-200 sticky top-0 bg-zinc-50 z-10">

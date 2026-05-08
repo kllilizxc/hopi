@@ -75,14 +75,14 @@ export default function ThreadConversation(props: {
     return (
         <AssistantRuntimeProvider runtime={runtime}>
             <section className="flex flex-col h-full bg-white relative">
-                <ThreadPrimitive.Root className="flex flex-col flex-1 min-h-0 bg-zinc-50/30">
-                    <div className="flex flex-col h-full">
+                <ThreadPrimitive.Root className="prototype-chat-thread flex flex-col flex-1 min-h-0 bg-zinc-50/30">
+                    <div className="prototype-chat-thread__root flex flex-col h-full">
                         <div className="flex-shrink-0 z-20 bg-white border-b border-zinc-200">
                             <ThreadHeader thread={props.thread} />
                         </div>
 
                         <div className="flex-1 min-h-0 relative">
-                            <ThreadPrimitive.Viewport className="absolute inset-0 overflow-y-auto" autoScroll>
+                            <ThreadPrimitive.Viewport className="prototype-chat-thread__viewport absolute inset-0 overflow-y-auto" autoScroll>
                                 <div className="flex flex-col max-w-3xl mx-auto w-full">
                                     {props.thread.briefing ? (
                                         <div className="px-6 py-4">
@@ -102,7 +102,7 @@ export default function ThreadConversation(props: {
                                         </div>
                                     ) : null}
 
-                                    <div className="flex flex-col w-full gap-8 px-6 pt-4 pb-8">
+                                    <div className="prototype-chat-thread__messages flex flex-col w-full gap-8 px-6 pt-4 pb-8">
                                         <ThreadPrimitive.Messages components={THREAD_COMPONENTS} />
                                     </div>
                                 </div>
@@ -112,10 +112,10 @@ export default function ThreadConversation(props: {
                 </ThreadPrimitive.Root>
 
                 <div className="flex-shrink-0 border-t border-zinc-200 bg-white p-4 z-20">
-                    <div className="max-w-3xl mx-auto w-full flex flex-col gap-3">
+                    <div className="prototype-chat-thread__controls max-w-3xl mx-auto w-full flex flex-col gap-3">
                         <ThreadQuickActions thread={props.thread} />
 
-                        <ComposerPrimitive.Root className="flex flex-col border border-zinc-300 rounded-xl bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 overflow-hidden transition-all duration-200">
+                        <ComposerPrimitive.Root className="prototype-chat-compose flex flex-col border border-zinc-300 rounded-xl bg-white shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 overflow-hidden transition-all duration-200">
                             <div className="flex items-end bg-white w-full p-2 relative">
                                 <ComposerPrimitive.Input
                                     className="flex-1 max-h-32 min-h-[44px] px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 bg-transparent resize-none outline-none leading-relaxed"

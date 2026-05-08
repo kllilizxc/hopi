@@ -583,6 +583,201 @@ export const OmcEvidenceSchema = z.object({
 })
 export type OmcEvidence = z.infer<typeof OmcEvidenceSchema>
 
+export const OmcDecisionTopicKindSchema = z.enum(['status', 'approval', 'risk', 'direction'])
+export type OmcDecisionTopicKind = z.infer<typeof OmcDecisionTopicKindSchema>
+
+export const OmcDecisionTopicLifecycleSchema = z.enum(['pending', 'in-progress', 'waiting', 'silent', 'resolved'])
+export type OmcDecisionTopicLifecycle = z.infer<typeof OmcDecisionTopicLifecycleSchema>
+
+export const OmcDecisionTopicTurnAuthorSchema = z.enum(['user', 'manager', 'system', 'agent'])
+export type OmcDecisionTopicTurnAuthor = z.infer<typeof OmcDecisionTopicTurnAuthorSchema>
+
+export const OmcDecisionTopicTurnKindSchema = z.enum(['question', 'directive', 'decision', 'ack', 'answer', 'status', 'evidence'])
+export type OmcDecisionTopicTurnKind = z.infer<typeof OmcDecisionTopicTurnKindSchema>
+
+export const OmcDecisionTopicTurnReplyStateSchema = z.enum(['none', 'forwarded', 'linked', 'failed'])
+export type OmcDecisionTopicTurnReplyState = z.infer<typeof OmcDecisionTopicTurnReplyStateSchema>
+
+export const OmcDecisionTopicTurnSchema = z.object({
+    id: z.string(),
+    topicId: z.string().trim().min(1),
+    programId: z.string(),
+    author: OmcDecisionTopicTurnAuthorSchema,
+    kind: OmcDecisionTopicTurnKindSchema,
+    body: z.string(),
+    sessionId: z.string().nullable().optional(),
+    sessionMessageId: z.string().nullable().optional(),
+    replyState: OmcDecisionTopicTurnReplyStateSchema,
+    createdAt: z.number(),
+})
+export type OmcDecisionTopicTurn = z.infer<typeof OmcDecisionTopicTurnSchema>
+
+export const OmcDecisionTopicSchema = z.object({
+    id: z.string().trim().min(1),
+    programId: z.string(),
+    kind: OmcDecisionTopicKindSchema,
+    title: z.string().trim().min(1),
+    goalId: z.string().nullable().optional(),
+    planKey: z.string().trim().min(1).nullable().optional(),
+    workOrderId: z.string().nullable().optional(),
+    lifecycle: OmcDecisionTopicLifecycleSchema,
+    unread: z.boolean(),
+    bridgeSessionId: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+})
+export type OmcDecisionTopic = z.infer<typeof OmcDecisionTopicSchema>
+
+export const OmcDecisionTopicThreadSchema = OmcDecisionTopicSchema.extend({
+    turns: z.array(OmcDecisionTopicTurnSchema),
+})
+export type OmcDecisionTopicThread = z.infer<typeof OmcDecisionTopicThreadSchema>
+
+export const OmcDecisionTopicListResponseSchema = z.object({
+    programId: z.string(),
+    topics: z.array(OmcDecisionTopicThreadSchema),
+})
+export type OmcDecisionTopicListResponse = z.infer<typeof OmcDecisionTopicListResponseSchema>
+
+export const OmcDecisionTopicReplyRequestSchema = z.object({
+    topicId: z.string().trim().min(1),
+    kind: OmcDecisionTopicKindSchema,
+    title: z.string().trim().min(1),
+    goalId: z.string().nullable().optional(),
+    planKey: z.string().trim().min(1).nullable().optional(),
+    sessionId: z.string().nullable().optional(),
+    text: z.string().trim().min(1),
+})
+export type OmcDecisionTopicReplyRequest = z.infer<typeof OmcDecisionTopicReplyRequestSchema>
+
+export const OmcDecisionTopicReplyResponseSchema = z.object({
+    topic: OmcDecisionTopicSchema,
+    turns: z.array(OmcDecisionTopicTurnSchema),
+})
+export type OmcDecisionTopicReplyResponse = z.infer<typeof OmcDecisionTopicReplyResponseSchema>
+
+export const OmcMailboxPrioritySchema = z.enum(['low', 'normal', 'high'])
+export type OmcMailboxPriority = z.infer<typeof OmcMailboxPrioritySchema>
+
+export const OmcMailboxMessageSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    from: z.string().trim().min(1),
+    to: z.string().trim().min(1),
+    thread: z.string().trim().min(1),
+    kind: z.string().trim().min(1),
+    priority: OmcMailboxPrioritySchema,
+    body: z.string(),
+    createdAt: z.number(),
+    readAt: z.number().nullable().optional(),
+})
+export type OmcMailboxMessage = z.infer<typeof OmcMailboxMessageSchema>
+
+export const OmcWorkOrderOwnerSchema = z.enum(['manager', 'driver', 'reviewer', 'planner'])
+export type OmcWorkOrderOwner = z.infer<typeof OmcWorkOrderOwnerSchema>
+
+export const OmcWorkOrderStatusSchema = z.enum([
+    'ready',
+    'in_progress',
+    'in_review',
+    'waiting_user',
+    'replanning',
+    'blocked',
+    'done',
+])
+export type OmcWorkOrderStatus = z.infer<typeof OmcWorkOrderStatusSchema>
+
+export const OmcReviewVerdictSchema = z.enum(['accepted', 'revision_needed', 'needs_user', 'replan_needed'])
+export type OmcReviewVerdict = z.infer<typeof OmcReviewVerdictSchema>
+
+export const OmcWorkOrderSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    goalId: z.string().nullable().optional(),
+    planKey: z.string().trim().min(1).nullable().optional(),
+    title: z.string().trim().min(1),
+    owner: OmcWorkOrderOwnerSchema.nullable().optional(),
+    status: OmcWorkOrderStatusSchema,
+    currentAttemptId: z.string().nullable().optional(),
+    reviewerVerdict: OmcReviewVerdictSchema.nullable().optional(),
+    blockedReason: z.string().nullable().optional(),
+    latestAcceptedAttemptId: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+})
+export type OmcWorkOrder = z.infer<typeof OmcWorkOrderSchema>
+
+export const OmcWorkAttemptRoleSchema = z.enum(['driver', 'reviewer'])
+export type OmcWorkAttemptRole = z.infer<typeof OmcWorkAttemptRoleSchema>
+
+export const OmcWorkAttemptStatusSchema = z.enum([
+    'running',
+    'closing',
+    'reviewing',
+    'accepted',
+    'revision_needed',
+    'needs_user',
+    'failed',
+])
+export type OmcWorkAttemptStatus = z.infer<typeof OmcWorkAttemptStatusSchema>
+
+export const OmcWorkAttemptSchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    workOrderId: z.string(),
+    role: OmcWorkAttemptRoleSchema,
+    sessionId: z.string().nullable().optional(),
+    status: OmcWorkAttemptStatusSchema,
+    summary: z.string().nullable().optional(),
+    sourceMailboxMessageId: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    completedAt: z.number().nullable().optional(),
+})
+export type OmcWorkAttempt = z.infer<typeof OmcWorkAttemptSchema>
+
+export const OmcCoordinationAgentRoleSchema = z.enum(['manager', 'driver', 'reviewer', 'planner'])
+export type OmcCoordinationAgentRole = z.infer<typeof OmcCoordinationAgentRoleSchema>
+
+export const OmcCoordinationAgentStateSchema = z.object({
+    programId: z.string(),
+    role: OmcCoordinationAgentRoleSchema,
+    busy: z.boolean(),
+    currentWorkOrderId: z.string().nullable().optional(),
+    activeSessionId: z.string().nullable().optional(),
+    model: z.string().nullable().optional(),
+    mode: z.string().nullable().optional(),
+    lastHeartbeat: z.number(),
+})
+export type OmcCoordinationAgentState = z.infer<typeof OmcCoordinationAgentStateSchema>
+
+export const OmcDirectiveScopeTypeSchema = z.enum(['program', 'goal', 'plan', 'work_order'])
+export type OmcDirectiveScopeType = z.infer<typeof OmcDirectiveScopeTypeSchema>
+
+export const OmcDirectiveLedgerEntrySchema = z.object({
+    id: z.string(),
+    programId: z.string(),
+    scopeType: OmcDirectiveScopeTypeSchema,
+    scopeId: z.string().trim().min(1),
+    sourceTopicId: z.string().nullable().optional(),
+    key: z.string().trim().min(1),
+    summary: z.string().trim().min(1),
+    rawText: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+})
+export type OmcDirectiveLedgerEntry = z.infer<typeof OmcDirectiveLedgerEntrySchema>
+
+export const OmcProgramRuntimeStateResponseSchema = z.object({
+    programId: z.string(),
+    mailbox: z.array(OmcMailboxMessageSchema),
+    workOrders: z.array(OmcWorkOrderSchema),
+    workAttempts: z.array(OmcWorkAttemptSchema),
+    agents: z.array(OmcCoordinationAgentStateSchema),
+    directives: z.array(OmcDirectiveLedgerEntrySchema),
+})
+export type OmcProgramRuntimeStateResponse = z.infer<typeof OmcProgramRuntimeStateResponseSchema>
+
 export const OmcProgramSummarySchema = OmcProgramSchema.extend({
     counts: z.object({
         Planning: z.number().int().min(0),
@@ -599,6 +794,7 @@ export const OmcPlanSummarySchema = z.object({
     planPath: z.string().trim().min(1),
     phaseKey: z.string().trim().min(1),
     phaseLabel: z.string().trim().min(1),
+    dependsOn: z.array(z.string().trim().min(1)).optional(),
     planTitle: z.string().trim().min(1),
     summary: z.string(),
     checklistTotal: z.number().int().min(0),
@@ -1017,6 +1213,84 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
             planKey: z.string(),
             runtime: OmcPlanRuntimeSchema.optional(),
             packet: OmcMergePacketSchema.optional()
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-topic-updated'),
+        programId: z.string(),
+        topicId: z.string(),
+        data: z.object({
+            topicId: z.string(),
+            topic: OmcDecisionTopicSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-topic-turn-added'),
+        programId: z.string(),
+        topicId: z.string(),
+        turnId: z.string(),
+        data: z.object({
+            topicId: z.string(),
+            turnId: z.string(),
+            turn: OmcDecisionTopicTurnSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-mailbox-message-added'),
+        programId: z.string(),
+        messageId: z.string(),
+        data: z.object({
+            messageId: z.string(),
+            message: OmcMailboxMessageSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-work-order-updated'),
+        programId: z.string(),
+        workOrderId: z.string(),
+        data: z.object({
+            workOrderId: z.string(),
+            workOrder: OmcWorkOrderSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-work-attempt-added'),
+        programId: z.string(),
+        workOrderId: z.string(),
+        workAttemptId: z.string(),
+        data: z.object({
+            workOrderId: z.string(),
+            workAttemptId: z.string(),
+            workAttempt: OmcWorkAttemptSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-work-attempt-updated'),
+        programId: z.string(),
+        workOrderId: z.string(),
+        workAttemptId: z.string(),
+        data: z.object({
+            workOrderId: z.string(),
+            workAttemptId: z.string(),
+            workAttempt: OmcWorkAttemptSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-coordination-agent-updated'),
+        programId: z.string(),
+        role: OmcCoordinationAgentRoleSchema,
+        data: z.object({
+            role: OmcCoordinationAgentRoleSchema,
+            agent: OmcCoordinationAgentStateSchema.optional(),
+        }).optional()
+    }),
+    SessionEventBaseSchema.extend({
+        type: z.literal('omc-directive-ledger-updated'),
+        programId: z.string(),
+        directiveId: z.string(),
+        data: z.object({
+            directiveId: z.string(),
+            directive: OmcDirectiveLedgerEntrySchema.optional(),
         }).optional()
     })
 ])

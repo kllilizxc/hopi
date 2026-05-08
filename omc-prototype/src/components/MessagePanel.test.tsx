@@ -40,8 +40,16 @@ const operatorSurfaceState: {
     clearSessionLog: vi.fn(),
 }
 
+const locationState: {
+    pathname: string
+    searchStr?: string
+} = {
+    pathname: '/goals/goal-1',
+    searchStr: '',
+}
+
 vi.mock('@tanstack/react-router', () => ({
-    useLocation: () => ({ pathname: '/goals/goal-1' }),
+    useLocation: () => locationState,
 }))
 
 vi.mock('@/prototype/store', () => ({
@@ -68,11 +76,13 @@ vi.mock('@/components/operator/MessageWorkspace', () => ({
         selectedThread: OperatorThread | null
         traceSelection?: { planId: string; streamId: string } | null
         sessionLogSelection?: { sessionId: string } | null
+        heading?: { summary: string }
         onSelectThread: (threadId: string) => void
         onBackToList: () => void
     }) {
         return (
             <div>
+                <div data-testid="workspace-heading">{props.heading?.summary ?? ''}</div>
                 <div data-testid="workspace-mode">
                     {props.mode === 'session-log'
                         ? `session-log:${props.sessionLogSelection?.sessionId ?? 'unknown'}`
@@ -92,6 +102,8 @@ vi.mock('@/components/operator/MessageWorkspace', () => ({
 
 describe('MessagePanel', () => {
     beforeEach(() => {
+        locationState.pathname = '/goals/goal-1'
+        locationState.searchStr = ''
         storeState.activeThread = null
         storeState.activeThreadSelectionId = 0
         storeState.threads = [buildThread()]
@@ -220,6 +232,17 @@ describe('MessagePanel', () => {
 
         rerender(<MessagePanel />)
         expect(screen.getByTestId('workspace-mode')).toHaveTextContent('trace:plan-ingest-proof')
+    })
+
+    it('treats the root workspace goal query as the current goal context', async () => {
+        const { default: MessagePanel } = await import('./MessagePanel')
+
+        locationState.pathname = '/'
+        locationState.searchStr = '?goal=goal-1'
+
+        render(<MessagePanel />)
+
+        expect(screen.getByTestId('workspace-heading')).toHaveTextContent('围绕当前目标的话题会优先排前，默认先看列表。')
     })
 })
 

@@ -7,7 +7,7 @@ const MARKDOWN_PLUGINS = [remarkGfm]
 
 export function MarkdownRenderer(props: { content: string }) {
     return (
-        <div className="prototype-thread-markdown">
+        <div className="prototype-thread-markdown overflow-x-hidden [overflow-wrap:anywhere]">
             <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
                 {props.content}
             </ReactMarkdown>
@@ -19,7 +19,7 @@ export function MarkdownMessagePart() {
     return (
         <MarkdownTextPrimitive
             remarkPlugins={MARKDOWN_PLUGINS}
-            className="prototype-thread-markdown"
+            className="prototype-thread-markdown overflow-x-hidden [overflow-wrap:anywhere]"
         />
     )
 }

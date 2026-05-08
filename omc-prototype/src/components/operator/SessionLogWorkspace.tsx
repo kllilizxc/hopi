@@ -48,7 +48,7 @@ type SessionLogEntry = MessageSessionLogEntry | ToolSessionLogEntry
 type SessionLogTailState = {
     tone: 'running' | 'live' | 'stopped'
     title: string
-    detail: string
+    detail: string | null
     pulse: boolean
 }
 
@@ -256,6 +256,18 @@ function getErrorMessage(error: unknown): string {
     return message || '底层 Session 操作失败'
 }
 
+function isSessionNotFoundError(error: unknown): boolean {
+    const message = getErrorMessage(error)
+    return /session not found/i.test(message)
+}
+
+function getSessionLoadErrorMessage(error: unknown): string {
+    if (isSessionNotFoundError(error)) {
+        return '这条底层 transcript 对应的旧 session 已被回收。'
+    }
+    return getErrorMessage(error)
+}
+
 function extractSessionStatePatch(data: unknown): Partial<Pick<Session, 'active' | 'thinking' | 'activeAt' | 'modelMode' | 'permissionMode'>> | null {
     if (!data || typeof data !== 'object') {
         return null
@@ -296,8 +308,8 @@ function buildSessionLogTailState(params: {
     if (!session.active) {
         return {
             tone: 'stopped',
-            title: '本轮输出已结束',
-            detail: '这条 Session 已停止；如果你继续发送，系统会先自动恢复。',
+            title: '本轮已结束',
+            detail: null,
             pulse: false,
         }
     }
@@ -305,16 +317,16 @@ function buildSessionLogTailState(params: {
     if (session.thinking || pendingCount > 0 || sending) {
         return {
             tone: 'running',
-            title: '底层 Agent 正在继续输出',
-            detail: '新消息会继续追加在这里。',
+            title: '正在输出…',
+            detail: null,
             pulse: true,
         }
     }
 
     return {
         tone: 'live',
-        title: '会话仍在线，等待下一步',
-        detail: '当前没有新输出，但这条 Session 还没有结束。',
+        title: '在线，等待下一条输出',
+        detail: null,
         pulse: false,
     }
 }
@@ -322,8 +334,11 @@ function buildSessionLogTailState(params: {
 export default function SessionLogWorkspace(props: {
     selection: SessionLogSelection
     onBack: () => void
+    mode?: 'standalone' | 'embedded'
 }) {
     const api = usePrototypeRemoteApi()
+    const mode = props.mode ?? 'standalone'
+    const isEmbedded = mode === 'embedded'
     const [resolvedSessionId, setResolvedSessionId] = useState(props.selection.sessionId)
     const [session, setSession] = useState<Session | null>(null)
     const [loadingSession, setLoadingSession] = useState(true)
@@ -335,6 +350,7 @@ export default function SessionLogWorkspace(props: {
     const stickToBottomRef = useRef(true)
     const previousLastEntryIdRef = useRef<string | null>(null)
     const previousSessionIdRef = useRef<string | null>(null)
+    const previousTailToneRef = useRef<SessionLogTailState['tone'] | null>(null)
 
     const {
         messages,
@@ -362,7 +378,8 @@ export default function SessionLogWorkspace(props: {
             const response = await api.getSession(sessionId)
             setSession(response.session)
         } catch (error) {
-            setSessionError(getErrorMessage(error))
+            setSession(null)
+            setSessionError(getSessionLoadErrorMessage(error))
         } finally {
             setLoadingSession(false)
         }
@@ -444,6 +461,7 @@ export default function SessionLogWorkspace(props: {
     useEffect(() => {
         const sessionChanged = previousSessionIdRef.current !== resolvedSessionId
         const lastEntryChanged = previousLastEntryIdRef.current !== lastEntryId
+        const tailToneChanged = previousTailToneRef.current !== (tailState?.tone ?? null)
 
         if (sessionChanged) {
             stickToBottomRef.current = true
@@ -451,7 +469,7 @@ export default function SessionLogWorkspace(props: {
             requestAnimationFrame(() => {
                 scrollToBottom()
             })
-        } else if (lastEntryChanged && stickToBottomRef.current) {
+        } else if (lastEntryChanged || tailToneChanged) {
             requestAnimationFrame(() => {
                 scrollToBottom()
             })
@@ -459,7 +477,8 @@ export default function SessionLogWorkspace(props: {
 
         previousSessionIdRef.current = resolvedSessionId
         previousLastEntryIdRef.current = lastEntryId
-    }, [lastEntryId, resolvedSessionId, scrollToBottom, setAtBottom])
+        previousTailToneRef.current = tailState?.tone ?? null
+    }, [lastEntryId, resolvedSessionId, scrollToBottom, setAtBottom, tailState?.tone])
 
     useEffect(() => {
         if (!pendingCount || !stickToBottomRef.current) {
@@ -523,6 +542,17 @@ export default function SessionLogWorkspace(props: {
     }
 
     if (loadingSession && !session) {
+        if (isEmbedded) {
+            return (
+                <section className="flex flex-col h-full bg-white relative">
+                    <section className="flex flex-col items-center justify-center p-12 text-center text-zinc-500 h-full">
+                        <h3 className="text-base font-semibold text-zinc-900 mb-2">正在连接底层 Session</h3>
+                        <p className="text-sm max-w-sm">系统正在拉取这条运行的原始 transcript。</p>
+                    </section>
+                </section>
+            )
+        }
+
         return (
             <section className="flex flex-col h-full bg-white relative">
                 <header className="flex-shrink-0 px-6 py-4 bg-zinc-50 border-b border-zinc-200">
@@ -548,16 +578,25 @@ export default function SessionLogWorkspace(props: {
     return (
         <section className="flex flex-col h-full bg-white relative">
             <div className="flex-shrink-0 border-b border-zinc-200 z-10 bg-white">
-                <header className="px-6 py-5 bg-zinc-50">
-                    <div className="flex items-center justify-between mb-4">
-                        <button
-                            type="button"
-                            className="flex items-center gap-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors focus:outline-none focus-visible:underline"
-                            onClick={props.onBack}
-                            aria-label="返回消息面板"
-                        >
-                            <span>← 返回消息面板</span>
-                        </button>
+                <header className={`${isEmbedded ? 'px-4 py-4 bg-white' : 'px-6 py-5 bg-zinc-50'}`}>
+                    <div className={`prototype-session-log__topbar flex items-center justify-between gap-3 ${isEmbedded ? '' : 'mb-4'}`}>
+                        {isEmbedded ? (
+                            <div className="flex flex-col min-w-0">
+                                <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">底层 transcript</p>
+                                <p className="text-sm text-zinc-500 truncate" title={props.selection.subtitle ?? resolvedSessionId}>
+                                    {props.selection.subtitle ?? resolvedSessionId}
+                                </p>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                className="flex items-center gap-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors focus:outline-none focus-visible:underline"
+                                onClick={props.onBack}
+                                aria-label="返回消息面板"
+                            >
+                                <span>← 返回消息面板</span>
+                            </button>
+                        )}
 
                         <div className="flex items-center gap-3">
                             {hasMore ? (
@@ -583,16 +622,18 @@ export default function SessionLogWorkspace(props: {
                         </div>
                     </div>
 
-                    <div className="flex flex-col">
-                        <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">底层 transcript</p>
-                        <h2 className="text-xl font-bold text-zinc-900 mb-1">{props.selection.title}</h2>
-                        <p className="text-sm text-zinc-500 truncate" title={props.selection.subtitle ?? resolvedSessionId}>
-                            {props.selection.subtitle ?? resolvedSessionId}
-                        </p>
-                    </div>
+                    {!isEmbedded ? (
+                        <div className="flex flex-col">
+                            <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">底层 transcript</p>
+                            <h2 className="prototype-session-log__title text-xl font-bold text-zinc-900 mb-1">{props.selection.title}</h2>
+                            <p className="text-sm text-zinc-500 truncate" title={props.selection.subtitle ?? resolvedSessionId}>
+                                {props.selection.subtitle ?? resolvedSessionId}
+                            </p>
+                        </div>
+                    ) : null}
                 </header>
 
-                <div className="flex flex-wrap gap-2 px-6 py-3 bg-white border-t border-zinc-100">
+                <div className={`prototype-session-log__meta prototype-session-log__meta--wrapped flex flex-wrap gap-2 ${isEmbedded ? 'px-4 py-3' : 'px-6 py-3'} bg-white border-t border-zinc-100`}>
                     <MetaBadge tone="neutral">{labelSource(props.selection.source)}</MetaBadge>
                     {session?.metadata?.flavor ? (
                         <MetaBadge tone="neutral">{session.metadata.flavor}</MetaBadge>
@@ -605,7 +646,7 @@ export default function SessionLogWorkspace(props: {
                     ) : null}
                 </div>
 
-                {!session?.active ? (
+                {session && !session.active ? (
                     <div className="px-6 py-2 bg-amber-50 border-t border-b border-amber-100 text-sm text-amber-800 font-medium">
                         Session 已停止。发送新消息会先自动恢复，再继续写入。
                     </div>
@@ -625,13 +666,16 @@ export default function SessionLogWorkspace(props: {
             <div className="flex-1 flex flex-col min-h-0 bg-zinc-50/30 relative" data-testid="session-log-scroll-shell">
                 <div
                     ref={viewportRef}
-                    className="absolute inset-0 overflow-y-auto px-6 py-6"
+                    className={`absolute inset-0 overflow-y-auto overflow-x-hidden ${isEmbedded ? 'px-4 py-4' : 'px-6 py-6'}`}
                     onScroll={handleViewportScroll}
                 >
-                    <div className="flex flex-col max-w-3xl mx-auto w-full gap-6 pb-4">
+                    <div className="prototype-chat-thread__messages--chronological flex flex-col max-w-3xl mx-auto w-full min-w-0 gap-6 pb-4">
                         {entries.length ? entries.map((entry) => {
                                 return (
-                                    <article key={entry.id} className={getOperatorMessageRootClass(entry.role)}>
+                                    <article
+                                        key={entry.id}
+                                        className={`${getOperatorMessageRootClass(entry.role)} ${entry.role === 'assistant' ? 'prototype-thread-message--agent' : entry.role === 'user' ? 'prototype-thread-message--user' : 'prototype-thread-message--system'}`}
+                                    >
                                         <OperatorMessageCard
                                             role={entry.role}
                                             timestampLabel={entry.createdAtLabel}
@@ -659,26 +703,26 @@ export default function SessionLogWorkspace(props: {
                             )}
                             {entries.length && tailState ? (
                                 <div
-                                    className={`flex items-start gap-4 p-4 rounded-xl border mt-4 ${tailState.tone === 'running' ? 'bg-blue-50 border-blue-200' : tailState.tone === 'live' ? 'bg-emerald-50 border-emerald-200' : 'bg-zinc-100 border-zinc-200 opacity-80'}`}
+                                    className={`prototype-session-log__tail prototype-session-log__tail--${tailState.tone} flex items-center gap-2 px-3 py-2 rounded-lg border mt-2 w-fit max-w-full ${tailState.tone === 'running' ? 'bg-blue-50/70 border-blue-200 text-blue-800' : tailState.tone === 'live' ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800' : 'bg-zinc-100 border-zinc-200 text-zinc-700 opacity-90'}`}
                                     data-testid="session-log-tail"
                                     role="status"
                                     aria-live="polite"
                                 >
                                     <span
                                         aria-hidden="true"
-                                        className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${tailState.tone === 'running' ? 'bg-blue-500' : tailState.tone === 'live' ? 'bg-emerald-500' : 'bg-zinc-400'} ${tailState.pulse ? 'animate-pulse' : ''}`}
+                                        className={`prototype-session-log__tail-dot ${tailState.pulse ? 'prototype-session-log__tail-dot--pulse' : ''} w-2 h-2 rounded-full flex-shrink-0 ${tailState.tone === 'running' ? 'bg-blue-500' : tailState.tone === 'live' ? 'bg-emerald-500' : 'bg-zinc-400'} ${tailState.pulse ? 'animate-pulse' : ''}`}
                                     />
-                                    <div className="flex flex-col gap-1 min-w-0">
-                                        <p className={`text-sm font-bold ${tailState.tone === 'running' ? 'text-blue-900' : tailState.tone === 'live' ? 'text-emerald-900' : 'text-zinc-700'}`}>{tailState.title}</p>
-                                        <p className={`text-xs ${tailState.tone === 'running' ? 'text-blue-700' : tailState.tone === 'live' ? 'text-emerald-700' : 'text-zinc-500'}`}>{tailState.detail}</p>
-                                    </div>
+                                    <p className="text-xs font-medium whitespace-pre-wrap break-words">{tailState.title}</p>
+                                    {tailState.detail ? (
+                                        <p className="text-xs opacity-80 whitespace-pre-wrap break-words">{tailState.detail}</p>
+                                    ) : null}
                                 </div>
                             ) : null}
                         </div>
-                    </div>
                 </div>
+            </div>
 
-            <form className="flex-shrink-0 border-t border-zinc-200 bg-white p-4 z-10" onSubmit={handleSend}>
+            <form className={`flex-shrink-0 border-t border-zinc-200 bg-white ${isEmbedded ? 'p-3' : 'p-4'} z-10`} onSubmit={handleSend}>
                 {sendError ? (
                     <p className="mb-3 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md" role="alert">
                         {sendError}

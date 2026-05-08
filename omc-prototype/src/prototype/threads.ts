@@ -481,6 +481,7 @@ function threadMeaningfulSignature(thread: Pick<OperatorThread, 'title' | 'previ
         thread.firstMessage.continueSilentlyEffect ?? '',
         thread.firstMessage.changeDirectionEffect ?? '',
         thread.briefing?.title ?? '',
+        thread.briefing?.decisionQuestion ?? '',
         thread.briefing?.identity.projectLabel ?? '',
         thread.briefing?.identity.goalLabel ?? '',
         thread.briefing?.identity.planLabel ?? '',
@@ -550,6 +551,17 @@ function approvalDecisionPrompt(item: PrototypeApprovalItem) {
     }
 }
 
+function approvalDecisionQuestion(item: PrototypeApprovalItem) {
+    switch (item.kind) {
+        case 'branch-promotion':
+            return '要不要按系统建议放行导入分支。'
+        case 'direction-change':
+            return '要不要按系统建议调整周报路线。'
+        case 'scope-change':
+            return '要不要按系统建议收紧周报范围。'
+    }
+}
+
 function approvalApproveLabel(item: PrototypeApprovalItem) {
     switch (item.kind) {
         case 'branch-promotion':
@@ -604,6 +616,7 @@ function createThreadIdentity(snapshot: PrototypeScenarioSnapshot, refs: ThreadC
 function createStatusBriefing(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal, refs: ThreadContextRef[], goalView: ReturnType<typeof goalPresentation>): DecisionBriefing {
     return {
         title: statusThreadTitle(goal),
+        decisionQuestion: null,
         identity: createThreadIdentity(snapshot, refs),
         summaryRows: {
             whatHappened: `${goalDisplayLabel(goal)} 当前处于${labelGoalStatus(goal.status)}，置信度约 ${goal.confidence}%。`,
@@ -630,6 +643,7 @@ function createStatusBriefing(snapshot: PrototypeScenarioSnapshot, goal: Prototy
 function createDirectionBriefing(snapshot: PrototypeScenarioSnapshot, goal: PrototypeGoal, refs: ThreadContextRef[], firstMessage: OperatorFirstMessage): DecisionBriefing {
     return {
         title: directionThreadTitle(goal),
+        decisionQuestion: null,
         identity: createThreadIdentity(snapshot, refs),
         summaryRows: {
             whatHappened: firstMessage.currentStatus,
@@ -679,6 +693,7 @@ function createApprovalBriefing(snapshot: PrototypeScenarioSnapshot, item: Proto
 
     return {
         title: approvalThreadTitle(item),
+        decisionQuestion: approvalDecisionQuestion(item),
         identity: createThreadIdentity(snapshot, refs, item.title),
         summaryRows: {
             whatHappened: firstMessage.currentStatus,
@@ -707,6 +722,7 @@ function createApprovalBriefing(snapshot: PrototypeScenarioSnapshot, item: Proto
 function createRiskBriefing(snapshot: PrototypeScenarioSnapshot, risk: PrototypeRisk, refs: ThreadContextRef[], view: ReturnType<typeof riskPresentation>, context: ReturnType<typeof riskContextPresentation>, firstMessage: OperatorFirstMessage): DecisionBriefing {
     return {
         title: riskThreadTitle(risk),
+        decisionQuestion: null,
         identity: createThreadIdentity(snapshot, refs),
         summaryRows: {
             whatHappened: `${view.title}，当前被系统判定为${labelRiskSeverity(risk.severity)}风险。`,
@@ -893,7 +909,9 @@ function createApprovalThread(snapshot: PrototypeScenarioSnapshot, item: Prototy
     }
     const briefing = createApprovalBriefing(snapshot, item, baseFirstMessage, context, refs)
     const firstMessage: OperatorFirstMessage = {
-        currentStatus: briefing.summaryRows.whatHappened,
+        currentStatus: item.liveContext
+            ? (briefing.decisionQuestion ?? briefing.summaryRows.whatHappened)
+            : baseFirstMessage.currentStatus,
         background: briefing.summaryRows.whyEscalated,
         whyNow: briefing.summaryRows.currentImpact,
         suggestedAction: briefing.summaryRows.recommendedAction,
@@ -1122,6 +1140,7 @@ export function syncOperatorThreadBundle(params: {
     snapshot: PrototypeScenarioSnapshot
     previousState: ExistingThreadState
     decisionTopics?: Record<string, DecisionTopic>
+    persistedMessagesByThread?: Record<string, OperatorMessage[]>
 }): { bundle: { threadsById: Record<string, OperatorThread>; messagesByThread: Record<string, OperatorMessage[]> }; activeThreadId: string | null } {
     const seeds = buildOperatorThreadSeeds(params.snapshot).map((seed) => (
         overlayDecisionTopic(seed, params.decisionTopics?.[seed.id] ?? null)
@@ -1131,7 +1150,8 @@ export function syncOperatorThreadBundle(params: {
 
     for (const seed of seeds) {
         const previousThread = params.previousState.threadsById[seed.id]
-        const previousMessages = params.previousState.messagesByThread[seed.id] ?? []
+        const persistedMessages = params.persistedMessagesByThread?.[seed.id] ?? null
+        const previousMessages = persistedMessages ?? params.previousState.messagesByThread[seed.id] ?? []
         const unread = shouldMarkUnread(
             seed,
             previousThread,

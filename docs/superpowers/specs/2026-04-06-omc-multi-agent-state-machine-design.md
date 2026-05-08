@@ -31,6 +31,19 @@ Recommended model:
 
 `Driver` and `Reviewer` are temporary worker roles, not permanent top-level agents.
 
+UI hierarchy recommendation for the real OMC-backed prototype:
+
+- user-visible navigation should collapse further to a `Single Workspace` model
+- there should be one primary page for the project, not separate dashboard and goal pages
+- the current goal should be selected inside that workspace rather than by navigating to a second page
+- the selected goal should still be encoded in the URL so refresh/share can restore context
+- each goal workspace view is the kanban for that goal's phases and plan cards
+- clicking a plan card should not create a third page; it should update the right-side message/trace surface in place
+- legacy direct links to a goal or a single plan card may exist as compatibility bridges, but they should resolve back into the single workspace with the appropriate goal selected
+- "execution stream" is not a required first-class object
+- if a stream concept exists, treat it as a derived grouping, filter, or label over plan cards
+- only promote streams back to first-class state if one long-lived lane truly owns many cards, its own risk posture, and its own operator-facing history
+
 ## Problem
 
 Without a clear internal model, OMC risks three failures:
@@ -70,7 +83,7 @@ Single global orchestrator.
 Responsibilities:
 
 - maintain the authoritative `WorldModel`
-- decide current focus, goal order, and stream priority
+- decide current focus, goal order, and plan-card priority
 - create and update `WorkOrder`s
 - interpret user replies
 - translate internal events into operator-facing `DecisionTopic`s
@@ -141,7 +154,7 @@ Shared system truth used by the main canvas.
 Minimum contents:
 
 - goals
-- streams
+- plan cards
 - current focus
 - active work orders
 - open decision topics
@@ -149,7 +162,61 @@ Minimum contents:
 - risk posture
 - user directives currently in force
 
-The left canvas reads this model. It does not own decision logic.
+Optional derived contents:
+
+- stream or lane labels used only for grouping/filtering in the UI
+- card dependency summaries
+
+The main workspace reads this model. It does not own decision logic.
+
+### Single Workspace Layout
+
+The recommended operator surface is one page composed of four stacked areas:
+
+1. project-level header
+   - project name
+   - planning log entry point
+   - global inbox entry point
+   - runtime status
+2. goal switcher row
+   - goal selector rendered as compact goal cards rather than plain text tabs
+   - selection changes current goal in-place
+   - URL sync via query state such as `/?goal=<goalId>`
+3. current goal workspace
+   - goal summary
+   - strategy summary
+   - digest / current situation
+   - kanban for phases and plan cards
+4. right-side operator surface
+   - inbox
+   - thread detail
+   - plan trace
+   - raw session log
+
+This keeps the operator in one continuous working surface while still preserving shareable deep links.
+
+### Goal Switching Rules
+
+Goal switching should behave like changing workspace context, not page navigation.
+
+Rules:
+
+- selecting another goal updates the URL query and refreshes the center workspace in place
+- the kanban always reflects only the currently selected goal
+- the right-side surface remains open when possible, but only for content still valid in the new goal context
+- if the open trace or thread belongs to another goal, it should be closed automatically on goal switch
+- global session logs may remain open across goal switches because they are not scoped to a single goal
+
+### Compatibility Routes
+
+To avoid breaking existing links while the UI collapses to one page:
+
+- `/` becomes the canonical workspace route
+- `/?goal=<goalId>` selects the current goal
+- `/goals/:goalId` redirects to `/?goal=:goalId`
+- `/goals/:goalId/plans/:planId` redirects to `/?goal=:goalId` and opens the matching trace
+
+This preserves bookmarkability without reintroducing deeper visible hierarchy.
 
 ### WorkOrder
 
@@ -335,7 +402,7 @@ Behavior:
 
 - manager interprets intent
 - planner-like reasoning happens inside manager
-- updated route may change stream priority, scope, and future decision topics
+- updated route may change goal priority, card ordering, scope, and future decision topics
 
 ### 3. Follow-up question
 
@@ -369,7 +436,7 @@ Default policy: graded freeze.
 - reading a thread does not pause work
 - asking a question does not pause unrelated work
 - threads of kind `approval`, `risk`, or `direction` may freeze the relevant decision boundary
-- unrelated streams continue unless the manager determines a broader route change
+- unrelated plan cards continue unless the manager determines a broader route change
 
 This keeps the system responsive without letting user-boundary decisions race ahead.
 
@@ -416,7 +483,7 @@ Topic:
 
 Flow:
 
-1. execution continues on import stream
+1. execution continues on the import plan card currently on the critical path
 2. gatekeeper sees the risk may affect route quality
 3. risk topic opens
 4. user replies: `先收紧，不要扩范围`
@@ -446,6 +513,7 @@ Flow:
 - every user-visible topic maps to a decision boundary or meaningful status track
 - every work order can loop through review multiple times before acceptance
 - skills define worker capability; agent identity stays generic
+- the operator should not need to navigate below the single workspace level to inspect or steer a plan card
 
 ## Why This Model
 
@@ -454,7 +522,9 @@ This model keeps the system understandable:
 - three long-lived roles only
 - one global conversational voice
 - one shared world model
+- one primary workspace
 - explicit inner Ralph loop
 - explicit outer decision boundary
+- no redundant `Dashboard -> Goal -> Card Detail` navigation layer unless real product complexity proves it necessary
 
 It supports long-running autonomy without requiring the user to micromanage plan cards or execution attempts.

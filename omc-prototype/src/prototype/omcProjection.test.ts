@@ -3,12 +3,14 @@ import type {
     OmcAttempt,
     OmcEvidence,
     OmcGuidedPlanningRun,
+    OmcProgramRuntimeStateResponse,
     OmcPlanDetailResponse,
     OmcPlanRuntime,
     OmcPlanningIndexResponse,
     OmcProgramOverviewResponse,
 } from '@hopi/protocol/types'
 import { buildPrototypeSnapshotFromOmc, buildWorldModelFromOmc } from './omcProjection'
+import { labelStreamStatus, streamPresentation } from './presenter'
 
 function createProgramOverview(): OmcProgramOverviewResponse {
     return {
@@ -59,6 +61,7 @@ function createPlanningIndex(): OmcPlanningIndexResponse {
                         planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-01-PLAN.md',
                         phaseKey: '01-foundation',
                         phaseLabel: '01 Foundation',
+                        dependsOn: [],
                         planTitle: 'Lock runtime foundation',
                         summary: 'Make the first control-plane loop reliable.',
                         checklistTotal: 4,
@@ -72,6 +75,7 @@ function createPlanningIndex(): OmcPlanningIndexResponse {
                         planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-02-PLAN.md',
                         phaseKey: '01-foundation',
                         phaseLabel: '01 Foundation',
+                        dependsOn: [],
                         planTitle: 'Harden review lane',
                         summary: 'Keep the review lane deterministic.',
                         checklistTotal: 5,
@@ -91,6 +95,7 @@ function createPlanningIndex(): OmcPlanningIndexResponse {
                         planPath: 'docs/design/omc-planning-seed/phases/02-ux/02-01-PLAN.md',
                         phaseKey: '02-ux',
                         phaseLabel: '02 Ux',
+                        dependsOn: [],
                         planTitle: 'Refresh operator workspace',
                         summary: 'Turn the workspace into a calmer decision surface.',
                         checklistTotal: 3,
@@ -360,6 +365,121 @@ function createPlanDetails(runtimes: OmcPlanRuntime[]): Record<string, OmcPlanDe
     }
 }
 
+function createProgramRuntimeState(): OmcProgramRuntimeStateResponse {
+    return {
+        programId: 'omc-default',
+        mailbox: [
+            {
+                id: 'mailbox-1',
+                programId: 'omc-default',
+                from: 'manager',
+                to: 'driver',
+                thread: 'work-01',
+                kind: 'task-assignment',
+                priority: 'high',
+                body: 'Implement the expedition entry scene and fog-of-war traversal.',
+                createdAt: 215,
+                readAt: null,
+            },
+            {
+                id: 'mailbox-2',
+                programId: 'omc-default',
+                from: 'driver',
+                to: 'reviewer',
+                thread: 'work-01',
+                kind: 'review-request',
+                priority: 'high',
+                body: 'Review the expedition entry scene before we move on.',
+                createdAt: 225,
+                readAt: null,
+            },
+            {
+                id: 'mailbox-3',
+                programId: 'omc-default',
+                from: 'reviewer',
+                to: 'manager',
+                thread: 'work-01',
+                kind: 'review-verdict',
+                priority: 'high',
+                body: 'Need user confirmation about the empty space before the mountain gate node.',
+                createdAt: 235,
+                readAt: null,
+            },
+        ],
+        workOrders: [
+            {
+                id: 'work-01',
+                programId: 'omc-default',
+                goalId: '01-foundation',
+                planKey: '01-01',
+                title: 'Lock runtime foundation',
+                owner: null,
+                status: 'waiting_user',
+                currentAttemptId: 'driver-attempt-1',
+                reviewerVerdict: 'needs_user',
+                blockedReason: 'Need user confirmation about the empty space before the mountain gate node.',
+                latestAcceptedAttemptId: null,
+                createdAt: 200,
+                updatedAt: 236,
+            },
+        ],
+        workAttempts: [
+            {
+                id: 'driver-attempt-1',
+                programId: 'omc-default',
+                workOrderId: 'work-01',
+                role: 'driver',
+                sessionId: 'session-driver-1',
+                status: 'closing',
+                summary: 'Built the expedition entry scene and traversal shell.',
+                sourceMailboxMessageId: 'mailbox-1',
+                createdAt: 216,
+                updatedAt: 224,
+                completedAt: null,
+            },
+            {
+                id: 'review-attempt-1',
+                programId: 'omc-default',
+                workOrderId: 'work-01',
+                role: 'reviewer',
+                sessionId: null,
+                status: 'needs_user',
+                summary: 'Need user confirmation about the empty space before the mountain gate node.',
+                sourceMailboxMessageId: 'mailbox-2',
+                createdAt: 226,
+                updatedAt: 235,
+                completedAt: 235,
+            },
+        ],
+        agents: [
+            {
+                programId: 'omc-default',
+                role: 'manager',
+                busy: false,
+                currentWorkOrderId: null,
+                activeSessionId: null,
+                model: 'codex',
+                mode: 'default',
+                lastHeartbeat: 236,
+            },
+        ],
+        directives: [
+            {
+                id: 'directive-1',
+                programId: 'omc-default',
+                scopeType: 'work_order',
+                scopeId: 'work-01',
+                sourceTopicId: 'status:01-foundation',
+                key: 'entry-scene-feedback',
+                summary: 'Keep the entry scene concise before the mountain gate node.',
+                rawText: '怎么到了山门节点入口中间什么都没有，符合预期吗',
+                createdAt: 237,
+                updatedAt: 237,
+            },
+        ],
+    }
+}
+
 describe('OMC runtime projection', () => {
     it('projects live OMC planning data into a prototype snapshot with approval and risk surfaces', () => {
         const overview = createProgramOverview()
@@ -392,6 +512,318 @@ describe('OMC runtime projection', () => {
                 category: 'review-approval',
             },
         })
+    })
+
+    it('prefers the real task-board runtime state when projecting work orders and trace events', () => {
+        const overview = createProgramOverview()
+        const index = createPlanningIndex()
+        const runtimes = createPlanRuntimes()
+        const details = createPlanDetails(runtimes)
+        const runtimeState = createProgramRuntimeState()
+
+        const world = buildWorldModelFromOmc({
+            overview,
+            index,
+            runtimes,
+            planningRun: null,
+            details,
+            runtimeState,
+        })
+
+        expect(world.workOrders['work-01']).toMatchObject({
+            planId: '01-01',
+            goalId: '01-foundation',
+            state: 'waiting_user',
+            loop: {
+                round: 1,
+                reviewerVerdict: 'needs_decision',
+                lastDriverSummary: 'Built the expedition entry scene and traversal shell.',
+                lastReviewerSummary: 'Need user confirmation about the empty space before the mountain gate node.',
+                lastDecisionSummary: 'Keep the entry scene concise before the mountain gate node.',
+            },
+        })
+
+        expect(world.agentEvents).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'Proposal',
+                workOrderId: 'work-01',
+                emittedBy: 'manager',
+                payload: expect.objectContaining({
+                    summary: 'Implement the expedition entry scene and fog-of-war traversal.',
+                }),
+            }),
+            expect.objectContaining({
+                kind: 'ReviewerVerdict',
+                workOrderId: 'work-01',
+                emittedBy: 'reviewer',
+                payload: expect.objectContaining({
+                    verdict: 'needs_decision',
+                }),
+            }),
+            expect.objectContaining({
+                kind: 'ManagerDecision',
+                workOrderId: 'work-01',
+                emittedBy: 'manager',
+                payload: expect.objectContaining({
+                    decision: 'escalate_to_user',
+                }),
+            }),
+            expect.objectContaining({
+                kind: 'Resolution',
+                workOrderId: 'work-01',
+                emittedBy: 'manager',
+                payload: expect.objectContaining({
+                    summary: 'Keep the entry scene concise before the mountain gate node.',
+                }),
+            }),
+        ]))
+    })
+
+    it('also prefers task-board state over stale plan-runtime review columns when projecting cards and approvals', () => {
+        const overview = createProgramOverview()
+        const index = createPlanningIndex()
+        const runtimes = createPlanRuntimes()
+        const details = createPlanDetails(runtimes)
+        const runtimeState: OmcProgramRuntimeStateResponse = {
+            programId: 'omc-default',
+            mailbox: [
+                {
+                    id: 'mailbox-next',
+                    programId: 'omc-default',
+                    from: 'manager',
+                    to: 'driver',
+                    thread: 'work-02',
+                    kind: 'task-assignment',
+                    priority: 'high',
+                    body: 'Move on to the review lane hardening card.',
+                    createdAt: 260,
+                    readAt: 260,
+                },
+            ],
+            workOrders: [
+                {
+                    id: 'work-01',
+                    programId: 'omc-default',
+                    goalId: '01-foundation',
+                    planKey: '01-01',
+                    title: 'Lock runtime foundation',
+                    owner: null,
+                    status: 'done',
+                    currentAttemptId: 'driver-attempt-1',
+                    reviewerVerdict: 'accepted',
+                    blockedReason: null,
+                    latestAcceptedAttemptId: 'driver-attempt-1',
+                    createdAt: 200,
+                    updatedAt: 250,
+                },
+                {
+                    id: 'work-02',
+                    programId: 'omc-default',
+                    goalId: '01-foundation',
+                    planKey: '01-02',
+                    title: 'Harden review lane',
+                    owner: 'driver',
+                    status: 'in_progress',
+                    currentAttemptId: 'driver-attempt-2',
+                    reviewerVerdict: null,
+                    blockedReason: null,
+                    latestAcceptedAttemptId: null,
+                    createdAt: 251,
+                    updatedAt: 261,
+                },
+            ],
+            workAttempts: [
+                {
+                    id: 'driver-attempt-1',
+                    programId: 'omc-default',
+                    workOrderId: 'work-01',
+                    role: 'driver',
+                    sessionId: 'session-finished',
+                    status: 'accepted',
+                    summary: 'Runtime foundation is accepted.',
+                    sourceMailboxMessageId: null,
+                    createdAt: 201,
+                    updatedAt: 250,
+                    completedAt: 250,
+                },
+                {
+                    id: 'driver-attempt-2',
+                    programId: 'omc-default',
+                    workOrderId: 'work-02',
+                    role: 'driver',
+                    sessionId: 'session-running',
+                    status: 'running',
+                    summary: 'Hardening the review lane.',
+                    sourceMailboxMessageId: 'mailbox-next',
+                    createdAt: 261,
+                    updatedAt: 262,
+                    completedAt: null,
+                },
+            ],
+            agents: [],
+            directives: [],
+        }
+
+        const snapshot = buildPrototypeSnapshotFromOmc({
+            overview,
+            index,
+            runtimes,
+            planningRun: null,
+            details,
+            runtimeState,
+        })
+
+        expect(snapshot.planCards.find((card) => card.id === '01-01')).toMatchObject({
+            column: 'Done',
+        })
+        expect(snapshot.planCards.find((card) => card.id === '01-02')).toMatchObject({
+            column: 'Running',
+            signal: 'Hardening the review lane.',
+        })
+        expect(snapshot.approvalBatches.today.items.map((item) => item.id)).not.toContain('01-01')
+    })
+
+    it('shows downstream plans as waiting on upstream instead of mapping when dependencies are not finished', () => {
+        const overview = createProgramOverview()
+        const index: OmcPlanningIndexResponse = {
+            program: {
+                id: 'omc-default',
+                name: 'HOPI Workspace',
+                repoRoot: '/Users/realizer/Code/hopi',
+            },
+            phases: [
+                {
+                    phaseKey: '01-foundation',
+                    phaseLabel: '01 Foundation',
+                    plans: [
+                        {
+                            planKey: '01-01',
+                            planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-01-PLAN.md',
+                            phaseKey: '01-foundation',
+                            phaseLabel: '01 Foundation',
+                            dependsOn: [],
+                            planTitle: 'Lock runtime foundation',
+                            summary: 'Make the first control-plane loop reliable.',
+                            checklistTotal: 4,
+                            checklistDone: 2,
+                            checklistOpen: 2,
+                            firstOpenItem: 'Capture one more evidence round before review.',
+                            lastModifiedAt: 100,
+                        },
+                        {
+                            planKey: '01-02',
+                            planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-02-PLAN.md',
+                            phaseKey: '01-foundation',
+                            phaseLabel: '01 Foundation',
+                            dependsOn: ['01-01'],
+                            planTitle: 'Harden review lane',
+                            summary: 'Keep the review lane deterministic.',
+                            checklistTotal: 5,
+                            checklistDone: 0,
+                            checklistOpen: 5,
+                            firstOpenItem: 'Finish the merge packet.',
+                            lastModifiedAt: 120,
+                        },
+                        {
+                            planKey: '01-03',
+                            planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-03-PLAN.md',
+                            phaseKey: '01-foundation',
+                            phaseLabel: '01 Foundation',
+                            dependsOn: ['01-02'],
+                            planTitle: 'Ship expedition handoff',
+                            summary: 'Connect the finished lane into the next phase.',
+                            checklistTotal: 3,
+                            checklistDone: 0,
+                            checklistOpen: 3,
+                            firstOpenItem: 'Wait for review lane to finish.',
+                            lastModifiedAt: 130,
+                        },
+                    ],
+                },
+            ],
+        }
+
+        const runtimes: OmcPlanRuntime[] = [
+            createPlanRuntimes()[0]!,
+            {
+                programId: 'omc-default',
+                planKey: '01-02',
+                planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-02-PLAN.md',
+                phaseKey: '01-foundation',
+                phaseLabel: '01 Foundation',
+                column: 'Planning',
+                loopStatus: 'idle',
+                currentLoopRunId: null,
+                currentWorktreePath: null,
+                currentBranch: null,
+                targetBranch: null,
+                attemptCount: 0,
+                consecutiveFailureCount: 0,
+                lastFailureFingerprint: null,
+                reviewRequired: false,
+                reviewApprovedAt: null,
+                mergeStatus: 'idle',
+                mergeBlockedReason: null,
+                lastMergeAttemptAt: null,
+                mergeApprovedAt: null,
+                doneAt: null,
+                latestEvidenceSummary: null,
+                lastAttemptAt: null,
+                updatedAt: null,
+            },
+            {
+                programId: 'omc-default',
+                planKey: '01-03',
+                planPath: 'docs/design/omc-planning-seed/phases/01-foundation/01-03-PLAN.md',
+                phaseKey: '01-foundation',
+                phaseLabel: '01 Foundation',
+                column: 'Planning',
+                loopStatus: 'idle',
+                currentLoopRunId: null,
+                currentWorktreePath: null,
+                currentBranch: null,
+                targetBranch: null,
+                attemptCount: 0,
+                consecutiveFailureCount: 0,
+                lastFailureFingerprint: null,
+                reviewRequired: false,
+                reviewApprovedAt: null,
+                mergeStatus: 'idle',
+                mergeBlockedReason: null,
+                lastMergeAttemptAt: null,
+                mergeApprovedAt: null,
+                doneAt: null,
+                latestEvidenceSummary: null,
+                lastAttemptAt: null,
+                updatedAt: null,
+            },
+        ]
+
+        const snapshot = buildPrototypeSnapshotFromOmc({
+            overview,
+            index,
+            runtimes,
+            planningRun: null,
+            details: {},
+        })
+
+        const blockedByUpstream = snapshot.streams.find((stream) => stream.id === '01-02')
+        const blockedByReview = snapshot.streams.find((stream) => stream.id === '01-03')
+
+        expect(blockedByUpstream).toBeDefined()
+        expect(blockedByReview).toBeDefined()
+        expect(blockedByUpstream?.status).toBe('waiting-upstream')
+        expect(blockedByReview?.status).toBe('waiting-upstream')
+        expect(labelStreamStatus(blockedByUpstream!.status)).toBe('等待上游')
+        expect(blockedByUpstream?.dependencyLabel).toBe('依赖 01-01')
+        expect(blockedByReview?.dependencyLabel).toBe('依赖 01-02')
+        expect(streamPresentation(blockedByUpstream!, 'execution')).toMatchObject({
+            summary: '这条还没开始，正在等 01-01 完成。',
+            whyNow: '按计划顺序，得先完成 01-01，才能轮到这条。',
+            latestMove: '暂无 attempt；当前被 01-01 挡住。',
+            dependencyLabel: '依赖 01-01',
+        })
+        expect(snapshot.planCards.find((card) => card.id === '01-02')?.badges).toContain('dependent')
     })
 
     it('projects live plan runtimes into work orders, decision topics, and traceable agent events', () => {

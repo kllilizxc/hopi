@@ -51,3 +51,5 @@ cli/npm/main/
 .codex
 .claude
 .agents
+super
+docs

@@ -2,6 +2,9 @@ import { createContext, useContext, type ReactNode } from 'react'
 import type {
     DecryptedMessage,
     OmcAttachLocalRepoRequest,
+    OmcDecisionTopicListResponse,
+    OmcDecisionTopicReplyRequest,
+    OmcDecisionTopicReplyResponse,
     OmcGuidedPlanningBrief,
     OmcGuidedPlanningControlResponse,
     OmcGuidedPlanningStateResponse,
@@ -12,6 +15,7 @@ import type {
     OmcPlanningIndexResponse,
     OmcProgramListResponse,
     OmcProgramOverviewResponse,
+    OmcProgramRuntimeStateResponse,
     OmcProgramBootstrapResponse,
     OmcReviewReopenAction,
     Session,
@@ -92,6 +96,13 @@ export type PrototypeSessionMessagesResponse = {
     }
 }
 
+export type PrototypeGitCommandResponse = {
+    success: boolean
+    stdout?: string
+    stderr?: string
+    error?: string
+}
+
 export class PrototypeRemoteApiClient {
     constructor(
         private readonly baseUrl: string,
@@ -131,6 +142,10 @@ export class PrototypeRemoteApiClient {
 
     async getProgram(programId: string): Promise<OmcProgramOverviewResponse> {
         return await this.request<OmcProgramOverviewResponse>(`/api/omc/programs/${encodeURIComponent(programId)}`)
+    }
+
+    async getProgramRuntimeState(programId: string): Promise<OmcProgramRuntimeStateResponse> {
+        return await this.request<OmcProgramRuntimeStateResponse>(`/api/omc/programs/${encodeURIComponent(programId)}/runtime`)
     }
 
     async attachLocalRepo(input: OmcAttachLocalRepoRequest): Promise<OmcProgramBootstrapResponse> {
@@ -190,6 +205,23 @@ export class PrototypeRemoteApiClient {
 
     async getPlanDetail(programId: string, planKey: string): Promise<OmcPlanDetailResponse> {
         return await this.request<OmcPlanDetailResponse>(`/api/omc/programs/${encodeURIComponent(programId)}/plans/${encodeURIComponent(planKey)}`)
+    }
+
+    async getDecisionTopics(programId: string): Promise<OmcDecisionTopicListResponse> {
+        return await this.request<OmcDecisionTopicListResponse>(`/api/omc/programs/${encodeURIComponent(programId)}/topics`)
+    }
+
+    async replyDecisionTopic(programId: string, input: OmcDecisionTopicReplyRequest): Promise<OmcDecisionTopicReplyResponse> {
+        return await this.request<OmcDecisionTopicReplyResponse>(
+            `/api/omc/programs/${encodeURIComponent(programId)}/topics/reply`,
+            {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                },
+                body: JSON.stringify(input),
+            },
+        )
     }
 
     async approveReview(programId: string, planKey: string): Promise<OmcPlanControlResponse> {
@@ -280,6 +312,43 @@ export class PrototypeRemoteApiClient {
         const query = params.toString()
         return await this.request<PrototypeSessionMessagesResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/messages${query ? `?${query}` : ''}`,
+        )
+    }
+
+    async getGitDiffNumstat(
+        sessionId: string,
+        options?: { staged?: boolean; baseRef?: string },
+    ): Promise<PrototypeGitCommandResponse> {
+        const params = new URLSearchParams()
+        if (typeof options?.staged === 'boolean') {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
+
+        const query = params.toString()
+        return await this.request<PrototypeGitCommandResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/git-diff-numstat${query ? `?${query}` : ''}`,
+        )
+    }
+
+    async getGitDiffFile(
+        sessionId: string,
+        path: string,
+        options?: { staged?: boolean; baseRef?: string },
+    ): Promise<PrototypeGitCommandResponse> {
+        const params = new URLSearchParams()
+        params.set('path', path)
+        if (typeof options?.staged === 'boolean') {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
+
+        return await this.request<PrototypeGitCommandResponse>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`,
         )
     }
 

@@ -1,16 +1,29 @@
 import type {
     OmcAttemptCheck,
+    OmcDecisionTopicKind,
+    OmcDecisionTopicLifecycle,
+    OmcDecisionTopicTurnAuthor,
+    OmcDecisionTopicTurnKind,
+    OmcDecisionTopicTurnReplyState,
+    OmcDirectiveScopeType,
     OmcAttemptTerminationReason,
+    OmcCoordinationAgentRole,
     OmcContextPack,
     OmcGuidedPlanningBrief,
     OmcGuidedPlanningRunStage,
     OmcGuidedPlanningRunStatus,
+    OmcMailboxPriority,
     OmcMergeStatus,
     OmcAttemptStatus,
     OmcBoardColumn,
     OmcEvidenceKind,
     OmcEvidenceStatus,
     OmcLoopStatus,
+    OmcReviewVerdict,
+    OmcWorkAttemptRole,
+    OmcWorkAttemptStatus,
+    OmcWorkOrderOwner,
+    OmcWorkOrderStatus,
     TaskInitRuntime,
     TaskMergeRuntime,
     TaskPreviewRuntime
@@ -203,6 +216,108 @@ export type OmcEvidenceRow = {
     summary: string
     payload: Record<string, unknown> | null
     createdAt: number
+}
+
+export type OmcDecisionTopicRow = {
+    id: string
+    programId: string
+    namespace: string
+    kind: OmcDecisionTopicKind
+    title: string
+    goalId: string | null
+    planKey: string | null
+    workOrderId: string | null
+    lifecycle: OmcDecisionTopicLifecycle
+    unread: boolean
+    bridgeSessionId: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type OmcDecisionTopicTurnRow = {
+    id: string
+    topicId: string
+    programId: string
+    namespace: string
+    author: OmcDecisionTopicTurnAuthor
+    kind: OmcDecisionTopicTurnKind
+    body: string
+    sessionId: string | null
+    sessionMessageId: string | null
+    replyState: OmcDecisionTopicTurnReplyState
+    createdAt: number
+}
+
+export type OmcMailboxMessageRow = {
+    id: string
+    programId: string
+    namespace: string
+    from: string
+    to: string
+    thread: string
+    kind: string
+    priority: OmcMailboxPriority
+    body: string
+    createdAt: number
+    readAt: number | null
+}
+
+export type OmcWorkOrderRow = {
+    id: string
+    programId: string
+    namespace: string
+    goalId: string | null
+    planKey: string | null
+    title: string
+    owner: OmcWorkOrderOwner | null
+    status: OmcWorkOrderStatus
+    currentAttemptId: string | null
+    reviewerVerdict: OmcReviewVerdict | null
+    blockedReason: string | null
+    latestAcceptedAttemptId: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type OmcWorkAttemptRow = {
+    id: string
+    programId: string
+    namespace: string
+    workOrderId: string
+    role: OmcWorkAttemptRole
+    sessionId: string | null
+    status: OmcWorkAttemptStatus
+    summary: string | null
+    sourceMailboxMessageId: string | null
+    createdAt: number
+    updatedAt: number
+    completedAt: number | null
+}
+
+export type OmcCoordinationAgentStateRow = {
+    programId: string
+    namespace: string
+    role: OmcCoordinationAgentRole
+    busy: boolean
+    currentWorkOrderId: string | null
+    activeSessionId: string | null
+    model: string | null
+    mode: string | null
+    lastHeartbeat: number
+}
+
+export type OmcDirectiveLedgerEntryRow = {
+    id: string
+    programId: string
+    namespace: string
+    scopeType: OmcDirectiveScopeType
+    scopeId: string
+    sourceTopicId: string | null
+    key: string
+    summary: string
+    rawText: string | null
+    createdAt: number
+    updatedAt: number
 }
 
 export type StoredTask = {

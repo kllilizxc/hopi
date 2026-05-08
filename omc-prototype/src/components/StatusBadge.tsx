@@ -34,6 +34,8 @@ function toneForStream(status: PrototypeStreamStatus): BadgeTone {
             return 'accent'
         case 'blocked':
             return 'danger'
+        case 'waiting-upstream':
+            return 'warning'
         case 'watching':
             return 'warning'
         case 'mapping':

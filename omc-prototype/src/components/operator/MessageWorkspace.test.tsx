@@ -196,6 +196,7 @@ describe('MessageWorkspace', () => {
         expect(screen.getByRole('heading', { name: '做出每周投资简报' })).toBeInTheDocument()
         expect(screen.getByText('12 分钟前')).toBeInTheDocument()
         expect(screen.getByText('等你回复')).toBeInTheDocument()
+        expect(screen.getByText('可并行处理')).toBeInTheDocument()
         expect(screen.getByText('方向话题')).toBeInTheDocument()
         expect(container.querySelector('.prototype-thread-status-pill')).toBeNull()
     })

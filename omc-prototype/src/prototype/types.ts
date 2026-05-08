@@ -4,7 +4,7 @@ export type PrototypeCheckpointId = 'intake' | 'strategy' | 'execution' | 'appro
 
 export type PrototypeGoalStatus = 'intake' | 'on-track' | 'at-risk' | 'blocked' | 'ready-for-approval'
 
-export type PrototypeStreamStatus = 'mapping' | 'running' | 'watching' | 'blocked' | 'ready-for-approval'
+export type PrototypeStreamStatus = 'mapping' | 'waiting-upstream' | 'running' | 'watching' | 'blocked' | 'ready-for-approval'
 
 export type PrototypeRiskSeverity = 'low' | 'medium' | 'high'
 
@@ -83,7 +83,7 @@ export type PlanTraceMatch =
     | { kind: 'inferred'; label: '推断关联' }
     | { kind: 'none'; label: '无运行态输出' }
 
-export type PlanTraceTab = 'events' | 'state' | 'json'
+export type PlanTraceTab = 'logs' | 'events' | 'state' | 'json' | 'diff'
 
 export type PlanTraceEventView = {
     id: string
@@ -246,6 +246,8 @@ export type OperatorFirstMessage = {
 }
 
 export type DecisionSummaryRows = {
+    targetOutcome?: string | null
+    changeSummary?: string | null
     whatHappened: string
     whyEscalated: string
     recommendedAction: string
@@ -257,6 +259,7 @@ export type DecisionEvidence = {
     terminationReason: string | null
     nextSuggestedStep: string | null
     failureFingerprint: string | null
+    changedFiles?: string[] | null
     defaultExpanded: boolean
 }
 
@@ -275,6 +278,7 @@ export type DecisionIdentity = {
 
 export type DecisionBriefing = {
     title: string
+    decisionQuestion: string | null
     identity: DecisionIdentity
     summaryRows: DecisionSummaryRows
     primaryAction: DecisionActionHint | null
@@ -398,12 +402,14 @@ export type PrototypeApprovalItem = {
         goalLabel: string | null
         planLabel: string
         planKey: string
+        planSummary?: string | null
         sessionId: string | null
         attemptNumber: number | null
         latestSummary: string | null
         terminationReason: string | null
         nextSuggestedStep: string | null
         failureFingerprint: string | null
+        changedFiles?: string[]
     } | null
 }
 
@@ -465,6 +471,8 @@ export type PrototypeGoalDetail = {
     goal: PrototypeGoal
     strategy: PrototypeStrategySnapshot
     streams: PrototypeStream[]
+    phases: PrototypePhase[]
+    planCards: PrototypePlanCard[]
     risks: PrototypeRisk[]
     digest: PrototypeDigest
 }
@@ -477,6 +485,14 @@ export type PrototypeStreamDetail = {
     planCards: PrototypePlanCard[]
 }
 
+export type PrototypePlanCardDetail = {
+    goal: PrototypeGoal
+    strategy: PrototypeStrategySnapshot
+    planCard: PrototypePlanCard
+    phases: PrototypePhase[]
+    siblingPlanCards: PrototypePlanCard[]
+}
+
 export type PrototypePortfolioView = {
     checkpoint: PrototypeCheckpoint
     checkpoints: PrototypeCheckpoint[]
@@ -484,6 +500,7 @@ export type PrototypePortfolioView = {
     goals: PrototypeGoal[]
     strategies: PrototypeStrategySnapshot[]
     streams: PrototypeStream[]
+    planCards: PrototypePlanCard[]
     digest: PrototypeDigest
     approvalBatch: PrototypeApprovalBatch
     risks: PrototypeRisk[]
@@ -496,12 +513,14 @@ export interface PrototypeDataSource {
     getDigest(window: PrototypeTimeWindow): PrototypeDigest
     getApprovalBatch(window: PrototypeTimeWindow): PrototypeApprovalBatch
     getExecutionDrilldown(input: { goalId: string; streamId: string }): PrototypeStreamDetail | null
+    getPlanDrilldown(input: { goalId: string; planId: string }): PrototypePlanCardDetail | null
 }
 
 export interface PrototypeActionDispatcher {
     attachDemoProgram(): void
     selectProgram?(programId: string): void
     setActiveThread(id: string): void
+    clearActiveThread(): void
     openPlanTrace(input: TraceSelection): void
     clearPlanTrace(): void
     performQuickAction(threadId: string, actionId: string): void

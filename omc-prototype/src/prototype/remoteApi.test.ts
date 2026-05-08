@@ -300,4 +300,60 @@ describe('PrototypeRemoteApiClient bootstrap methods', () => {
             }),
         )
     })
+
+    it('loads combined git numstat for the current session worktree', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                success: true,
+                stdout: '4\t1\tsrc/game.ts\n',
+            }),
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        const api = new PrototypeRemoteApiClient('http://localhost:3006', 'jwt-token')
+
+        const response = await api.getGitDiffNumstat('session-123')
+
+        expect(response).toEqual({
+            success: true,
+            stdout: '4\t1\tsrc/game.ts\n',
+        })
+        expect(fetchMock).toHaveBeenCalledWith(
+            'http://localhost:3006/api/sessions/session-123/git-diff-numstat',
+            expect.objectContaining({
+                headers: {
+                    authorization: 'Bearer jwt-token',
+                },
+            }),
+        )
+    })
+
+    it('loads a unified diff for a specific changed file', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                success: true,
+                stdout: 'diff --git a/src/game.ts b/src/game.ts',
+            }),
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        const api = new PrototypeRemoteApiClient('http://localhost:3006', 'jwt-token')
+
+        const response = await api.getGitDiffFile('session-123', 'src/game.ts')
+
+        expect(response).toEqual({
+            success: true,
+            stdout: 'diff --git a/src/game.ts b/src/game.ts',
+        })
+        expect(fetchMock).toHaveBeenCalledWith(
+            'http://localhost:3006/api/sessions/session-123/git-diff-file?path=src%2Fgame.ts',
+            expect.objectContaining({
+                headers: {
+                    authorization: 'Bearer jwt-token',
+                },
+            }),
+        )
+    })
 })
