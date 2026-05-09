@@ -846,10 +846,530 @@ describe('TaskAutomation', () => {
         expect(accepted?.status).toBe('finished')
         expect(accepted?.worktreeMergedAt).toBeNumber()
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(accepted?.mergedDiffSnapshot).toMatchObject({
+            files: [
+                {
+                    fileName: 'map.ts',
+                    filePath: 'src',
+                    fullPath: 'src/map.ts',
+                    status: 'modified',
+                    isStaged: true,
+                    linesAdded: 1,
+                    linesRemoved: 0
+                }
+            ],
+            baseCommit: MERGE_BASE
+        })
         expect(accepted?.finishedAt).toBeNumber()
         expect(mergeCalls).toBe(1)
         expect(cleanupCalls).toBe(1)
         expect(archiveCalls).toBe(1)
+    })
+
+    it('lets the agent repair auto-merge conflicts before retrying the accepted task merge', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-auto-merge-conflict'
+        const goalId = 'goal-evaluator-auto-merge-conflict'
+        const taskId = 'generator-task-auto-merge-conflict'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main',
+            worktreeCleanupAfterMerge: true
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false,
+            worktree: true
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'in_review',
+            activeSessionId: sessionId,
+            source: 'evaluator'
+        })
+
+        let mergeCalls = 0
+        let sendMessageCalls = 0
+        let cleanupCalls = 0
+        let archiveCalls = 0
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            getSessionByNamespace(id: string, ns: string) {
+                return id === sessionId && ns === namespace ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 2,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return {
+                    success: true,
+                    targetBranch: 'main',
+                    sourceBranch: 'task-branch',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                if (mergeCalls === 1) {
+                    return {
+                        success: false,
+                        error: 'Merge conflicts detected; manual resolution required',
+                        conflictFiles: ['src/map.ts']
+                    }
+                }
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return {
+                    success: true,
+                    verified: true,
+                    targetBranch: 'main',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1,
+                    targetHead: TARGET_HEAD
+                }
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '1\t0\tsrc/map.ts\n' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string; localId?: string }) {
+                sendMessageCalls += 1
+                store.messages.addMessage(sessionId, {
+                    role: 'user',
+                    content: { type: 'text', text: payload.text },
+                    meta: { sentFrom: 'webapp' }
+                }, payload.localId)
+                store.messages.addMessage(sessionId, {
+                    role: 'agent',
+                    content: { type: 'text', text: 'Resolved the merge conflict and updated the task branch.' }
+                })
+            },
+            async gitRemoveWorktree() {
+                cleanupCalls += 1
+                return { success: true }
+            },
+            async archiveSession() {
+                archiveCalls += 1
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Accepted.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'finished',
+                                handoff: 'Accepted map traversal.',
+                                evidence: 'Tests and diff reviewed.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        await waitForTask({
+            store,
+            namespace,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(accepted?.status).toBe('finished')
+        expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(2)
+        expect(sendMessageCalls).toBe(1)
+        expect(cleanupCalls).toBe(1)
+        expect(archiveCalls).toBe(1)
+    })
+
+    it('resumes a retrying auto-merge when a merge repair ready event arrives after the monitor was lost', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-auto-merge-resume'
+        const goalId = 'goal-evaluator-auto-merge-resume'
+        const taskId = 'generator-task-auto-merge-resume'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false,
+            worktree: true
+        })
+
+        const now = Date.now()
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'in_review',
+            activeSessionId: sessionId,
+            source: 'evaluator',
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId,
+                requestedAt: now - 2_000,
+                startedAt: now - 1_500,
+                updatedAt: now - 1_000,
+                completedAt: null,
+                retryCount: 1,
+                failureFingerprint: 'merge_conflict:test',
+                latestNote: 'Auto-merge found conflicts; asked the linked agent to repair them (1/2).',
+                blockedReason: null,
+                failure: null
+            }
+        })
+
+        let mergeCalls = 0
+        let archiveCalls = 0
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            getSessionByNamespace(id: string, ns: string) {
+                return id === sessionId && ns === namespace ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 2,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return {
+                    success: true,
+                    targetBranch: 'main',
+                    sourceBranch: 'task-branch',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return {
+                    success: true,
+                    verified: true,
+                    targetBranch: 'main',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1,
+                    targetHead: TARGET_HEAD
+                }
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '1\t0\tsrc/map.ts\n' }
+            },
+            async archiveSession() {
+                archiveCalls += 1
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Resolved the merge conflict.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'in_review',
+                                handoff: 'Resolved merge conflicts and staged the combined result.',
+                                evidence: 'Tests passed after conflict resolution.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const promptLocalId = `auto:merge_runtime:${taskId}:1:${now - 500}`
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: promptLocalId,
+                    hasAssistantReply: true
+                }
+            }
+        }, `ready:${promptLocalId}`)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        await waitForTask({
+            store,
+            namespace,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(accepted?.status).toBe('finished')
+        expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(1)
+        expect(archiveCalls).toBe(1)
+    })
+
+    it('resumes a retrying auto-merge when merge repair finishes without HOPI_ACTIONS', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-auto-merge-no-actions'
+        const goalId = 'goal-evaluator-auto-merge-no-actions'
+        const taskId = 'generator-task-auto-merge-no-actions'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false,
+            worktree: true
+        })
+
+        const now = Date.now()
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'in_review',
+            activeSessionId: sessionId,
+            source: 'evaluator',
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId,
+                requestedAt: now - 2_000,
+                startedAt: now - 1_500,
+                updatedAt: now - 1_000,
+                completedAt: null,
+                retryCount: 1,
+                failureFingerprint: 'merge_conflict:test',
+                latestNote: 'Auto-merge found conflicts; asked the linked agent to repair them (1/2).',
+                blockedReason: null,
+                failure: null
+            }
+        })
+
+        let mergeCalls = 0
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            getSessionByNamespace(id: string, ns: string) {
+                return id === sessionId && ns === namespace ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 2,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return {
+                    success: true,
+                    targetBranch: 'main',
+                    sourceBranch: 'task-branch',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return {
+                    success: true,
+                    verified: true,
+                    targetBranch: 'main',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1,
+                    targetHead: TARGET_HEAD
+                }
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '1\t0\tsrc/map.ts\n' }
+            },
+            async archiveSession() {
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: 'Resolved the merge conflicts by rebasing the source branch onto main.'
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const promptLocalId = `auto:merge_runtime:${taskId}:1:${now - 500}`
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: promptLocalId,
+                    hasAssistantReply: true
+                }
+            }
+        }, `ready:${promptLocalId}`)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        await waitForTask({
+            store,
+            namespace,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(accepted?.status).toBe('finished')
+        expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(1)
     })
 
     it('auto-merges an accepted goal worktree task with a default merge workflow when actions manifest is missing', async () => {
@@ -1429,6 +1949,120 @@ describe('TaskAutomation', () => {
         const planner = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(planner?.status).toBe('finished')
         expect(realtimeEvents.some((event) => event.type === 'task-added')).toBe(true)
+        expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
+    })
+
+    it('accepts planner-friendly decision topic question and context fields', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-decision-actions'
+        const goalId = 'goal-decision-1'
+        const taskId = 'planner-task-decision-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal decision action project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build story system',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: [
+                        'HOPI_ACTIONS:',
+                        '```json',
+                        JSON.stringify({
+                            actions: [
+                                {
+                                    type: 'update_goal',
+                                    goalId,
+                                    status: 'blocked',
+                                    currentFocus: 'Awaiting human confirmation.'
+                                },
+                                {
+                                    type: 'create_decision_topic',
+                                    goalId,
+                                    title: 'Choose final story navigation entry',
+                                    question: 'Should story content enter from MainMenu, Expedition exit, or a debug-only button?',
+                                    context: 'The next implementation task needs a stable entry point before UI wiring continues.',
+                                    blocking: true
+                                },
+                                {
+                                    type: 'update_current_task',
+                                    status: 'finished',
+                                    handoff: 'No new implementation tasks promoted.',
+                                    evidence: 'Verified current goal state.'
+                                }
+                            ]
+                        }),
+                        '```'
+                    ].join('\n')
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        expect(topics).toHaveLength(1)
+        expect(topics[0]?.title).toBe('Choose final story navigation entry')
+        expect(topics[0]?.body).toContain('Should story content enter from MainMenu, Expedition exit, or a debug-only button?')
+        expect(topics[0]?.body).toContain('The next implementation task needs a stable entry point before UI wiring continues.')
+        expect(topics[0]?.blocking).toBe(true)
+
+        const goal = store.goals.getGoalByNamespace(goalId, namespace)
+        expect(goal?.status).toBe('blocked')
+        expect(goal?.currentFocus).toBe('Awaiting human confirmation.')
+
+        const planner = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(planner?.status).toBe('finished')
+        expect(planner?.handoff).toBe('No new implementation tasks promoted.')
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
 
@@ -2627,6 +3261,81 @@ describe('TaskAutomation', () => {
         const userMsg = store.messages.addMessage(sessionId, {
             role: 'user',
             content: { type: 'text', text: 'resolve merge conflicts' },
+            localKey: promptLocalId,
+            meta: { sentFrom: 'webapp' }
+        }, promptLocalId)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
+
+        const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', forLocalKey: promptLocalId } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
+        expect(afterReady?.worktreeMergeCommit).toBe('abc123')
+    })
+
+    it('ignores merge runtime repair prompts for task progress state', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Test project'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        const mergedAt = Date.now() - 1_000
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Test task',
+            status: 'finished',
+            activeSessionId: sessionId,
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: 'abc123'
+        })
+        store.tasks.updateTaskByNamespace(taskId, namespace, {
+            finishedAt: mergedAt,
+            mergedDiffSnapshot: {
+                files: [{ fullPath: 'src/app.ts', linesAdded: 5, linesRemoved: 1 }],
+                capturedAt: mergedAt,
+                baseCommit: 'deadbeef'
+            }
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {}
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const promptLocalId = `auto:merge_runtime:${taskId}:1`
+        const userMsg = store.messages.addMessage(sessionId, {
+            role: 'user',
+            content: { type: 'text', text: 'repair merge verification failure' },
             localKey: promptLocalId,
             meta: { sentFrom: 'webapp' }
         }, promptLocalId)

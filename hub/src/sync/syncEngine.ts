@@ -322,6 +322,7 @@ export class SyncEngine {
     private reloadAll(): void {
         this.sessionCache.reloadAll()
         this.machineCache.reloadAll()
+        this.autoRunScheduler.seedKnownProjects(this.store.projects.listProjects())
     }
 
     getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
@@ -684,7 +685,7 @@ export class SyncEngine {
         }
     }
 
-    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         try {
             return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
         } catch (error) {
@@ -704,7 +705,11 @@ export class SyncEngine {
         }
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.getGitDiffNumstatOnMachine(machineId, options)
+    }
+
+    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         try {
             return await this.rpcGateway.getGitDiffFile(sessionId, options)
         } catch (error) {
@@ -722,6 +727,10 @@ export class SyncEngine {
                 cwd: options.cwd ?? fallback.sessionPath
             })
         }
+    }
+
+    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.getGitDiffFileOnMachine(machineId, options)
     }
 
     async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {

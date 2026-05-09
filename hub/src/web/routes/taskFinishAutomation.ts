@@ -71,7 +71,8 @@ export async function handleTaskMovedToFinished(options: {
                         project: {
                             id: project.id,
                             name: project.name,
-                            improvementsMaxPendingTasks: maxPending
+                            improvementsMaxPendingTasks: maxPending,
+                            agentOutputLanguage: project.agentOutputLanguage
                         },
                         finishedTask: task,
                         targetSessionId,

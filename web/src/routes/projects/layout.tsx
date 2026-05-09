@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { DEFAULT_AGENT_FLAVOR, normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
-import type { Goal, Machine, PermissionMode, TaskPriority } from '@/types/api'
+import type { AgentOutputLanguage, AutomationLaneLimits, Goal, Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
@@ -30,7 +30,6 @@ import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
-import { GoalDecisionTopicsPanel } from '@/routes/projects/goal-decision-topics'
 import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
 import type { AgentType } from '@/components/NewSession/types'
 
@@ -272,7 +271,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                                 selectedId={props.projectId}
                                 onSelect={handleProjectClick}
                                 ariaLabel={t('projects.title')}
-                                className="max-w-md"
+                                className="max-w-[min(72vw,56rem)]"
                             />
                         ) : null}
                     </>
@@ -299,6 +298,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                         selectedId={isPlanningRoute ? 'planning' : 'board'}
                         onSelect={handleProjectViewTab}
                         ariaLabel={t('projects.tabs.label')}
+                        distribution="equal"
                     />
                 )}
             />
@@ -313,7 +313,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 </div>
             ) : (
                 <>
-                    <GoalDecisionTopicsPanel projectId={props.projectId} goalId={props.selectedGoalId} />
                     <div className="flex-1 min-h-0">
                         <ProjectKanbanBoard
                             projectId={props.projectId}
@@ -381,8 +380,9 @@ export default function ProjectsPage() {
         worktreeTargetBranch?: string
         worktreeAutoCommitMode?: 'off' | 'per_conversation'
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage
         autoRunEnabled?: boolean
-        maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }): Promise<string | null> => {

@@ -30,6 +30,7 @@ export const queryKeys = {
         options?.baseRef ? `base:${options.baseRef}` : 'working-tree',
         options?.staged === true ? 'staged' : options?.staged === false ? 'unstaged' : 'auto'
     ] as const,
+    taskMergedFileDiff: (taskId: string, path: string) => ['task-merged-file-diff', taskId, path] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     skills: (sessionId: string) => ['skills', sessionId] as const,
 }

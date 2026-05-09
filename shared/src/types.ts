@@ -1,5 +1,8 @@
 export type {
+    AgentOutputLanguage,
     AutomationReadinessStatus,
+    AutomationLane,
+    AutomationLaneLimits,
     AgentState,
     AgentStateCompletedRequest,
     AgentStateRequest,
@@ -15,6 +18,7 @@ export type {
     GoalListResponse,
     GoalResponse,
     GoalStatus,
+    HopiTaskRole,
     ListDirectoryQuery,
     ListDirectoryRequest,
     ListDirectoryResponse,

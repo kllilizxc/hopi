@@ -4,6 +4,7 @@ import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { TaskSessionStartFailure, TaskSessionStartFailureCode, TaskSessionStartRetryAction } from '@hopi/protocol/task-session-start'
+import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 import { z } from 'zod'
 import type { Store, StoredMessage, StoredTask } from '../store'
 import {
@@ -14,6 +15,7 @@ import {
 import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
 import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
+import { buildAgentOutputLanguageSection, resolveAgentOutputLocale } from './agentOutputLanguage'
 import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type SessionRootPathLike } from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
@@ -399,6 +401,7 @@ function buildInitCommandReportLines(options: {
 function resolveWorkflowKickoff(options: {
     task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'contract' | 'handoff' | 'evidence'>
     kickoff: StartSessionKickoffOptions
+    agentOutputLocale?: string
 }): StartSessionKickoffOptions {
     if (options.kickoff.kind === 'skip' || options.kickoff.kind === 'custom') {
         return options.kickoff
@@ -425,7 +428,7 @@ function resolveWorkflowKickoff(options: {
 
     return {
         kind: 'custom',
-        text: `${buildTaskKickoffSummary(options.task)}
+        text: `${buildTaskKickoffSummary(options.task, { agentOutputLocale: options.agentOutputLocale })}
 
 ${guidance}`,
         localId: `${AUTO_WORKFLOW_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`,
@@ -449,12 +452,19 @@ function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>)
     return 'Generator'
 }
 
+function toHopiTaskRole(role: GoalTaskRole | null): HopiTaskRole | undefined {
+    if (!role) {
+        return undefined
+    }
+    return role.toLowerCase() as HopiTaskRole
+}
+
 function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
             '- create_goal_task: create a small ready task for this Goal.',
-            '- update_goal: update Goal status/currentFocus/successCriteria when durable.',
+            '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
         ]
@@ -503,8 +513,10 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
             '',
             'Allowed transitions:',
-            '- Create a small batch of ready goal-scoped kanban tasks.',
-            '- Mark this Goal active, paused, blocked, or update current focus when needed.',
+            '- Create enough independent ready goal-scoped kanban tasks to fill available generator lane capacity, usually 2-3 when the lane is empty.',
+            '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
+            '- Mark this Goal active or blocked, or update current focus when needed.',
+            '- Do not mark the Goal paused, done, or archived; those are explicit human lifecycle actions.',
             '- Create one blocking human question when the Goal or task is unclear.',
             '- Record handoff/evidence and move this planning task to blocked or finished.',
             buildGoalActionPacketSection(role)
@@ -564,7 +576,10 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
     ].join('\n')
 }
 
-function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'contract' | 'handoff' | 'evidence'>): string {
+function buildTaskKickoffSummary(
+    task: Pick<StoredTask, 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'contract' | 'handoff' | 'evidence'>,
+    options?: { agentOutputLocale?: string }
+): string {
     const title = (task.title ?? '').trim()
     const description = (task.description ?? '').trim()
     const goalId = (task.goalId ?? '').trim()
@@ -607,19 +622,23 @@ function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' 
             : ''
     const contextSections = `${goalSection}${roleSection}${contractSection}${handoffSection}${evidenceSection}`
 
+    const languageSection = options?.agentOutputLocale
+        ? buildAgentOutputLanguageSection(options.agentOutputLocale)
+        : ''
+
     if (title && description) {
-        return `Task: ${title}\n\nDescription:\n${description}${subTasksSection}${contextSections}`
+        return `Task: ${title}\n\nDescription:\n${description}${subTasksSection}${contextSections}${languageSection}`
     }
     if (description) {
-        return `${description}${subTasksSection}${contextSections}`
+        return `${description}${subTasksSection}${contextSections}${languageSection}`
     }
     if (title) {
-        return `Task: ${title}${subTasksSection}${contextSections}`
+        return `Task: ${title}${subTasksSection}${contextSections}${languageSection}`
     }
     if (subTasksSection) {
-        return `Task${subTasksSection}${contextSections}`
+        return `Task${subTasksSection}${contextSections}${languageSection}`
     }
-    return `Task${contextSections}`
+    return `Task${contextSections}${languageSection}`
 }
 
 function buildRepeatedInitFailureNote(options: {
@@ -1203,6 +1222,15 @@ function resolveGoalPreviousRootPath(options: {
     return resolveSessionPreferredRootPath(toSessionRootPathLike(storedSession) ?? {})
 }
 
+function sessionHasPendingRequests(session: Pick<Session, 'agentState'> | null | undefined): boolean {
+    const agentState = session?.agentState
+    if (!agentState || typeof agentState !== 'object') {
+        return false
+    }
+    const requests = (agentState as { requests?: unknown }).requests
+    return Boolean(requests && typeof requests === 'object' && Object.keys(requests).length > 0)
+}
+
 export type StartTaskSessionResult =
     | {
         ok: true
@@ -1212,6 +1240,149 @@ export type StartTaskSessionResult =
         initRecoveryError?: TaskSessionStartFailure
     }
     | { ok: false; error: TaskSessionStartFailure }
+
+async function continueTaskInLinkedSessionInternal(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+}): Promise<StartTaskSessionResult | null> {
+    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (!task) {
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'task_not_found',
+                message: 'Task not found',
+                retryAvailable: false
+            })
+        }
+    }
+
+    if (task.status !== 'planned' || !task.goalId || !task.activeSessionId) {
+        return null
+    }
+
+    const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
+    if (!linkedSession || linkedSession.active === false || linkedSession.thinking || sessionHasPendingRequests(linkedSession)) {
+        return null
+    }
+
+    const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
+    if (!project) {
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'project_not_found',
+                message: 'Project not found',
+                retryAvailable: false
+            })
+        }
+    }
+
+    setSessionTaskLink({
+        store: options.store,
+        engine: options.engine,
+        sessionId: linkedSession.id,
+        namespace: options.namespace,
+        projectId: project.id,
+        taskId: task.id,
+        name: task.title,
+        hopiTaskRole: toHopiTaskRole(getGoalTaskRole(task))
+    })
+
+    const agentOutputLocale = resolveAgentOutputLocale({
+        agentOutputLanguage: project.agentOutputLanguage,
+        session: linkedSession
+    })
+    const kickoff = resolveWorkflowKickoff({
+        task,
+        kickoff: { kind: 'default' },
+        agentOutputLocale
+    })
+    const kickoffText = (() => {
+        if (kickoff.kind === 'skip') {
+            return ''
+        }
+        if (kickoff.kind === 'custom') {
+            return normalizeText(kickoff.text)
+        }
+        return buildTaskKickoffSummary(task, { agentOutputLocale })
+    })()
+
+    if (kickoffText) {
+        await options.engine.sendMessage(linkedSession.id, {
+            text: kickoffText,
+            localId: kickoff.kind === 'custom' && kickoff.localId
+                ? kickoff.localId
+                : `auto:kickoff:${task.id}:${Date.now()}`,
+            sentFrom: 'webapp'
+        })
+    }
+
+    const strategy = getWorkflowStrategy(task)
+    const workflowPatch = strategy.getTaskPatchForTransition('task_prompted', task) ?? { status: 'in_progress' }
+    const updatedTask = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
+        activeSessionId: linkedSession.id,
+        status: workflowPatch.status ?? 'in_progress',
+        workflowPhase: workflowPatch.workflowPhase,
+        initRuntime: buildTaskInitRuntime({
+            task,
+            status: 'succeeded',
+            sessionId: linkedSession.id,
+            retryCount: task.initRuntime?.retryCount,
+            latestNote: 'Goal role continued in the linked session.'
+        })
+    })
+
+    if (!updatedTask) {
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'task_not_found',
+                message: 'Task not found',
+                retryAvailable: false
+            })
+        }
+    }
+
+    options.engine.handleRealtimeEvent({
+        type: 'task-updated',
+        taskId: updatedTask.id,
+        projectId: updatedTask.projectId,
+        namespace: options.namespace,
+        data: {
+            taskId: updatedTask.id,
+            activeSessionId: updatedTask.activeSessionId,
+            initRuntime: updatedTask.initRuntime
+        }
+    })
+
+    return {
+        ok: true,
+        task: updatedTask,
+        sessionId: linkedSession.id
+    }
+}
+
+export async function continueTaskInLinkedSession(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    taskId: string
+}): Promise<StartTaskSessionResult | null> {
+    try {
+        return await continueTaskInLinkedSessionInternal(options)
+    } catch (error) {
+        return {
+            ok: false,
+            error: createTaskSessionStartFailure({
+                code: 'unexpected_error',
+                message: formatErrorMessage(error, 'Failed to continue linked task session')
+            })
+        }
+    }
+}
 
 
 async function startSessionFromTaskInternal(options: {
@@ -1236,7 +1407,6 @@ async function startSessionFromTaskInternal(options: {
             })
         }
     }
-    const kickoff = resolveWorkflowKickoff({ task, kickoff: requestedKickoff })
     const previousSessionId = task.activeSessionId
 
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
@@ -1303,6 +1473,7 @@ async function startSessionFromTaskInternal(options: {
     const isGsdNonExecutionPhase = isGsdWorkflow && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
     const isGoalPlanningRole = Boolean(task.goalId) && (task.source === 'planner' || task.source === 'radar')
     const isGoalReviewRole = Boolean(task.goalId) && task.status === 'in_review'
+    const goalTaskRole = getGoalTaskRole(task)
     if (isGsdNonExecutionPhase || isGoalPlanningRole) {
         // Workflow phases that should not trigger execution:
         // force session into an explicit planning / read-only posture regardless of stored task settings.
@@ -1442,7 +1613,8 @@ async function startSessionFromTaskInternal(options: {
         namespace: options.namespace,
         projectId: project.id,
         taskId: task.id,
-        name: task.title
+        name: task.title,
+        hopiTaskRole: toHopiTaskRole(goalTaskRole)
     })
 
     const sessionConfigPatch: SessionConfigPatch = {}
@@ -1478,6 +1650,11 @@ async function startSessionFromTaskInternal(options: {
     const runtimeSession = typeof engineWithSessionLookup.getSessionByNamespace === 'function'
         ? engineWithSessionLookup.getSessionByNamespace.call(options.engine, spawn.sessionId, options.namespace)
         : undefined
+    const agentOutputLocale = resolveAgentOutputLocale({
+        agentOutputLanguage: project.agentOutputLanguage,
+        session: runtimeSession
+    })
+    const kickoff = resolveWorkflowKickoff({ task, kickoff: requestedKickoff, agentOutputLocale })
     const initScriptCwdCandidates = resolveSessionRootPathCandidates({
         session: runtimeSession ?? {},
         workspacePath: workspace.path
@@ -1828,7 +2005,7 @@ async function startSessionFromTaskInternal(options: {
                 return `${baseKickoff}${historySection}`
             }
 
-            const baseKickoff = buildTaskKickoffSummary(updatedTask)
+            const baseKickoff = buildTaskKickoffSummary(updatedTask, { agentOutputLocale })
 
             if (!previousSessionId || previousSessionId === spawn.sessionId || updatedTask.goalId) {
                 return baseKickoff

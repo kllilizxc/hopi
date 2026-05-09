@@ -562,6 +562,30 @@ describe('git diff RPC handlers', () => {
         expect(result.stdout).toContain('unstaged.txt')
     })
 
+    it('compares baseRef against targetRef without including later working tree changes', async () => {
+        await runGit(repoDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'target'])
+        const targetCommit = await runGit(repoDir, ['rev-parse', 'HEAD'])
+
+        const numstatResult = await callGitHandler('git-diff-numstat', {
+            cwd: repoDir,
+            baseRef: initialCommit,
+            targetRef: targetCommit
+        })
+        const fileResult = await callGitHandler('git-diff-file', {
+            cwd: repoDir,
+            filePath: 'unstaged.txt',
+            baseRef: initialCommit,
+            targetRef: targetCommit
+        })
+
+        expect(numstatResult.success).toBe(true)
+        expect(numstatResult.stdout).toContain('staged.txt')
+        expect(numstatResult.stdout).not.toContain('unstaged.txt')
+
+        expect(fileResult.success).toBe(true)
+        expect((fileResult.stdout ?? '').trim()).toBe('')
+    })
+
     it('still supports explicit staged and unstaged filters', async () => {
         const stagedResult = await callGitHandler('git-diff-numstat', { cwd: repoDir, staged: true })
         const unstagedResult = await callGitHandler('git-diff-numstat', { cwd: repoDir, staged: false })

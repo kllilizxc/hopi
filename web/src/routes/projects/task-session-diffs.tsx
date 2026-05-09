@@ -54,6 +54,42 @@ function parseCommittedFiles(numStatOutput: string): GitFileStatus[] {
     return files.filter((file): file is GitFileStatus => file !== null)
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isGitFileStatus(value: unknown): value is GitFileStatus {
+    if (!isObject(value)) return false
+    return typeof value.fileName === 'string'
+        && typeof value.filePath === 'string'
+        && typeof value.fullPath === 'string'
+        && (value.status === 'added'
+            || value.status === 'deleted'
+            || value.status === 'modified'
+            || value.status === 'renamed'
+            || value.status === 'untracked'
+            || value.status === 'conflicted')
+        && typeof value.isStaged === 'boolean'
+        && typeof value.linesAdded === 'number'
+        && typeof value.linesRemoved === 'number'
+}
+
+function normalizeMergedDiffSnapshot(value: unknown): { files: GitFileStatus[]; capturedAt?: number; baseCommit?: string } | null {
+    if (!isObject(value)) return null
+
+    const files = Array.isArray(value.files)
+        ? value.files.filter(isGitFileStatus)
+        : typeof value.rawNumstat === 'string'
+            ? parseCommittedFiles(value.rawNumstat)
+            : []
+
+    return {
+        files,
+        capturedAt: typeof value.capturedAt === 'number' ? value.capturedAt : undefined,
+        baseCommit: typeof value.baseCommit === 'string' ? value.baseCommit : undefined
+    }
+}
+
 function extractCommandError(result: GitCommandResponse | undefined): string | null {
     if (!result) return null
     if (result.success) return null
@@ -70,7 +106,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     // Reuse canonical task query shape to avoid cache key collisions with useTask().
     const taskId = session?.metadata?.taskId ?? null
     const { task, isLoading: isTaskLoading } = useTask(props.api, taskId)
-    const mergedDiffSnapshot = task?.mergedDiffSnapshot as { files: GitFileStatus[]; capturedAt: number; baseCommit?: string } | null | undefined
+    const mergedDiffSnapshot = normalizeMergedDiffSnapshot(task?.mergedDiffSnapshot)
 
     const sessionDiffQuery = useQuery({
         queryKey: queryKeys.gitCommittedDiff(props.sessionId, worktreeBaseCommit ?? 'none'),
@@ -93,6 +129,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         path: string
         staged?: boolean
         baseRef?: string
+        taskMergedDiffId?: string
         diffScope?: 'staged' | 'unstaged' | 'committed'
     } | null>(null)
 
@@ -130,6 +167,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
             })
         }
         if (mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0) {
+            const mergedTaskId = task?.id ?? taskId
             sections.push({
                 key: 'merged',
                 title: t('projects.diffs.merged'),
@@ -137,13 +175,13 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                 files: mergedDiffSnapshot.files,
                 onOpenFile: (file) => setOpenFile({
                     path: file.fullPath,
-                    baseRef: mergedDiffSnapshot.baseCommit,
+                    taskMergedDiffId: mergedTaskId ?? undefined,
                     diffScope: 'committed'
                 }),
             })
         }
         return sections
-    }, [gitStatus, mergedDiffSnapshot, sessionDiffFiles, showSessionDiff, t, worktreeBaseCommit])
+    }, [gitStatus, mergedDiffSnapshot, sessionDiffFiles, showSessionDiff, t, task?.id, taskId, worktreeBaseCommit])
 
     if (openFile) {
         return (
@@ -153,6 +191,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                 filePath={openFile.path}
                 staged={openFile.staged}
                 baseRef={openFile.baseRef}
+                taskMergedDiffId={openFile.taskMergedDiffId}
                 diffScope={openFile.diffScope}
                 onBack={() => setOpenFile(null)}
             />

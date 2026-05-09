@@ -16,6 +16,7 @@ import { getWorkflowStrategy } from './workflowStrategy'
 
 const IMPROVEMENTS_SCAN_LOCAL_ID_PREFIX = 'auto:improvements_scan:'
 const AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX = 'auto:merge_conflict_resolve:'
+const AUTO_MERGE_RUNTIME_LOCAL_ID_PREFIX = 'auto:merge_runtime:'
 const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
 const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 const AUTO_BOOTSTRAP_REPAIR_LOCAL_ID_PREFIX = 'auto:bootstrap_repair:'
@@ -52,6 +53,11 @@ function isMergeConflictAutoResolveLocalId(localId: unknown): boolean {
     return localId.startsWith(AUTO_MERGE_CONFLICT_LOCAL_ID_PREFIX)
 }
 
+function isMergeRuntimeLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(AUTO_MERGE_RUNTIME_LOCAL_ID_PREFIX)
+}
+
 function isPreviewSetupLocalId(localId: unknown): boolean {
     if (typeof localId !== 'string') return false
     return localId.startsWith(AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX)
@@ -81,6 +87,11 @@ function isReadyEventMessage(message: DecryptedMessage): boolean {
     if (!data || typeof data !== 'object') return false
     if (!('type' in data)) return false
     return (data as { type?: unknown }).type === 'ready'
+}
+
+function isMergeRuntimeReadyEvent(message: DecryptedMessage): boolean {
+    const details = getReadyEventDetails(message)
+    return Boolean(details?.forLocalKey && isMergeRuntimeLocalId(details.forLocalKey))
 }
 
 type ReadyEventDetails = {
@@ -303,6 +314,7 @@ function isTaskProgressPromptMessage(message: DecryptedMessage): boolean {
     if (getMessageRole(message) !== 'user') return false
     if (isInternalAutomationLocalId(message.localId)) return false
     if (isMergeConflictAutoResolveLocalId(message.localId)) return false
+    if (isMergeRuntimeLocalId(message.localId)) return false
     if (isPreviewSetupLocalId(message.localId)) return false
     if (isWorkflowAutomationLocalId(message.localId)) return false
     return true
@@ -473,9 +485,15 @@ export class TaskAutomation {
                 return
             }
             if (goalActionResult === 'goal_task') {
+                if (isMergeRuntimeReadyEvent(message)) {
+                    this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                }
                 return
             }
             this.tryMoveToInReviewFromReady(sessionId, message)
+            if (isMergeRuntimeReadyEvent(message)) {
+                this.maybeRequestAutoMergeAcceptedTask(sessionId)
+            }
             this.maybeAutoCommitWorktreeFromReady(sessionId, message)
             return
         }

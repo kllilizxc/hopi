@@ -152,6 +152,24 @@ function buildContractFromPlannerFields(action: Record<string, unknown>): string
     }).join('\n\n').trim()
 }
 
+function getTrimmedString(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    return trimmed || null
+}
+
+function buildDecisionTopicBody(action: Record<string, unknown>): unknown {
+    const body = getTrimmedString(action.body)
+    if (body) return body
+
+    const question = getTrimmedString(action.question)
+    const context = getTrimmedString(action.context)
+    if (question && context) {
+        return `${question}\n\n${context}`
+    }
+    return question ?? context ?? action.body
+}
+
 function normalizeActionPacketInput(raw: unknown): unknown {
     const packet = toRecord(raw)
     if (!packet || !Array.isArray(packet.actions)) {
@@ -190,7 +208,8 @@ function normalizeActionPacketInput(raw: unknown): unknown {
             if (type === 'create_decision_topic') {
                 return {
                     ...item,
-                    taskId: getAlias(item, 'taskId', 'task_id')
+                    taskId: getAlias(item, 'taskId', 'task_id'),
+                    body: buildDecisionTopicBody(item)
                 }
             }
             return item

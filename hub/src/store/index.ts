@@ -51,7 +51,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 20
+const SCHEMA_VERSION: number = 22
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -413,8 +413,10 @@ export class Store {
                 worktree_target_branch TEXT,
                 worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off',
                 worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0,
+                agent_output_language TEXT NOT NULL DEFAULT 'system',
                 auto_run_enabled INTEGER NOT NULL DEFAULT 0,
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
+                automation_lane_limits TEXT,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
                 improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
                 automation_readiness_status TEXT NOT NULL DEFAULT 'unknown',
@@ -906,6 +908,12 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 20) {
             this.migrateFromV19ToV20()
+        }
+        if (SCHEMA_VERSION >= 21) {
+            this.migrateFromV20ToV21()
+        }
+        if (SCHEMA_VERSION >= 22) {
+            this.migrateFromV21ToV22()
         }
     }
 
@@ -1424,6 +1432,26 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
         `)
+    }
+
+    private migrateFromV20ToV21(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v20 to v21 migration.')
+        }
+        if (!projectColumns.has('automation_lane_limits')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_lane_limits TEXT')
+        }
+    }
+
+    private migrateFromV21ToV22(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v21 to v22 migration.')
+        }
+        if (!projectColumns.has('agent_output_language')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN agent_output_language TEXT NOT NULL DEFAULT 'system'")
+        }
     }
 
     private getMachineColumnNames(): Set<string> {

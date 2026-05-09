@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite'
+import type { AgentOutputLanguage, AutomationLaneLimits } from '@hopi/protocol/types'
 
 import type { StoredProject } from './types'
-import { archiveProject, createProject, getProject, getProjectByNamespace, listProjectsByNamespace, updateProject } from './projects'
+import { archiveProject, createProject, getProject, getProjectByNamespace, listProjects, listProjectsByNamespace, updateProject } from './projects'
 
 export class ProjectStore {
     private readonly db: Database
@@ -25,8 +26,10 @@ export class ProjectStore {
         worktreeTargetBranch?: string | null
         worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -48,6 +51,10 @@ export class ProjectStore {
         return listProjectsByNamespace(this.db, namespace, options)
     }
 
+    listProjects(options?: { includeArchived?: boolean }): StoredProject[] {
+        return listProjects(this.db, options)
+    }
+
     updateProject(
         projectId: string,
         namespace: string,
@@ -63,8 +70,10 @@ export class ProjectStore {
             worktreeTargetBranch?: string | null
             worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
             worktreeCleanupAfterMerge?: boolean
+            agentOutputLanguage?: AgentOutputLanguage | null
             autoRunEnabled?: boolean
             maxRunningSessions?: number
+            automationLaneLimits?: AutomationLaneLimits | null
             improvementsEnabled?: boolean
             improvementsMaxPendingTasks?: number
             automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'

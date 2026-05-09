@@ -14,6 +14,7 @@ export function SessionFileViewer(props: {
     filePath: string
     staged?: boolean
     baseRef?: string
+    taskMergedDiffId?: string
     diffScope?: 'staged' | 'unstaged' | 'committed'
     onBack: () => void
     showSafeAreaTop?: boolean
@@ -24,6 +25,7 @@ export function SessionFileViewer(props: {
 }) {
     const { t } = useTranslation()
     const { copied: pathCopied, copy: copyPath } = useCopyToClipboard()
+    const showStagedStatus = props.showStagedStatus ?? (props.diffScope !== 'committed')
 
     const viewer = useSessionFileDiffViewer({
         api: props.api,
@@ -31,6 +33,7 @@ export function SessionFileViewer(props: {
         filePath: props.filePath,
         staged: props.staged,
         baseRef: props.baseRef,
+        taskMergedDiffId: props.taskMergedDiffId,
     })
 
     return (
@@ -78,7 +81,7 @@ export function SessionFileViewer(props: {
             <SessionFileDiffContent
                 viewer={viewer}
                 staged={props.staged}
-                showStagedStatus={props.showStagedStatus ?? true}
+                showStagedStatus={showStagedStatus}
                 fileErrorClassName={props.fileErrorClassName ?? 'text-sm text-red-600'}
                 contentCopyVariant={props.contentCopyVariant ?? 'button'}
                 labels={{

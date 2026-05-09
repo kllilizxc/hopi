@@ -21,37 +21,55 @@ export function GoalSwitcher(props: GoalSwitcherProps) {
         : selected?.title ?? t('projects.goals.empty')
 
     return (
-        <div
-            data-testid="goal-switcher-toolbar"
-            className="flex flex-wrap items-end gap-2 border-b border-[var(--app-divider)] px-3 py-2"
-        >
-            {props.leading ? (
-                <div className="max-w-full shrink-0 overflow-x-auto">
-                    {props.leading}
-                </div>
-            ) : null}
-            <div className="min-w-[min(100%,18rem)] flex-1">
-                <div className="text-[11px] font-medium uppercase text-[var(--app-hint)]">
-                    {t('projects.goals.current')}
-                </div>
-                <AdaptiveSelect
-                    title={t('projects.goals.title')}
-                    value={selected?.id ?? ''}
-                    options={props.goals.map((goal) => ({ value: goal.id, label: goal.title }))}
-                    onValueChange={props.onSelectGoal}
-                    disabled={props.goals.length === 0 || props.isLoading}
-                    trigger={
-                        <Button type="button" variant="secondary" className="mt-1 w-full justify-between gap-2">
-                            <span className="truncate">{label}</span>
-                            <ChevronDownIcon className="h-4 w-4 shrink-0 text-[var(--app-hint)]" />
+        <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 sm:px-4 sm:py-3">
+            <div
+                data-testid="goal-switcher-toolbar"
+                className="grid w-full min-w-0 gap-2 lg:grid-cols-[minmax(20rem,1fr)_auto_auto] lg:items-center lg:gap-3"
+            >
+                <div
+                    data-testid="goal-switcher-goal-row"
+                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 lg:contents"
+                >
+                    <div data-testid="goal-switcher-current-goal" className="min-w-0">
+                        <AdaptiveSelect
+                            title={t('projects.goals.title')}
+                            value={selected?.id ?? ''}
+                            options={props.goals.map((goal) => ({ value: goal.id, label: goal.title }))}
+                            onValueChange={props.onSelectGoal}
+                            disabled={props.goals.length === 0 || props.isLoading}
+                            trigger={
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    className="h-10 w-full justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-3 shadow-sm hover:border-[var(--app-divider)] hover:opacity-100 sm:h-11 sm:gap-3 sm:px-4"
+                                >
+                                    <span className="truncate text-left">{label}</span>
+                                    <ChevronDownIcon className="h-4 w-4 shrink-0 text-[var(--app-hint)]" />
+                                </Button>
+                            }
+                        />
+                    </div>
+                    <div data-testid="goal-switcher-actions" className="flex min-w-0 justify-end">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={props.onCreateGoal}
+                            className="h-10 shrink-0 gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-3 shadow-sm hover:border-[var(--app-divider)] hover:opacity-100 sm:h-11 sm:px-4"
+                        >
+                            <PlusIcon className="h-4 w-4" />
+                            {t('projects.goals.create')}
                         </Button>
-                    }
-                />
+                    </div>
+                </div>
+                {props.leading ? (
+                    <div
+                        data-testid="goal-switcher-leading"
+                        className="w-full min-w-0 overflow-x-auto lg:w-auto lg:pb-0.5"
+                    >
+                        {props.leading}
+                    </div>
+                ) : null}
             </div>
-            <Button type="button" variant="secondary" onClick={props.onCreateGoal} className="shrink-0 gap-2">
-                <PlusIcon className="h-4 w-4" />
-                {t('projects.goals.create')}
-            </Button>
         </div>
     )
 }

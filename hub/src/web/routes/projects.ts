@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
@@ -29,8 +29,10 @@ const createProjectSchema = z.object({
     worktreeTargetBranch: z.string().max(255).optional(),
     worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.optional(),
     worktreeCleanupAfterMerge: z.boolean().optional(),
+    agentOutputLanguage: AgentOutputLanguageSchema.optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
+    automationLaneLimits: AutomationLaneLimitsSchema.optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
 })
@@ -47,8 +49,10 @@ const updateProjectSchema = z.object({
     worktreeTargetBranch: z.string().max(255).nullable().optional(),
     worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.nullable().optional(),
     worktreeCleanupAfterMerge: z.boolean().optional(),
+    agentOutputLanguage: AgentOutputLanguageSchema.nullable().optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
+    automationLaneLimits: AutomationLaneLimitsSchema.nullable().optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
 })
@@ -197,8 +201,10 @@ export function createProjectsRoutes(options: {
             worktreeTargetBranch: parsed.data.worktreeTargetBranch ?? null,
             worktreeAutoCommitMode: parsed.data.worktreeAutoCommitMode ?? null,
             worktreeCleanupAfterMerge: parsed.data.worktreeCleanupAfterMerge,
+            agentOutputLanguage: parsed.data.agentOutputLanguage ?? null,
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
+            automationLaneLimits: parsed.data.automationLaneLimits,
             improvementsEnabled: parsed.data.improvementsEnabled,
             improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
@@ -335,8 +341,10 @@ export function createProjectsRoutes(options: {
             worktreeTargetBranch: parsed.data.worktreeTargetBranch,
             worktreeAutoCommitMode: parsed.data.worktreeAutoCommitMode,
             worktreeCleanupAfterMerge: parsed.data.worktreeCleanupAfterMerge,
+            agentOutputLanguage: parsed.data.agentOutputLanguage,
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
+            automationLaneLimits: parsed.data.automationLaneLimits,
             improvementsEnabled: parsed.data.improvementsEnabled,
             improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { AgentFlavor, ModelMode, PermissionMode, Project } from '@/types/api'
+import type { AgentFlavor, AgentOutputLanguage, AutomationLaneLimits, ModelMode, PermissionMode, Project } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type UpdateProjectInput = {
@@ -16,8 +16,10 @@ type UpdateProjectInput = {
         worktreeTargetBranch?: string | null
         worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }

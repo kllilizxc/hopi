@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, type ReactNode, useMemo } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Session } from '@/types/api'
 import { isTelegramApp } from '@/hooks/useTelegram'
@@ -13,6 +13,7 @@ type SessionHeaderProps = {
     onViewFiles?: () => void
     onViewDiffs?: () => void
     onSessionDeleted?: () => void
+    extra?: ReactNode
 }
 
 function SessionHeaderImpl(props: SessionHeaderProps) {
@@ -93,13 +94,18 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
                         </IconButton>
                     ) : null}
                 </div>
+                {props.extra ? (
+                    <div className="mx-auto w-full max-w-content px-3 pb-3">
+                        {props.extra}
+                    </div>
+                ) : null}
             </div>
         </>
     )
 }
 
 function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeaderProps): boolean {
-    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted) {
+    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted || prev.extra !== next.extra) {
         return false
     }
 

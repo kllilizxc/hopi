@@ -58,21 +58,23 @@ export function SessionFileDiffContent(props: {
                                 {props.labels.diffTab}
                             </button>
                         </Tag>
-                        <Tag
-                            asChild
-                            variant={props.viewer.displayMode === 'file' ? 'primary' : 'secondary'}
-                            size="md"
-                            shape="rounded"
-                            bordered={false}
-                            className="cursor-pointer"
-                        >
-                            <button
-                                type="button"
-                                onClick={() => props.viewer.setDisplayMode('file')}
+                        {props.viewer.canLoadFileContent ? (
+                            <Tag
+                                asChild
+                                variant={props.viewer.displayMode === 'file' ? 'primary' : 'secondary'}
+                                size="md"
+                                shape="rounded"
+                                bordered={false}
+                                className="cursor-pointer"
                             >
-                                {props.labels.fileTab}
-                            </button>
-                        </Tag>
+                                <button
+                                    type="button"
+                                    onClick={() => props.viewer.setDisplayMode('file')}
+                                >
+                                    {props.labels.fileTab}
+                                </button>
+                            </Tag>
+                        ) : null}
 
                         {props.showStagedStatus ? (
                             <div className="ml-auto text-[10px] text-[var(--app-hint)]">

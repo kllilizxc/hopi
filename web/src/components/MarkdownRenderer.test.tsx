@@ -1,0 +1,86 @@
+// @vitest-environment jsdom
+
+import { screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { describe, expect, it, vi } from 'vitest'
+import { renderWithProviders } from '@/test/renderWithProviders'
+import { MarkdownRenderer } from './MarkdownRenderer'
+
+vi.mock('@assistant-ui/react', async importOriginal => {
+    const actual = await importOriginal<typeof import('@assistant-ui/react')>()
+    return {
+        ...actual,
+        TextMessagePartProvider: (props: { text: string; children: ReactNode }) => (
+            <div>
+                <div>{props.text}</div>
+                {props.children}
+            </div>
+        )
+    }
+})
+
+vi.mock('@assistant-ui/react-markdown', async importOriginal => {
+    const actual = await importOriginal<typeof import('@assistant-ui/react-markdown')>()
+    return {
+        ...actual,
+        MarkdownTextPrimitive: () => null
+    }
+})
+
+describe('MarkdownRenderer', () => {
+    it('renders HOPI_ACTIONS packets as readable task action results', () => {
+        renderWithProviders(
+            <MarkdownRenderer
+                content={[
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [{
+                            type: 'update_current_task',
+                            status: 'blocked',
+                            handoff: 'Docs contract is not aligned with the implementation.',
+                            evidence: 'Tests pass, but main uses presentation.mapWidth.'
+                        }]
+                    }, null, 2),
+                    '```'
+                ].join('\n')}
+            />
+        )
+
+        expect(screen.getByText('Task blocked')).toBeInTheDocument()
+        expect(screen.getByText('Why')).toBeInTheDocument()
+        expect(screen.getByText('Docs contract is not aligned with the implementation.')).toBeInTheDocument()
+        expect(screen.getByText('Evidence')).toBeInTheDocument()
+        expect(screen.getByText('Tests pass, but main uses presentation.mapWidth.')).toBeInTheDocument()
+    })
+
+    it('keeps kickoff task contracts visible when they include instructional HOPI_ACTIONS examples', () => {
+        renderWithProviders(
+            <MarkdownRenderer
+                content={[
+                    'Final HOPI_ACTIONS packet:',
+                    '- HOPI applies this JSON after your turn.',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [{
+                            type: 'update_current_task',
+                            status: 'finished',
+                            handoff: '...',
+                            evidence: '...'
+                        }]
+                    }, null, 2),
+                    '```',
+                    '',
+                    'Task Contract:',
+                    '## Objective',
+                    'Use the brainstorming protocol to clarify this Goal before implementation: 调整为成熟的游戏架构'
+                ].join('\n')}
+            />
+        )
+
+        expect(screen.getByText(/Task Contract:/)).toBeInTheDocument()
+        expect(screen.getByText(/调整为成熟的游戏架构/)).toBeInTheDocument()
+        expect(screen.queryByText('Task finished')).not.toBeInTheDocument()
+    })
+})

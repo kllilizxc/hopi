@@ -9,11 +9,14 @@ export function CompactTabs(props: {
     selectedId: string
     onSelect: (id: string) => void
     ariaLabel: string
+    distribution?: 'content' | 'equal'
     className?: string
 }) {
+    const isEqual = props.distribution === 'equal'
+
     return (
         <div
-            className={`flex items-center gap-1 overflow-x-auto ${props.className ?? ''}`}
+            className={`flex ${isEqual ? 'w-full' : 'max-w-full'} items-center gap-1 overflow-x-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-1 ${props.className ?? ''}`}
             role="tablist"
             aria-label={props.ariaLabel}
         >
@@ -28,10 +31,10 @@ export function CompactTabs(props: {
                         aria-selected={isSelected}
                         aria-current={isSelected ? 'page' : undefined}
                         title={item.title ?? item.label}
-                        className={`px-3 py-1.5 text-sm whitespace-nowrap rounded-md transition-colors border ${
+                        className={`${isEqual ? 'min-w-0 flex-1 text-center' : 'shrink-0'} rounded-md border px-3 py-1.5 text-sm whitespace-nowrap transition-colors ${
                             isSelected
-                                ? 'text-[var(--app-link)] bg-[var(--app-link)]/15 border-[var(--app-link)]/40 font-semibold shadow-sm'
-                                : 'text-[var(--app-hint)] border-transparent hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
+                                ? 'border-[var(--app-divider)] bg-[var(--app-subtle-bg)] text-[var(--app-fg)] font-semibold shadow-sm'
+                                : 'border-transparent text-[var(--app-hint)] hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
                         }`}
                     >
                         {item.label}
@@ -41,4 +44,3 @@ export function CompactTabs(props: {
         </div>
     )
 }
-

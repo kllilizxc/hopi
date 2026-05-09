@@ -61,6 +61,13 @@ function resolveTaskActionFailureDetail(runtime: TaskActionRuntimeLike | null | 
         ?? null
 }
 
+function isMergeConflictRepairRuntime(runtime: Task['mergeRuntime'] | null | undefined): boolean {
+    return runtime?.status === 'retrying'
+        && typeof runtime.latestNote === 'string'
+        && runtime.latestNote.includes('Platform merge found conflicts')
+        && runtime.latestNote.includes('linked session')
+}
+
 export function isBusyTaskActionRuntimeStatus(status: TaskActionRuntimeCoreStatus | null | undefined): boolean {
     return status === 'queued'
         || status === 'waiting'
@@ -170,6 +177,15 @@ export function buildMergeRuntimeSummary(
                 busy: true
             }
         case 'retrying':
+            if (isMergeConflictRepairRuntime(runtime)) {
+                return {
+                    title: `Merge 冲突修复中${retrySuffix}`,
+                    detail: '已把冲突交给 linked session 里的 agent 修复；完成后 HOPI 会自动重试 merge。',
+                    tone: 'info',
+                    busy: true
+                }
+            }
+
             return {
                 title: `Merge 重试中${retrySuffix}`,
                 detail: runtime.latestNote ?? '正在根据最新输出继续重试。',

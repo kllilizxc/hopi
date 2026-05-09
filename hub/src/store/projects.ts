@@ -1,4 +1,11 @@
 import type { Database } from 'bun:sqlite'
+import {
+    AutomationLaneLimitsSchema,
+    DEFAULT_AUTOMATION_LANE_LIMITS,
+    normalizeAgentOutputLanguage,
+    normalizeAutomationLaneLimits
+} from '@hopi/protocol'
+import type { AgentOutputLanguage, AutomationLaneLimits } from '@hopi/protocol/types'
 
 import type { StoredProject } from './types'
 
@@ -17,8 +24,10 @@ type DbProjectRow = {
     worktree_target_branch?: string | null
     worktree_auto_commit_mode?: string | null
     worktree_cleanup_after_merge?: number
+    agent_output_language?: string | null
     auto_run_enabled: number
     max_running_sessions: number
+    automation_lane_limits?: string | null
     improvements_enabled: number
     improvements_max_pending_tasks?: number
     improvements_max_generated_new?: number
@@ -29,6 +38,22 @@ type DbProjectRow = {
     created_at: number
     updated_at: number
     archived_at: number | null
+}
+
+function parseAutomationLaneLimits(value: string | null | undefined): AutomationLaneLimits | null {
+    if (!value) {
+        return null
+    }
+    try {
+        const parsed = AutomationLaneLimitsSchema.safeParse(JSON.parse(value))
+        return parsed.success ? parsed.data : null
+    } catch {
+        return null
+    }
+}
+
+function serializeAutomationLaneLimits(value: AutomationLaneLimits | null | undefined): string {
+    return JSON.stringify(normalizeAutomationLaneLimits(value ?? DEFAULT_AUTOMATION_LANE_LIMITS))
 }
 
 function toStoredProject(row: DbProjectRow): StoredProject {
@@ -55,8 +80,10 @@ function toStoredProject(row: DbProjectRow): StoredProject {
                 ? 'off'
                 : null,
         worktreeCleanupAfterMerge: Boolean(row.worktree_cleanup_after_merge ?? 0),
+        agentOutputLanguage: normalizeAgentOutputLanguage(row.agent_output_language),
         autoRunEnabled: Boolean(row.auto_run_enabled),
         maxRunningSessions: row.max_running_sessions,
+        automationLaneLimits: parseAutomationLaneLimits(row.automation_lane_limits),
         improvementsEnabled: Boolean(row.improvements_enabled),
         improvementsMaxPendingTasks: row.improvements_max_pending_tasks ?? row.improvements_max_generated_new ?? 5,
         automationReadinessStatus: row.automation_readiness_status === 'checking'
@@ -94,8 +121,10 @@ export function createProject(
         worktreeTargetBranch?: string | null
         worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -110,7 +139,7 @@ export function createProject(
             name, description, default_workspace_id,
             default_agent_flavor, default_permission_mode, default_model, default_model_mode,
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
-            auto_run_enabled, max_running_sessions,
+            agent_output_language, auto_run_enabled, max_running_sessions, automation_lane_limits,
             improvements_enabled, improvements_max_pending_tasks,
             automation_readiness_status, automation_readiness_summary, automation_readiness_checked_at,
             created_at, updated_at, archived_at
@@ -119,7 +148,7 @@ export function createProject(
             @name, @description, @default_workspace_id,
             @default_agent_flavor, @default_permission_mode, @default_model, @default_model_mode,
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
-            @auto_run_enabled, @max_running_sessions,
+            @agent_output_language, @auto_run_enabled, @max_running_sessions, @automation_lane_limits,
             @improvements_enabled, @improvements_max_pending_tasks,
             @automation_readiness_status, @automation_readiness_summary, @automation_readiness_checked_at,
             @created_at, @updated_at, NULL
@@ -139,8 +168,10 @@ export function createProject(
         worktree_target_branch: project.worktreeTargetBranch ?? null,
         worktree_auto_commit_mode: project.worktreeAutoCommitMode ?? 'off',
         worktree_cleanup_after_merge: project.worktreeCleanupAfterMerge ? 1 : 0,
+        agent_output_language: normalizeAgentOutputLanguage(project.agentOutputLanguage),
         auto_run_enabled: project.autoRunEnabled ? 1 : 0,
         max_running_sessions: project.maxRunningSessions ?? 5,
+        automation_lane_limits: serializeAutomationLaneLimits(project.automationLaneLimits),
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: project.improvementsMaxPendingTasks ?? 5,
         automation_readiness_status: project.automationReadinessStatus ?? 'unknown',
@@ -185,6 +216,17 @@ export function listProjectsByNamespace(
     return rows.map(toStoredProject)
 }
 
+export function listProjects(
+    db: Database,
+    options?: { includeArchived?: boolean }
+): StoredProject[] {
+    const includeArchived = Boolean(options?.includeArchived)
+    const rows = includeArchived
+        ? db.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all() as DbProjectRow[]
+        : db.prepare('SELECT * FROM projects WHERE archived_at IS NULL ORDER BY updated_at DESC').all() as DbProjectRow[]
+    return rows.map(toStoredProject)
+}
+
 export function updateProject(
     db: Database,
     projectId: string,
@@ -201,8 +243,10 @@ export function updateProject(
         worktreeTargetBranch?: string | null
         worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -230,8 +274,14 @@ export function updateProject(
         worktreeTargetBranch: patch.worktreeTargetBranch !== undefined ? patch.worktreeTargetBranch : current.worktreeTargetBranch,
         worktreeAutoCommitMode: patch.worktreeAutoCommitMode !== undefined ? patch.worktreeAutoCommitMode : current.worktreeAutoCommitMode,
         worktreeCleanupAfterMerge: patch.worktreeCleanupAfterMerge !== undefined ? patch.worktreeCleanupAfterMerge : current.worktreeCleanupAfterMerge,
+        agentOutputLanguage: patch.agentOutputLanguage !== undefined
+            ? normalizeAgentOutputLanguage(patch.agentOutputLanguage)
+            : current.agentOutputLanguage,
         autoRunEnabled: patch.autoRunEnabled !== undefined ? patch.autoRunEnabled : current.autoRunEnabled,
         maxRunningSessions: patch.maxRunningSessions ?? current.maxRunningSessions,
+        automationLaneLimits: patch.automationLaneLimits !== undefined
+            ? normalizeAutomationLaneLimits(patch.automationLaneLimits)
+            : current.automationLaneLimits,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
         improvementsMaxPendingTasks: patch.improvementsMaxPendingTasks ?? current.improvementsMaxPendingTasks,
         automationReadinessStatus: patch.automationReadinessStatus !== undefined ? patch.automationReadinessStatus : current.automationReadinessStatus,
@@ -255,8 +305,10 @@ export function updateProject(
             worktree_target_branch = @worktree_target_branch,
             worktree_auto_commit_mode = @worktree_auto_commit_mode,
             worktree_cleanup_after_merge = @worktree_cleanup_after_merge,
+            agent_output_language = @agent_output_language,
             auto_run_enabled = @auto_run_enabled,
             max_running_sessions = @max_running_sessions,
+            automation_lane_limits = @automation_lane_limits,
             improvements_enabled = @improvements_enabled,
             improvements_max_pending_tasks = @improvements_max_pending_tasks,
             automation_readiness_status = @automation_readiness_status,
@@ -280,8 +332,10 @@ export function updateProject(
         worktree_target_branch: next.worktreeTargetBranch,
         worktree_auto_commit_mode: next.worktreeAutoCommitMode ?? 'off',
         worktree_cleanup_after_merge: next.worktreeCleanupAfterMerge ? 1 : 0,
+        agent_output_language: normalizeAgentOutputLanguage(next.agentOutputLanguage),
         auto_run_enabled: next.autoRunEnabled ? 1 : 0,
         max_running_sessions: next.maxRunningSessions,
+        automation_lane_limits: serializeAutomationLaneLimits(next.automationLaneLimits),
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: next.improvementsMaxPendingTasks,
         automation_readiness_status: next.automationReadinessStatus,

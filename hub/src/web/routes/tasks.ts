@@ -14,7 +14,7 @@ import { getTaskSessionStartFailureHttpStatus } from '@hopi/protocol/task-sessio
 import { Hono } from 'hono'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { Store, StoredTask } from '../../store'
+import type { Store, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import {
     buildApprovalPendingActionRuntimeNote,
     buildQueuedActionRuntimeNote,
@@ -138,6 +138,44 @@ function parseDiffNumstat(output: string): Array<{
     }
 
     return files
+}
+
+const gitCommitRefPattern = /^[0-9a-f]{7,64}$/i
+
+function normalizeGitCommitRef(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const normalized = value.trim()
+    if (!normalized) return null
+    return gitCommitRefPattern.test(normalized) ? normalized : null
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractMergedDiffBaseCommit(snapshot: unknown): string | null {
+    if (!isObject(snapshot)) return null
+    return normalizeGitCommitRef(snapshot.baseCommit)
+}
+
+function resolveTaskWorkspace(options: {
+    store: Store
+    project: StoredProject
+    task: StoredTask
+}): StoredWorkspace | null {
+    const workspaces = options.store.workspaces.listWorkspacesByProject(options.project.id)
+    if (options.task.workspaceId) {
+        return workspaces.find((workspace) => workspace.id === options.task.workspaceId) ?? null
+    }
+
+    if (options.project.defaultWorkspaceId) {
+        const defaultWorkspace = workspaces.find((workspace) => workspace.id === options.project.defaultWorkspaceId)
+        if (defaultWorkspace) {
+            return defaultWorkspace
+        }
+    }
+
+    return workspaces[0] ?? null
 }
 
 function buildWorktreeMergeCommitMessage(task: Pick<StoredTask, 'id' | 'title'>): string {
@@ -2085,6 +2123,10 @@ const updateTaskSchema = z.object({
 const listTasksQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional(),
     goalId: z.string().min(1).optional()
+})
+
+const mergedDiffFileQuerySchema = z.object({
+    path: z.string().min(1)
 })
 
 const attachSessionSchema = z.object({
@@ -4581,6 +4623,64 @@ export function createTasksRoutes(options: {
         } satisfies TaskWorktreeMergeState)
     })
 
+    app.get('/tasks/:taskId/worktree/merged-diff-file', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const parsed = mergedDiffFileQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid file path' }, 400)
+        }
+
+        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        if (!task) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
+        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const baseRef = extractMergedDiffBaseCommit(task.mergedDiffSnapshot)
+        if (!baseRef) {
+            return c.json({ success: false, error: 'Merged diff base commit not available' }, 400)
+        }
+
+        const targetRef = normalizeGitCommitRef(task.worktreeMergeCommit)
+        if (!targetRef) {
+            return c.json({ success: false, error: 'Merge commit not available' }, 400)
+        }
+
+        const workspace = resolveTaskWorkspace({
+            store: options.store,
+            project,
+            task
+        })
+        if (!workspace) {
+            return c.json({ success: false, error: 'Workspace not found' }, 400)
+        }
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        try {
+            const result = await engine.getGitDiffFileOnMachine(project.machineId, {
+                cwd: workspace.path,
+                filePath: parsed.data.path,
+                baseRef,
+                targetRef
+            })
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: formatErrorMessage(error, 'Failed to load merged diff')
+            })
+        }
+    })
+
     app.post('/tasks/:taskId/worktree/merge', async (c) => {
         try {
             const namespace = c.get('namespace')
@@ -4601,7 +4701,9 @@ export function createTasksRoutes(options: {
                 return c.json({ error: 'Task not found' }, 404)
             }
 
-            if (isActiveMergeRuntimeStatus(task.mergeRuntime?.status)) {
+            const mergeMonitorKey = buildMergeMonitorKey(namespace, task.id)
+            if (isActiveMergeRuntimeStatus(task.mergeRuntime?.status)
+                && inFlightConversationMergeMonitorKeys.has(mergeMonitorKey)) {
                 return c.json(buildMergeKickoffResponse({
                     task,
                     skippedReason: task.mergeRuntime?.status ?? 'running'

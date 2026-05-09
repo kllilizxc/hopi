@@ -116,6 +116,45 @@ describe('project workspace policy', () => {
         expect(listBody.workspaces[0]?.id).toBe(body.project.defaultWorkspaceId as string)
     })
 
+    it('persists project agent output language through create and update', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Language',
+                workspaces: [{ path: '/tmp/workspace-language' }],
+                agentOutputLanguage: 'zh-CN'
+            })
+        })
+        expect(createResponse.status).toBe(200)
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+                agentOutputLanguage: string
+            }
+        }
+        expect(createBody.project.agentOutputLanguage).toBe('zh-CN')
+
+        const updateResponse = await app.request(`/api/projects/${createBody.project.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                agentOutputLanguage: 'en'
+            })
+        })
+        expect(updateResponse.status).toBe(200)
+        const updateBody = await updateResponse.json() as {
+            project: {
+                agentOutputLanguage: string
+            }
+        }
+        expect(updateBody.project.agentOutputLanguage).toBe('en')
+    })
+
     it('rejects workspace changes after project creation', async () => {
         const store = new Store(':memory:')
         const app = createTestApp(store)

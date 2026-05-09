@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react'
+import { memo, type ReactNode, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import { SessionChat } from '@/components/SessionChat'
@@ -21,6 +21,7 @@ export const TaskSessionChat = memo(function TaskSessionChat(props: {
     onViewFiles?: () => void
     onViewDiffs?: () => void
     onViewTerminal?: () => void
+    headerExtra?: ReactNode
 }) {
     const { t } = useTranslation()
     const queryClient = useQueryClient()
@@ -163,6 +164,7 @@ export const TaskSessionChat = memo(function TaskSessionChat(props: {
             onViewFiles={props.onViewFiles}
             onViewDiffs={props.onViewDiffs}
             onViewTerminal={props.onViewTerminal}
+            headerExtra={props.headerExtra}
         />
     )
 })

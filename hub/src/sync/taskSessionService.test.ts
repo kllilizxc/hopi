@@ -297,6 +297,192 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('.hopi/docs/goals/goal-1.md')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('Allowed transitions:')
+        expect(kickoffText).toContain('Do not mark the Goal paused, done, or archived')
+        expect(kickoffText).not.toContain('Mark this Goal active, paused, blocked')
+    })
+
+    it('adds project agent output language guidance to goal task kickoff', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-task-language-kickoff'
+        const taskId = 'task-language-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            agentOutputLanguage: 'zh-CN'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: 'goal-language',
+            projectId,
+            namespace,
+            title: 'Goal language'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId: 'goal-language',
+            title: 'Build language-aware planning',
+            description: 'Make generated goal artifacts follow project language.',
+            status: 'planned',
+            workspaceId,
+            source: 'planner'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-task-language-kickoff',
+            { path: workspacePath, host: 'localhost', locale: 'en-US' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost', locale: 'en-US' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, message: { text?: string }) {
+                kickoffText = message.text ?? ''
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Agent output language: zh-CN')
+        expect(kickoffText).toContain('Use zh-CN for HOPI_ACTIONS generated titles, descriptions, decision topics, handoff, evidence, and goal updates unless quoting source text.')
+    })
+
+    it('keeps project agent output language guidance on internal workflow kickoff', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-workflow-language-kickoff'
+        const taskId = 'task-workflow-language-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            agentOutputLanguage: 'zh-CN'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Plan language-aware workflow',
+            description: 'Keep generated artifacts localized.',
+            status: 'planned',
+            workspaceId,
+            workflowProfile: 'gsd',
+            workflowPhase: 'plan'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-workflow-language-kickoff',
+            { path: workspacePath, host: 'localhost', locale: 'en-US' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost', locale: 'en-US' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, message: { text?: string }) {
+                kickoffText = message.text ?? ''
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Agent output language: zh-CN')
+        expect(kickoffText).toContain('Workflow mode: GSD plan.')
     })
 
     it('blocks task when setup workflow from actions manifest fails', async () => {
@@ -1856,6 +2042,108 @@ describe('startSessionFromTask', () => {
         expect(spawnedWorktreeTargetBranch).toBeUndefined()
     })
 
+    it('includes resolved decision handoff in goal planner kickoff', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-decision-handoff'
+        const goalId = 'goal-planner-decision-handoff'
+        const taskId = 'task-planner-decision-handoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Clarify autonomous loop',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'planned',
+            source: 'planner',
+            workspaceId,
+            handoff: [
+                'Resolved DecisionTopic: Choose story entry',
+                'Human answer:',
+                'Use MainMenu as the player-facing entry.'
+            ].join('\n')
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-planner-decision-handoff',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Role: Planner')
+        expect(kickoffText).toContain('Latest Handoff')
+        expect(kickoffText).toContain('Resolved DecisionTopic: Choose story entry')
+        expect(kickoffText).toContain('Use MainMenu as the player-facing entry.')
+    })
+
     it('starts radar goal tasks in the main workspace without creating a worktree', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -2183,8 +2471,10 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         const updatedReviewTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        const spawnedReviewSession = store.sessions.getSessionByNamespace(spawned.id, namespace)
         expect(updatedReviewTask?.status).toBe('in_review')
         expect(updatedReviewTask?.activeSessionId).toBe(previousSession.id)
+        expect((spawnedReviewSession?.metadata as { hopiTaskRole?: string } | null)?.hopiTaskRole).toBe('evaluator')
         expect(kickoffText).toContain('Role: Evaluator')
         expect(kickoffText).toContain('Generator Handoff')
         expect(kickoffText).toContain('Evidence Packet')

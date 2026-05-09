@@ -232,8 +232,15 @@ export class SSEManager {
             return true
         }
 
-        if (category === 'messages' || category === 'sessions') {
+        if (category === 'messages') {
             return Boolean(connection.sessionId && 'sessionId' in event && connection.sessionId === event.sessionId)
+        }
+
+        if (category === 'sessions') {
+            if (connection.sessionId && 'sessionId' in event && connection.sessionId === event.sessionId) {
+                return true
+            }
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
         }
 
         if (category === 'machines') {

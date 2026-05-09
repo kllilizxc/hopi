@@ -6,6 +6,13 @@ import { EventPublisher } from './eventPublisher'
 import { readSessionTaskLinkMetadata, relinkTaskToSession } from './sessionTaskLink'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema } from './todos'
 
+function buildSessionEventScope(session: Pick<Session, 'namespace' | 'metadata'>): { namespace: string; projectId?: string } {
+    const projectId = session.metadata?.projectId?.trim()
+    return projectId
+        ? { namespace: session.namespace, projectId }
+        : { namespace: session.namespace }
+}
+
 export class SessionCache {
     private readonly sessions: Map<string, Session> = new Map()
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
@@ -62,16 +69,19 @@ export class SessionCache {
     }
 
     refreshSession(sessionId: string): Session | null {
+        const existing = this.sessions.get(sessionId)
         let stored = this.store.sessions.getSession(sessionId)
         if (!stored) {
-            const existed = this.sessions.delete(sessionId)
-            if (existed) {
-                this.publisher.emit({ type: 'session-removed', sessionId })
+            if (existing) {
+                this.sessions.delete(sessionId)
+                this.publisher.emit({
+                    type: 'session-removed',
+                    sessionId,
+                    ...buildSessionEventScope(existing)
+                })
             }
             return null
         }
-
-        const existing = this.sessions.get(sessionId)
 
         if (stored.todos === null && !this.todoBackfillAttemptedSessionIds.has(sessionId)) {
             this.todoBackfillAttemptedSessionIds.add(sessionId)
@@ -125,7 +135,12 @@ export class SessionCache {
         }
 
         this.sessions.set(sessionId, session)
-        this.publisher.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: session })
+        this.publisher.emit({
+            type: existing ? 'session-updated' : 'session-added',
+            sessionId,
+            ...buildSessionEventScope(session),
+            data: session
+        })
         return session
     }
 
@@ -186,6 +201,7 @@ export class SessionCache {
             this.publisher.emit({
                 type: 'session-updated',
                 sessionId: session.id,
+                ...buildSessionEventScope(session),
                 data: {
                     activeAt: session.activeAt,
                     thinking: session.thinking,
@@ -210,7 +226,12 @@ export class SessionCache {
         session.thinking = false
         session.thinkingAt = t
 
-        this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false } })
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            ...buildSessionEventScope(session),
+            data: { active: false, thinking: false }
+        })
     }
 
     expireInactive(now: number = Date.now()): void {
@@ -221,7 +242,12 @@ export class SessionCache {
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
             session.thinking = false
-            this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            this.publisher.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                ...buildSessionEventScope(session),
+                data: { active: false }
+            })
         }
     }
 
@@ -239,7 +265,12 @@ export class SessionCache {
         }
 
         this.syncLinkedTaskModes(sessionId, session.namespace, config)
-        this.publisher.emit({ type: 'session-updated', sessionId, data: session })
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId,
+            ...buildSessionEventScope(session),
+            data: session
+        })
     }
 
     private syncLinkedTaskModes(
@@ -335,7 +366,11 @@ export class SessionCache {
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
 
-        this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
+        this.publisher.emit({
+            type: 'session-removed',
+            sessionId,
+            ...buildSessionEventScope(session)
+        })
 
         for (const task of linkedTasks) {
             const updated = this.store.tasks.updateTaskByNamespace(task.id, session.namespace, { activeSessionId: null })
@@ -418,9 +453,14 @@ export class SessionCache {
             })
         }
 
+        const oldSession = this.sessions.get(oldSessionId)
         const existed = this.sessions.delete(oldSessionId)
         if (existed) {
-            this.publisher.emit({ type: 'session-removed', sessionId: oldSessionId, namespace })
+            this.publisher.emit({
+                type: 'session-removed',
+                sessionId: oldSessionId,
+                ...(oldSession ? buildSessionEventScope(oldSession) : { namespace })
+            })
         }
         this.lastBroadcastAtBySessionId.delete(oldSessionId)
         this.todoBackfillAttemptedSessionIds.delete(oldSessionId)

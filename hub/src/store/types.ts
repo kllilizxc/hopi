@@ -26,7 +26,9 @@ import type {
     OmcWorkOrderStatus,
     TaskInitRuntime,
     TaskMergeRuntime,
-    TaskPreviewRuntime
+    TaskPreviewRuntime,
+    AgentOutputLanguage,
+    AutomationLaneLimits
 } from '@hopi/protocol/types'
 
 export type StoredSession = {
@@ -102,8 +104,10 @@ export type StoredProject = {
     worktreeTargetBranch: string | null
     worktreeAutoCommitMode: 'off' | 'per_conversation' | null
     worktreeCleanupAfterMerge: boolean
+    agentOutputLanguage: AgentOutputLanguage
     autoRunEnabled: boolean
     maxRunningSessions: number
+    automationLaneLimits: AutomationLaneLimits | null
     improvementsEnabled: boolean
     improvementsMaxPendingTasks: number
     automationReadinessStatus: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'

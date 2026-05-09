@@ -203,14 +203,202 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
         await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
-            .some((task) => task.source === 'planner'))
+            .some((task) => task.source === 'planner' && task.title.includes('Plan next')))
 
         const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
-            .find((task) => task.source === 'planner')
+            .find((task) => task.source === 'planner' && task.title.includes('Plan next'))
         expect(planner?.title).toContain('Plan next')
         expect(planner?.permissionMode).toBe('safe-yolo')
         expect(planner?.contract).toContain('.hopi/docs/todo.md')
+        expect(planner?.contract).toContain('Target open generator tasks: 3')
+        expect(planner?.contract).toContain('Current open generator tasks: 0')
+        expect(planner?.contract).toContain('Create up to 3 independent ready generator tasks')
+        expect(planner?.contract).not.toContain('create a DecisionTopic proposing completion')
+        expect(planner?.contract).toContain('Leave Goal completion to explicit user archive/done actions')
+        expect(planner?.contract).toContain('Do not mark the Goal paused, done, or archived just because the current iteration looks complete')
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+    })
+
+    it('carries recent resolved decision answers into generated planner loop tasks', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-decision-handoff'
+        const goalId = 'goal-decision-handoff'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 0,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep iterating with human answer',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: 'finished-planner-task',
+            projectId,
+            goalId,
+            title: 'Previous planner question',
+            status: 'finished',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const topic = store.goalDecisionTopics.create({
+            id: 'topic-main-menu-entry',
+            projectId,
+            goalId,
+            namespace,
+            taskId: 'finished-planner-task',
+            title: 'Choose story entry',
+            body: 'Should story content enter from MainMenu or a debug-only button?',
+            blocking: true
+        })
+        store.goalDecisionTopics.resolveByNamespace(topic.id, namespace, 'Use MainMenu as the player-facing entry.')
+
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'planner' && task.title.includes('Plan next')))
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner' && task.title.includes('Plan next'))
+        expect(planner?.handoff).toContain('Resolved DecisionTopic: Choose story entry')
+        expect(planner?.handoff).toContain('Should story content enter from MainMenu or a debug-only button?')
+        expect(planner?.handoff).toContain('Use MainMenu as the player-facing entry.')
+    })
+
+    it('continues a reactivated goal planner in its active linked session with decision context', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-reactivated'
+        const goalId = 'goal-planner-reactivated'
+        const taskId = 'task-planner-reactivated'
+        const sessionId = 'session-planner-reactivated'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep iterating after a human answer',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.sessions.getOrCreateSession(
+            sessionId,
+            { path: '/tmp/workspace', host: 'localhost', projectId, taskId, hopiTaskRole: 'planner' },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'planned',
+            source: 'planner',
+            activeSessionId: sessionId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            handoff: [
+                'Resolved DecisionTopic: Choose next slice',
+                'Topic ID: topic-next-slice',
+                '',
+                'Question / Context:',
+                'Should the next story slice enter from MainMenu?',
+                '',
+                'Human answer:',
+                'Use MainMenu as the player-facing entry.'
+            ].join('\n')
+        })
+
+        let spawnCount = 0
+        let kickoffText = ''
+        let kickoffSessionId = ''
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return [{
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'planner' }
+                }]
+            },
+            getSessionByNamespace(lookupSessionId: string) {
+                if (lookupSessionId !== sessionId) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'planner' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: 'unexpected-new-session'
+                }
+            },
+            async sendMessage(sentSessionId: string, payload: { text: string }) {
+                kickoffSessionId = sentSessionId
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await delay(150)
+
+        expect(spawnCount).toBe(0)
+        expect(kickoffSessionId).toBe(sessionId)
+        expect(kickoffText).toContain('Role: Planner')
+        expect(kickoffText).toContain('Resolved DecisionTopic: Choose next slice')
+        expect(kickoffText).toContain('Use MainMenu as the player-facing entry.')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === taskId)).toBe(true)
     })
 
     it('requests a planner tick when a finished goal task leaves the board running low', async () => {
@@ -280,6 +468,68 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
     })
 
+    it('does not create a planner tick while goal work is already active', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-active-work'
+        const goalId = 'goal-active-work'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Avoid planner churn',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: 'task-active-review',
+            projectId,
+            goalId,
+            title: 'Active review work',
+            status: 'in_review',
+            source: 'evaluator',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await delay(100)
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner')
+        expect(planner).toBeUndefined()
+        expect(realtimeEvents.some((event) => {
+            if (event.type !== 'task-added') return false
+            const task = store.tasks.getTaskByNamespace(event.taskId, namespace)
+            return task?.source === 'planner'
+        })).toBe(false)
+    })
+
     it('creates a periodic radar task for an enabled active goal', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -325,6 +575,48 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(radar?.permissionMode).toBe('safe-yolo')
         expect(radar?.contract).toContain('.hopi/docs/tech-debt.md')
         expect(radar?.contract).toContain('TODO/FIXME')
+    })
+
+    it('runs known-project ticks for projects seeded from persisted state', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar-seeded'
+        const goalId = 'goal-radar-seeded'
+        const project = store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Maintain repo health',
+            status: 'active',
+            autopilotEnabled: true
+        })
+
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.seedKnownProjects([project])
+        scheduler.requestKnownProjectTicks({ delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'radar'))
     })
 
     it('does not auto-run gsd tasks outside execute_ready phase', async () => {
@@ -490,6 +782,366 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('starts a queued review while the generator lane is occupied', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-review-reserved-slot'
+        const goalId = 'goal-review-reserved-slot'
+        const workspaceId = 'workspace-review-reserved-slot'
+        const reviewTaskId = 'task-ready-for-review'
+        const previousSessionId = 'session-generator-done'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: 'task-still-running',
+            projectId,
+            goalId,
+            title: 'Still running',
+            status: 'in_progress',
+            source: 'manual',
+            activeSessionId: 'session-still-running',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        store.tasks.createTask({
+            id: reviewTaskId,
+            projectId,
+            goalId,
+            title: 'Ready for review',
+            status: 'in_review',
+            source: 'manual',
+            activeSessionId: previousSessionId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            handoff: 'Ready for evaluator.'
+        })
+
+        const evaluatorSession = store.sessions.getOrCreateSession(
+            'session-evaluator',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const realtimeEvents: SyncEvent[] = []
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return [
+                    {
+                        id: 'session-still-running',
+                        namespace,
+                        active: true,
+                        thinking: true,
+                        metadata: { projectId, taskId: 'task-still-running', path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    }
+                ]
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId === previousSessionId) {
+                    return {
+                        id: previousSessionId,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    }
+                }
+                if (sessionId === evaluatorSession.id) {
+                    return {
+                        id: evaluatorSession.id,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: { projectId, path: '/tmp/workspace' }
+                    }
+                }
+                return undefined
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: evaluatorSession.id
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await delay(150)
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.source).toBe('evaluator')
+        expect(store.sessions.getSessionByNamespace(evaluatorSession.id, namespace)?.metadata).toMatchObject({
+            taskId: reviewTaskId,
+            hopiTaskRole: 'evaluator'
+        })
+        expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === reviewTaskId)).toBe(true)
+    })
+
+    it('starts at most three generator tasks by default', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-default-generator-lane-limit'
+        const goalId = 'goal-default-generator-lane-limit'
+        const workspaceId = 'workspace-default-generator-lane-limit'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 5,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+
+        for (let index = 1; index <= 4; index += 1) {
+            store.tasks.createTask({
+                id: `task-generator-${index}`,
+                projectId,
+                goalId,
+                title: `Generator task ${index}`,
+                status: 'planned',
+                source: 'manual',
+                workflowProfile: 'default',
+                workflowPhase: null
+            })
+            store.sessions.getOrCreateSession(
+                `session-generator-${index}`,
+                { path: '/tmp/workspace', host: 'localhost' },
+                null,
+                namespace
+            )
+        }
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                const match = /^session-generator-(\d+)$/.exec(sessionId)
+                if (!match) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, path: '/tmp/workspace' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: `session-generator-${spawnCount}`
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await delay(150)
+
+        expect(spawnCount).toBe(3)
+        const started = store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            .filter((task) => task.status === 'in_progress')
+        expect(started).toHaveLength(3)
+        expect(store.tasks.getTaskByNamespace('task-generator-4', namespace)?.status).toBe('planned')
+    })
+
+    it('uses a custom evaluator lane limit to pause review starts', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-evaluator-lane-paused'
+        const goalId = 'goal-evaluator-lane-paused'
+        const workspaceId = 'workspace-evaluator-lane-paused'
+        const reviewTaskId = 'task-review-paused'
+        const previousSessionId = 'session-generator-done-paused'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 5,
+            defaultWorkspaceId: workspaceId,
+            automationLaneLimits: { evaluator: 0 },
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: reviewTaskId,
+            projectId,
+            goalId,
+            title: 'Review should wait',
+            status: 'in_review',
+            source: 'manual',
+            activeSessionId: previousSessionId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            handoff: 'Ready for evaluator.'
+        })
+
+        const evaluatorSession = store.sessions.getOrCreateSession(
+            'session-evaluator-paused',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId === previousSessionId) {
+                    return {
+                        id: previousSessionId,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    }
+                }
+                if (sessionId === evaluatorSession.id) {
+                    return {
+                        id: evaluatorSession.id,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: { projectId, path: '/tmp/workspace' }
+                    }
+                }
+                return undefined
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: evaluatorSession.id
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await delay(150)
+
+        expect(spawnCount).toBe(0)
+        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.source).toBe('manual')
     })
 
     it('still auto-runs project_init tasks before project readiness is ready', async () => {

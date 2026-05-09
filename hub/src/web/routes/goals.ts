@@ -4,6 +4,7 @@ import { GoalStatusSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
+import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHandoff'
 import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
 import { readGoalTodo } from '../../sync/goals/goalTodo'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -99,7 +100,8 @@ function buildPlannerSeedTaskContract(goal: {
         '',
         `- Read and update .hopi/docs/goals/${goal.id}.md.`,
         '- Update .hopi/docs/todo.md with curated candidate/ready work.',
-        '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough.',
+        '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough, usually 2-3 independent tasks when the lane is empty.',
+        '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
         '- If product intent is unclear, create one blocking DecisionTopic with a concrete question and stop.',
         '- Finish with a HOPI_ACTIONS JSON packet that creates ready kanban tasks or a blocking DecisionTopic.',
         '- Use update_current_task inside HOPI_ACTIONS to record handoff/evidence before finishing this planning task.',
@@ -186,7 +188,7 @@ function ensurePlannerSeedTask(options: {
             },
             {
                 id: randomUUID(),
-                content: 'Create the first small batch of goal-scoped tasks',
+                content: 'Create the first small batch of independent goal-scoped tasks',
                 status: 'pending',
                 priority: 'medium'
             }
@@ -432,9 +434,13 @@ export function createGoalsRoutes(options: {
         }
 
         const engine = options.getSyncEngine()
-        if (topic.blocking && topic.taskId) {
-            const stillBlocked = options.store.goalDecisionTopics
+        const remainingBlockingGoalTopics = topic.blocking
+            ? options.store.goalDecisionTopics
                 .listByGoalAndNamespace(topic.goalId, namespace)
+                .filter((candidate) => candidate.blocking && candidate.status === 'waiting')
+            : []
+        if (topic.blocking && topic.taskId) {
+            const stillBlocked = remainingBlockingGoalTopics
                 .some((candidate) => (
                     candidate.taskId === topic.taskId &&
                     candidate.blocking &&
@@ -442,9 +448,10 @@ export function createGoalsRoutes(options: {
                 ))
             if (!stillBlocked) {
                 const task = options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
-                if (task?.status === 'blocked') {
+                if (task) {
                     const plannedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
-                        status: 'planned'
+                        status: task.status === 'blocked' ? 'planned' : task.status,
+                        handoff: prependTaskHandoffDecisionContext(task, topic)
                     })
                     if (plannedTask) {
                         emitTaskUpdated({
@@ -455,6 +462,14 @@ export function createGoalsRoutes(options: {
                         })
                     }
                 }
+            }
+        }
+        if (topic.blocking && remainingBlockingGoalTopics.length === 0) {
+            const goal = options.store.goals.getGoalByNamespace(topic.goalId, namespace)
+            if (goal?.status === 'blocked') {
+                options.store.goals.updateGoalByNamespace(goal.id, namespace, {
+                    status: 'active'
+                })
             }
         }
 

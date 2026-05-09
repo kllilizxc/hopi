@@ -1,5 +1,7 @@
 import type {
     AttachmentMetadata,
+    AgentOutputLanguage,
+    AutomationLaneLimits,
     AuthResponse,
     DeleteUploadResponse,
     ListDirectoryResponse,
@@ -270,8 +272,10 @@ export class ApiClient {
         worktreeTargetBranch?: string
         worktreeAutoCommitMode?: 'off' | 'per_conversation'
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {
@@ -292,8 +296,10 @@ export class ApiClient {
         worktreeTargetBranch?: string | null
         worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
         autoRunEnabled?: boolean
         maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {
@@ -649,6 +655,12 @@ export class ApiClient {
             params.set('baseRef', options.baseRef)
         }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`)
+    }
+
+    async getTaskMergedDiffFile(taskId: string, path: string): Promise<GitCommandResponse> {
+        const params = new URLSearchParams()
+        params.set('path', path)
+        return await this.request<GitCommandResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merged-diff-file?${params.toString()}`)
     }
 
     async searchSessionFiles(sessionId: string, query: string, limit?: number): Promise<FileSearchResponse> {

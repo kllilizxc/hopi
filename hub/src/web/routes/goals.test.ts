@@ -341,10 +341,73 @@ describe('goal routes', () => {
         })
 
         expect(resolveResponse.status).toBe(200)
-        expect(store.tasks.getTaskByNamespace(task.id, 'default')?.status).toBe('planned')
+        const resumedTask = store.tasks.getTaskByNamespace(task.id, 'default')
+        expect(resumedTask?.status).toBe('planned')
+        expect(resumedTask?.handoff).toContain('Resolved DecisionTopic: Clarify acceptance')
+        expect(resumedTask?.handoff).toContain('Which acceptance criteria should apply?')
+        expect(resumedTask?.handoff).toContain('Use the documented success criteria.')
         expect(events).toContainEqual(expect.objectContaining({
             type: 'task-updated',
             taskId: task.id,
+            projectId: project.id,
+            namespace: 'default'
+        }))
+    })
+
+    it('reactivates a blocked goal after the last blocking decision topic is resolved', async () => {
+        const store = new Store(':memory:')
+        const events: unknown[] = []
+        const engine = {
+            handleRealtimeEvent(event: unknown) {
+                events.push(event)
+            }
+        } as SyncEngine
+        const app = createTestApp(store, engine)
+        const project = await createProject(app, createTempWorkspace())
+
+        const goalResponse = await app.request(`/api/projects/${project.id}/goals`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Blocked Goal Decision' })
+        })
+        expect(goalResponse.status).toBe(200)
+        const goalBody = await goalResponse.json() as { goal: { id: string } }
+        store.goals.updateGoalByNamespace(goalBody.goal.id, 'default', { status: 'blocked' })
+
+        const task = store.tasks.createTask({
+            id: 'task-waiting-for-goal-answer',
+            projectId: project.id,
+            goalId: goalBody.goal.id,
+            title: 'Plan after answer',
+            status: 'planned',
+            source: 'planner',
+            workflowProfile: 'default'
+        })
+
+        const topicResponse = await app.request(`/api/goals/${goalBody.goal.id}/topics`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                taskId: task.id,
+                title: 'Choose route',
+                body: 'Which story route should the next planner use?',
+                blocking: true
+            })
+        })
+        expect(topicResponse.status).toBe(200)
+        const topicBody = await topicResponse.json() as { topic: { id: string } }
+        events.length = 0
+
+        const resolveResponse = await app.request(`/api/goal-topics/${topicBody.topic.id}/resolve`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ resolution: 'Use MainMenu as the story entry.' })
+        })
+
+        expect(resolveResponse.status).toBe(200)
+        expect(store.goals.getGoalByNamespace(goalBody.goal.id, 'default')?.status).toBe('active')
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'project-updated',
             projectId: project.id,
             namespace: 'default'
         }))

@@ -4,6 +4,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { useGoalTodo } from '@/hooks/queries/useGoalTodo'
+import { GoalDecisionTopicsPanel } from '@/routes/projects/goal-decision-topics'
 import type { GoalTodoResponse, GoalTodoSection, GoalTodoSectionKind } from '@/types/api'
 
 type GoalPlanningPageProps = {
@@ -51,6 +52,39 @@ function formatUpdatedAt(updatedAt: number | null): string | null {
     }).format(new Date(updatedAt))
 }
 
+function PlanningSectionIndex(props: {
+    groups: Array<{ kind: GoalTodoSectionKind; items: GoalTodoSection[] }>
+}) {
+    const { t } = useTranslation()
+
+    return (
+        <aside
+            data-testid="planning-section-index"
+            className="min-w-0 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3 xl:sticky xl:top-3"
+        >
+            <div className="text-xs font-semibold uppercase tracking-normal text-[var(--app-hint)]">
+                {t('projects.planning.sectionIndex')}
+            </div>
+            <nav className="mt-3 flex flex-wrap gap-2 xl:flex-col">
+                {props.groups.map((group) => (
+                    <a
+                        key={group.kind}
+                        href={`#planning-${group.kind}`}
+                        className="flex min-w-36 flex-1 items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] transition-colors duration-200 hover:border-[var(--app-link)] hover:text-[var(--app-link)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] xl:min-w-0 xl:flex-none"
+                    >
+                        <span className="font-medium">
+                            {t(`projects.todo.kind.${group.kind}`)}
+                        </span>
+                        <span className="text-xs text-[var(--app-hint)]">
+                            {t('projects.todo.count', { n: group.items.length })}
+                        </span>
+                    </a>
+                ))}
+            </nav>
+        </aside>
+    )
+}
+
 function RawMarkdownPanel(props: {
     title: string
     rawMarkdown: string
@@ -78,7 +112,7 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
     const rawMarkdown = props.todo?.rawMarkdown ?? null
 
     return (
-        <div className="h-full min-h-0 overflow-y-auto bg-[var(--app-bg)]">
+        <section data-testid="planning-document" className="bg-[var(--app-bg)]">
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3 py-4 lg:px-4">
                 <header className="flex flex-col gap-3 border-b border-[var(--app-divider)] pb-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
@@ -146,20 +180,24 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                         ) : null}
                     </div>
                 ) : (
-                    <div className="space-y-4">
-                        <div className="-mx-3 overflow-x-auto px-3 pb-2 lg:mx-0 lg:px-0">
+                    <div
+                        data-testid="planning-workspace"
+                        className="grid min-w-0 gap-4 xl:grid-cols-[16rem_minmax(0,1fr)] xl:items-start"
+                    >
+                        <PlanningSectionIndex groups={groupedSections} />
+                        <div className="min-w-0 space-y-4">
                             <div
                                 data-testid="planning-section-grid"
-                                className="grid min-w-[960px] grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-3 xl:min-w-0 xl:grid-cols-[repeat(auto-fit,minmax(360px,1fr))]"
+                                className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3"
                             >
                                 {groupedSections.map((group) => (
                                     <section
                                         key={group.kind}
                                         id={`planning-${group.kind}`}
                                         data-testid={`planning-section-${group.kind}`}
-                                        className="flex max-h-[calc(100vh-260px)] min-h-80 min-w-0 scroll-mt-3 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)]"
+                                        className="flex min-w-0 scroll-mt-3 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)]"
                                     >
-                                        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--app-divider)] bg-[var(--app-secondary-bg)] p-3">
+                                        <div className="flex items-center justify-between gap-3 border-b border-[var(--app-divider)] bg-[var(--app-secondary-bg)] p-3">
                                             <Tag size="sm" variant={TAG_VARIANTS[group.kind]}>
                                                 {t(`projects.todo.kind.${group.kind}`)}
                                             </Tag>
@@ -167,11 +205,11 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                                                 {t('projects.todo.count', { n: group.items.length })}
                                             </span>
                                         </div>
-                                        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+                                        <div className="space-y-2 p-2">
                                             {group.items.map((section, index) => (
                                                 <article
                                                     key={`${group.kind}-${section.taskId ?? section.title}-${index}`}
-                                                    className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3"
+                                                    className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 transition-colors duration-200 hover:border-[var(--app-divider)]"
                                                 >
                                                     <div className="flex flex-col gap-1.5">
                                                         <h2 className="min-w-0 text-sm font-semibold leading-snug text-[var(--app-fg)]">
@@ -197,15 +235,15 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                                     </section>
                                 ))}
                             </div>
-                        </div>
 
-                        {rawMarkdown ? (
-                            <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
-                        ) : null}
+                            {rawMarkdown ? (
+                                <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
+                            ) : null}
+                        </div>
                     </div>
                 )}
             </div>
-        </div>
+        </section>
     )
 }
 
@@ -235,11 +273,16 @@ export function GoalPlanningPage(props: GoalPlanningPageProps) {
     }
 
     return (
-        <GoalPlanningDocument
-            projectId={props.projectId}
-            todo={todo}
-            isLoading={isLoading}
-            error={error}
-        />
+        <div data-testid="planning-page-scroll" className="h-full min-h-0 overflow-y-auto bg-[var(--app-bg)]">
+            <div data-testid="planning-page-content" className="space-y-4">
+                <GoalDecisionTopicsPanel projectId={props.projectId} goalId={props.goalId} />
+                <GoalPlanningDocument
+                    projectId={props.projectId}
+                    todo={todo}
+                    isLoading={isLoading}
+                    error={error}
+                />
+            </div>
+        </div>
     )
 }

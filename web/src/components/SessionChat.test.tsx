@@ -53,6 +53,33 @@ describe('SessionChat runtime summaries', () => {
         expect(summary?.detail).toContain('retry merge')
     })
 
+    it('describes conflict repair retrying state as agent work, not generic loading', () => {
+        const task = createTask({
+            status: 'in_review',
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId: 'session-1',
+                updatedAt: 30,
+                requestedAt: 10,
+                startedAt: 20,
+                completedAt: null,
+                retryCount: 3,
+                failureFingerprint: 'merge_conflict:test',
+                latestNote: 'Platform merge found conflicts. Resolving them in the linked session before retry.',
+                blockedReason: null
+            }
+        })
+
+        const summary = buildMergeRuntimeSummary(task, task.mergeRuntime)
+
+        expect(summary).toMatchObject({
+            title: 'Merge 冲突修复中（已重试 3 次）',
+            detail: '已把冲突交给 linked session 里的 agent 修复；完成后 HOPI 会自动重试 merge。',
+            tone: 'info',
+            busy: true
+        })
+    })
+
     it('keeps retry merge action visible after a canceled merge runtime', () => {
         const task = createTask({
             status: 'in_review',

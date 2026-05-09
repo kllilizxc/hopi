@@ -30,6 +30,11 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
     const waitingTopics = useMemo(() => {
         return topics.filter((topic) => topic.status === 'waiting')
     }, [topics])
+    const recentResolvedTopics = useMemo(() => {
+        return topics
+            .filter((topic) => topic.status === 'resolved' && Boolean(topic.resolution?.trim()))
+            .slice(0, 3)
+    }, [topics])
 
     if (!props.goalId) {
         return null
@@ -51,7 +56,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
         )
     }
 
-    if (waitingTopics.length === 0) {
+    if (waitingTopics.length === 0 && recentResolvedTopics.length === 0) {
         return null
     }
 
@@ -89,80 +94,135 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
     }
 
     return (
-        <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
-            <div className="mx-auto flex w-full max-w-content flex-col gap-2">
-                <div className="flex items-center gap-2">
-                    <div className="text-xs font-semibold text-[var(--app-fg)]">
-                        {t('projects.decisions.title')}
+        <section
+            data-testid="goal-decision-tray"
+            className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-3"
+        >
+            <div
+                data-testid="goal-decision-panel"
+                className="mx-auto flex w-full max-w-7xl flex-col gap-3 lg:px-4"
+            >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-semibold text-[var(--app-fg)]">
+                            {t('projects.decisions.title')}
+                        </div>
+                        {waitingTopics.length > 0 ? (
+                            <Tag size="xs" variant="warning">
+                                {t('projects.decisions.waitingCount', { n: waitingTopics.length })}
+                            </Tag>
+                        ) : null}
                     </div>
-                    <Tag size="xs" variant="warning">
-                        {t('projects.decisions.waitingCount', { n: waitingTopics.length })}
-                    </Tag>
                 </div>
-                <div className="grid gap-2 lg:grid-cols-2">
-                    {waitingTopics.map((topic) => {
-                        const draftKey = getTopicDraftKey(topic)
-                        const draft = drafts[draftKey] ?? ''
-                        const isTopicPending = pendingTopicId === topic.id
-                        return (
-                            <form
-                                key={topic.id}
-                                className="rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2"
-                                onSubmit={handleSubmit(topic)}
-                            >
-                                <div className="flex items-start justify-between gap-2">
+                {waitingTopics.length > 0 ? (
+                    <div
+                        data-testid="goal-decision-grid"
+                        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,360px),1fr))] gap-3"
+                    >
+                        {waitingTopics.map((topic) => {
+                            const draftKey = getTopicDraftKey(topic)
+                            const draft = drafts[draftKey] ?? ''
+                            const isTopicPending = pendingTopicId === topic.id
+                            return (
+                                <form
+                                    key={topic.id}
+                                    data-testid={`goal-decision-topic-${topic.id}`}
+                                    className="grid min-w-0 gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
+                                    onSubmit={handleSubmit(topic)}
+                                >
                                     <div className="min-w-0">
-                                        <div className="text-sm font-medium leading-snug break-words">
-                                            {topic.title}
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <h2 className="text-sm font-semibold leading-snug break-words text-[var(--app-fg)]">
+                                                    {topic.title}
+                                                </h2>
+                                                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                                    {topic.blocking ? (
+                                                        <Tag size="xs" variant="error">
+                                                            {t('projects.decisions.blocking')}
+                                                        </Tag>
+                                                    ) : null}
+                                                    {topic.taskId ? (
+                                                        <Tag size="xs" variant="secondary">
+                                                            {t('projects.decisions.linkedTask', {
+                                                                id: topic.taskId.slice(0, 8)
+                                                            })}
+                                                        </Tag>
+                                                    ) : null}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                            {topic.blocking ? (
-                                                <Tag size="xs" variant="error">
-                                                    {t('projects.decisions.blocking')}
-                                                </Tag>
-                                            ) : null}
-                                            {topic.taskId ? (
-                                                <Tag size="xs" variant="secondary">
-                                                    {t('projects.decisions.linkedTask', {
-                                                        id: topic.taskId.slice(0, 8)
-                                                    })}
-                                                </Tag>
-                                            ) : null}
+                                        <div className="mt-3 whitespace-pre-wrap pr-1 text-sm leading-relaxed text-[var(--app-hint)] break-words">
+                                            {topic.body}
                                         </div>
                                     </div>
-                                </div>
-                                <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--app-hint)] break-words">
-                                    {topic.body}
-                                </div>
-                                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start">
-                                    <textarea
-                                        value={draft}
-                                        onChange={(event) => {
-                                            setDrafts((current) => ({
-                                                ...current,
-                                                [draftKey]: event.target.value
-                                            }))
-                                        }}
-                                        disabled={isTopicPending}
-                                        rows={2}
-                                        placeholder={t('projects.decisions.answerPlaceholder')}
-                                        className="min-h-16 flex-1 resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                    />
-                                    <Button
-                                        type="submit"
-                                        size="sm"
-                                        disabled={!draft.trim() || isTopicPending}
-                                        className="gap-2 sm:mt-0"
-                                    >
-                                        <CheckIcon className="h-4 w-4" />
-                                        {isTopicPending ? t('projects.decisions.resolving') : t('projects.decisions.resolve')}
-                                    </Button>
-                                </div>
-                            </form>
-                        )
-                    })}
-                </div>
+                                    <div className="flex min-w-0 flex-col gap-2 border-t border-[var(--app-divider)] pt-3 xl:border-l xl:border-t-0 xl:pl-3 xl:pt-0">
+                                        <textarea
+                                            id={`decision-resolution-${topic.id}`}
+                                            name={`decision-resolution-${topic.id}`}
+                                            value={draft}
+                                            onChange={(event) => {
+                                                setDrafts((current) => ({
+                                                    ...current,
+                                                    [draftKey]: event.target.value
+                                                }))
+                                            }}
+                                            disabled={isTopicPending}
+                                            rows={3}
+                                            placeholder={t('projects.decisions.answerPlaceholder')}
+                                            className="min-h-24 w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                        />
+                                        <Button
+                                            type="submit"
+                                            size="sm"
+                                            disabled={!draft.trim() || isTopicPending}
+                                            className="w-full gap-2"
+                                        >
+                                            <CheckIcon className="h-4 w-4" />
+                                            {isTopicPending ? t('projects.decisions.resolving') : t('projects.decisions.resolve')}
+                                        </Button>
+                                    </div>
+                                </form>
+                            )
+                        })}
+                    </div>
+                ) : null}
+                {recentResolvedTopics.length > 0 ? (
+                    <div data-testid="goal-decision-resolved-list" className="flex flex-col gap-2 pr-1">
+                        <div className="text-xs font-semibold uppercase tracking-normal text-[var(--app-hint)]">
+                            {t('projects.decisions.recentResolved')}
+                        </div>
+                        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-2">
+                            {recentResolvedTopics.map((topic) => (
+                                <article
+                                    key={topic.id}
+                                    className="min-w-0 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3"
+                                >
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <h2 className="min-w-0 text-sm font-semibold leading-snug break-words text-[var(--app-fg)]">
+                                            {topic.title}
+                                        </h2>
+                                        <Tag size="xs" variant="success">
+                                            {t('projects.decisions.resolved')}
+                                        </Tag>
+                                    </div>
+                                    <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--app-hint)] break-words">
+                                        {topic.body}
+                                    </div>
+                                    <div className="mt-3 rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)] p-2">
+                                        <div className="text-[11px] font-semibold uppercase tracking-normal text-[var(--app-hint)]">
+                                            {t('projects.decisions.answerLabel')}
+                                        </div>
+                                        <div className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-[var(--app-fg)] break-words">
+                                            {topic.resolution}
+                                        </div>
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    </div>
+                ) : null}
             </div>
-        </div>
+        </section>
     )
 }

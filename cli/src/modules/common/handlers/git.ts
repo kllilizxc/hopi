@@ -22,6 +22,7 @@ interface GitDiffNumstatRequest {
     cwd?: string
     staged?: boolean
     baseRef?: string
+    targetRef?: string
     timeout?: number
 }
 
@@ -30,6 +31,7 @@ interface GitDiffFileRequest {
     filePath: string
     staged?: boolean
     baseRef?: string
+    targetRef?: string
     timeout?: number
 }
 
@@ -246,6 +248,8 @@ function normalizeBaseRef(raw: unknown): string | null {
     }
     return value
 }
+
+const normalizeTargetRef = normalizeBaseRef
 
 function normalizeMergeStrategy(raw: unknown): MergeStrategy | null {
     if (raw === undefined) {
@@ -722,18 +726,27 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         if (data.baseRef !== undefined && !baseRef) {
             return rpcError('Invalid base reference')
         }
+        const targetRef = normalizeTargetRef(data.targetRef)
+        if (data.targetRef !== undefined && !targetRef) {
+            return rpcError('Invalid target reference')
+        }
+        if (targetRef && !baseRef) {
+            return rpcError('targetRef requires baseRef')
+        }
 
         const combinedBase = !baseRef && data.staged === undefined
             ? await resolveCombinedDiffBase(resolved.cwd, data.timeout)
             : null
 
-        const args = baseRef
-            ? ['diff', '--numstat', baseRef]
-            : data.staged === true
-                ? ['diff', '--cached', '--numstat']
-                : data.staged === false
-                    ? ['diff', '--numstat']
-                    : ['diff', '--numstat', combinedBase ?? 'HEAD']
+        const args = baseRef && targetRef
+            ? ['diff', '--numstat', `${baseRef}..${targetRef}`]
+            : baseRef
+                ? ['diff', '--numstat', baseRef]
+                : data.staged === true
+                    ? ['diff', '--cached', '--numstat']
+                    : data.staged === false
+                        ? ['diff', '--numstat']
+                        : ['diff', '--numstat', combinedBase ?? 'HEAD']
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 
@@ -1076,18 +1089,27 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
         if (data.baseRef !== undefined && !baseRef) {
             return rpcError('Invalid base reference')
         }
+        const targetRef = normalizeTargetRef(data.targetRef)
+        if (data.targetRef !== undefined && !targetRef) {
+            return rpcError('Invalid target reference')
+        }
+        if (targetRef && !baseRef) {
+            return rpcError('targetRef requires baseRef')
+        }
 
         const combinedBase = !baseRef && data.staged === undefined
             ? await resolveCombinedDiffBase(resolved.cwd, data.timeout)
             : null
 
-        const args = baseRef
-            ? ['diff', '--no-ext-diff', baseRef, '--', data.filePath]
-            : data.staged === true
-                ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
-                : data.staged === false
-                    ? ['diff', '--no-ext-diff', '--', data.filePath]
-                    : ['diff', '--no-ext-diff', combinedBase ?? 'HEAD', '--', data.filePath]
+        const args = baseRef && targetRef
+            ? ['diff', '--no-ext-diff', `${baseRef}..${targetRef}`, '--', data.filePath]
+            : baseRef
+                ? ['diff', '--no-ext-diff', baseRef, '--', data.filePath]
+                : data.staged === true
+                    ? ['diff', '--cached', '--no-ext-diff', '--', data.filePath]
+                    : data.staged === false
+                        ? ['diff', '--no-ext-diff', '--', data.filePath]
+                        : ['diff', '--no-ext-diff', combinedBase ?? 'HEAD', '--', data.filePath]
         return await runGitCommand(args, resolved.cwd, data.timeout)
     })
 }

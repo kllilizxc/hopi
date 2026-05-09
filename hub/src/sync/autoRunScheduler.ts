@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL, normalizeAutomationLaneLimits } from '@hopi/protocol'
+import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
+import type { AutomationLane } from '@hopi/protocol/types'
 import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
 import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
+import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
-import { startSessionFromTask } from './taskSessionService'
+import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
 
 type ProjectKey = `${string}:${string}`
@@ -14,13 +17,99 @@ type TaskAutopilotPolicy = {
     allowBeforeReadiness: boolean
 }
 
-const GOAL_PLANNER_LOW_WATERMARK = 2
 const GOAL_RADAR_INTERVAL_MS = 24 * 60 * 60 * 1000
 const ACTIVE_GOAL_STATUSES = new Set(['planning', 'active'])
 const OPEN_GOAL_TASK_STATUSES = new Set(['planned', 'in_progress', 'in_review', 'blocked'])
+const AUTOMATION_LANE_PRIORITY: Record<AutomationLane, number> = {
+    evaluator: 0,
+    planner: 1,
+    generator: 2,
+    radar: 3
+}
 
 function toProjectKey(namespace: string, projectId: string): ProjectKey {
     return `${namespace}:${projectId}`
+}
+
+function createLaneCounts(): Record<AutomationLane, number> {
+    return {
+        planner: 0,
+        generator: 0,
+        evaluator: 0,
+        radar: 0
+    }
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null
+}
+
+function getTaskAutomationLane(task: Pick<StoredTask, 'status' | 'source'>): AutomationLane {
+    if (task.status === 'in_review') {
+        return 'evaluator'
+    }
+    if (task.source === 'planner') {
+        return 'planner'
+    }
+    if (task.source === 'radar') {
+        return 'radar'
+    }
+    return 'generator'
+}
+
+function getSessionAutomationLane(session: { metadata?: unknown }): AutomationLane | null {
+    const metadata = toRecord(session.metadata)
+    if (!metadata) {
+        return null
+    }
+    const parsed = HopiTaskRoleSchema.safeParse(metadata.hopiTaskRole)
+    return parsed.success ? parsed.data : 'generator'
+}
+
+function countRunningSessionsByLane(
+    sessions: Array<{ thinking?: boolean; metadata?: unknown }>,
+    projectId: string
+): Record<AutomationLane, number> {
+    const counts = createLaneCounts()
+    for (const session of sessions) {
+        if (!session.thinking) {
+            continue
+        }
+        const metadata = toRecord(session.metadata)
+        if (metadata?.projectId !== projectId) {
+            continue
+        }
+        const lane = getSessionAutomationLane(session)
+        if (!lane) {
+            continue
+        }
+        counts[lane] += 1
+    }
+    return counts
+}
+
+function sessionHasPendingRequests(session: { agentState?: unknown } | null | undefined): boolean {
+    const agentState = session?.agentState
+    if (!agentState || typeof agentState !== 'object') {
+        return false
+    }
+    const requests = (agentState as { requests?: unknown }).requests
+    return Boolean(requests && typeof requests === 'object' && Object.keys(requests).length > 0)
+}
+
+function sortAutomationCandidates(tasks: StoredTask[]): StoredTask[] {
+    return tasks
+        .map((task, index) => ({ task, index, lane: getTaskAutomationLane(task) }))
+        .sort((left, right) => {
+            const laneOrder = AUTOMATION_LANE_PRIORITY[left.lane] - AUTOMATION_LANE_PRIORITY[right.lane]
+            if (laneOrder !== 0) {
+                return laneOrder
+            }
+            return left.index - right.index
+        })
+        .map((item) => item.task)
 }
 
 function isTaskAutoRunnable(task: {
@@ -42,7 +131,11 @@ function isTaskAutoRunnable(task: {
     if (task.archivedAt) return false
     if (task.activeSessionId) {
         const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
-        if (task.status === 'planned' && linkedSession?.active) {
+        if (
+            task.status === 'planned'
+            && linkedSession?.active
+            && (!task.goalId || linkedSession.thinking || sessionHasPendingRequests(linkedSession))
+        ) {
             return false
         }
         if (isReviewTask && linkedSession?.thinking) {
@@ -95,24 +188,39 @@ function getTaskAutopilotPolicy(options: {
     }
 }
 
-function buildPlannerLoopContract(goal: StoredGoal): string {
+function buildPlannerLoopContract(options: {
+    goal: StoredGoal
+    targetOpenGeneratorTasks: number
+    currentOpenGeneratorTasks: number
+}): string {
+    const taskBudget = Math.max(0, options.targetOpenGeneratorTasks - options.currentOpenGeneratorTasks)
     return [
         '## Objective',
         '',
-        `Continue the Planner loop for Goal ${goal.id}: ${goal.title}.`,
+        `Continue the Planner loop for Goal ${options.goal.id}: ${options.goal.title}.`,
+        '',
+        '## Kanban Fill Target',
+        '',
+        `- Target open generator tasks: ${options.targetOpenGeneratorTasks}.`,
+        `- Current open generator tasks: ${options.currentOpenGeneratorTasks}.`,
+        `- Create up to ${taskBudget} independent ready generator tasks to fill the generator lane.`,
+        '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
         '',
         '## Acceptance',
         '',
-        `- Read and update .hopi/docs/goals/${goal.id}.md when strategy or status changed.`,
+        `- Read and update .hopi/docs/goals/${options.goal.id}.md when strategy or status changed.`,
         '- Read and curate .hopi/docs/todo.md; promote only a small ready batch into kanban.',
         '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
         '- Create blocking DecisionTopics for unclear product direction, one question at a time.',
         '- Create goal-scoped tasks with lightweight contracts using the final HOPI_ACTIONS packet.',
-        '- If the Goal looks complete, create a DecisionTopic proposing completion instead of silently marking it done.',
+        '- Leave Goal completion to explicit user archive/done actions; do not create a completion DecisionTopic.',
+        '- Do not mark the Goal paused, done, or archived just because the current iteration looks complete.',
+        '- If later candidates remain, promote enough independent ready candidates to keep the generator lane usefully filled.',
+        '- If no next work is actionable, update docs/currentFocus and finish without changing Goal lifecycle status.',
         '',
         '## Suggested Checks',
         '',
-        '- Confirm active kanban work is not overfilled.',
+        '- Confirm active kanban work is not overfilled beyond the fill target.',
         '- Confirm todo items are candidate/ready/active/done/parked rather than an uncurated dump.',
         '',
         '## Non-goals / Constraints',
@@ -189,6 +297,16 @@ export class AutoRunScheduler {
     requestKnownProjectTicks(options?: { delayMs?: number }): void {
         for (const project of this.knownProjects.values()) {
             this.requestTick(project.namespace, project.projectId, options)
+        }
+    }
+
+    seedKnownProjects(projects: Array<Pick<StoredProject, 'id' | 'namespace' | 'archivedAt'>>): void {
+        for (const project of projects) {
+            if (project.archivedAt) {
+                continue
+            }
+            const key = toProjectKey(project.namespace, project.id)
+            this.knownProjects.set(key, { namespace: project.namespace, projectId: project.id })
         }
     }
 
@@ -290,15 +408,30 @@ export class AutoRunScheduler {
             return null
         }
 
+        const activeGoalWork = options.tasks.some((task) => (
+            task.source !== 'planner'
+            && task.source !== 'radar'
+            && !task.archivedAt
+            && (task.status === 'in_progress' || task.status === 'in_review')
+        ))
+        if (activeGoalWork) {
+            return null
+        }
+
+        const targetOpenGeneratorTasks = normalizeAutomationLaneLimits(options.project.automationLaneLimits).generator
         const activeWorkCount = options.tasks.filter((task) => (
             task.source !== 'planner'
             && task.source !== 'radar'
             && !task.archivedAt
             && (task.status === 'planned' || task.status === 'in_progress' || task.status === 'in_review')
         )).length
-        if (activeWorkCount > GOAL_PLANNER_LOW_WATERMARK) {
+        if (activeWorkCount >= targetOpenGeneratorTasks) {
             return null
         }
+
+        const handoff = buildResolvedDecisionHandoff(
+            this.store.goalDecisionTopics.listByGoalAndNamespace(options.goal.id, options.project.namespace)
+        )
 
         return this.store.tasks.createTask({
             id: randomUUID(),
@@ -316,7 +449,12 @@ export class AutoRunScheduler {
             modelMode: null,
             workflowProfile: 'default',
             source: 'planner',
-            contract: buildPlannerLoopContract(options.goal)
+            contract: buildPlannerLoopContract({
+                goal: options.goal,
+                targetOpenGeneratorTasks,
+                currentOpenGeneratorTasks: activeWorkCount
+            }),
+            handoff
         })
     }
 
@@ -426,30 +564,21 @@ export class AutoRunScheduler {
 
             const projectReadinessReady = project.automationReadinessStatus === 'ready'
 
-            const maxRunning = project.maxRunningSessions ?? 5
-            const runningCount = this.engine.getSessionsByNamespace(namespace)
-                .filter((session) => session.metadata?.projectId === projectId && session.thinking)
-                .length
-
-            const capacity = Math.max(0, maxRunning - runningCount)
-            if (capacity <= 0) {
-                return
-            }
-
-            const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: Math.min(50, capacity * 5) })
-            const review = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
-                .filter((task) => task.status === 'in_review')
-            const candidates = [...review, ...planned]
+            const laneLimits = normalizeAutomationLaneLimits(project.automationLaneLimits)
+            const runningByLane = countRunningSessionsByLane(this.engine.getSessionsByNamespace(namespace), projectId)
+            const startedByLane = createLaneCounts()
+            const projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: 200 })
+            const review = projectTasks.filter((task) => task.status === 'in_review')
+            const candidates = sortAutomationCandidates([...review, ...planned])
             if (candidates.length === 0) {
                 return
             }
 
-            let started = 0
-
             for (const task of candidates) {
-                if (started >= capacity) {
-                    break
-                }
+                const lane = getTaskAutomationLane(task)
+                if (runningByLane[lane] + startedByLane[lane] >= laneLimits[lane]) continue
+
                 const policy = getTaskAutopilotPolicy({
                     task,
                     project,
@@ -469,17 +598,22 @@ export class AutoRunScheduler {
                     engine: this.engine
                 })) continue
 
-                const result = await startSessionFromTask({
+                const continued = await continueTaskInLinkedSession({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace,
+                    taskId: task.id
+                })
+                const result = continued ?? await startSessionFromTask({
                     store: this.store,
                     engine: this.engine,
                     namespace,
                     taskId: task.id
                 })
 
+                startedByLane[lane] += 1
+
                 if (result.ok) {
-                    if (result.task.initRuntime?.status !== 'blocked') {
-                        started += 1
-                    }
                     continue
                 }
 

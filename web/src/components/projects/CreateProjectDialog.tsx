@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DEFAULT_AUTOMATION_LANE_LIMITS } from '@hopi/protocol'
 import type { ApiClient } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -6,8 +7,20 @@ import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
-import type { Machine } from '@/types/api'
+import { getAgentOutputLanguageOptions } from '@/lib/agent-output-language'
+import type { AgentOutputLanguage, AutomationLaneLimits, Machine } from '@/types/api'
 import { MachineDirectoryPicker } from './MachineDirectoryPicker'
+
+type AutomationLaneKey = 'planner' | 'generator' | 'evaluator' | 'radar'
+
+const AUTOMATION_LANE_FIELDS: AutomationLaneKey[] = ['planner', 'generator', 'evaluator', 'radar']
+
+function clampLaneLimit(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 0
+    }
+    return Math.max(0, Math.min(50, Math.trunc(value)))
+}
 
 export type CreateProjectDialogProps = {
     api: ApiClient | null
@@ -24,8 +37,9 @@ export type CreateProjectDialogProps = {
         worktreeTargetBranch?: string
         worktreeAutoCommitMode?: 'off' | 'per_conversation'
         worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage
         autoRunEnabled?: boolean
-        maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }) => Promise<string | null>
@@ -45,8 +59,11 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
     const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
     const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
     const [worktreeCleanupAfterMerge, setWorktreeCleanupAfterMerge] = useState(false)
+    const [agentOutputLanguage, setAgentOutputLanguage] = useState<AgentOutputLanguage>('system')
     const [autoRunEnabled, setAutoRunEnabled] = useState(false)
-    const [maxRunningSessions, setMaxRunningSessions] = useState(5)
+    const [automationLaneLimits, setAutomationLaneLimits] = useState<Record<AutomationLaneKey, number>>({
+        ...DEFAULT_AUTOMATION_LANE_LIMITS
+    })
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
     const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
@@ -62,6 +79,8 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
             label: `${getMachineDisplayTitle(machine)}${machine.metadata?.platform ? ` (${machine.metadata.platform})` : ''}`,
         }))
     }, [props.isMachinesLoading, props.machines, t])
+
+    const agentOutputLanguageOptions = useMemo(() => getAgentOutputLanguageOptions(t), [t])
 
     useEffect(() => {
         if (!props.isOpen) return
@@ -79,6 +98,13 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
 
     const canSubmit = Boolean(machineId && name.trim() && workspaces.length > 0 && !props.isPending)
 
+    const setAutomationLaneLimit = (lane: AutomationLaneKey, value: number) => {
+        setAutomationLaneLimits((previous) => ({
+            ...previous,
+            [lane]: clampLaneLimit(value)
+        }))
+    }
+
     const handleSubmit = async () => {
         if (!canSubmit) return
         const normalizedTargetBranch = worktreeTargetBranch.trim()
@@ -91,8 +117,9 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
             worktreeTargetBranch: defaultSessionType === 'worktree' && normalizedTargetBranch ? normalizedTargetBranch : undefined,
             worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : undefined,
             worktreeCleanupAfterMerge: defaultSessionType === 'worktree' ? worktreeCleanupAfterMerge : undefined,
+            agentOutputLanguage,
             autoRunEnabled,
-            maxRunningSessions,
+            automationLaneLimits,
             improvementsEnabled,
             improvementsMaxPendingTasks,
         })
@@ -107,8 +134,9 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
             setWorktreeTargetBranch('')
             setWorktreeAutoCommitMode('off')
             setWorktreeCleanupAfterMerge(false)
+            setAgentOutputLanguage('system')
             setAutoRunEnabled(false)
-            setMaxRunningSessions(5)
+            setAutomationLaneLimits({ ...DEFAULT_AUTOMATION_LANE_LIMITS })
             setImprovementsEnabled(false)
             setImprovementsMaxPendingTasks(5)
             props.onClose()
@@ -183,6 +211,21 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                             rows={4}
                             className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                         />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                            {t('projects.agentOutputLanguage.title')}
+                        </label>
+                        <AdaptiveSelectField
+                            title={t('projects.agentOutputLanguage.title')}
+                            value={agentOutputLanguage}
+                            options={agentOutputLanguageOptions}
+                            onValueChange={(value) => setAgentOutputLanguage(value as AgentOutputLanguage)}
+                            disabled={props.isPending}
+                            align="start"
+                        />
+                        <div className="text-xs text-[var(--app-hint)]">{t('projects.agentOutputLanguage.hint')}</div>
                     </div>
 
                     <div className="space-y-1.5">
@@ -276,19 +319,27 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                             <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={props.isPending} />
                             {t('projects.automation.autoRun')}
                         </label>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxRunning')}</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={50}
-                                    value={maxRunningSessions}
-                                    onChange={(event) => setMaxRunningSessions(Number(event.target.value))}
-                                    disabled={props.isPending}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                />
+                        <div className="space-y-1.5">
+                            <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.laneLimits')}</div>
+                            <div className="grid grid-cols-2 gap-3">
+                                {AUTOMATION_LANE_FIELDS.map((lane) => (
+                                    <div key={lane} className="space-y-1.5">
+                                        <label className="text-xs font-medium text-[var(--app-hint)]">
+                                            {t(`projects.automation.lane.${lane}`)}
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={50}
+                                            value={automationLaneLimits[lane]}
+                                            onChange={(event) => setAutomationLaneLimit(lane, Number(event.target.value))}
+                                            disabled={props.isPending}
+                                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                        />
+                                    </div>
+                                ))}
                             </div>
+                            <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.laneLimitsHint')}</div>
                         </div>
 
                         <label className="flex items-center gap-2 text-sm cursor-pointer select-none">

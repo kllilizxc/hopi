@@ -588,7 +588,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(20)
+        expect(userVersion.user_version).toBe(22)
 
         db.close()
     })
@@ -620,7 +620,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(20)
+        expect(userVersion.user_version).toBe(22)
 
         db.close()
     })
@@ -647,6 +647,9 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('handoff')
         expect(taskColumns).toContain('evidence')
         expect(taskColumns).toContain('init_runtime')
+        const projectColumns = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((column) => column.name)
+        expect(projectColumns).toContain('automation_lane_limits')
+        expect(projectColumns).toContain('agent_output_language')
 
         const taskForeignKeys = db.prepare('PRAGMA foreign_key_list(tasks)').all() as Array<{
             table: string
@@ -662,14 +665,20 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(20)
+        expect(userVersion.user_version).toBe(22)
 
         const project = store.projects.createProject({
             id: 'goal-project',
             namespace: 'default',
             machineId: 'machine-1',
-            name: 'Goal Project'
+            name: 'Goal Project',
+            agentOutputLanguage: 'zh-CN'
         })
+        expect(project.agentOutputLanguage).toBe('zh-CN')
+        const updatedProject = store.projects.updateProject(project.id, 'default', {
+            agentOutputLanguage: 'en'
+        })
+        expect(updatedProject?.agentOutputLanguage).toBe('en')
         const goal = store.goals.createGoal({
             id: 'goal-1',
             projectId: project.id,

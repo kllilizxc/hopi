@@ -71,6 +71,7 @@ describe('useResolveGoalDecisionTopic', () => {
 
         await waitFor(() => {
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.goalTopics(topic.goalId) })
+            expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.goals(topic.projectId) })
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.tasksRoot(topic.projectId) })
         })
         expect(api.resolveGoalDecisionTopic).toHaveBeenCalledWith(topic.id, {

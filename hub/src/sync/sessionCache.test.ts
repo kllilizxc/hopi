@@ -6,6 +6,88 @@ import { VisibilityTracker } from '../visibility/visibilityTracker'
 import { EventPublisher } from './eventPublisher'
 import { SessionCache } from './sessionCache'
 
+describe('SessionCache realtime scope', () => {
+    it('emits projectId on project-linked session add and heartbeat updates', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-session-scope'
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-project-linked',
+            {
+                path: '/tmp/project',
+                host: 'test',
+                projectId,
+                taskId: 'task-session-scope',
+                hopiTaskRole: 'evaluator'
+            },
+            null,
+            namespace
+        )
+
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const events: unknown[] = []
+        publisher.subscribe((event) => events.push(event))
+
+        const cache = new SessionCache(store, publisher)
+        cache.refreshSession(storedSession.id)
+        cache.handleSessionAlive({ sid: storedSession.id, time: Date.now(), thinking: true })
+
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'session-added',
+            sessionId: storedSession.id,
+            projectId
+        }))
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'session-updated',
+            sessionId: storedSession.id,
+            projectId,
+            data: expect.objectContaining({ thinking: true })
+        }))
+    })
+
+    it('emits projectId when a cached project-linked session disappears from storage', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-session-remove-scope'
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-project-linked-remove',
+            {
+                path: '/tmp/project',
+                host: 'test',
+                projectId,
+                taskId: 'task-session-remove-scope',
+                hopiTaskRole: 'evaluator'
+            },
+            null,
+            namespace
+        )
+
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const events: unknown[] = []
+        publisher.subscribe((event) => events.push(event))
+
+        const cache = new SessionCache(store, publisher)
+        cache.refreshSession(storedSession.id)
+        events.length = 0
+
+        store.sessions.deleteSession(storedSession.id, namespace)
+        cache.refreshSession(storedSession.id)
+
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'session-removed',
+            sessionId: storedSession.id,
+            namespace,
+            projectId
+        }))
+    })
+})
+
 describe('SessionCache.deleteSession', () => {
     it('clears activeSessionId on tasks linked to a deleted session', async () => {
         const store = new Store(':memory:')

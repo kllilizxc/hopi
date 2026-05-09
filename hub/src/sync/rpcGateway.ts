@@ -326,19 +326,19 @@ export class RpcGateway {
         return await this.machineRpc(machineId, 'git-status', { cwd }) as RpcCommandResponse
     }
 
-    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-numstat', options) as RpcCommandResponse
     }
 
-    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.machineRpc(machineId, 'git-diff-numstat', options) as RpcCommandResponse
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-file', options) as RpcCommandResponse
     }
 
-    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string }): Promise<RpcCommandResponse> {
+    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.machineRpc(machineId, 'git-diff-file', options) as RpcCommandResponse
     }
 

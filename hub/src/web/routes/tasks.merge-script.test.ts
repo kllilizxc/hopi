@@ -419,6 +419,96 @@ describe('tasks merge route contract workflow', () => {
         expect(transcript).toContain('retried the platform merge')
     })
 
+    it('restarts a retrying merge runtime when the in-memory monitor was lost', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-monitor-lost'
+        const taskId = 'task-merge-monitor-lost'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-monitor-lost', createSession('session-merge-monitor-lost').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+        store.tasks.updateTaskByNamespace(taskId, 'default', {
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId,
+                requestedAt: Date.now() - 2_000,
+                startedAt: Date.now() - 1_500,
+                updatedAt: Date.now() - 1_000,
+                completedAt: null,
+                retryCount: 1,
+                failureFingerprint: 'merge_conflict:test',
+                latestNote: 'Platform merge found conflicts. Resolving them in the linked session before retry.',
+                blockedReason: null,
+                failure: null
+            }
+        })
+
+        const session = createSession(sessionId)
+        let mergeCalls = 0
+        const engine = {
+            resolveSessionAccess(id: string, namespace: string) {
+                return id === sessionId && namespace === 'default'
+                    ? { ok: true as const, sessionId, session }
+                    : { ok: false as const, reason: 'not-found' as const }
+            },
+            getSessionByNamespace(id: string, namespace: string) {
+                return id === sessionId && namespace === 'default' ? session : undefined
+            },
+            async readSessionFile() {
+                return createContractResponse()
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 1,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '1\t0\tsrc/story.ts\n' }
+            },
+            async archiveSession() {
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { skippedReason?: string | null }
+        expect(body.skippedReason).toBeNull()
+
+        await waitForTask({
+            store,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(updatedTask?.status).toBe('finished')
+        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(1)
+    })
+
     it('runs contract-defined merge verify commands before landing', async () => {
         const store = new Store(':memory:')
         const projectId = 'project-merge-platform-verify-run'

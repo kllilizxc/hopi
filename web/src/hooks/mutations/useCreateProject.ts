@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { AgentFlavor, ModelMode, PermissionMode, Project } from '@/types/api'
+import type { AgentFlavor, AgentOutputLanguage, AutomationLaneLimits, ModelMode, PermissionMode, Project } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type CreateProjectInput = {
@@ -12,12 +12,14 @@ type CreateProjectInput = {
     worktreeTargetBranch?: string
     worktreeAutoCommitMode?: 'off' | 'per_conversation'
     worktreeCleanupAfterMerge?: boolean
+    agentOutputLanguage?: AgentOutputLanguage
     defaultAgentFlavor?: AgentFlavor
     defaultPermissionMode?: PermissionMode
     defaultModel?: string
     defaultModelMode?: ModelMode
     autoRunEnabled?: boolean
     maxRunningSessions?: number
+    automationLaneLimits?: AutomationLaneLimits
     improvementsEnabled?: boolean
     improvementsMaxPendingTasks?: number
 }

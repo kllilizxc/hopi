@@ -14,6 +14,7 @@ import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
+import { buildAppEventSubscription } from '@/lib/app-event-subscription'
 import { fetchLatestMessages, getActiveMessageWindowSessionIds } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
@@ -247,38 +248,10 @@ function AppInner() {
         })
     }, [addToast])
 
-    const eventSubscription = useMemo(() => {
-        const includeToasts = ['toasts'] as const
-        const includeMachines = ['machines'] as const
-
-        if (selectedProjectId) {
-            return {
-                all: false,
-                projectId: selectedProjectId,
-                include: ['projects', 'workspaces', 'tasks', ...includeMachines, ...includeToasts] as const
-            }
-        }
-
-        if (pathname.startsWith('/projects')) {
-            return {
-                all: true,
-                include: ['projects', ...includeMachines, ...includeToasts] as const
-            }
-        }
-
-        if (pathname.startsWith('/sessions') && !selectedSessionId) {
-            return {
-                all: true,
-                include: ['sessions', ...includeMachines, ...includeToasts] as const
-            }
-        }
-
-        // Default: keep toasts flowing, but avoid message/session noise.
-        return {
-            all: true,
-            include: [...includeMachines, ...includeToasts] as const
-        }
-    }, [pathname, selectedProjectId, selectedSessionId])
+    const eventSubscription = useMemo(
+        () => buildAppEventSubscription({ pathname, selectedProjectId, selectedSessionId }),
+        [pathname, selectedProjectId, selectedSessionId]
+    )
 
     const { subscriptionId } = useSSE({
         enabled: Boolean(api && token),

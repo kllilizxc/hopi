@@ -24,6 +24,7 @@ export type UseSessionFileDiffViewerResult = {
     highlightedContent: ReactNode | null
     binaryFile: boolean
     canCopyContent: boolean
+    canLoadFileContent: boolean
 }
 
 function resolveLanguage(path: string): string | undefined {
@@ -75,26 +76,36 @@ export function useSessionFileDiffViewer(params: {
     filePath: string
     staged?: boolean
     baseRef?: string
+    taskMergedDiffId?: string
 }): UseSessionFileDiffViewerResult {
     const missingPath = !params.filePath
     const [displayMode, setDisplayMode] = useState<FileViewerDisplayMode>('diff')
-    const shouldAutoFallbackToFile = params.staged === undefined && !params.baseRef
+    const canLoadFileContent = !params.taskMergedDiffId
+    const shouldAutoFallbackToFile = params.staged === undefined && !params.baseRef && canLoadFileContent
 
     const diffQuery = useQuery({
-        queryKey: queryKeys.gitFileDiff(params.sessionId, params.filePath, {
-            staged: params.staged,
-            baseRef: params.baseRef,
-        }),
+        queryKey: params.taskMergedDiffId
+            ? queryKeys.taskMergedFileDiff(params.taskMergedDiffId, params.filePath)
+            : queryKeys.gitFileDiff(params.sessionId, params.filePath, {
+                staged: params.staged,
+                baseRef: params.baseRef,
+            }),
         queryFn: async () => {
-            if (!params.api || !params.sessionId || !params.filePath) {
-                throw new Error('Missing session or path')
+            if (!params.api || !params.filePath) {
+                throw new Error('Missing API client or path')
+            }
+            if (params.taskMergedDiffId) {
+                return await params.api.getTaskMergedDiffFile(params.taskMergedDiffId, params.filePath)
+            }
+            if (!params.sessionId) {
+                throw new Error('Missing session')
             }
             return await params.api.getGitDiffFile(params.sessionId, params.filePath, {
                 staged: params.staged,
                 baseRef: params.baseRef,
             })
         },
-        enabled: Boolean(params.api && params.sessionId && params.filePath)
+        enabled: Boolean(params.api && params.filePath && (params.taskMergedDiffId || params.sessionId))
     })
 
     const fileQuery = useQuery({
@@ -105,7 +116,7 @@ export function useSessionFileDiffViewer(params: {
             }
             return await params.api.readSessionFile(params.sessionId, params.filePath)
         },
-        enabled: Boolean(params.api && params.sessionId && params.filePath && displayMode === 'file')
+        enabled: Boolean(params.api && params.sessionId && params.filePath && canLoadFileContent && displayMode === 'file')
     })
 
     const diffContent = diffQuery.data?.success ? (diffQuery.data.stdout ?? '') : ''
@@ -146,7 +157,7 @@ export function useSessionFileDiffViewer(params: {
 
     useEffect(() => {
         setDisplayMode('diff')
-    }, [params.filePath, params.sessionId, params.staged, params.baseRef])
+    }, [params.filePath, params.sessionId, params.staged, params.baseRef, params.taskMergedDiffId])
 
     useEffect(() => {
         if (diffContent) {
@@ -181,5 +192,6 @@ export function useSessionFileDiffViewer(params: {
         highlightedContent,
         binaryFile,
         canCopyContent,
+        canLoadFileContent,
     }
 }

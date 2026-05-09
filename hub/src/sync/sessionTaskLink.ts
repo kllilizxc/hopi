@@ -1,4 +1,4 @@
-import type { Session } from '@hopi/protocol/types'
+import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 
 import type { StoredSession, StoredTask, Store } from '../store'
 import { syncTaskActionRuntimeSession } from '../utils/taskActionRuntime'
@@ -8,6 +8,7 @@ export type SessionTaskLinkMetadata = {
     projectId: string
     taskId: string
     name?: string
+    hopiTaskRole?: HopiTaskRole
 }
 
 type LinkRealtimeEngine = Pick<SyncEngine, 'handleRealtimeEvent'>
@@ -62,7 +63,11 @@ export function readSessionTaskLinkMetadata(current: unknown): SessionTaskLinkMe
     }
 
     const name = trimString(record.name) ?? undefined
-    return { projectId, taskId, name }
+    const rawRole = trimString(record.hopiTaskRole)
+    const hopiTaskRole = rawRole === 'planner' || rawRole === 'generator' || rawRole === 'evaluator' || rawRole === 'radar'
+        ? rawRole
+        : undefined
+    return { projectId, taskId, name, hopiTaskRole }
 }
 
 export function mergeSessionTaskLinkMetadata(current: unknown, patch: SessionTaskLinkMetadata): unknown {
@@ -74,7 +79,8 @@ export function mergeSessionTaskLinkMetadata(current: unknown, patch: SessionTas
         ...base,
         projectId: patch.projectId,
         taskId: patch.taskId,
-        name: patch.name ?? base.name
+        name: patch.name ?? base.name,
+        hopiTaskRole: patch.hopiTaskRole ?? base.hopiTaskRole
     }
 }
 
@@ -124,6 +130,7 @@ export function syncTaskSessionLink(options: {
     projectId: string
     taskId: string
     name?: string
+    hopiTaskRole?: HopiTaskRole
 }): boolean {
     const ok = updateStoredSessionTaskLink({
         store: options.store,
@@ -132,7 +139,8 @@ export function syncTaskSessionLink(options: {
         patch: {
             projectId: options.projectId,
             taskId: options.taskId,
-            name: options.name
+            name: options.name,
+            hopiTaskRole: options.hopiTaskRole
         }
     })
 
@@ -157,6 +165,7 @@ export function setSessionTaskLink(options: {
     projectId: string
     taskId: string
     name?: string
+    hopiTaskRole?: HopiTaskRole
 }): boolean {
     return syncTaskSessionLink(options)
 }

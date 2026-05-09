@@ -281,6 +281,40 @@ describe('SSEManager namespace filtering', () => {
         ])
     })
 
+    it('delivers project-linked session updates to project-scoped subscriptions when sessions are included', () => {
+        const manager = new SSEManager(0, new VisibilityTracker())
+        const receivedProjectScoped: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'project-scoped',
+            namespace: 'alpha',
+            all: false,
+            projectId: 'p1',
+            include: ['sessions'],
+            send: (event) => {
+                receivedProjectScoped.push(event)
+            },
+            sendHeartbeat: () => { }
+        })
+
+        manager.broadcast({
+            type: 'session-added',
+            sessionId: 's1',
+            projectId: 'p1',
+            namespace: 'alpha',
+            data: { sessionId: 's1' }
+        } as SyncEvent)
+        manager.broadcast({
+            type: 'session-updated',
+            sessionId: 's2',
+            projectId: 'p2',
+            namespace: 'alpha',
+            data: { sessionId: 's2' }
+        } as SyncEvent)
+
+        expect(receivedProjectScoped.map((event) => event.type)).toEqual(['session-added'])
+    })
+
     it('does not deliver task updates to session-scoped subscriptions unless explicitly scoped', () => {
         const manager = new SSEManager(0, new VisibilityTracker())
         const received: SyncEvent[] = []

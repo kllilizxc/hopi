@@ -9,6 +9,7 @@ import {
     loadImprovementsScanProjectGuidance,
     type ImprovementsScanGuidanceEntry
 } from './improvementsScanBestPractices'
+import { resolveAgentOutputLocale } from './agentOutputLanguage'
 import type { SyncEngine } from './syncEngine'
 import { getDefaultWorkflowPhase } from './workflowStrategy'
 
@@ -37,68 +38,6 @@ export type ImprovementsSuggestion = {
     category: ImprovementCategory
     workspacePath?: string
     workspaceLabel?: string
-}
-
-function normalizeLocaleTag(raw: string | undefined): string | null {
-    if (!raw) return null
-
-    let value = raw.trim()
-    if (!value) return null
-
-    if (value.includes(':')) {
-        value = value.split(':')[0] ?? value
-    }
-    value = value.split('.')[0] ?? value
-    value = value.split('@')[0] ?? value
-    value = value.replace(/_/g, '-')
-
-    if (!value) return null
-    const lowered = value.toLowerCase()
-    if (lowered === 'c' || lowered === 'posix') {
-        return null
-    }
-
-    try {
-        const [canonical] = Intl.getCanonicalLocales(value)
-        return canonical ?? null
-    } catch {
-        return null
-    }
-}
-
-function resolvePromptLocale(options: {
-    store: Store
-    targetSessionId: string
-    preferredLocale?: string
-}): string {
-    const preferredLocale = normalizeLocaleTag(options.preferredLocale)
-    if (preferredLocale) {
-        return preferredLocale
-    }
-
-    const session = options.store.sessions.getSession(options.targetSessionId)
-    if (session && isObject(session.metadata)) {
-        const metadataLocale = typeof session.metadata.locale === 'string'
-            ? session.metadata.locale
-            : (typeof session.metadata.language === 'string' ? session.metadata.language : undefined)
-        const parsed = normalizeLocaleTag(metadataLocale)
-        if (parsed) {
-            return parsed
-        }
-    }
-
-    const envLocale = normalizeLocaleTag(
-        process.env.LC_ALL
-        ?? process.env.LC_MESSAGES
-        ?? process.env.LANGUAGE
-        ?? process.env.LANG
-    )
-    if (envLocale) {
-        return envLocale
-    }
-
-    const fallbackLocale = normalizeLocaleTag(Intl.DateTimeFormat().resolvedOptions().locale)
-    return fallbackLocale ?? 'en'
 }
 
 function normalizeTitle(value: string): string {
@@ -557,7 +496,7 @@ export async function runImprovementsScan(options: {
     store: Store
     engine: SyncEngine
     namespace: string
-    project: { id: string; name: string; improvementsMaxPendingTasks: number }
+    project: { id: string; name: string; improvementsMaxPendingTasks: number; agentOutputLanguage?: string | null }
     finishedTask: StoredTask
     targetSessionId: string
     maxToCreate: number
@@ -571,10 +510,10 @@ export async function runImprovementsScan(options: {
         return { ok: true, createdTaskIds: [] }
     }
 
-    const locale = resolvePromptLocale({
-        store: options.store,
-        targetSessionId: options.targetSessionId,
-        preferredLocale: options.preferredLocale
+    const locale = resolveAgentOutputLocale({
+        agentOutputLanguage: options.project.agentOutputLanguage,
+        preferredLocale: options.preferredLocale,
+        session: options.store.sessions.getSession(options.targetSessionId)
     })
     const workspaces = options.store.workspaces.listWorkspacesByProject(options.project.id)
     const projectGuidance = await loadImprovementsScanProjectGuidance(workspaces)

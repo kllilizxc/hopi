@@ -31,6 +31,7 @@ export function useResolveGoalDecisionTopic(api: ApiClient | null): {
             const goalId = topic.goalId || input.goalId
             const projectId = topic.projectId || input.projectId
             void queryClient.invalidateQueries({ queryKey: queryKeys.goalTopics(goalId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.goals(projectId) })
             void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(projectId) })
             if (topic.taskId) {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.task(topic.taskId) })

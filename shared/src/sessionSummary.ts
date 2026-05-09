@@ -1,5 +1,5 @@
 import type { ModelMode } from './modes'
-import type { Session, WorktreeMetadata } from './schemas'
+import type { HopiTaskRole, Session, WorktreeMetadata } from './schemas'
 
 export type SessionSummaryMetadata = {
     name?: string
@@ -7,6 +7,7 @@ export type SessionSummaryMetadata = {
     machineId?: string
     projectId?: string
     taskId?: string
+    hopiTaskRole?: HopiTaskRole
     summary?: { text: string }
     flavor?: string | null
     worktree?: WorktreeMetadata
@@ -16,6 +17,7 @@ export type SessionSummary = {
     id: string
     active: boolean
     thinking: boolean
+    createdAt: number
     activeAt: number
     updatedAt: number
     metadata: SessionSummaryMetadata | null
@@ -33,6 +35,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         machineId: session.metadata.machineId ?? undefined,
         projectId: session.metadata.projectId ?? undefined,
         taskId: session.metadata.taskId ?? undefined,
+        hopiTaskRole: session.metadata.hopiTaskRole,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
         worktree: session.metadata.worktree
@@ -47,6 +50,7 @@ export function toSessionSummary(session: Session): SessionSummary {
         id: session.id,
         active: session.active,
         thinking: session.thinking,
+        createdAt: session.createdAt,
         activeAt: session.activeAt,
         updatedAt: session.updatedAt,
         metadata,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
@@ -171,6 +171,7 @@ export function SessionChat(props: {
     onViewFiles?: () => void
     onViewDiffs?: () => void
     onViewTerminal?: () => void
+    headerExtra?: ReactNode
 }) {
     const { token, baseUrl } = useAppContext()
     const { haptic } = usePlatform()
@@ -768,6 +769,7 @@ export function SessionChat(props: {
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
                 onSessionDeleted={props.onBack}
+                extra={props.headerExtra}
             />
 
             {sessionInactive ? (

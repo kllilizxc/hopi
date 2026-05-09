@@ -36,6 +36,51 @@ const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
     finished: true
 }
 
+type TaskMergeRuntimeTag = {
+    label: string
+    variant: 'default' | 'warning' | 'error'
+    title: string | null
+}
+
+function getTaskMergeRuntimeTag(t: ReturnType<typeof useTranslation>['t'], task: Task): TaskMergeRuntimeTag | null {
+    const runtime = task.mergeRuntime
+    if (!runtime) {
+        return null
+    }
+
+    const title = runtime.latestNote ?? runtime.blockedReason ?? null
+    switch (runtime.status) {
+        case 'queued':
+        case 'waiting':
+        case 'approval_pending':
+        case 'running':
+            return {
+                label: t('projects.tasks.merge.running'),
+                variant: 'default',
+                title
+            }
+        case 'retrying':
+            return {
+                label: t('projects.tasks.merge.retrying', { count: runtime.retryCount ?? 0 }),
+                variant: 'warning',
+                title
+            }
+        case 'blocked':
+        case 'canceled':
+            return {
+                label: t('projects.tasks.merge.blocked'),
+                variant: 'error',
+                title
+            }
+        case 'succeeded':
+            return null
+        default: {
+            const _exhaustive: never = runtime.status
+            return _exhaustive
+        }
+    }
+}
+
 function getDefaultCollapsedColumns(): Record<TaskStatus, boolean> {
     const collapsed = { ...DEFAULT_COLLAPSED_COLUMNS }
     if (!isMobileViewport()) {
@@ -346,6 +391,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const useArchiveStyle = props.task.status === 'finished'
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
+    const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
     const cardBackground = useArchiveStyle ? ARCHIVE_TASK_CARD_BACKGROUND : ACTIVE_TASK_CARD_BACKGROUND
     const canExpandSubTasks = subTasks.length > 0
 
@@ -453,6 +499,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                         completed: subTaskProgress.completed,
                                         total: subTaskProgress.total
                                     })}
+                                </Tag>
+                            ) : null}
+                            {mergeRuntimeTag ? (
+                                <Tag size="xs" variant={mergeRuntimeTag.variant} title={mergeRuntimeTag.title ?? undefined}>
+                                    {mergeRuntimeTag.label}
                                 </Tag>
                             ) : null}
                             {isGeneratedPending ? (

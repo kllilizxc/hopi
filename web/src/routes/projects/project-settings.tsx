@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
-import type { AgentFlavor, PermissionMode, Workspace } from '@/types/api'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTOMATION_LANE_LIMITS, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeAutomationLaneLimits, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import type { AgentFlavor, AgentOutputLanguage, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
+import { getAgentOutputLanguageOptions, normalizeProjectAgentOutputLanguage } from '@/lib/agent-output-language'
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { PageHeader } from '@/components/PageHeader'
@@ -20,6 +21,16 @@ import { useUpdateProject } from '@/hooks/mutations/useUpdateProject'
 import { useVerifyProjectAutomation } from '@/hooks/mutations/useVerifyProjectAutomation'
 
 type AutomationReadinessStatus = 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
+type AutomationLaneKey = 'planner' | 'generator' | 'evaluator' | 'radar'
+
+const AUTOMATION_LANE_FIELDS: AutomationLaneKey[] = ['planner', 'generator', 'evaluator', 'radar']
+
+function clampLaneLimit(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 0
+    }
+    return Math.max(0, Math.min(50, Math.trunc(value)))
+}
 
 function getAutomationReadinessVariant(status: AutomationReadinessStatus): 'default' | 'secondary' | 'success' | 'warning' | 'error' {
     switch (status) {
@@ -123,8 +134,11 @@ export function ProjectSettingsPage() {
     const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
     const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
     const [worktreeCleanupAfterMerge, setWorktreeCleanupAfterMerge] = useState(false)
+    const [agentOutputLanguage, setAgentOutputLanguage] = useState<AgentOutputLanguage>('system')
     const [autoRunEnabled, setAutoRunEnabled] = useState(false)
-    const [maxRunningSessions, setMaxRunningSessions] = useState(5)
+    const [automationLaneLimits, setAutomationLaneLimits] = useState<Record<AutomationLaneKey, number>>({
+        ...DEFAULT_AUTOMATION_LANE_LIMITS
+    })
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
     const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
@@ -147,8 +161,9 @@ export function ProjectSettingsPage() {
         setWorktreeTargetBranch(project.worktreeTargetBranch ?? '')
         setWorktreeAutoCommitMode(project.worktreeAutoCommitMode === 'per_conversation' ? 'per_conversation' : 'off')
         setWorktreeCleanupAfterMerge(Boolean(project.worktreeCleanupAfterMerge))
+        setAgentOutputLanguage(normalizeProjectAgentOutputLanguage(project.agentOutputLanguage))
         setAutoRunEnabled(Boolean(project.autoRunEnabled))
-        setMaxRunningSessions(project.maxRunningSessions ?? 5)
+        setAutomationLaneLimits(normalizeAutomationLaneLimits(project.automationLaneLimits))
         setImprovementsEnabled(Boolean(project.improvementsEnabled))
         setImprovementsMaxPendingTasks(project.improvementsMaxPendingTasks ?? 5)
     }, [project])
@@ -163,6 +178,8 @@ export function ProjectSettingsPage() {
         { value: 'gemini' as const, label: t('agent.gemini') },
         { value: 'opencode' as const, label: t('agent.opencode') },
     ]), [t])
+
+    const agentOutputLanguageOptions = useMemo(() => getAgentOutputLanguageOptions(t), [t])
 
     useEffect(() => {
         if (!isPermissionModeAllowedForFlavor(defaultPermissionMode, defaultAgentFlavor)) {
@@ -206,6 +223,13 @@ export function ProjectSettingsPage() {
         }
     }, [api, project?.machineId, workspaces])
 
+    const setAutomationLaneLimit = useCallback((lane: AutomationLaneKey, value: number) => {
+        setAutomationLaneLimits((previous) => ({
+            ...previous,
+            [lane]: clampLaneLimit(value)
+        }))
+    }, [])
+
     const handleSaveBasics = useCallback(async () => {
         if (!project) return
 
@@ -226,8 +250,9 @@ export function ProjectSettingsPage() {
                 worktreeTargetBranch: worktreeTargetBranch.trim() ? worktreeTargetBranch.trim() : null,
                 worktreeAutoCommitMode: defaultSessionType === 'worktree' ? worktreeAutoCommitMode : 'off',
                 worktreeCleanupAfterMerge,
+                agentOutputLanguage,
                 autoRunEnabled,
-                maxRunningSessions,
+                automationLaneLimits,
                 improvementsEnabled,
                 improvementsMaxPendingTasks
             }
@@ -247,8 +272,9 @@ export function ProjectSettingsPage() {
         worktreeTargetBranch,
         worktreeAutoCommitMode,
         worktreeCleanupAfterMerge,
+        agentOutputLanguage,
         autoRunEnabled,
-        maxRunningSessions,
+        automationLaneLimits,
         improvementsEnabled,
         improvementsMaxPendingTasks
     ])
@@ -398,6 +424,19 @@ export function ProjectSettingsPage() {
                                     compact
                                 />
                             </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.agentOutputLanguage.title')}</label>
+                                <AdaptiveSelectField
+                                    title={t('projects.agentOutputLanguage.title')}
+                                    value={agentOutputLanguage}
+                                    options={agentOutputLanguageOptions}
+                                    onValueChange={(value) => setAgentOutputLanguage(value as AgentOutputLanguage)}
+                                    disabled={isPending}
+                                    align="start"
+                                />
+                                <div className="text-xs text-[var(--app-hint)]">{t('projects.agentOutputLanguage.hint')}</div>
+                            </div>
                         </div>
 
                         <div className="space-y-2">
@@ -435,19 +474,27 @@ export function ProjectSettingsPage() {
                                 <Checkbox checked={autoRunEnabled} onCheckedChange={setAutoRunEnabled} disabled={isPending} />
                                 {t('projects.automation.autoRun')}
                             </label>
-                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.maxRunning')}</label>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={50}
-                                        value={maxRunningSessions}
-                                        onChange={(e) => setMaxRunningSessions(Number(e.target.value))}
-                                        disabled={isPending}
-                                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                                    />
+                            <div className="space-y-1.5">
+                                <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.laneLimits')}</div>
+                                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                                    {AUTOMATION_LANE_FIELDS.map((lane) => (
+                                        <div key={lane} className="space-y-1.5">
+                                            <label className="text-xs font-medium text-[var(--app-hint)]">
+                                                {t(`projects.automation.lane.${lane}`)}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={50}
+                                                value={automationLaneLimits[lane]}
+                                                onChange={(e) => setAutomationLaneLimit(lane, Number(e.target.value))}
+                                                disabled={isPending}
+                                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                            />
+                                        </div>
+                                    ))}
                                 </div>
+                                <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.laneLimitsHint')}</div>
                             </div>
 
                             <label className="flex items-center gap-2 text-sm cursor-pointer select-none">

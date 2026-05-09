@@ -1,9 +1,9 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
 import { memo } from 'react'
-import { MarkdownText } from '@/components/assistant-ui/markdown-text'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
+import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -11,8 +11,12 @@ const TOOL_COMPONENTS = {
     Fallback: HappyToolMessage
 } as const
 
+function AssistantTextPart(props: { text: string; status?: { type: string } }) {
+    return <MarkdownRenderer content={props.text} isRunning={props.status?.type === 'running'} />
+}
+
 const MESSAGE_PART_COMPONENTS = {
-    Text: MarkdownText,
+    Text: AssistantTextPart,
     Reasoning: Reasoning,
     ReasoningGroup: ReasoningGroup,
     tools: TOOL_COMPONENTS

@@ -15,6 +15,15 @@ export type SessionType = z.infer<typeof SessionTypeSchema>
 export const WorktreeAutoCommitModeSchema = z.enum(['off', 'per_conversation'])
 export type WorktreeAutoCommitMode = z.infer<typeof WorktreeAutoCommitModeSchema>
 
+export const AgentOutputLanguageSchema = z.enum(['system', 'en', 'zh-CN'])
+export type AgentOutputLanguage = z.infer<typeof AgentOutputLanguageSchema>
+export const DEFAULT_AGENT_OUTPUT_LANGUAGE: AgentOutputLanguage = 'system'
+
+export function normalizeAgentOutputLanguage(value?: string | null): AgentOutputLanguage {
+    const parsed = AgentOutputLanguageSchema.safeParse(value)
+    return parsed.success ? parsed.data : DEFAULT_AGENT_OUTPUT_LANGUAGE
+}
+
 export const DirectoryEntryTypeSchema = z.enum(['file', 'directory', 'other'])
 export type DirectoryEntryType = z.infer<typeof DirectoryEntryTypeSchema>
 
@@ -70,6 +79,40 @@ export const WorktreeMetadataSchema = z.object({
 
 export type WorktreeMetadata = z.infer<typeof WorktreeMetadataSchema>
 
+export const HopiTaskRoleSchema = z.enum(['planner', 'generator', 'evaluator', 'radar'])
+export type HopiTaskRole = z.infer<typeof HopiTaskRoleSchema>
+
+export const AutomationLaneSchema = HopiTaskRoleSchema
+export type AutomationLane = HopiTaskRole
+
+const AutomationLaneLimitSchema = z.number().int().min(0).max(50)
+
+export const AutomationLaneLimitsSchema = z.object({
+    planner: AutomationLaneLimitSchema.optional(),
+    generator: AutomationLaneLimitSchema.optional(),
+    evaluator: AutomationLaneLimitSchema.optional(),
+    radar: AutomationLaneLimitSchema.optional()
+})
+export type AutomationLaneLimits = z.infer<typeof AutomationLaneLimitsSchema>
+
+export const DEFAULT_AUTOMATION_LANE_LIMITS: Record<AutomationLane, number> = {
+    planner: 3,
+    generator: 3,
+    evaluator: 3,
+    radar: 3
+}
+
+export function normalizeAutomationLaneLimits(value?: AutomationLaneLimits | null): Record<AutomationLane, number> {
+    const parsed = AutomationLaneLimitsSchema.safeParse(value ?? {})
+    const limits = parsed.success ? parsed.data : {}
+    return {
+        planner: limits.planner ?? DEFAULT_AUTOMATION_LANE_LIMITS.planner,
+        generator: limits.generator ?? DEFAULT_AUTOMATION_LANE_LIMITS.generator,
+        evaluator: limits.evaluator ?? DEFAULT_AUTOMATION_LANE_LIMITS.evaluator,
+        radar: limits.radar ?? DEFAULT_AUTOMATION_LANE_LIMITS.radar
+    }
+}
+
 export const MetadataSchema = z.object({
     path: z.string(),
     host: z.string(),
@@ -81,6 +124,7 @@ export const MetadataSchema = z.object({
     machineId: z.string().optional(),
     projectId: z.string().optional(),
     taskId: z.string().optional(),
+    hopiTaskRole: HopiTaskRoleSchema.optional(),
     claudeSessionId: z.string().optional(),
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),
@@ -211,8 +255,10 @@ export const ProjectSchema = z.object({
     worktreeTargetBranch: z.string().nullable().optional(),
     worktreeAutoCommitMode: WorktreeAutoCommitModeSchema.nullable().optional(),
     worktreeCleanupAfterMerge: z.boolean().optional(),
+    agentOutputLanguage: AgentOutputLanguageSchema.optional(),
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
+    automationLaneLimits: AutomationLaneLimitsSchema.optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
     automationReadinessStatus: AutomationReadinessStatusSchema.optional(),
@@ -1110,7 +1156,8 @@ const SessionEventBaseSchema = z.object({
 })
 
 const SessionChangedSchema = SessionEventBaseSchema.extend({
-    sessionId: z.string()
+    sessionId: z.string(),
+    projectId: z.string().optional()
 })
 
 const MachineChangedSchema = SessionEventBaseSchema.extend({
@@ -1128,7 +1175,8 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
     }),
     SessionEventBaseSchema.extend({
         type: z.literal('session-removed'),
-        sessionId: z.string()
+        sessionId: z.string(),
+        projectId: z.string().optional()
     }),
     SessionChangedSchema.extend({
         type: z.literal('message-received'),
