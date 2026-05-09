@@ -53,3 +53,4 @@ cli/npm/main/
 .agents
 super
 docs
+.agent-debug

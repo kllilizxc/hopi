@@ -361,7 +361,10 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.projects })
                 if ('projectId' in event) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.project(event.projectId) })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.goals(event.projectId) })
                 }
+                void queryClient.invalidateQueries({ queryKey: queryKeys.goalTopicsRoot })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.goalTodoRoot })
             }
 
             if (event.type === 'workspace-added' || event.type === 'workspace-updated' || event.type === 'workspace-removed') {
@@ -370,7 +373,8 @@ export function useSSE(options: {
             }
 
             if (event.type === 'task-added' || event.type === 'task-updated' || event.type === 'task-removed') {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(event.projectId) })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(event.projectId) })
+                void queryClient.invalidateQueries({ queryKey: queryKeys.goalTodoRoot })
                 if ('taskId' in event) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.task(event.taskId) })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.taskPreview(event.taskId) })

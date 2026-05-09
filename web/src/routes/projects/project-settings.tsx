@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
 import type { AgentFlavor, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -116,9 +116,9 @@ export function ProjectSettingsPage() {
 
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
-    const [defaultAgentFlavor, setDefaultAgentFlavor] = useState<AgentFlavor>('claude')
+    const [defaultAgentFlavor, setDefaultAgentFlavor] = useState<AgentFlavor>(DEFAULT_AGENT_FLAVOR)
     const [defaultPermissionMode, setDefaultPermissionMode] = useState<PermissionMode>('default')
-    const [defaultModel, setDefaultModel] = useState('auto')
+    const [defaultModel, setDefaultModel] = useState(DEFAULT_TASK_MODEL)
     const [defaultSessionType, setDefaultSessionType] = useState<'simple' | 'worktree'>('simple')
     const [worktreeTargetBranch, setWorktreeTargetBranch] = useState('')
     const [worktreeAutoCommitMode, setWorktreeAutoCommitMode] = useState<'off' | 'per_conversation'>('off')
@@ -135,11 +135,14 @@ export function ProjectSettingsPage() {
 
     useEffect(() => {
         if (!project) return
+        const resolvedDefaultAgent = (project.defaultAgentFlavor as AgentFlavor | null) ?? DEFAULT_AGENT_FLAVOR
         setName(project.name ?? '')
         setDescription(project.description ?? '')
-        setDefaultAgentFlavor((project.defaultAgentFlavor as AgentFlavor | null) ?? 'claude')
+        setDefaultAgentFlavor(resolvedDefaultAgent)
         setDefaultPermissionMode((project.defaultPermissionMode as PermissionMode | null) ?? 'default')
-        setDefaultModel(resolveStoredModel(project.defaultModel, project.defaultModelMode) ?? 'auto')
+        setDefaultModel(resolveStoredModel(project.defaultModel, project.defaultModelMode) ?? (
+            resolvedDefaultAgent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : 'auto'
+        ))
         setDefaultSessionType(project.defaultSessionType === 'worktree' ? 'worktree' : 'simple')
         setWorktreeTargetBranch(project.worktreeTargetBranch ?? '')
         setWorktreeAutoCommitMode(project.worktreeAutoCommitMode === 'per_conversation' ? 'per_conversation' : 'off')

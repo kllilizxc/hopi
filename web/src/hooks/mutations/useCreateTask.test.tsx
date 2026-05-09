@@ -45,6 +45,10 @@ function createTask(overrides: Partial<Task> = {}): Task {
         attachments: overrides.attachments ?? null,
         source: overrides.source ?? 'manual',
         sourceTaskId: overrides.sourceTaskId ?? null,
+        goalId: overrides.goalId ?? null,
+        contract: overrides.contract ?? null,
+        handoff: overrides.handoff ?? null,
+        evidence: overrides.evidence ?? null,
         workflowProfile: overrides.workflowProfile ?? 'default',
         workflowPhase: overrides.workflowPhase ?? null,
         subTasks: overrides.subTasks ?? null,
@@ -172,6 +176,73 @@ describe('useCreateTask', () => {
         await waitFor(() => {
             const cached = queryClient.getQueryData<TasksResponse>(queryKeys.tasks(existingTask.projectId))
             expect(cached?.tasks).toEqual([existingTask])
+        })
+    })
+
+    it('optimistically updates the goal-scoped task cache and forwards goal payload fields', async () => {
+        const queryClient = createTestQueryClient()
+        const existingTask = createTask()
+        const goalScopedKey = queryKeys.tasks(existingTask.projectId, 'goal-1')
+
+        expect(goalScopedKey).toEqual(['tasks', existingTask.projectId, 'goal-1'])
+        queryClient.setQueryData<TasksResponse>(goalScopedKey, { tasks: [existingTask] })
+
+        let resolveRequest: ((value: { task: Task }) => void) | null = null
+        const api = {
+            createProjectTask: vi.fn(() => new Promise<{ task: Task }>((resolve) => {
+                resolveRequest = resolve
+            }))
+        } as unknown as ApiClient
+
+        const { result } = renderHook(() => useCreateTask(api), {
+            wrapper: createWrapper(queryClient)
+        })
+
+        const input = {
+            projectId: existingTask.projectId,
+            title: 'Goal task',
+            workflowProfile: 'default' as const,
+            goalId: 'goal-1',
+            contract: 'Ship the first slice'
+        }
+
+        let requestPromise: Promise<Task>
+        await act(async () => {
+            requestPromise = result.current.createTask(input)
+        })
+
+        await waitFor(() => {
+            const cached = queryClient.getQueryData<TasksResponse>(goalScopedKey)
+            const optimisticTask = cached?.tasks.find((task) => task.id.startsWith('temp:'))
+            expect(optimisticTask?.goalId).toBe('goal-1')
+            expect(optimisticTask?.contract).toBe('Ship the first slice')
+        })
+
+        expect(api.createProjectTask).toHaveBeenCalledWith(existingTask.projectId, expect.objectContaining({
+            goalId: 'goal-1',
+            contract: 'Ship the first slice'
+        }))
+
+        if (!resolveRequest) {
+            throw new Error('expected pending createProjectTask request')
+        }
+        const serverTask = createTask({
+            id: 'task-goal-created',
+            projectId: existingTask.projectId,
+            title: 'Goal task',
+            goalId: 'goal-1',
+            contract: 'Ship the first slice'
+        })
+        const finishRequest = resolveRequest as (value: { task: Task }) => void
+        finishRequest({ task: serverTask })
+        await act(async () => {
+            await requestPromise!
+        })
+
+        await waitFor(() => {
+            const cached = queryClient.getQueryData<TasksResponse>(goalScopedKey)
+            expect(cached?.tasks.map((task) => task.id)).toEqual(expect.arrayContaining(['task-existing', 'task-goal-created']))
+            expect(cached?.tasks.some((task) => task.id.startsWith('temp:'))).toBe(false)
         })
     })
 })

@@ -125,6 +125,36 @@ export type StoredWorkspace = {
     updatedAt: number
 }
 
+export type StoredGoal = {
+    id: string
+    projectId: string
+    namespace: string
+    title: string
+    description: string | null
+    status: 'planning' | 'active' | 'blocked' | 'paused' | 'done' | 'archived'
+    successCriteria: string | null
+    autopilotEnabled: boolean
+    deployRequiresApproval: boolean
+    currentFocus: string | null
+    createdAt: number
+    updatedAt: number
+    archivedAt: number | null
+}
+
+export type StoredGoalDecisionTopic = {
+    id: string
+    projectId: string
+    goalId: string
+    taskId: string | null
+    title: string
+    body: string
+    status: 'waiting' | 'resolved'
+    blocking: boolean
+    resolution: string | null
+    createdAt: number
+    updatedAt: number
+}
+
 export type OmcProgramRow = {
     id: string
     namespace: string
@@ -323,6 +353,7 @@ export type OmcDirectiveLedgerEntryRow = {
 export type StoredTask = {
     id: string
     projectId: string
+    goalId: string | null
     title: string
     description: string | null
     status: string
@@ -347,6 +378,9 @@ export type StoredTask = {
     mergeRuntime: TaskMergeRuntime | null
     previewRuntime: TaskPreviewRuntime | null
     initRuntime: TaskInitRuntime | null
+    contract: string | null
+    handoff: string | null
+    evidence: string | null
     createdAt: number
     updatedAt: number
     finishedAt: number | null

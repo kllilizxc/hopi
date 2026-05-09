@@ -235,6 +235,86 @@ describe('tasks merge route contract workflow', () => {
         expect(transcript).toContain('completed the platform merge')
     })
 
+    it('lands a task with the default merge workflow when actions manifest is missing', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-platform-default'
+        const taskId = 'task-merge-platform-default'
+        const sessionId = store.sessions.getOrCreateSession('session-merge-default', createSession('session-merge-default').metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+
+        let mergeCalls = 0
+        let observedStateTargetBranch = ''
+        let observedMergeTargetBranch = ''
+        let observedMergeStrategy = ''
+        const session = createSession(sessionId)
+        const engine = {
+            resolveSessionAccess() {
+                return { ok: true, sessionId, session }
+            },
+            getSessionByNamespace() {
+                return session
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'ENOENT: no such file or directory'
+                }
+            },
+            async gitMergeWorktreeState(_sessionId: string, params: { targetBranch: string }) {
+                observedStateTargetBranch = params.targetBranch
+                return {
+                    success: true,
+                    targetBranch: params.targetBranch,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot(_sessionId: string, params: { targetBranch: string }) {
+                return {
+                    success: true,
+                    targetBranch: params.targetBranch,
+                    sourceBranch: 'task-branch',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1
+                }
+            },
+            async gitMergeWorktree(_sessionId: string, params: { targetBranch: string; strategy?: string }) {
+                mergeCalls += 1
+                observedMergeTargetBranch = params.targetBranch
+                observedMergeStrategy = params.strategy ?? ''
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { ok?: boolean; commitHash?: string | null }
+        expect(body.ok).toBe(true)
+        expect(body.commitHash).toBe(TARGET_HEAD)
+        expect(observedStateTargetBranch).toBe('main')
+        expect(observedMergeTargetBranch).toBe('main')
+        expect(observedMergeStrategy).toBe('squash')
+        expect(mergeCalls).toBe(1)
+    })
+
     it('hands conflicts to the linked session, then retries platform merge after the assistant is ready', async () => {
         const store = new Store(':memory:')
         const projectId = 'project-merge-platform-conflict'

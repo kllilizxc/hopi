@@ -51,6 +51,13 @@ export interface HappyCliCommand {
   args: string[];
 }
 
+interface DevelopmentHappyCliCommandOptions {
+  execPath: string;
+  execArgv: string[];
+  isBunRuntime: boolean;
+  projectRoot: string;
+}
+
 function normalizeCwd(cwd: string | URL | undefined): string | null {
   if (!cwd) {
     return null;
@@ -63,6 +70,28 @@ function normalizeCwd(cwd: string | URL | undefined): string | null {
   return isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
 }
 
+export function createDevelopmentHappyCliCommand(
+  args: string[],
+  options: DevelopmentHappyCliCommandOptions
+): HappyCliCommand {
+  const projectRoot = options.projectRoot;
+  const entrypoint = resolveEntrypoint(projectRoot);
+
+  if (options.isBunRuntime) {
+    // Bun can run TypeScript directly
+    return {
+      command: options.execPath,
+      args: ['--cwd', projectRoot, entrypoint, ...args]
+    };
+  }
+
+  // Node.js fallback: preserve execArgv (for compatibility)
+  return {
+    command: options.execPath,
+    args: [...options.execArgv, entrypoint, ...args]
+  };
+}
+
 export function getHappyCliCommand(args: string[]): HappyCliCommand {
   // Compiled binary mode: just use the executable directly
   if (isBunCompiled()) {
@@ -73,23 +102,12 @@ export function getHappyCliCommand(args: string[]): HappyCliCommand {
   }
 
   // Development mode: spawn with TypeScript entrypoint
-  const projectRoot = projectPath();
-  const entrypoint = resolveEntrypoint(projectRoot);
-  const isBunRuntime = Boolean((process.versions as Record<string, string | undefined>).bun);
-
-  if (isBunRuntime) {
-    // Bun can run TypeScript directly
-    return {
-      command: process.execPath,
-      args: [entrypoint, ...args]
-    };
-  }
-
-  // Node.js fallback: preserve execArgv (for compatibility)
-  return {
-    command: process.execPath,
-    args: [...process.execArgv, entrypoint, ...args]
-  };
+  return createDevelopmentHappyCliCommand(args, {
+    execPath: process.execPath,
+    execArgv: process.execArgv,
+    isBunRuntime: Boolean((process.versions as Record<string, string | undefined>).bun),
+    projectRoot: projectPath()
+  });
 }
 
 export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): ChildProcess {

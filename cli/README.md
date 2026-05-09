@@ -59,7 +59,6 @@ See `src/ui/doctor.ts`.
 
 ### Other
 
-- `hopi mcp` - Start MCP stdio bridge. See `src/codex/happyMcpStdioBridge.ts`.
 - `hopi hub` - Start the bundled hub (single binary workflow).
 - `hopi server` - Alias for `hopi hub`.
 
@@ -77,7 +76,6 @@ See `src/configuration.ts` for all options.
 - `HOPI_HOME` - Config/data directory (default: ~/.hopi).
 - `HOPI_EXPERIMENTAL` - Enable experimental features (true/1/yes).
 - `HOPI_CLAUDE_PATH` - Path to a specific `claude` executable.
-- `HOPI_HTTP_MCP_URL` - Default MCP target for `hopi mcp`.
 
 ### Runner
 

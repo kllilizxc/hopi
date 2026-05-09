@@ -1,11 +1,23 @@
+import { randomUUID } from 'node:crypto'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import type { SyncEvent } from '@hopi/protocol/types'
 import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
-import type { Store } from '../store'
+import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
+import { bootstrapGoalDocs } from './goals/goalDocs'
 import { startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
 
 type ProjectKey = `${string}:${string}`
+type TaskAutopilotPolicy = {
+    enabled: boolean
+    allowBeforeReadiness: boolean
+}
+
+const GOAL_PLANNER_LOW_WATERMARK = 2
+const GOAL_RADAR_INTERVAL_MS = 24 * 60 * 60 * 1000
+const ACTIVE_GOAL_STATUSES = new Set(['planning', 'active'])
+const OPEN_GOAL_TASK_STATUSES = new Set(['planned', 'in_progress', 'in_review', 'blocked'])
 
 function toProjectKey(namespace: string, projectId: string): ProjectKey {
     return `${namespace}:${projectId}`
@@ -16,23 +28,126 @@ function isTaskAutoRunnable(task: {
     archivedAt: number | null
     activeSessionId: string | null
     source: string | null
+    goalId: string | null
     workflowPhase: string | null
     workflowProfile: string
 }, options: {
     namespace: string
+    project: StoredProject
+    store: Store
     engine: Pick<SyncEngine, 'getSessionByNamespace'>
 }): boolean {
-    if (task.status !== 'planned') return false
+    const isReviewTask = task.status === 'in_review'
+    if (task.status !== 'planned' && !isReviewTask) return false
     if (task.archivedAt) return false
     if (task.activeSessionId) {
         const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
-        if (linkedSession?.active) {
+        if (task.status === 'planned' && linkedSession?.active) {
+            return false
+        }
+        if (isReviewTask && linkedSession?.thinking) {
             return false
         }
     }
     if (task.source === 'improvements_scan') return false
+    if (isReviewTask && task.source === 'evaluator') return false
+    if (!getTaskAutopilotPolicy({ task, ...options }).enabled) return false
     const strategy = getWorkflowStrategy(task)
     return strategy.canAutoRunTask(task)
+}
+
+function isGoalRunnable(goal: StoredGoal): boolean {
+    return !goal.archivedAt
+        && ACTIVE_GOAL_STATUSES.has(goal.status)
+}
+
+function isGoalAutopilotRunnable(goal: StoredGoal): boolean {
+    return goal.autopilotEnabled
+        && isGoalRunnable(goal)
+}
+
+function getTaskAutopilotPolicy(options: {
+    task: Pick<StoredTask, 'goalId' | 'source'>
+    project: StoredProject
+    store: Store
+    namespace: string
+}): TaskAutopilotPolicy {
+    if (!options.task.goalId) {
+        return {
+            enabled: options.project.autoRunEnabled,
+            allowBeforeReadiness: options.task.source === 'project_init'
+        }
+    }
+
+    const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id || !isGoalRunnable(goal)) {
+        return {
+            enabled: false,
+            allowBeforeReadiness: false
+        }
+    }
+
+    const goalAutopilotEnabled = isGoalAutopilotRunnable(goal)
+
+    return {
+        enabled: options.project.autoRunEnabled || goalAutopilotEnabled,
+        allowBeforeReadiness: true
+    }
+}
+
+function buildPlannerLoopContract(goal: StoredGoal): string {
+    return [
+        '## Objective',
+        '',
+        `Continue the Planner loop for Goal ${goal.id}: ${goal.title}.`,
+        '',
+        '## Acceptance',
+        '',
+        `- Read and update .hopi/docs/goals/${goal.id}.md when strategy or status changed.`,
+        '- Read and curate .hopi/docs/todo.md; promote only a small ready batch into kanban.',
+        '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
+        '- Create blocking DecisionTopics for unclear product direction, one question at a time.',
+        '- Create goal-scoped tasks with lightweight contracts using the final HOPI_ACTIONS packet.',
+        '- If the Goal looks complete, create a DecisionTopic proposing completion instead of silently marking it done.',
+        '',
+        '## Suggested Checks',
+        '',
+        '- Confirm active kanban work is not overfilled.',
+        '- Confirm todo items are candidate/ready/active/done/parked rather than an uncurated dump.',
+        '',
+        '## Non-goals / Constraints',
+        '',
+        '- Do not implement code in this Planner task.',
+        '- Keep docs maintenance concise and durable.',
+        '- Do not deploy or release without explicit human approval.'
+    ].join('\n')
+}
+
+function buildRadarContract(goal: StoredGoal): string {
+    return [
+        '## Objective',
+        '',
+        `Run background Radar for Goal ${goal.id}: ${goal.title}.`,
+        '',
+        '## Acceptance',
+        '',
+        '- Scan .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, .hopi/docs/tech-debt.md, and this Goal doc for drift.',
+        '- Scan recent code signals such as TODO/FIXME comments, stale docs references, repeated failures, and obvious technical debt.',
+        '- Update .hopi/docs/tech-debt.md only with curated, durable debt worth tracking.',
+        '- Update .hopi/docs/todo.md with candidate work only when it is actionable and scoped.',
+        '- Create goal-scoped tasks only for small, verifiable, high-confidence maintenance work.',
+        '',
+        '## Suggested Checks',
+        '',
+        '- Prefer rg-based scans and recent task evidence over broad guesses.',
+        '- Verify docs remain coherent after edits.',
+        '',
+        '## Non-goals / Constraints',
+        '',
+        '- Do not treat every TODO/FIXME as actionable.',
+        '- Do not make product/code changes directly in Radar unless the task contract is explicitly changed.',
+        '- Avoid noisy human interruptions; use DecisionTopic only for strategic or risky debt.'
+    ].join('\n')
 }
 
 export class AutoRunScheduler {
@@ -41,6 +156,7 @@ export class AutoRunScheduler {
     private readonly tickTimers: Map<ProjectKey, NodeJS.Timeout> = new Map()
     private readonly runningTicks: Set<ProjectKey> = new Set()
     private readonly pendingTicks: Set<ProjectKey> = new Set()
+    private readonly knownProjects: Map<ProjectKey, { namespace: string; projectId: string }> = new Map()
 
     constructor(
         private readonly store: Store,
@@ -51,6 +167,7 @@ export class AutoRunScheduler {
     requestTick(namespace: string, projectId: string, options?: { delayMs?: number }): void {
         const delayMs = options?.delayMs ?? 250
         const key = toProjectKey(namespace, projectId)
+        this.knownProjects.set(key, { namespace, projectId })
 
         if (this.runningTicks.has(key)) {
             this.pendingTicks.add(key)
@@ -67,6 +184,12 @@ export class AutoRunScheduler {
         }, delayMs)
 
         this.tickTimers.set(key, timer)
+    }
+
+    requestKnownProjectTicks(options?: { delayMs?: number }): void {
+        for (const project of this.knownProjects.values()) {
+            this.requestTick(project.namespace, project.projectId, options)
+        }
     }
 
     handleEvent(event: SyncEvent): void {
@@ -114,10 +237,174 @@ export class AutoRunScheduler {
 
         if ((event.type === 'task-added' || event.type === 'task-updated') && event.projectId && event.taskId && event.namespace) {
             const task = this.store.tasks.getTaskByNamespace(event.taskId, event.namespace)
-            if (task && isTaskAutoRunnable(task, { namespace: event.namespace, engine: this.engine })) {
-                this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
+            const project = this.store.projects.getProjectByNamespace(event.projectId, event.namespace)
+            if (task && project) {
+                if (isTaskAutoRunnable(task, {
+                    namespace: event.namespace,
+                    project,
+                    store: this.store,
+                    engine: this.engine
+                })) {
+                    this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
+                    return
+                }
+
+                if (task.goalId) {
+                    const goal = this.store.goals.getGoalByNamespace(task.goalId, event.namespace)
+                    if (goal && goal.projectId === project.id && isGoalAutopilotRunnable(goal)) {
+                        this.requestTick(event.namespace, event.projectId, { delayMs: 250 })
+                    }
+                }
             }
         }
+    }
+
+    private getDefaultWorkspace(project: StoredProject): StoredWorkspace | null {
+        return project.defaultWorkspaceId
+            ? this.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+            : this.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    }
+
+    private emitTaskAdded(namespace: string, task: StoredTask): void {
+        this.engine.handleRealtimeEvent({
+            type: 'task-added',
+            taskId: task.id,
+            projectId: task.projectId,
+            namespace,
+            data: { taskId: task.id }
+        })
+    }
+
+    private ensurePlannerLoopTask(options: {
+        project: StoredProject
+        goal: StoredGoal
+        tasks: StoredTask[]
+        defaultWorkspace: StoredWorkspace | null
+    }): StoredTask | null {
+        const openPlanner = options.tasks.some((task) => (
+            task.source === 'planner'
+            && !task.archivedAt
+            && task.status !== 'finished'
+        ))
+        if (openPlanner) {
+            return null
+        }
+
+        const activeWorkCount = options.tasks.filter((task) => (
+            task.source !== 'planner'
+            && task.source !== 'radar'
+            && !task.archivedAt
+            && (task.status === 'planned' || task.status === 'in_progress' || task.status === 'in_review')
+        )).length
+        if (activeWorkCount > GOAL_PLANNER_LOW_WATERMARK) {
+            return null
+        }
+
+        return this.store.tasks.createTask({
+            id: randomUUID(),
+            projectId: options.project.id,
+            goalId: options.goal.id,
+            title: 'Plan next goal iteration',
+            description: 'Refresh Goal strategy, curate repo memory, and promote the next small batch of work.',
+            status: 'planned',
+            priority: 'high',
+            sortKey: Date.now(),
+            workspaceId: options.defaultWorkspace?.id ?? null,
+            agentFlavor: DEFAULT_AGENT_FLAVOR,
+            permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
+            model: DEFAULT_TASK_MODEL,
+            modelMode: null,
+            workflowProfile: 'default',
+            source: 'planner',
+            contract: buildPlannerLoopContract(options.goal)
+        })
+    }
+
+    private ensureRadarTask(options: {
+        project: StoredProject
+        goal: StoredGoal
+        tasks: StoredTask[]
+        defaultWorkspace: StoredWorkspace | null
+    }): StoredTask | null {
+        if (options.goal.status !== 'active') {
+            return null
+        }
+
+        const openRadar = options.tasks.some((task) => (
+            task.source === 'radar'
+            && !task.archivedAt
+            && task.status !== 'finished'
+        ))
+        if (openRadar) {
+            return null
+        }
+
+        const latestRadarAt = options.tasks
+            .filter((task) => task.source === 'radar')
+            .reduce((latest, task) => Math.max(latest, task.createdAt), 0)
+        if (latestRadarAt > 0 && Date.now() - latestRadarAt < GOAL_RADAR_INTERVAL_MS) {
+            return null
+        }
+
+        return this.store.tasks.createTask({
+            id: randomUUID(),
+            projectId: options.project.id,
+            goalId: options.goal.id,
+            title: 'Radar: scan goal docs and technical debt',
+            description: 'Run the periodic background radar pass for docs drift, technical debt, and stale planning state.',
+            status: 'planned',
+            priority: 'low',
+            sortKey: Date.now(),
+            workspaceId: options.defaultWorkspace?.id ?? null,
+            agentFlavor: DEFAULT_AGENT_FLAVOR,
+            permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
+            model: DEFAULT_TASK_MODEL,
+            modelMode: null,
+            workflowProfile: 'default',
+            source: 'radar',
+            contract: buildRadarContract(options.goal)
+        })
+    }
+
+    private ensureGoalAutopilotTasks(namespace: string, project: StoredProject): StoredGoal[] {
+        const goals = this.store.goals
+            .listGoalsByProjectAndNamespace(project.id, namespace)
+            .filter(isGoalAutopilotRunnable)
+        const defaultWorkspace = this.getDefaultWorkspace(project)
+
+        for (const goal of goals) {
+            bootstrapGoalDocs({
+                project,
+                goal,
+                defaultWorkspace
+            })
+            const tasks = this.store.tasks.listTasksByProjectAndNamespace(project.id, namespace, {
+                includeArchived: true,
+                goalId: goal.id
+            })
+            const planner = this.ensurePlannerLoopTask({
+                project,
+                goal,
+                tasks,
+                defaultWorkspace
+            })
+            if (planner) {
+                this.emitTaskAdded(namespace, planner)
+                tasks.push(planner)
+            }
+
+            const radar = this.ensureRadarTask({
+                project,
+                goal,
+                tasks,
+                defaultWorkspace
+            })
+            if (radar) {
+                this.emitTaskAdded(namespace, radar)
+            }
+        }
+
+        return goals
     }
 
     private async tickProject(namespace: string, projectId: string): Promise<void> {
@@ -132,7 +419,8 @@ export class AutoRunScheduler {
             if (!project || project.archivedAt) {
                 return
             }
-            if (!project.autoRunEnabled) {
+            const autopilotGoals = this.ensureGoalAutopilotTasks(namespace, project)
+            if (!project.autoRunEnabled && autopilotGoals.length === 0) {
                 return
             }
 
@@ -149,20 +437,37 @@ export class AutoRunScheduler {
             }
 
             const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: Math.min(50, capacity * 5) })
-            if (planned.length === 0) {
+            const review = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+                .filter((task) => task.status === 'in_review')
+            const candidates = [...review, ...planned]
+            if (candidates.length === 0) {
                 return
             }
 
             let started = 0
 
-            for (const task of planned) {
+            for (const task of candidates) {
                 if (started >= capacity) {
                     break
                 }
-                if (!projectReadinessReady && task.source !== 'project_init') {
+                const policy = getTaskAutopilotPolicy({
+                    task,
+                    project,
+                    store: this.store,
+                    namespace
+                })
+                if (!policy.enabled) {
                     continue
                 }
-                if (!isTaskAutoRunnable(task, { namespace, engine: this.engine })) continue
+                if (!projectReadinessReady && !policy.allowBeforeReadiness) {
+                    continue
+                }
+                if (!isTaskAutoRunnable(task, {
+                    namespace,
+                    project,
+                    store: this.store,
+                    engine: this.engine
+                })) continue
 
                 const result = await startSessionFromTask({
                     store: this.store,

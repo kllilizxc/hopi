@@ -1,8 +1,7 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
-import { buildHopiMcpBridge } from '@/codex/utils/buildHopiMcpBridge';
 import { convertAgentMessage } from '@/agent/messageConverter';
-import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
+import type { AgentMessage, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
 import { GeminiDisplay } from '@/ui/ink/GeminiDisplay';
 import type { GeminiSession } from './session';
@@ -30,7 +29,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly hookSettingsPath?: string;
     private backend: ReturnType<typeof createGeminiBackend> | null = null;
     private permissionHandler: GeminiPermissionHandler | null = null;
-    private happyServer: { stop: () => void } | null = null;
     private abortController = new AbortController();
     private displayModel: string | null = null;
     private displayPermissionMode: PermissionMode | null = null;
@@ -68,9 +66,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             originalSendCodexMessage(message);
         };
 
-        const { server: happyServer, mcpServers } = await buildHopiMcpBridge(session.client);
-        this.happyServer = happyServer;
-
         const runtimeConfig = resolveGeminiRuntimeConfig({ model: this.model });
         this.displayModel = runtimeConfig.model;
         messageBuffer.addMessage(`[MODEL:${runtimeConfig.model}]`, 'system');
@@ -94,7 +89,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
         const acpSessionId = await backend.newSession({
             cwd: session.path,
-            mcpServers: toAcpMcpServers(mcpServers)
+            mcpServers: []
         });
         session.onSessionFound(acpSessionId);
 
@@ -176,10 +171,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             this.backend = null;
         }
 
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
     }
 
     private handleAgentMessage(message: AgentMessage): void {
@@ -249,15 +240,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     private async handleSwitchRequest(): Promise<void> {
         await this.requestExit('switch', () => this.handleAbort());
     }
-}
-
-function toAcpMcpServers(config: Record<string, { command: string; args: string[] }>): McpServerStdio[] {
-    return Object.entries(config).map(([name, entry]) => ({
-        name,
-        command: entry.command,
-        args: entry.args,
-        env: []
-    }));
 }
 
 export async function geminiRemoteLauncher(

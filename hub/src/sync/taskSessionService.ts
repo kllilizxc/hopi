@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel } from '@hopi/protocol'
 import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
@@ -14,7 +14,7 @@ import {
 import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
 import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
-import { resolveSessionRootPathCandidates } from './sessionRootPaths'
+import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type SessionRootPathLike } from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
 import { getWorkflowStrategy } from './workflowStrategy'
@@ -397,7 +397,7 @@ function buildInitCommandReportLines(options: {
 }
 
 function resolveWorkflowKickoff(options: {
-    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'subTasks' | 'workflowProfile' | 'workflowPhase'>
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'contract' | 'handoff' | 'evidence'>
     kickoff: StartSessionKickoffOptions
 }): StartSessionKickoffOptions {
     if (options.kickoff.kind === 'skip' || options.kickoff.kind === 'custom') {
@@ -433,9 +433,144 @@ ${guidance}`,
     }
 }
 
-function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'subTasks'>): string {
+type GoalTaskRole = 'Planner' | 'Generator' | 'Evaluator' | 'Radar'
+
+function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): GoalTaskRole | null {
+    const goalId = (task.goalId ?? '').trim()
+    if (!goalId) {
+        return null
+    }
+
+    const source = (task.source ?? '').trim().toLowerCase()
+    const status = (task.status ?? '').trim().toLowerCase()
+    if (status === 'in_review') return 'Evaluator'
+    if (source === 'planner') return 'Planner'
+    if (source === 'radar') return 'Radar'
+    return 'Generator'
+}
+
+function buildGoalActionPacketSection(role: GoalTaskRole): string {
+    const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
+    const commonActions = role === 'Planner' || role === 'Radar'
+        ? [
+            '- create_goal_task: create a small ready task for this Goal.',
+            '- update_goal: update Goal status/currentFocus/successCriteria when durable.',
+            '- create_decision_topic: ask one blocking human question when needed.',
+            '- update_current_task: record handoff/evidence and finish or block this role task.'
+        ]
+        : role === 'Evaluator'
+            ? [
+                '- update_current_task: accept by moving to finished, or return to planned/blocked with concrete feedback.',
+                '- create_decision_topic: ask for human approval or product clarification when needed.'
+            ]
+            : [
+                '- update_current_task: move completed work to in_review with handoff/evidence, or block with a concrete reason.',
+                '- create_decision_topic: ask for human clarification when needed.'
+            ]
+
+    return [
+        '',
+        'Final HOPI_ACTIONS packet:',
+        '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
+        '- If no HOPI state change is needed, omit the packet.',
+        ...commonActions,
+        '- Finish with exactly one fenced JSON block in this shape:',
+        'HOPI_ACTIONS:',
+        '```json',
+        '{',
+        '  "actions": [',
+        `    { "type": "update_current_task", "status": "${exampleStatus}", "handoff": "...", "evidence": "..." }`,
+        '  ]',
+        '}',
+        '```'
+    ].join('\n')
+}
+
+function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): string {
+    const role = getGoalTaskRole(task)
+    if (!role) {
+        return ''
+    }
+
+    if (role === 'Planner') {
+        return [
+            '',
+            '',
+            'Role: Planner',
+            '',
+            'Context strategy:',
+            '- Read .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, the current Goal doc, and the current Goal kanban snapshot.',
+            '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
+            '',
+            'Allowed transitions:',
+            '- Create a small batch of ready goal-scoped kanban tasks.',
+            '- Mark this Goal active, paused, blocked, or update current focus when needed.',
+            '- Create one blocking human question when the Goal or task is unclear.',
+            '- Record handoff/evidence and move this planning task to blocked or finished.',
+            buildGoalActionPacketSection(role)
+        ].join('\n')
+    }
+
+    if (role === 'Evaluator') {
+        return [
+            '',
+            '',
+            'Role: Evaluator',
+            '',
+            'Context strategy:',
+            '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
+            '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
+            '',
+            'Allowed transitions:',
+            '- Record evidence and move accepted work to finished; HOPI will request the existing worktree merge flow before closing accepted work.',
+            '- Return incomplete work to planned or blocked with concrete feedback.',
+            '- Create a DecisionTopic when human approval or product clarification is needed.',
+            buildGoalActionPacketSection(role)
+        ].join('\n')
+    }
+
+    if (role === 'Radar') {
+        return [
+            '',
+            '',
+            'Role: Radar',
+            '',
+            'Context strategy:',
+            '- Read .hopi/docs/*, recent task outcomes, TODO/FIXME scan output, and code/documentation drift signals.',
+            '- Keep findings curated; Radar is a maintenance signal, not a dumping ground.',
+            '',
+            'Allowed transitions:',
+            '- Update .hopi/docs/tech-debt.md and .hopi/docs/todo.md with durable findings.',
+            '- Create goal tasks only for small, verifiable, high-confidence maintenance tasks.',
+            '- Record evidence and finish or block this Radar task.',
+            buildGoalActionPacketSection(role)
+        ].join('\n')
+    }
+
+    return [
+        '',
+        '',
+        'Role: Generator',
+        '',
+        'Context strategy:',
+        '- Read the Task Contract, Goal doc, relevant decisions, linked files/search results, current git status, and latest Planner handoff.',
+        '- Update repo docs when behavior, architecture, or lasting product knowledge changes.',
+        '',
+        'Allowed transitions:',
+        '- Record handoff/evidence and move complete work to in_review.',
+        '- Move unclear or impossible work to blocked.',
+        '- Create a DecisionTopic when human clarification is required.',
+        buildGoalActionPacketSection(role)
+    ].join('\n')
+}
+
+function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'contract' | 'handoff' | 'evidence'>): string {
     const title = (task.title ?? '').trim()
     const description = (task.description ?? '').trim()
+    const goalId = (task.goalId ?? '').trim()
+    const contract = (task.contract ?? '').trim()
+    const handoff = (task.handoff ?? '').trim()
+    const evidence = (task.evidence ?? '').trim()
     const subTasks = Array.isArray(task.subTasks)
         ? task.subTasks as Array<{ content?: unknown; status?: unknown }>
         : []
@@ -452,20 +587,39 @@ function buildTaskKickoffSummary(task: Pick<StoredTask, 'title' | 'description' 
     const subTasksSection = subTaskLines.length > 0
         ? `\n\nSubtasks:\n${subTaskLines.join('\n')}`
         : ''
+    const goalSection = goalId
+        ? `\n\nGoal ID: ${goalId}`
+        : ''
+    const roleSection = buildGoalRoleSection(task)
+    const role = getGoalTaskRole(task)
+    const contractSection = contract
+        ? `\n\nTask Contract:\n${contract}`
+        : ''
+    const handoffSection = handoff
+        ? role === 'Evaluator'
+            ? `\n\nGenerator Handoff:\n${handoff}`
+            : `\n\nLatest Handoff:\n${handoff}`
+        : ''
+    const evidenceSection = evidence
+        ? `\n\nEvidence Packet:\n${evidence}`
+        : role === 'Evaluator'
+            ? '\n\nEvidence Packet:\n- None recorded yet.'
+            : ''
+    const contextSections = `${goalSection}${roleSection}${contractSection}${handoffSection}${evidenceSection}`
 
     if (title && description) {
-        return `Task: ${title}\n\nDescription:\n${description}${subTasksSection}`
+        return `Task: ${title}\n\nDescription:\n${description}${subTasksSection}${contextSections}`
     }
     if (description) {
-        return `${description}${subTasksSection}`
+        return `${description}${subTasksSection}${contextSections}`
     }
     if (title) {
-        return `Task: ${title}${subTasksSection}`
+        return `Task: ${title}${subTasksSection}${contextSections}`
     }
     if (subTasksSection) {
-        return `Task${subTasksSection}`
+        return `Task${subTasksSection}${contextSections}`
     }
-    return 'Task'
+    return `Task${contextSections}`
 }
 
 function buildRepeatedInitFailureNote(options: {
@@ -1016,6 +1170,39 @@ function buildTaskInitRuntime(options: {
     })
 }
 
+function toSessionRootPathLike(session: { metadata?: unknown | null } | null | undefined): SessionRootPathLike | null {
+    if (!session?.metadata || typeof session.metadata !== 'object') {
+        return null
+    }
+
+    return { metadata: session.metadata as SessionRootPathLike['metadata'] }
+}
+
+function resolveGoalPreviousRootPath(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    previousSessionId: string | null
+}): string | null {
+    if (!options.previousSessionId) {
+        return null
+    }
+
+    const engineWithLookup = options.engine as unknown as {
+        getSessionByNamespace?: SyncEngine['getSessionByNamespace']
+    }
+    const runtimeSession = typeof engineWithLookup.getSessionByNamespace === 'function'
+        ? engineWithLookup.getSessionByNamespace.call(options.engine, options.previousSessionId, options.namespace)
+        : undefined
+    const runtimePath = resolveSessionPreferredRootPath(toSessionRootPathLike(runtimeSession) ?? {})
+    if (runtimePath) {
+        return runtimePath
+    }
+
+    const storedSession = options.store.sessions.getSessionByNamespace(options.previousSessionId, options.namespace)
+    return resolveSessionPreferredRootPath(toSessionRootPathLike(storedSession) ?? {})
+}
+
 export type StartTaskSessionResult =
     | {
         ok: true
@@ -1095,12 +1282,15 @@ async function startSessionFromTaskInternal(options: {
     const agent = overrides.agent
         ?? (task.agentFlavor as z.infer<typeof AgentFlavorSchema> | undefined)
         ?? (project.defaultAgentFlavor as z.infer<typeof AgentFlavorSchema> | undefined)
-        ?? 'claude'
+        ?? DEFAULT_AGENT_FLAVOR
 
     const overrideModel = normalizeModelName(overrides.model)
     const taskModel = resolveStoredModel(task.model, task.modelMode)
     const projectDefaultModel = resolveStoredModel(project.defaultModel, project.defaultModelMode)
-    const model = overrideModel ?? taskModel ?? projectDefaultModel ?? undefined
+    const model = overrideModel
+        ?? taskModel
+        ?? projectDefaultModel
+        ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
 
     let permissionMode = overrides.permissionMode
         ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
@@ -1111,14 +1301,21 @@ async function startSessionFromTaskInternal(options: {
     const workflowPhase = (task.workflowPhase ?? '').trim().toLowerCase()
     const isGsdWorkflow = workflowProfile === 'gsd'
     const isGsdNonExecutionPhase = isGsdWorkflow && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
-    if (isGsdNonExecutionPhase) {
+    const isGoalPlanningRole = Boolean(task.goalId) && (task.source === 'planner' || task.source === 'radar')
+    const isGoalReviewRole = Boolean(task.goalId) && task.status === 'in_review'
+    if (isGsdNonExecutionPhase || isGoalPlanningRole) {
         // Workflow phases that should not trigger execution:
         // force session into an explicit planning / read-only posture regardless of stored task settings.
-        permissionMode = agent === 'claude' || agent === 'codex'
+        permissionMode = agent === 'claude'
             ? 'plan'
+            : agent === 'codex'
+                ? 'safe-yolo'
             : agent === 'gemini'
                 ? 'read-only'
                 : 'default'
+    }
+    if (agent === 'codex' && permissionMode === 'plan') {
+        permissionMode = 'safe-yolo'
     }
     const modelMode = (() => {
         if (overrides.modelMode !== undefined) {
@@ -1147,7 +1344,27 @@ async function startSessionFromTaskInternal(options: {
     const inferredYolo = permissionMode === 'yolo' && isPermissionModeAllowedForFlavor(permissionMode, agent)
     const yolo = isGsdNonExecutionPhase ? false : overrides.yolo ?? inferredYolo
 
-    const sessionType = project.defaultSessionType === 'worktree' ? 'worktree' : 'simple'
+    const isGoalGeneratorContinuation = Boolean(task.goalId)
+        && task.status === 'planned'
+        && task.source !== 'planner'
+        && task.source !== 'radar'
+        && Boolean(previousSessionId)
+    const goalPreviousRootPath = isGoalReviewRole || isGoalGeneratorContinuation
+        ? resolveGoalPreviousRootPath({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            previousSessionId
+        })
+        : null
+    const spawnRootPath = isGoalPlanningRole
+        ? workspace.path
+        : goalPreviousRootPath ?? workspace.path
+    const sessionType = isGoalPlanningRole || goalPreviousRootPath
+        ? 'simple'
+        : project.defaultSessionType === 'worktree'
+            ? 'worktree'
+            : 'simple'
     const worktreeName = sessionType === 'worktree'
         ? `task-${task.id.slice(0, 8)}-${task.title}`.slice(0, 80)
         : undefined
@@ -1188,7 +1405,7 @@ async function startSessionFromTaskInternal(options: {
 
     const spawn = await options.engine.spawnSession(
         project.machineId,
-        workspace.path,
+        spawnRootPath,
         agent,
         model,
         yolo,
@@ -1229,9 +1446,7 @@ async function startSessionFromTaskInternal(options: {
     })
 
     const sessionConfigPatch: SessionConfigPatch = {}
-    if (permissionMode === 'plan' && agent === 'codex') {
-        sessionConfigPatch.collaborationMode = 'plan'
-    } else if (permissionMode && isPermissionModeAllowedForFlavor(permissionMode, agent)) {
+    if (permissionMode && isPermissionModeAllowedForFlavor(permissionMode, agent)) {
         sessionConfigPatch.permissionMode = permissionMode
     }
     if (Object.keys(sessionConfigPatch).length > 0) {
@@ -1269,7 +1484,9 @@ async function startSessionFromTaskInternal(options: {
     })
 
     const workflowStrategy = getWorkflowStrategy(task)
-    const workflowPatch = workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
+    const workflowPatch = isGoalReviewRole
+        ? { status: 'in_review' as const }
+        : workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
     let runtimeTask = task
 
     const emitStartedTaskUpdate = (updatedTask: StoredTask): void => {
@@ -1293,15 +1510,20 @@ async function startSessionFromTaskInternal(options: {
         source?: string | null
         initRuntime?: StoredTask['initRuntime'] | null
     }): StoredTask | null => {
+        const defaultActiveSessionId = isGoalReviewRole && previousSessionId
+            ? previousSessionId
+            : spawn.sessionId
         const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
-            activeSessionId: patch?.activeSessionId !== undefined ? patch.activeSessionId : spawn.sessionId,
+            activeSessionId: patch?.activeSessionId !== undefined ? patch.activeSessionId : defaultActiveSessionId,
             status: patch?.status ?? workflowPatch.status ?? 'in_progress',
             workflowPhase: patch?.workflowPhase !== undefined ? patch.workflowPhase : workflowPatch.workflowPhase,
             source: patch?.source !== undefined
                 ? patch.source
-                : task.source === 'improvements_scan'
-                    ? 'manual'
-                    : undefined,
+                : isGoalReviewRole
+                    ? 'evaluator'
+                    : task.source === 'improvements_scan'
+                        ? 'manual'
+                        : undefined,
             initRuntime: patch?.initRuntime
         })
         if (updatedTask) {
@@ -1370,8 +1592,19 @@ async function startSessionFromTaskInternal(options: {
     }
 
     const shouldBypassSetupContract = task.source === 'project_init'
+    const shouldSkipSetupWorkflow = Boolean(task.goalId)
 
-    if (shouldBypassSetupContract) {
+    if (shouldSkipSetupWorkflow) {
+        updatedTask = updateStartedTask({
+            initRuntime: buildTaskInitRuntime({
+                task: runtimeTask,
+                status: 'succeeded',
+                sessionId: spawn.sessionId,
+                retryCount: runtimeTask.initRuntime?.retryCount,
+                latestNote: 'Goal role skipped setup workflow.'
+            })
+        })
+    } else if (shouldBypassSetupContract) {
         const bootstrapManifest = await ensureBootstrapStarterContract({
             engine: options.engine,
             sessionId: spawn.sessionId,
@@ -1597,7 +1830,7 @@ async function startSessionFromTaskInternal(options: {
 
             const baseKickoff = buildTaskKickoffSummary(updatedTask)
 
-            if (!previousSessionId || previousSessionId === spawn.sessionId) {
+            if (!previousSessionId || previousSessionId === spawn.sessionId || updatedTask.goalId) {
                 return baseKickoff
             }
 

@@ -1,6 +1,5 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
-import { buildHopiMcpBridge } from '@/codex/utils/buildHopiMcpBridge';
 import { convertAgentMessage } from '@/agent/messageConverter';
 import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
@@ -28,7 +27,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OpencodeSession;
     private backend: ReturnType<typeof createOpencodeBackend> | null = null;
     private permissionHandler: OpencodePermissionHandler | null = null;
-    private happyServer: { stop: () => void } | null = null;
     private abortController = new AbortController();
     private displayPermissionMode: PermissionMode | null = null;
     private instructionsSent = false;
@@ -66,9 +64,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             originalSendCodexMessage(message);
         };
 
-        const { server: happyServer, mcpServers } = await buildHopiMcpBridge(session.client);
-        this.happyServer = happyServer;
-
         const backend = createOpencodeBackend({
             cwd: session.path
         });
@@ -83,7 +78,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         await backend.initialize();
 
         const resumeSessionId = session.sessionId;
-        const mcpServerList = toAcpMcpServers(mcpServers);
+        const mcpServerList: McpServerStdio[] = [];
         let acpSessionId: string;
         if (resumeSessionId) {
             try {
@@ -150,7 +145,9 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             // Inject title instructions on first prompt
             let messageText = batch.message;
             if (!this.instructionsSent) {
-                messageText = `${TITLE_INSTRUCTION}\n\n${batch.message}`;
+                messageText = TITLE_INSTRUCTION
+                    ? `${TITLE_INSTRUCTION}\n\n${batch.message}`
+                    : batch.message;
                 this.instructionsSent = true;
             }
 
@@ -197,10 +194,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             this.backend = null;
         }
 
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
     }
 
     private handleAgentMessage(message: AgentMessage): void {
@@ -266,15 +259,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private async handleSwitchRequest(): Promise<void> {
         await this.requestExit('switch', () => this.handleAbort());
     }
-}
-
-function toAcpMcpServers(config: Record<string, { command: string; args: string[] }>): McpServerStdio[] {
-    return Object.entries(config).map(([name, entry]) => ({
-        name,
-        command: entry.command,
-        args: entry.args,
-        env: []
-    }));
 }
 
 export async function opencodeRemoteLauncher(

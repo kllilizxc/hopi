@@ -36,6 +36,10 @@ type UpdateTaskInput = {
         workflowPhase?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
+        goalId?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
         attachments?: TaskAttachmentInput[]
         subTasks?: TaskSubTaskInput[]
     }
@@ -57,7 +61,7 @@ export function useUpdateTask(api: ApiClient | null): {
             return result.task
         },
         onSuccess: (task) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(task.projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(task.projectId) })
             void queryClient.setQueryData(queryKeys.task(task.id), { task })
         }
     })

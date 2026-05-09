@@ -74,6 +74,18 @@ interface GitMergeWorktreeResponse {
     error?: string
 }
 
+interface GitRemoveWorktreeRequest {
+    timeout?: number
+}
+
+interface GitRemoveWorktreeResponse {
+    success: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 type MergeStrategy = 'ff' | 'merge_commit' | 'squash'
 
 interface GitMergeWorktreeStateRequest {
@@ -656,7 +668,7 @@ async function verifyWorktreeMergeSnapshot(options: {
         }
 
         await writeFile(patchPath, patchResult.stdout ?? '', 'utf8')
-        const reverseCheck = await runGitCommand(['apply', '--reverse', '--check', patchPath], targetContext.path, options.timeout)
+        const reverseCheck = await runGitCommand(['apply', '--reverse', '--check', '--3way', patchPath], targetContext.path, options.timeout)
         if (!reverseCheck.success) {
             return {
                 success: true,
@@ -1038,6 +1050,16 @@ export function registerGitHandlers(rpcHandlerManager: RpcHandlerManager, workin
             await restoreBranch()
             await targetContext.cleanup()
         }
+    })
+
+    rpcHandlerManager.registerHandler<GitRemoveWorktreeRequest, GitRemoveWorktreeResponse>('git-remove-worktree', async (data) => {
+        const worktree = readWorktreeEnv()
+        if (!worktree) {
+            return rpcError('Not a worktree session')
+        }
+
+        const timeout = data.timeout ?? 60_000
+        return await runGitCommand(['worktree', 'remove', '--force', worktree.worktreePath], worktree.basePath, timeout)
     })
 
     rpcHandlerManager.registerHandler<GitDiffFileRequest, GitCommandResponse>('git-diff-file', async (data) => {

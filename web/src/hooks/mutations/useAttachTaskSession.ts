@@ -25,7 +25,7 @@ export function useAttachTaskSession(api: ApiClient | null): {
             return result.task
         },
         onSuccess: (task, input) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(input.projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(input.projectId) })
             void queryClient.setQueryData(queryKeys.task(task.id), { task })
             if (task.activeSessionId) {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.session(task.activeSessionId) })
@@ -39,4 +39,3 @@ export function useAttachTaskSession(api: ApiClient | null): {
         error: mutation.error instanceof Error ? mutation.error.message : mutation.error ? 'Failed to attach session' : null,
     }
 }
-

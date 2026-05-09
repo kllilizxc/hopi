@@ -4,6 +4,8 @@ import type { DecryptedMessage, SyncEvent } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { buildTaskInitRuntime, buildTaskPreviewRuntime } from '../utils/taskActionRuntime'
 import { loadProjectActionContractFromSession } from './actionContract'
+import { applyGoalActionPacketFromSession } from './goals/goalActionPacket'
+import { requestAutoMergeAcceptedTask } from './taskAutoMerge'
 import {
     resolveSessionPreferredRootPath,
     resolveSessionRootPathCandidates,
@@ -18,6 +20,7 @@ const AUTO_PREVIEW_SETUP_LOCAL_ID_PREFIX = 'auto:preview_setup:'
 const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 const AUTO_BOOTSTRAP_REPAIR_LOCAL_ID_PREFIX = 'auto:bootstrap_repair:'
 const AUTO_BOOTSTRAP_PREVIEW_REPAIR_LOCAL_ID_PREFIX = 'auto:bootstrap_preview_repair:'
+const AUTO_TASK_KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
 const BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_POLL_INTERVAL_MS = 1_000
@@ -59,6 +62,11 @@ function isWorkflowAutomationLocalId(localId: unknown): boolean {
     return localId.startsWith(AUTO_WORKFLOW_LOCAL_ID_PREFIX)
 }
 
+function isTaskKickoffLocalId(localId: unknown): boolean {
+    if (typeof localId !== 'string') return false
+    return localId.startsWith(AUTO_TASK_KICKOFF_LOCAL_ID_PREFIX)
+}
+
 function isReadyEventMessage(message: DecryptedMessage): boolean {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
     if (!record) return false
@@ -77,6 +85,7 @@ function isReadyEventMessage(message: DecryptedMessage): boolean {
 
 type ReadyEventDetails = {
     forLocalKey: string | null
+    hasAssistantReply: boolean | null
 }
 
 function getReadyEventDetails(message: DecryptedMessage): ReadyEventDetails | null {
@@ -96,8 +105,11 @@ function getReadyEventDetails(message: DecryptedMessage): ReadyEventDetails | nu
     const forLocalKey = 'forLocalKey' in data && typeof (data as { forLocalKey?: unknown }).forLocalKey === 'string'
         ? (data as { forLocalKey: string }).forLocalKey
         : null
+    const hasAssistantReply = 'hasAssistantReply' in data && typeof (data as { hasAssistantReply?: unknown }).hasAssistantReply === 'boolean'
+        ? (data as { hasAssistantReply: boolean }).hasAssistantReply
+        : null
 
-    return { forLocalKey }
+    return { forLocalKey, hasAssistantReply }
 }
 
 type ErrorEventDetails = {
@@ -160,8 +172,35 @@ function getLegacyProcessExitedMessageDetails(message: DecryptedMessage): ErrorE
     }
 }
 
+function getCodexErrorDetails(message: DecryptedMessage): ErrorEventDetails | null {
+    const record = unwrapRoleWrappedRecordEnvelope(message.content)
+    if (!record) return null
+    if (record.role !== 'assistant' && record.role !== 'agent') return null
+
+    const content = record.content
+    if (!content || typeof content !== 'object') return null
+    if (!('type' in content) || (content as { type?: unknown }).type !== 'codex') return null
+    if (!('data' in content)) return null
+
+    const data = (content as { data?: unknown }).data
+    if (!data || typeof data !== 'object') return null
+    if (!('type' in data) || (data as { type?: unknown }).type !== 'error') return null
+
+    const messageText = 'message' in data && typeof (data as { message?: unknown }).message === 'string'
+        ? (data as { message: string }).message.trim()
+        : ''
+    const reason = 'reason' in data && typeof (data as { reason?: unknown }).reason === 'string'
+        ? (data as { reason: string }).reason.trim()
+        : ''
+
+    return {
+        message: messageText || null,
+        reason: reason || 'task-failed'
+    }
+}
+
 function getTaskInterruptionDetails(message: DecryptedMessage): ErrorEventDetails | null {
-    return getErrorEventDetails(message) ?? getLegacyProcessExitedMessageDetails(message)
+    return getErrorEventDetails(message) ?? getLegacyProcessExitedMessageDetails(message) ?? getCodexErrorDetails(message)
 }
 
 function formatBootstrapContractErrors(error: string): string {
@@ -389,6 +428,7 @@ export class TaskAutomation {
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
+            if (current.goalId && current.status === 'in_review' && isTaskKickoffLocalId(message.localId)) return
 
             const strategy = getWorkflowStrategy(current)
             const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'in_progress' }
@@ -422,6 +462,19 @@ export class TaskAutomation {
         }
 
         if (getMessageRole(message) === 'assistant' && isReadyEventMessage(message)) {
+            const details = getReadyEventDetails(message)
+            if (details?.hasAssistantReply === false) {
+                return
+            }
+            const goalActionResult = this.tryApplyGoalActionPacketFromReady(sessionId)
+            if (goalActionResult === 'applied') {
+                this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                this.maybeAutoCommitWorktreeFromReady(sessionId, message)
+                return
+            }
+            if (goalActionResult === 'goal_task') {
+                return
+            }
             this.tryMoveToInReviewFromReady(sessionId, message)
             this.maybeAutoCommitWorktreeFromReady(sessionId, message)
             return
@@ -430,6 +483,40 @@ export class TaskAutomation {
         if (getMessageRole(message) === 'assistant' && getTaskInterruptionDetails(message)) {
             this.tryBlockTaskFromInterruptionEvent(sessionId, message)
         }
+    }
+
+    private tryApplyGoalActionPacketFromReady(sessionId: string): 'applied' | 'goal_task' | 'not_goal_task' {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return 'not_goal_task'
+
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current || current.archivedAt || !current.goalId) {
+            return 'not_goal_task'
+        }
+        if (current.status !== 'in_progress' && current.status !== 'in_review') {
+            return 'goal_task'
+        }
+
+        return applyGoalActionPacketFromSession({
+            store: this.store,
+            engine: this.engine,
+            namespace: linked.namespace,
+            projectId: linked.projectId,
+            taskId: linked.taskId,
+            sessionId
+        }) ? 'applied' : 'goal_task'
+    }
+
+    private maybeRequestAutoMergeAcceptedTask(sessionId: string): void {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return
+
+        requestAutoMergeAcceptedTask({
+            store: this.store,
+            engine: this.engine,
+            namespace: linked.namespace,
+            taskId: linked.taskId
+        })
     }
 
     private maybeAutoCommitWorktreeFromReady(sessionId: string, readyMessage: DecryptedMessage): void {
@@ -1071,6 +1158,7 @@ export class TaskAutomation {
         if (!current) return
         if (current.archivedAt) return
         if (current.status !== 'in_review') return
+        if (current.goalId) return
 
         const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'in_progress' }

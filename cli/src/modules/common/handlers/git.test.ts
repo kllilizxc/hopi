@@ -101,6 +101,23 @@ describe('git merge worktree RPC handler', () => {
         expect(taskBranchHead).toBeTruthy()
     })
 
+    it('removes the current worktree through the git cleanup handler', async () => {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+        registerGitHandlers(rpc, worktreeDir)
+
+        const response = await rpc.handleRequest({
+            method: 'session-test:git-remove-worktree',
+            params: JSON.stringify({})
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; error?: string }
+        expect(parsed.success).toBe(true)
+        expect(parsed.error).toBeUndefined()
+
+        const worktreeList = await runGit(baseDir, ['worktree', 'list', '--porcelain'])
+        expect(worktreeList).not.toContain(worktreeDir)
+    })
+
     it('captures snapshot and verifies merged target branch', async () => {
         const targetDir = join(baseDir, '.target-verification-worktree')
         await runGit(baseDir, ['worktree', 'add', '-b', 'dev', targetDir])
@@ -244,6 +261,84 @@ describe('git merge worktree RPC handler', () => {
 
         const dirtyStatus = await runGit(targetDir, ['status', '--porcelain'])
         expect(dirtyStatus).toContain('?? local-only.txt')
+    })
+
+    it('verifies merged target branch when unrelated target edits shift patch context', async () => {
+        const contextWorktreeDir = await createTempDir('hopi-git-merge-context-worktree')
+
+        try {
+            await writeFile(join(baseDir, 'README.md'), 'a\nb old\nc\nd\ne\n')
+            await runGit(baseDir, ['add', 'README.md'])
+            await runGit(baseDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'multiline base'])
+            await runGit(baseDir, ['worktree', 'add', '-b', 'context-task', contextWorktreeDir])
+
+            process.env[PRODUCT_ENV.WORKTREE_BASE_PATH] = baseDir
+            process.env[PRODUCT_ENV.WORKTREE_BRANCH] = 'context-task'
+            process.env[PRODUCT_ENV.WORKTREE_NAME] = 'context-task'
+            process.env[PRODUCT_ENV.WORKTREE_PATH] = contextWorktreeDir
+
+            await writeFile(join(contextWorktreeDir, 'README.md'), 'a\nb new\nc\nd\ne\n')
+            await writeFile(join(baseDir, 'README.md'), 'a\nb old\nc\ntarget extra\nd\ne\n')
+            await runGit(baseDir, ['add', 'README.md'])
+            await runGit(baseDir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'target context'])
+
+            const rpc = new RpcHandlerManager({ scopePrefix: 'session-test' })
+            registerGitHandlers(rpc, contextWorktreeDir)
+
+            const snapshotResponse = await rpc.handleRequest({
+                method: 'session-test:git-capture-worktree-merge-snapshot',
+                params: JSON.stringify({
+                    targetBranch: 'main'
+                })
+            })
+
+            const snapshot = JSON.parse(snapshotResponse) as {
+                success: boolean
+                mergeBase?: string
+                snapshotRef?: string
+                error?: string
+            }
+            expect(snapshot.success).toBe(true)
+            expect(snapshot.error).toBeUndefined()
+            expect(snapshot.mergeBase).toBeTruthy()
+            expect(snapshot.snapshotRef).toBeTruthy()
+
+            const mergeResponse = await rpc.handleRequest({
+                method: 'session-test:git-merge-worktree',
+                params: JSON.stringify({
+                    targetBranch: 'main',
+                    commitMessage: 'HOPI: merge shifted context'
+                })
+            })
+
+            const merge = JSON.parse(mergeResponse) as { success: boolean; commitHash?: string; error?: string }
+            expect(merge.success).toBe(true)
+            expect(merge.error).toBeUndefined()
+            expect(merge.commitHash).toBeTruthy()
+
+            const verifyResponse = await rpc.handleRequest({
+                method: 'session-test:git-verify-worktree-merge',
+                params: JSON.stringify({
+                    targetBranch: 'main',
+                    mergeBase: snapshot.mergeBase,
+                    snapshotRef: snapshot.snapshotRef
+                })
+            })
+
+            const verify = JSON.parse(verifyResponse) as {
+                success: boolean
+                verified?: boolean
+                targetHead?: string
+                error?: string
+            }
+            expect(verify.success).toBe(true)
+            expect(verify.verified).toBe(true)
+            expect(verify.error).toBeUndefined()
+            expect(verify.targetHead).toBe(merge.commitHash)
+        } finally {
+            await runGit(baseDir, ['worktree', 'remove', '--force', contextWorktreeDir]).catch(() => undefined)
+            await rm(contextWorktreeDir, { recursive: true, force: true })
+        }
     })
 
     it('reports snapshot as unverified before merge', async () => {

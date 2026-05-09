@@ -1,9 +1,13 @@
-import { MODEL_MODES, type AgentFlavor, type ModelMode } from './modes'
+import { MODEL_MODES, type AgentFlavor, type ModelMode, type PermissionMode } from './modes'
 
 export type ModelPresetOption = {
     value: string
     label: string
 }
+
+export const DEFAULT_AGENT_FLAVOR: AgentFlavor = 'codex'
+export const DEFAULT_TASK_MODEL = 'gpt-5.5'
+export const DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE: PermissionMode = 'safe-yolo'
 
 export const MODEL_PRESET_OPTIONS: Record<AgentFlavor, readonly ModelPresetOption[]> = {
     claude: [
@@ -14,6 +18,7 @@ export const MODEL_PRESET_OPTIONS: Record<AgentFlavor, readonly ModelPresetOptio
     ],
     codex: [
         { value: 'auto', label: 'Auto' },
+        { value: 'gpt-5.5', label: 'GPT-5.5' },
         { value: 'gpt-5.4', label: 'GPT-5.4' },
         { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
         { value: 'gpt-5.2', label: 'GPT-5.2' },

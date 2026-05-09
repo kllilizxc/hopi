@@ -35,11 +35,11 @@ export class TaskStore {
         return listTasksByActiveSessionIdAndNamespace(this.db, activeSessionId, namespace, options)
     }
 
-    listTasksByProject(projectId: string, options?: { includeArchived?: boolean }): StoredTask[] {
+    listTasksByProject(projectId: string, options?: { includeArchived?: boolean; goalId?: string | null }): StoredTask[] {
         return listTasksByProject(this.db, projectId, options)
     }
 
-    listTasksByProjectAndNamespace(projectId: string, namespace: string, options?: { includeArchived?: boolean }): StoredTask[] {
+    listTasksByProjectAndNamespace(projectId: string, namespace: string, options?: { includeArchived?: boolean; goalId?: string | null }): StoredTask[] {
         return listTasksByProjectAndNamespace(this.db, projectId, namespace, options)
     }
 
@@ -50,6 +50,7 @@ export class TaskStore {
     createTask(task: {
         id: string
         projectId: string
+        goalId?: string | null
         title: string
         description?: string | null
         status: string
@@ -74,6 +75,9 @@ export class TaskStore {
         mergeRuntime?: TaskMergeRuntime | null
         previewRuntime?: TaskPreviewRuntime | null
         initRuntime?: TaskInitRuntime | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
     }): StoredTask {
         return createTask(this.db, task)
     }
@@ -83,6 +87,7 @@ export class TaskStore {
         namespace: string,
         patch: {
             title?: string
+            goalId?: string | null
             description?: string | null
             status?: string
             priority?: string | null
@@ -106,6 +111,9 @@ export class TaskStore {
             mergeRuntime?: TaskMergeRuntime | null
             previewRuntime?: TaskPreviewRuntime | null
             initRuntime?: TaskInitRuntime | null
+            contract?: string | null
+            handoff?: string | null
+            evidence?: string | null
             finishedAt?: number | null
             archivedAt?: number | null
         }

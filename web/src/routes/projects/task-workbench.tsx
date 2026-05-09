@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getModelLabel, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, getModelLabel, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
 import { useMatchRoute, useNavigate, useParams } from '@tanstack/react-router'
 import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
 import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, WorkflowStrategyDescriptor, Workspace } from '@/types/api'
@@ -1537,9 +1537,10 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
     }, [hasSession, navigate, props.projectId, props.taskId])
 
     const projectDefaults = useMemo(() => {
-        const agent = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+        const agent = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
         const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
         const model = resolveStoredModel(project?.defaultModel, project?.defaultModelMode)
+            ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : null)
         return { agent, permissionMode, model }
     }, [project?.defaultAgentFlavor, project?.defaultPermissionMode, project?.defaultModel, project?.defaultModelMode])
 

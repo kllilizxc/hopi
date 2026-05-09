@@ -74,7 +74,6 @@ ${chalk.bold('Usage:')}
   hopi codex             Start Codex mode
   hopi gemini            Start Gemini ACP mode
   hopi opencode          Start OpenCode ACP mode
-  hopi mcp               Start MCP stdio bridge
   hopi connect           (not available in direct-connect mode)
   hopi notify            (not available in direct-connect mode)
   hopi hub               Start the API + web hub

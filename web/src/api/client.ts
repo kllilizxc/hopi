@@ -6,6 +6,12 @@ import type {
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    Goal,
+    GoalDecisionTopicResponse,
+    GoalDecisionTopicsResponse,
+    GoalResponse,
+    GoalTodoResponse,
+    GoalsResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
@@ -311,6 +317,67 @@ export class ApiClient {
         })
     }
 
+    async listProjectGoals(projectId: string): Promise<GoalsResponse> {
+        return await this.request<GoalsResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals`)
+    }
+
+    async getGoalTodo(projectId: string, goalId: string): Promise<GoalTodoResponse> {
+        return await this.request<GoalTodoResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}/todo`)
+    }
+
+    async createProjectGoal(projectId: string, payload: {
+        title: string
+        description?: string | null
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+    }): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateGoal(goalId: string, patch: {
+        title?: string
+        description?: string | null
+        status?: Goal['status']
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+        currentFocus?: string | null
+    }): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async listGoalDecisionTopics(goalId: string): Promise<GoalDecisionTopicsResponse> {
+        return await this.request<GoalDecisionTopicsResponse>(`/api/goals/${encodeURIComponent(goalId)}/topics`)
+    }
+
+    async createGoalDecisionTopic(goalId: string, payload: {
+        taskId?: string | null
+        title: string
+        body: string
+        blocking?: boolean
+    }): Promise<GoalDecisionTopicResponse> {
+        return await this.request<GoalDecisionTopicResponse>(`/api/goals/${encodeURIComponent(goalId)}/topics`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async resolveGoalDecisionTopic(topicId: string, payload: {
+        resolution: string
+    }): Promise<GoalDecisionTopicResponse> {
+        return await this.request<GoalDecisionTopicResponse>(`/api/goal-topics/${encodeURIComponent(topicId)}/resolve`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
     async listProjectWorkspaces(projectId: string): Promise<WorkspacesResponse> {
         return await this.request<WorkspacesResponse>(`/api/projects/${encodeURIComponent(projectId)}/workspaces`)
     }
@@ -333,10 +400,13 @@ export class ApiClient {
         await this.request(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
     }
 
-    async listProjectTasks(projectId: string, options?: { includeArchived?: boolean }): Promise<TasksResponse> {
+    async listProjectTasks(projectId: string, options?: { includeArchived?: boolean; goalId?: string }): Promise<TasksResponse> {
         const params = new URLSearchParams()
         if (options?.includeArchived) {
             params.set('includeArchived', 'true')
+        }
+        if (options?.goalId) {
+            params.set('goalId', options.goalId)
         }
         const qs = params.toString()
         return await this.request<TasksResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ''}`)
@@ -363,6 +433,11 @@ export class ApiClient {
             dataUrl: string
             previewUrl?: string
         }>
+        goalId?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
+        source?: 'manual' | 'planner' | 'radar' | 'evaluator'
         subTasks?: Array<{
             id: string
             content: string
@@ -384,7 +459,7 @@ export class ApiClient {
         title?: string
         description?: string | null
         status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
-        source?: 'manual'
+        source?: 'manual' | 'planner' | 'radar' | 'evaluator'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
@@ -403,6 +478,10 @@ export class ApiClient {
             dataUrl: string
             previewUrl?: string
         }>
+        goalId?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
         subTasks?: Array<{
             id: string
             content: string

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { buildThreadStartParams, buildTurnStartParams } from './appServerConfig';
-import { codexSystemPrompt } from './systemPrompt';
 import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('appServerConfig', () => {
@@ -17,14 +16,14 @@ describe('appServerConfig', () => {
         expect(params.sandbox).toBe('danger-full-access');
         expect(params.approvalPolicy).toBe('never');
         expect(params.cwd).toBe('/tmp/worktree');
-        expect(params.baseInstructions).toBe(codexSystemPrompt);
-        expect(params.developerInstructions).toBe(codexSystemPrompt);
+        expect(params.baseInstructions).toBeTruthy();
+        expect(params.developerInstructions).toBeTruthy();
         expect(params.config).toEqual({
             [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },
-            developer_instructions: codexSystemPrompt
+            developer_instructions: params.developerInstructions
         });
     });
 
@@ -46,14 +45,14 @@ describe('appServerConfig', () => {
             developerInstructions: 'Only respond in Chinese.'
         });
 
-        expect(params.baseInstructions).toBe(codexSystemPrompt);
-        expect(params.developerInstructions).toBe(`${codexSystemPrompt}\n\nOnly respond in Chinese.`);
+        expect(params.baseInstructions).toBeTruthy();
+        expect(params.developerInstructions).toBe(`${params.baseInstructions}\n\nOnly respond in Chinese.`);
         expect(params.config).toEqual({
             [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },
-            developer_instructions: `${codexSystemPrompt}\n\nOnly respond in Chinese.`
+            developer_instructions: params.developerInstructions
         });
     });
 

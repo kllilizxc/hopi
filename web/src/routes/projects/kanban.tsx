@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
+import { DEFAULT_AGENT_FLAVOR } from '@hopi/protocol'
 import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
@@ -570,7 +571,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     )
 })
 
-export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { projectId: string; onOpenNewTask: () => void }) {
+export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
+    projectId: string
+    goalId: string | null
+    onOpenNewTask: () => void
+}) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
@@ -578,7 +583,8 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
     const { addToast } = useToast()
     const { t } = useTranslation()
     const { project } = useProject(api, props.projectId)
-    const { tasks, isLoading, error } = useTasks(api, props.projectId)
+    const tasksKey = useMemo(() => queryKeys.tasks(props.projectId, props.goalId), [props.goalId, props.projectId])
+    const { tasks, isLoading, error } = useTasks(api, props.goalId ? props.projectId : null, props.goalId)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
@@ -587,7 +593,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         ? taskRouteMatch.taskId
         : null
 
-    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
 
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
     const [collapsedColumns, setCollapsedColumns] = useState<Record<TaskStatus, boolean>>(() => loadCollapsedColumnsFromStorage())
@@ -656,13 +662,13 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
 
     const applyOptimisticTasks = useCallback((nextTasks: Task[]) => {
         kanbanStateRef.current = buildKanbanDerivedState(nextTasks)
-        queryClient.setQueryData<TasksResponse>(queryKeys.tasks(props.projectId), (prev) => {
+        queryClient.setQueryData<TasksResponse>(tasksKey, (prev) => {
             if (!prev) {
                 return { tasks: nextTasks }
             }
             return { ...prev, tasks: nextTasks }
         })
-    }, [props.projectId, queryClient])
+    }, [queryClient, tasksKey])
 
     const moveTask = useCallback(async (taskId: string, toStatus: TaskStatus, toIndex: number) => {
         const currentState = kanbanStateRef.current
@@ -687,7 +693,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
         const below = clampedIndex < nextToList.length - 1 ? nextToList[clampedIndex + 1] : null
         const nextSortKey = computeInsertedSortKey(above, below)
 
-        const previous = queryClient.getQueryData<TasksResponse>(queryKeys.tasks(props.projectId))
+        const previous = queryClient.getQueryData<TasksResponse>(tasksKey)
         const nextAll = currentState.tasks.map((t) => {
             if (t.id !== taskId) return t
             return {
@@ -709,7 +715,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             })
         } catch (error) {
             if (previous) {
-                queryClient.setQueryData(queryKeys.tasks(props.projectId), previous)
+                queryClient.setQueryData(tasksKey, previous)
             }
             kanbanStateRef.current = currentState
             addToast({
@@ -719,7 +725,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
                 url: ''
             })
         }
-    }, [updateTask, addToast, t, queryClient, applyOptimisticTasks, props.projectId])
+    }, [updateTask, addToast, t, queryClient, applyOptimisticTasks, tasksKey])
 
     const moveTaskRef = useRef(moveTask)
     useEffect(() => {
@@ -1000,6 +1006,14 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: { proj
             clearTouchDrag()
         }
     }, [clearTouchDrag, clearTouchListeners])
+
+    if (!props.goalId) {
+        return (
+            <div className="flex h-full items-center justify-center p-4 text-sm text-[var(--app-hint)]">
+                {t('projects.goals.empty')}
+            </div>
+        )
+    }
 
     if (isLoading) {
         return (

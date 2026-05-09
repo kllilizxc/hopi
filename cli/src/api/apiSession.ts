@@ -9,7 +9,7 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
-import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hopi/protocol'
+import type { ClientToServerEvents, Goal, GoalDecisionTopic, ServerToClientEvents, Task, Update } from '@hopi/protocol'
 import {
     TerminalClosePayloadSchema,
     TerminalOpenPayloadSchema,
@@ -44,6 +44,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
     private pendingMessages: UserMessage[] = []
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null
+    private webApiToken: { token: string; expiresAt: number } | null = null
     private lastSeenMessageSeq: number | null = null
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
@@ -286,6 +287,189 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.emit('message', message.content)
+    }
+
+    getSessionMetadata(): Metadata | null {
+        return this.metadata
+    }
+
+    private async getWebApiToken(): Promise<string> {
+        if (this.webApiToken && this.webApiToken.expiresAt > Date.now() + 30_000) {
+            return this.webApiToken.token
+        }
+
+        const response = await axios.post(
+            `${configuration.apiUrl}/api/auth`,
+            { accessToken: this.token },
+            {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 15_000
+            }
+        )
+        const token = typeof response.data?.token === 'string' ? response.data.token : null
+        if (!token) {
+            throw apiValidationError('Invalid /api/auth response', response)
+        }
+
+        this.webApiToken = {
+            token,
+            expiresAt: Date.now() + 14 * 60_000
+        }
+        return token
+    }
+
+    private async webApiRequest<T>(options: {
+        method: 'GET' | 'POST' | 'PATCH'
+        path: string
+        body?: unknown
+        params?: Record<string, string | boolean | undefined>
+    }): Promise<T> {
+        const token = await this.getWebApiToken()
+        const query = new URLSearchParams()
+        for (const [key, value] of Object.entries(options.params ?? {})) {
+            if (value !== undefined) {
+                query.set(key, String(value))
+            }
+        }
+        const queryText = query.toString()
+        const url = `${configuration.apiUrl}${options.path}${queryText ? `?${queryText}` : ''}`
+        const response = await axios.request<T>({
+            method: options.method,
+            url,
+            data: options.body,
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30_000
+        })
+        return response.data
+    }
+
+    async getTask(taskId: string): Promise<Task | null> {
+        try {
+            const data = await this.webApiRequest<{ task?: unknown }>({
+                method: 'GET',
+                path: `/api/tasks/${encodeURIComponent(taskId)}`
+            })
+            return data.task && typeof data.task === 'object' ? data.task as Task : null
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return null
+            }
+            throw error
+        }
+    }
+
+    async createTask(projectId: string, input: {
+        title: string
+        description?: string
+        goalId?: string
+        status?: string
+        priority?: string
+        workflowProfile: string
+        contract?: string
+        agentFlavor?: string
+        model?: string
+        modelMode?: string | null
+        source?: string
+    }): Promise<Task> {
+        const data = await this.webApiRequest<{ task?: unknown }>({
+            method: 'POST',
+            path: `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+            body: input
+        })
+        if (!data.task || typeof data.task !== 'object') {
+            throw new Error('Invalid create task response')
+        }
+        return data.task as Task
+    }
+
+    async listProjectTasks(projectId: string, options?: {
+        goalId?: string
+        includeArchived?: boolean
+    }): Promise<Task[]> {
+        const data = await this.webApiRequest<{ tasks?: unknown }>({
+            method: 'GET',
+            path: `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+            params: {
+                goalId: options?.goalId,
+                includeArchived: options?.includeArchived
+            }
+        })
+        return Array.isArray(data.tasks) ? data.tasks as Task[] : []
+    }
+
+    async updateTask(taskId: string, input: {
+        title?: string
+        description?: string | null
+        status?: string
+        priority?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
+        source?: string
+    }): Promise<Task> {
+        const data = await this.webApiRequest<{ task?: unknown }>({
+            method: 'PATCH',
+            path: `/api/tasks/${encodeURIComponent(taskId)}`,
+            body: input
+        })
+        if (!data.task || typeof data.task !== 'object') {
+            throw new Error('Invalid update task response')
+        }
+        return data.task as Task
+    }
+
+    async mergeTaskWorktree(taskId: string, payload?: {
+        targetBranch?: string
+        conflictStrategy?: 'manual' | 'agent'
+    }): Promise<{
+        ok: boolean
+        commitHash?: string | null
+        skippedReason?: string | null
+        mergedAt?: number | null
+    }> {
+        return await this.webApiRequest({
+            method: 'POST',
+            path: `/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`,
+            body: payload ?? {}
+        })
+    }
+
+    async updateGoal(goalId: string, input: {
+        status?: string
+        currentFocus?: string | null
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+    }): Promise<Goal> {
+        const data = await this.webApiRequest<{ goal?: unknown }>({
+            method: 'PATCH',
+            path: `/api/goals/${encodeURIComponent(goalId)}`,
+            body: input
+        })
+        if (!data.goal || typeof data.goal !== 'object') {
+            throw new Error('Invalid update goal response')
+        }
+        return data.goal as Goal
+    }
+
+    async createGoalDecisionTopic(goalId: string, input: {
+        taskId?: string | null
+        title: string
+        body: string
+        blocking?: boolean
+    }): Promise<GoalDecisionTopic> {
+        const data = await this.webApiRequest<{ topic?: unknown }>({
+            method: 'POST',
+            path: `/api/goals/${encodeURIComponent(goalId)}/topics`,
+            body: input
+        })
+        if (!data.topic || typeof data.topic !== 'object') {
+            throw new Error('Invalid create decision topic response')
+        }
+        return data.topic as GoalDecisionTopic
     }
 
     private async backfillIfNeeded(): Promise<void> {

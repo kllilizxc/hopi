@@ -1,6 +1,5 @@
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
-import type { McpServersConfig } from './buildHopiMcpBridge';
 import { codexSystemPrompt } from './systemPrompt';
 import type {
     ApprovalPolicy,
@@ -9,6 +8,10 @@ import type {
     ThreadStartParams,
     TurnStartParams
 } from '../appServerTypes';
+
+export type McpServersConfig = Record<string, { command: string; args: string[] }>;
+
+const DEFAULT_CODEX_THREAD_INSTRUCTIONS = 'You are Codex, an AI coding agent. Follow the user instructions and repository guidance.';
 
 function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
     switch (mode.permissionMode) {
@@ -88,13 +91,17 @@ export function buildThreadStartParams(args: {
     const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
 
     const config = buildMcpServerConfig(args.mcpServers);
-    const baseInstructions = args.baseInstructions ?? codexSystemPrompt;
-    const resolvedDeveloperInstructions = args.developerInstructions
-        ? `${baseInstructions}\n\n${args.developerInstructions}`
-        : baseInstructions;
+    const configuredBaseInstructions = args.baseInstructions ?? codexSystemPrompt;
+    const baseInstructions = configuredBaseInstructions.trim().length > 0
+        ? configuredBaseInstructions
+        : DEFAULT_CODEX_THREAD_INSTRUCTIONS;
+    const resolvedDeveloperInstructions = [
+        baseInstructions,
+        args.developerInstructions
+    ].filter((part): part is string => Boolean(part && part.trim())).join('\n\n');
     const configWithInstructions = {
         ...config,
-        developer_instructions: resolvedDeveloperInstructions
+        ...(resolvedDeveloperInstructions ? { developer_instructions: resolvedDeveloperInstructions } : {})
     };
 
     const params: ThreadStartParams = {

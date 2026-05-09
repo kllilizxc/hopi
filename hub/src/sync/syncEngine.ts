@@ -25,6 +25,7 @@ import {
     type RpcGitCaptureWorktreeMergeSnapshotResponse,
     type RpcGitMergeWorktreeResponse,
     type RpcGitMergeWorktreeStateResponse,
+    type RpcGitRemoveWorktreeResponse,
     type RpcGitVerifyWorktreeMergeResponse,
     type RpcListDirectoryResponse,
     type RpcPathExistsResponse,
@@ -50,6 +51,7 @@ export type {
     RpcGitCaptureWorktreeMergeSnapshotResponse,
     RpcGitMergeWorktreeResponse,
     RpcGitMergeWorktreeStateResponse,
+    RpcGitRemoveWorktreeResponse,
     RpcGitVerifyWorktreeMergeResponse,
     RpcListDirectoryResponse,
     RpcPathExistsResponse,
@@ -85,6 +87,7 @@ export class SyncEngine {
     private readonly omcPlanningAutomation: OmcPlanningAutomation
     private readonly omcTopicAutomation: OmcTopicAutomation
     private inactivityTimer: NodeJS.Timeout | null = null
+    private autoRunTimer: NodeJS.Timeout | null = null
 
     constructor(
         store: Store,
@@ -113,6 +116,8 @@ export class SyncEngine {
         this.reloadAll()
         void this.omcExecutionAutomation.reconcileAllPrograms()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+        this.autoRunTimer = setInterval(() => this.autoRunScheduler.requestKnownProjectTicks({ delayMs: 0 }), 15 * 60_000)
+        this.autoRunTimer.unref?.()
     }
 
     requestAutoRunTick(namespace: string, projectId: string): void {
@@ -123,6 +128,10 @@ export class SyncEngine {
         if (this.inactivityTimer) {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
+        }
+        if (this.autoRunTimer) {
+            clearInterval(this.autoRunTimer)
+            this.autoRunTimer = null
         }
     }
 
@@ -725,6 +734,10 @@ export class SyncEngine {
         strategy?: 'ff' | 'merge_commit' | 'squash'
     }): Promise<RpcGitMergeWorktreeResponse> {
         return await this.rpcGateway.gitMergeWorktree(sessionId, options)
+    }
+
+    async gitRemoveWorktree(sessionId: string): Promise<RpcGitRemoveWorktreeResponse> {
+        return await this.rpcGateway.gitRemoveWorktree(sessionId)
     }
 
     async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {

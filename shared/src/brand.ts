@@ -16,8 +16,6 @@ export const PRODUCT_DEFAULT_SITE_URL = `https://${PRODUCT_SLUG}.run`
 export const PRODUCT_DEFAULT_OFFICIAL_WEB_URL = `https://app.${PRODUCT_SLUG}.run`
 export const PRODUCT_DEFAULT_DOCS_URL = `${PRODUCT_DEFAULT_SITE_URL}/docs`
 export const PRODUCT_DEFAULT_VAPID_SUBJECT = `mailto:admin@${PRODUCT_SLUG}.run`
-export const PRODUCT_CHANGE_TITLE_TOOL = `${PRODUCT_SLUG}__change_title`
-export const PRODUCT_MCP_CHANGE_TITLE_TOOL = `mcp__${PRODUCT_CHANGE_TITLE_TOOL}`
 
 export function productEnvKey(suffix: string): string {
     return `${PRODUCT_NAME}_${suffix}`
@@ -39,7 +37,6 @@ export const PRODUCT_ENV = {
     API_URL: productEnvKey('API_URL'),
     HOME: productEnvKey('HOME'),
     EXPERIMENTAL: productEnvKey('EXPERIMENTAL'),
-    HTTP_MCP_URL: productEnvKey('HTTP_MCP_URL'),
     PROJECT_ROOT: productEnvKey('PROJECT_ROOT'),
     HOSTNAME: productEnvKey('HOSTNAME'),
     CLAUDE_PATH: productEnvKey('CLAUDE_PATH'),

@@ -2,44 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { EnhancedMode } from './loop';
 
-const harness = (() => {
-    const registry = globalThis as typeof globalThis & {
-        __hopiCodexRemoteLauncherHarness?: {
-            notifications: Array<{ method: string; params: unknown }>
-            registerRequestCalls: string[]
-            startTurnParams: Array<Record<string, unknown>>
-            failOnCollaboration: boolean
-            emitPlanUpdate: boolean
-            startTurnErrorMessage: string | null
-        }
-    }
-
-    if (!registry.__hopiCodexRemoteLauncherHarness) {
-        registry.__hopiCodexRemoteLauncherHarness = {
-            notifications: [],
-            registerRequestCalls: [],
-            startTurnParams: [],
-            failOnCollaboration: false,
-            emitPlanUpdate: false,
-            startTurnErrorMessage: null
-        };
-    }
-
-    return registry.__hopiCodexRemoteLauncherHarness;
-})();
+const harness = vi.hoisted(() => ({
+    notifications: [] as Array<{ method: string; params: unknown }>,
+    registerRequestCalls: [] as string[],
+    startTurnParams: [] as Array<Record<string, unknown>>,
+    failOnCollaboration: false,
+    emitPlanUpdate: false,
+    startTurnErrorMessage: null as string | null
+}));
 
 vi.mock('./codexAppServerClient', () => {
-    const harness = (globalThis as typeof globalThis & {
-        __hopiCodexRemoteLauncherHarness: {
-            notifications: Array<{ method: string; params: unknown }>
-            registerRequestCalls: string[]
-            startTurnParams: Array<Record<string, unknown>>
-            failOnCollaboration: boolean
-            emitPlanUpdate: boolean
-            startTurnErrorMessage: string | null
-        }
-    }).__hopiCodexRemoteLauncherHarness;
-
     class MockCodexAppServerClient {
         private notificationHandler: ((method: string, params: unknown) => void) | null = null;
 
@@ -106,15 +78,6 @@ vi.mock('./codexAppServerClient', () => {
 
     return { CodexAppServerClient: MockCodexAppServerClient };
 });
-
-vi.mock('./utils/buildHopiMcpBridge', () => ({
-    buildHopiMcpBridge: async () => ({
-        server: {
-            stop: () => {}
-        },
-        mcpServers: {}
-    })
-}));
 
 import { codexRemoteLauncher } from './codexRemoteLauncher';
 

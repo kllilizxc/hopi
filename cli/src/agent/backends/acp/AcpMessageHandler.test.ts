@@ -224,8 +224,8 @@ describe('AcpMessageHandler', () => {
         handler.handleUpdate({
             sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
             toolCallId: 'tool-4',
-            title: 'hopi_change_title',
-            rawInput: { title: 'A' },
+            title: 'repo_status',
+            rawInput: { path: '.' },
             status: 'in_progress'
         });
 
@@ -233,7 +233,7 @@ describe('AcpMessageHandler', () => {
             sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate,
             toolCallId: 'tool-4',
             kind: 'other',
-            rawInput: { title: 'B' },
+            rawInput: { path: 'cli' },
             status: 'in_progress'
         });
 
@@ -241,8 +241,8 @@ describe('AcpMessageHandler', () => {
             message.type === 'tool_call'
         );
         expect(calls).toHaveLength(2);
-        expect(calls[0].name).toBe('hopi_change_title');
-        expect(calls[1].name).toBe('hopi_change_title');
+        expect(calls[0].name).toBe('repo_status');
+        expect(calls[1].name).toBe('repo_status');
     });
 
     it('allows kind fallback to replace placeholder tool name', () => {

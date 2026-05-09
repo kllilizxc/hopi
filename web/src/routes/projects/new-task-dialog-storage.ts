@@ -1,4 +1,4 @@
-import { PERMISSION_MODES } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, PERMISSION_MODES } from '@hopi/protocol'
 import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 import type { AgentType } from '@/components/NewSession/types'
 import { resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
@@ -6,7 +6,7 @@ import type { PermissionMode, TaskPriority } from '@/types/api'
 
 export const NEW_TASK_DIALOG_STORAGE_KEY = productStorageNamespaceKey('newTaskDialog:lastOptions')
 
-const DEFAULT_AGENT: AgentType = 'claude'
+const DEFAULT_AGENT: AgentType = DEFAULT_AGENT_FLAVOR
 const VALID_AGENTS: ReadonlySet<AgentType> = new Set(['claude', 'codex', 'gemini', 'opencode'])
 const VALID_PRIORITIES: ReadonlySet<TaskPriority | ''> = new Set(['', 'high', 'medium', 'low'])
 const VALID_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set(PERMISSION_MODES)
@@ -93,11 +93,12 @@ export function resolveNewTaskDialogOptions(input: ResolveNewTaskDialogOptionsIn
     const { hasStoredOptions, options: storedOptions } = loadStoredNewTaskDialogOptions()
     const defaultPermissionPreference = hasStoredOptions ? null : input.defaultPermissionMode
     const agent = storedOptions.agent ?? (hasStoredOptions ? DEFAULT_AGENT : input.defaultAgent)
+    const model = storedOptions.model ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : 'auto')
 
     return {
         priority: storedOptions.priority ?? '',
         agent,
-        model: storedOptions.model ?? 'auto',
+        model,
         permissionMode: storedOptions.permissionMode ?? resolveTaskPermissionModeForFlavor(agent, defaultPermissionPreference),
         workflowProfile: normalizeWorkflowProfile(storedOptions.workflowProfile),
     }

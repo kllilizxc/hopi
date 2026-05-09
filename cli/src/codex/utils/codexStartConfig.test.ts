@@ -20,8 +20,7 @@ describe('buildCodexStartConfig', () => {
         expect(config.sandbox).toBe('danger-full-access');
         expect(config['approval-policy']).toBe('never');
         expect(config.config).toEqual({
-            mcp_servers: mcpServers,
-            developer_instructions: codexSystemPrompt
+            mcp_servers: mcpServers
         });
     });
 

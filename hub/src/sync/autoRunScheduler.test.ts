@@ -25,9 +25,11 @@ function createProjectWithTask(store: Store, options: {
     taskId: string
     workflowProfile: string
     workflowPhase: string | null
+    goalId?: string | null
     activeSessionId?: string | null
     workspaceId?: string | null
     source?: string | null
+    autoRunEnabled?: boolean
     automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
 }): void {
     store.projects.createProject({
@@ -35,7 +37,7 @@ function createProjectWithTask(store: Store, options: {
         namespace: options.namespace,
         machineId: 'machine-1',
         name: 'Project',
-        autoRunEnabled: true,
+        autoRunEnabled: options.autoRunEnabled ?? true,
         maxRunningSessions: 1,
         defaultWorkspaceId: options.workspaceId ?? null,
         automationReadinessStatus: options.automationReadinessStatus ?? 'unknown'
@@ -44,6 +46,7 @@ function createProjectWithTask(store: Store, options: {
     store.tasks.createTask({
         id: options.taskId,
         projectId: options.projectId,
+        goalId: options.goalId ?? null,
         title: 'Task',
         status: 'planned',
         source: options.source ?? 'manual',
@@ -54,6 +57,276 @@ function createProjectWithTask(store: Store, options: {
 }
 
 describe('AutoRunScheduler workflow strategy gate', () => {
+    it('auto-runs planner tasks for an enabled goal even when project auto-run is off', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-autopilot'
+        const goalId = 'goal-autopilot'
+        const taskId = 'task-goal-planner'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Task',
+            status: 'planned',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('auto-runs goal planner tasks when project auto-run is on even if goal autopilot is off', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-project-auto-run'
+        const goalId = 'goal-manual-autopilot'
+        const taskId = 'task-goal-planner-project-auto'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Manual autopilot goal',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal',
+            status: 'planned',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('creates a planner tick task when an enabled goal board is running low', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-low-water'
+        const goalId = 'goal-low-water'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep iterating',
+            status: 'active',
+            autopilotEnabled: true
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'planner'))
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner')
+        expect(planner?.title).toContain('Plan next')
+        expect(planner?.permissionMode).toBe('safe-yolo')
+        expect(planner?.contract).toContain('.hopi/docs/todo.md')
+        expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+    })
+
+    it('requests a planner tick when a finished goal task leaves the board running low', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-finished-low-water'
+        const goalId = 'goal-finished-low-water'
+        const taskId = 'task-finished-work'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep iterating after work finishes',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Finished implementation task',
+            status: 'finished',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.handleEvent({
+            type: 'task-updated',
+            taskId,
+            projectId,
+            namespace,
+            data: { taskId }
+        })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'planner' && task.title.includes('Plan next')))
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner' && task.id !== taskId)
+        expect(planner?.title).toContain('Plan next')
+        expect(planner?.permissionMode).toBe('safe-yolo')
+        expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+    })
+
+    it('creates a periodic radar task for an enabled active goal', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar'
+        const goalId = 'goal-radar'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Maintain repo health',
+            status: 'active',
+            autopilotEnabled: true
+        })
+
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'radar'))
+
+        const radar = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'radar')
+        expect(radar?.permissionMode).toBe('safe-yolo')
+        expect(radar?.contract).toContain('.hopi/docs/tech-debt.md')
+        expect(radar?.contract).toContain('TODO/FIXME')
+    })
+
     it('does not auto-run gsd tasks outside execute_ready phase', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -161,6 +434,62 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(task?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(false)
+    })
+
+    it('auto-runs goal generator tasks before project readiness is ready', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-generator-readiness'
+        const goalId = 'goal-generator-readiness'
+        const taskId = 'task-generator-readiness'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement first slice',
+            status: 'planned',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
     it('still auto-runs project_init tasks before project readiness is ready', async () => {

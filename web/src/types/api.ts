@@ -1,5 +1,7 @@
 import type {
     DirectoryEntry,
+    Goal,
+    GoalDecisionTopic,
     Project,
     Task,
     TaskWorkflowPhase,
@@ -18,6 +20,8 @@ export type {
     AttachmentMetadata,
     AgentFlavor,
     DirectoryEntry,
+    Goal,
+    GoalDecisionTopic,
     ListDirectoryResponse,
     ModelMode,
     PermissionMode,
@@ -103,6 +107,24 @@ export type ProjectAutomationVerificationResponse = {
 }
 export type WorkspacesResponse = { workspaces: Workspace[] }
 export type WorkspaceResponse = { workspace: Workspace }
+export type GoalsResponse = { goals: Goal[] }
+export type GoalResponse = { goal: Goal }
+export type GoalDecisionTopicsResponse = { topics: GoalDecisionTopic[] }
+export type GoalDecisionTopicResponse = { topic: GoalDecisionTopic }
+export type GoalTodoSectionKind = 'ready' | 'candidate' | 'deferred' | 'promoted' | 'done' | 'unknown'
+export type GoalTodoSection = {
+    kind: GoalTodoSectionKind
+    title: string
+    body: string
+    taskId: string | null
+}
+export type GoalTodoResponse = {
+    exists: boolean
+    path: string | null
+    rawMarkdown: string | null
+    sections: GoalTodoSection[]
+    updatedAt: number | null
+}
 export type TasksResponse = { tasks: Task[] }
 export type TaskResponse = { task: Task }
 export type WorkflowStrategyDescriptor = {

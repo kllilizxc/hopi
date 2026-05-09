@@ -3,16 +3,11 @@ import { codexLocal } from './codexLocal';
 import { CodexSession } from './session';
 import { createCodexSessionScanner } from './utils/codexSessionScanner';
 import { convertCodexEvent } from './utils/codexEventConverter';
-import { buildHopiMcpBridge } from './utils/buildHopiMcpBridge';
 import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
 
 export async function codexLocalLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     const resumeSessionId = session.sessionId;
     let scanner: Awaited<ReturnType<typeof createCodexSessionScanner>> | null = null;
-
-    // Start hopi hub for MCP bridge (same as remote mode)
-    const { server: happyServer, mcpServers } = await buildHopiMcpBridge(session.client);
-    logger.debug(`[codex-local]: Started hopi MCP bridge server at ${happyServer.url}`);
 
     const handleSessionFound = (sessionId: string) => {
         session.onSessionFound(sessionId);
@@ -33,7 +28,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 onSessionFound: handleSessionFound,
                 abort: abortSignal,
                 codexArgs: session.codexArgs,
-                mcpServers
+                mcpServers: {}
             });
         },
         sendFailureMessage: (message) => {
@@ -79,7 +74,5 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         return await launcher.run();
     } finally {
         await scanner?.cleanup();
-        happyServer.stop();
-        logger.debug('[codex-local]: Stopped hopi MCP bridge server');
     }
 }

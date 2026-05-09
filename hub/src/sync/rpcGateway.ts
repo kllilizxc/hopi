@@ -65,6 +65,14 @@ export type RpcGitMergeWorktreeResponse = {
     error?: string
 }
 
+export type RpcGitRemoveWorktreeResponse = {
+    success: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
 export type RpcGitMergeWorktreeStateResponse = {
     success: boolean
     targetBranch?: string
@@ -346,6 +354,12 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'git-merge-worktree', options, {
             timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
         }) as RpcGitMergeWorktreeResponse
+    }
+
+    async gitRemoveWorktree(sessionId: string): Promise<RpcGitRemoveWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-remove-worktree', {}, {
+            timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
+        }) as RpcGitRemoveWorktreeResponse
     }
 
     async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {

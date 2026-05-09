@@ -34,6 +34,21 @@ export type LoadMergeWorkflowFromSessionResult =
         error: string
     }
 
+export function createDefaultMergeWorkflow(targetBranch: string | null | undefined): MergeWorkflow {
+    const normalizedTargetBranch = typeof targetBranch === 'string' && targetBranch.trim().length > 0
+        ? targetBranch.trim()
+        : 'main'
+
+    return {
+        targetBranch: normalizedTargetBranch,
+        strategy: 'squash',
+        conflictResolution: {
+            mode: 'ai',
+            maxAttempts: 2
+        }
+    }
+}
+
 export function resolveSessionActionContractRootPaths(session: SessionLike): string[] {
     return resolveSessionRootPathCandidates({ session })
 }

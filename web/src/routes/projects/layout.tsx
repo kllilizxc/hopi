@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
-import type { Machine, PermissionMode, TaskPriority } from '@/types/api'
+import { DEFAULT_AGENT_FLAVOR, normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
+import type { Goal, Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
@@ -18,7 +18,9 @@ import { Pressable } from '@/components/ui/pressable'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useProject } from '@/hooks/queries/useProject'
 import { useProjects } from '@/hooks/queries/useProjects'
+import { useGoals } from '@/hooks/queries/useGoals'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
+import { useCreateGoal } from '@/hooks/mutations/useCreateGoal'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
@@ -26,6 +28,10 @@ import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
+import { GoalSwitcher } from '@/routes/projects/goal-switcher'
+import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
+import { GoalDecisionTopicsPanel } from '@/routes/projects/goal-decision-topics'
+import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
 import type { AgentType } from '@/components/NewSession/types'
 
 function TopBar(props: {
@@ -178,16 +184,24 @@ function ProjectsListPanel(props: {
 
 const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     projectId: string
+    goals: Goal[]
+    selectedGoalId: string | null
+    isGoalsLoading: boolean
     onBackToProjects: () => void
     onOpenSettings: () => void
+    onSelectGoal: (goalId: string) => void
+    onOpenCreateGoal: () => void
     onOpenNewTask: () => void
 }) {
     const { api } = useAppContext()
     const { t } = useTranslation()
     const navigate = useNavigate()
+    const matchRoute = useMatchRoute()
     const { project } = useProject(api, props.projectId)
     const { projects } = useProjects(api, { includeArchived: false })
     const { recentProjectIds, markProjectUsed } = useRecentProjects()
+    const planningMatch = matchRoute({ to: '/projects/$projectId/planning' })
+    const isPlanningRoute = Boolean(planningMatch && planningMatch.projectId === props.projectId)
 
     const recentProjects = useRecentProjectTabs({
         projects,
@@ -213,6 +227,28 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
             void navigate({ to: '/projects/$projectId', params: { projectId } })
         }
     }, [props.projectId, navigate])
+
+    const projectViewTabs = useMemo(() => [
+        {
+            id: 'board',
+            label: t('projects.tabs.board'),
+            title: t('projects.tabs.board')
+        },
+        {
+            id: 'planning',
+            label: t('projects.tabs.planning'),
+            title: t('projects.tabs.planning')
+        }
+    ], [t])
+
+    const handleProjectViewTab = useCallback((tabId: string) => {
+        if (tabId === 'planning') {
+            void navigate({ to: '/projects/$projectId/planning', params: { projectId: props.projectId } })
+            return
+        }
+
+        void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
+    }, [navigate, props.projectId])
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -251,9 +287,44 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 }
             />
 
-            <div className="flex-1 min-h-0">
-                <ProjectKanbanBoard projectId={props.projectId} onOpenNewTask={props.onOpenNewTask} />
+            <GoalSwitcher
+                goals={props.goals}
+                selectedGoalId={props.selectedGoalId}
+                isLoading={props.isGoalsLoading}
+                onSelectGoal={props.onSelectGoal}
+                onCreateGoal={props.onOpenCreateGoal}
+            />
+
+            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
+                <CompactTabs
+                    items={projectViewTabs}
+                    selectedId={isPlanningRoute ? 'planning' : 'board'}
+                    onSelect={handleProjectViewTab}
+                    ariaLabel={t('projects.tabs.label')}
+                    className="mx-auto w-full max-w-content"
+                />
             </div>
+
+            {isPlanningRoute ? (
+                <div className="flex-1 min-h-0">
+                    <GoalPlanningPage
+                        projectId={props.projectId}
+                        goalId={props.selectedGoalId}
+                        isGoalsLoading={props.isGoalsLoading}
+                    />
+                </div>
+            ) : (
+                <>
+                    <GoalDecisionTopicsPanel projectId={props.projectId} goalId={props.selectedGoalId} />
+                    <div className="flex-1 min-h-0">
+                        <ProjectKanbanBoard
+                            projectId={props.projectId}
+                            goalId={props.selectedGoalId}
+                            onOpenNewTask={props.onOpenNewTask}
+                        />
+                    </div>
+                </>
+            )}
         </div>
     )
 })
@@ -280,16 +351,28 @@ export default function ProjectsPage() {
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
+    const { createGoal, isPending: isCreatingGoal, error: createGoalError } = useCreateGoal(api)
     const { createTask, isPending: isCreatingTask } = useCreateTask(api)
     const { startTaskSession } = useStartTaskSession(api)
 
     const [createOpen, setCreateOpen] = useState(false)
+    const [createGoalOpen, setCreateGoalOpen] = useState(false)
     const [newTaskOpen, setNewTaskOpen] = useState(false)
+    const [selectedGoalByProject, setSelectedGoalByProject] = useState<Record<string, string>>({})
 
     const { project } = useProject(api, selectedProjectId ?? '')
+    const { goals, isLoading: isGoalsLoading } = useGoals(api, selectedProjectId)
     const { strategies: workflowStrategies } = useWorkflowStrategies(api)
-    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? 'claude'
+    const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
+    const selectedGoalId = useMemo(() => {
+        if (!selectedProjectId) return null
+        const storedGoalId = selectedGoalByProject[selectedProjectId] ?? null
+        if (storedGoalId && goals.some((goal) => goal.id === storedGoalId)) {
+            return storedGoalId
+        }
+        return goals[0]?.id ?? null
+    }, [goals, selectedGoalByProject, selectedProjectId])
 
     const handleCreateProject = useCallback(async (input: {
         machineId: string
@@ -331,12 +414,17 @@ export default function ProjectsPage() {
         workflowProfile: string
     }) => {
         if (!selectedProjectId) return
+        if (!selectedGoalId) {
+            addToast({ title: t('projects.goals.empty'), body: '', sessionId: '', url: '' })
+            return
+        }
 
         const model = normalizeModelName(data.model)
         void (async () => {
             try {
                 const created = await createTask({
                     projectId: selectedProjectId,
+                    goalId: selectedGoalId,
                     title: data.title,
                     description: data.description,
                     priority: data.priority || undefined,
@@ -385,7 +473,38 @@ export default function ProjectsPage() {
                 })
             }
         })()
-    }, [selectedProjectId, createTask, addToast, navigate, startTaskSession, t])
+    }, [selectedProjectId, selectedGoalId, createTask, addToast, navigate, startTaskSession, t])
+
+    const handleCreateGoal = useCallback(async (input: {
+        title: string
+        description: string | null
+        successCriteria: string | null
+        autopilotEnabled: boolean
+        deployRequiresApproval: boolean
+    }): Promise<boolean> => {
+        if (!selectedProjectId) return false
+        try {
+            const created = await createGoal({
+                projectId: selectedProjectId,
+                title: input.title,
+                description: input.description,
+                successCriteria: input.successCriteria,
+                autopilotEnabled: input.autopilotEnabled,
+                deployRequiresApproval: input.deployRequiresApproval
+            })
+            setSelectedGoalByProject((current) => ({ ...current, [selectedProjectId]: created.id }))
+            setCreateGoalOpen(false)
+            return true
+        } catch (error) {
+            addToast({
+                title: t('projects.goals.createFailed'),
+                body: error instanceof Error ? error.message : 'Failed to create goal',
+                sessionId: '',
+                url: ''
+            })
+            return false
+        }
+    }, [addToast, createGoal, selectedProjectId, t])
 
     const handleBackToProjects = useCallback(() => {
         void navigate({ to: '/projects' })
@@ -401,8 +520,12 @@ export default function ProjectsPage() {
     }, [navigate])
 
     const handleOpenNewTaskDialog = useCallback(() => {
+        if (!selectedGoalId) {
+            addToast({ title: t('projects.goals.empty'), body: '', sessionId: '', url: '' })
+            return
+        }
         setNewTaskOpen(true)
-    }, [])
+    }, [addToast, selectedGoalId, t])
 
     const handleSelectProject = useCallback((projectId: string) => {
         void navigate({ to: '/projects/$projectId', params: { projectId } })
@@ -428,8 +551,15 @@ export default function ProjectsPage() {
                 {selectedProjectId ? (
                     <ProjectBoardPanel
                         projectId={selectedProjectId}
+                        goals={goals}
+                        selectedGoalId={selectedGoalId}
+                        isGoalsLoading={isGoalsLoading}
                         onBackToProjects={handleBackToProjects}
                         onOpenSettings={handleOpenProjectSettings}
+                        onSelectGoal={(goalId) => {
+                            setSelectedGoalByProject((current) => ({ ...current, [selectedProjectId]: goalId }))
+                        }}
+                        onOpenCreateGoal={() => setCreateGoalOpen(true)}
                         onOpenNewTask={handleOpenNewTaskDialog}
                     />
                 ) : (
@@ -476,6 +606,14 @@ export default function ProjectsPage() {
                     onCreate={handleCreateTask}
                 />
             ) : null}
+
+            <CreateGoalDialog
+                isOpen={createGoalOpen}
+                onOpenChange={setCreateGoalOpen}
+                onCreate={handleCreateGoal}
+                isPending={isCreatingGoal}
+                error={createGoalError}
+            />
         </div>
     )
 }

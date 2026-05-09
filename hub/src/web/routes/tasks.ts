@@ -1,6 +1,6 @@
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { MergeWorkflow } from '@hopi/protocol/actions'
-import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskSourceSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
@@ -29,6 +29,7 @@ import { buildTaskMergeRuntime as buildSharedTaskMergeRuntime, buildTaskPreviewR
 import { waitForAssistantCompletion } from '../../sync/improvementsScan'
 import {
     buildMergeConflictResolutionPrompt,
+    createDefaultMergeWorkflow,
     findBlockedMergeConflictPath,
     getMergeRunVerifyChecks,
     loadMergeWorkflowFromSession,
@@ -45,6 +46,7 @@ import {
 } from '../../sync/sessionRootPaths'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from '../../sync/syncEngine'
 import { relinkTaskToSession, resolveBestUsableTaskSession } from '../../sync/sessionTaskLink'
+import { cleanupMergedTaskWorktree } from '../../sync/taskAutoMerge'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
@@ -1994,16 +1996,6 @@ async function persistSuccessfulTaskMerge(options: {
         return null
     }
 
-    if (statusChangingToFinished) {
-        void handleTaskMovedToFinished({
-            store: options.store,
-            engine: options.engine,
-            namespace: options.namespace,
-            taskId: options.task.id,
-            preferredLocale: options.preferredLocale
-        })
-    }
-
     emitTaskUpdatedEvent({
         engine: options.engine,
         namespace: options.namespace,
@@ -2014,6 +2006,24 @@ async function persistSuccessfulTaskMerge(options: {
             mergeRuntime: updatedTask.mergeRuntime
         }
     })
+
+    await cleanupMergedTaskWorktree({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task: updatedTask,
+        sessionId: options.sessionId
+    })
+
+    if (statusChangingToFinished) {
+        void handleTaskMovedToFinished({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            taskId: options.task.id,
+            preferredLocale: options.preferredLocale
+        })
+    }
 
     return updatedTask
 }
@@ -2030,6 +2040,7 @@ const taskAttachmentSchema = z.object({
 const createTaskSchema = z.object({
     title: z.string().min(1).max(255),
     description: z.string().max(200_000).optional(),
+    goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).optional(),
     workspaceId: z.string().min(1).optional(),
@@ -2041,14 +2052,19 @@ const createTaskSchema = z.object({
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     sortKey: z.number().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
-    subTasks: z.array(TodoItemSchema).optional()
+    subTasks: z.array(TodoItemSchema).optional(),
+    contract: z.string().max(200_000).nullable().optional(),
+    handoff: z.string().max(200_000).nullable().optional(),
+    evidence: z.string().max(200_000).nullable().optional(),
+    source: TaskSourceSchema.optional()
 })
 
 const updateTaskSchema = z.object({
     title: z.string().min(1).max(255).optional(),
     description: z.string().max(200_000).nullable().optional(),
+    goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
-    source: z.literal('manual').optional(),
+    source: TaskSourceSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
     workspaceId: z.string().min(1).nullable().optional(),
     agentFlavor: AgentFlavorSchema.nullable().optional(),
@@ -2060,11 +2076,15 @@ const updateTaskSchema = z.object({
     sortKey: z.number().nullable().optional(),
     activeSessionId: z.string().min(1).nullable().optional(),
     attachments: z.array(taskAttachmentSchema).optional(),
-    subTasks: z.array(TodoItemSchema).optional()
+    subTasks: z.array(TodoItemSchema).optional(),
+    contract: z.string().max(200_000).nullable().optional(),
+    handoff: z.string().max(200_000).nullable().optional(),
+    evidence: z.string().max(200_000).nullable().optional()
 })
 
 const listTasksQuerySchema = z.object({
-    includeArchived: z.enum(['true', 'false']).optional()
+    includeArchived: z.enum(['true', 'false']).optional(),
+    goalId: z.string().min(1).optional()
 })
 
 const attachSessionSchema = z.object({
@@ -3820,8 +3840,12 @@ export function createTasksRoutes(options: {
         }
 
         const query = listTasksQuerySchema.safeParse(c.req.query())
-        const includeArchived = query.success ? query.data.includeArchived === 'true' : false
-        const tasks = options.store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { includeArchived })
+        if (!query.success) {
+            return c.json({ error: 'Invalid query' }, 400)
+        }
+        const includeArchived = query.data.includeArchived === 'true'
+        const goalId = query.data.goalId
+        const tasks = options.store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { includeArchived, goalId })
         return c.json({ tasks })
     })
 
@@ -3838,6 +3862,12 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        if (parsed.data.goalId) {
+            const goal = options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
+            if (!goal || goal.projectId !== projectId) {
+                return c.json({ error: 'Goal not found' }, 404)
+            }
+        }
 
         const attachments = parsed.data.attachments ?? []
         const attachmentsCheck = validateAttachments(attachments)
@@ -3852,6 +3882,7 @@ export function createTasksRoutes(options: {
         const created = options.store.tasks.createTask({
             id: taskId,
             projectId,
+            goalId: parsed.data.goalId ?? null,
             title: parsed.data.title,
             description: parsed.data.description ?? null,
             status: parsed.data.status ?? 'planned',
@@ -3867,7 +3898,10 @@ export function createTasksRoutes(options: {
             attachments: attachments.length > 0 ? attachments : undefined,
             subTasks: parsed.data.subTasks,
             subTasksUpdatedAt: parsed.data.subTasks ? Date.now() : null,
-            source: 'manual'
+            contract: parsed.data.contract ?? null,
+            handoff: parsed.data.handoff ?? null,
+            evidence: parsed.data.evidence ?? null,
+            source: parsed.data.source ?? 'manual'
         })
 
         const engine = options.getSyncEngine()
@@ -3904,6 +3938,12 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        if (parsed.data.goalId) {
+            const goal = options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
+            if (!goal || goal.projectId !== existing.projectId) {
+                return c.json({ error: 'Goal not found' }, 404)
+            }
+        }
 
         const attachments = parsed.data.attachments
         if (attachments) {
@@ -3922,6 +3962,7 @@ export function createTasksRoutes(options: {
 
         const updated = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
             title: parsed.data.title,
+            goalId: parsed.data.goalId,
             description: parsed.data.description,
             status: parsed.data.status,
             source: parsed.data.source,
@@ -3940,6 +3981,9 @@ export function createTasksRoutes(options: {
             attachments: attachments,
             subTasks: parsed.data.subTasks,
             subTasksUpdatedAt: parsed.data.subTasks !== undefined ? Date.now() : undefined,
+            contract: parsed.data.contract,
+            handoff: parsed.data.handoff,
+            evidence: parsed.data.evidence,
             finishedAt
         })
 
@@ -4472,7 +4516,9 @@ export function createTasksRoutes(options: {
 
         if (mergeWorkflow.kind === 'valid') {
             targetBranch = normalizeBranchName(mergeWorkflow.workflow.targetBranch) ?? targetBranch
-        } else if (!targetBranch) {
+        } else if (mergeWorkflow.kind === 'missing') {
+            targetBranch = targetBranch ?? createDefaultMergeWorkflow(project.worktreeTargetBranch).targetBranch
+        } else {
             return c.json({
                 ...baseState,
                 canMerge: false,
@@ -4629,7 +4675,7 @@ export function createTasksRoutes(options: {
                 sessionId,
                 session
             })
-            if (mergeWorkflowLoad.kind !== 'valid') {
+            if (mergeWorkflowLoad.kind === 'invalid') {
                 const blockedReason = mergeWorkflowLoad.error
                 const blockedTask = updateTaskMergeRuntime({
                     store: options.store,
@@ -4640,18 +4686,18 @@ export function createTasksRoutes(options: {
                     sessionId,
                     retryCount: getNextMergeAttemptRetryCount(resolvedTask),
                     failureFingerprint: buildMergeFailureFingerprint({
-                        reason: mergeWorkflowLoad.kind === 'missing' ? 'contract_missing' : 'contract_invalid',
+                        reason: 'contract_invalid',
                         blockedReason
                     }),
-                    latestNote: mergeWorkflowLoad.kind === 'missing'
-                        ? buildMissingMergeWorkflowContractNote(mergeWorkflowLoad.manifestPath)
-                        : buildInvalidMergeWorkflowContractNote(mergeWorkflowLoad.manifestPath, blockedReason),
+                    latestNote: buildInvalidMergeWorkflowContractNote(mergeWorkflowLoad.manifestPath, blockedReason),
                     blockedReason
                 }) ?? resolvedTask
                 return c.json({ error: blockedReason, mergeRuntime: blockedTask.mergeRuntime }, 400)
             }
 
-            const mergeWorkflow = mergeWorkflowLoad.workflow
+            const mergeWorkflow = mergeWorkflowLoad.kind === 'valid'
+                ? mergeWorkflowLoad.workflow
+                : createDefaultMergeWorkflow(project.worktreeTargetBranch)
             const targetBranch = normalizeBranchName(parsed.data.targetBranch)
                 ?? normalizeBranchName(mergeWorkflow.targetBranch)
                 ?? normalizeBranchName(project.worktreeTargetBranch)

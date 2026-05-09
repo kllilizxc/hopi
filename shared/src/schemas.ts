@@ -227,6 +227,64 @@ export const ProjectSchema = z.object({
 
 export type Project = z.infer<typeof ProjectSchema>
 
+export const GoalStatusSchema = z.enum(['planning', 'active', 'blocked', 'paused', 'done', 'archived'])
+export type GoalStatus = z.infer<typeof GoalStatusSchema>
+
+export const GoalSchema = z.object({
+    id: z.string(),
+    projectId: z.string(),
+    namespace: z.string(),
+    title: z.string().trim().min(1),
+    description: z.string().nullable().optional(),
+    status: GoalStatusSchema,
+    successCriteria: z.string().nullable().optional(),
+    autopilotEnabled: z.boolean(),
+    deployRequiresApproval: z.boolean(),
+    currentFocus: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    archivedAt: z.number().nullable().optional()
+})
+export type Goal = z.infer<typeof GoalSchema>
+
+export const GoalDecisionTopicStatusSchema = z.enum(['waiting', 'resolved'])
+export type GoalDecisionTopicStatus = z.infer<typeof GoalDecisionTopicStatusSchema>
+
+export const GoalDecisionTopicSchema = z.object({
+    id: z.string(),
+    projectId: z.string(),
+    goalId: z.string(),
+    taskId: z.string().nullable().optional(),
+    title: z.string().trim().min(1),
+    body: z.string(),
+    status: GoalDecisionTopicStatusSchema,
+    blocking: z.boolean(),
+    resolution: z.string().nullable().optional(),
+    createdAt: z.number(),
+    updatedAt: z.number()
+})
+export type GoalDecisionTopic = z.infer<typeof GoalDecisionTopicSchema>
+
+export const GoalListResponseSchema = z.object({
+    goals: z.array(GoalSchema)
+})
+export type GoalListResponse = z.infer<typeof GoalListResponseSchema>
+
+export const GoalResponseSchema = z.object({
+    goal: GoalSchema
+})
+export type GoalResponse = z.infer<typeof GoalResponseSchema>
+
+export const GoalDecisionTopicListResponseSchema = z.object({
+    topics: z.array(GoalDecisionTopicSchema)
+})
+export type GoalDecisionTopicListResponse = z.infer<typeof GoalDecisionTopicListResponseSchema>
+
+export const GoalDecisionTopicResponseSchema = z.object({
+    topic: GoalDecisionTopicSchema
+})
+export type GoalDecisionTopicResponse = z.infer<typeof GoalDecisionTopicResponseSchema>
+
 export const WorkspaceSchema = z.object({
     id: z.string(),
     projectId: z.string(),
@@ -257,6 +315,9 @@ export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>
 export const TaskWorkflowPhaseSchema = z.string().min(1).max(64).regex(/^[a-z0-9_.-]+$/i)
 export type TaskWorkflowPhase = z.infer<typeof TaskWorkflowPhaseSchema>
+
+export const TaskSourceSchema = z.enum(['manual', 'improvements_scan', 'project_init', 'planner', 'radar', 'evaluator'])
+export type TaskSource = z.infer<typeof TaskSourceSchema>
 
 export const GitFileStatusSchema = z.object({
     fileName: z.string(),
@@ -365,6 +426,7 @@ export type TaskInitRuntime = z.infer<typeof TaskInitRuntimeSchema>
 export const TaskSchema = z.object({
     id: z.string(),
     projectId: z.string(),
+    goalId: z.string().nullable().optional(),
     title: z.string(),
     description: z.string().nullable().optional(),
     status: TaskStatusSchema,
@@ -377,8 +439,11 @@ export const TaskSchema = z.object({
     model: ModelNameSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
-    source: z.enum(['manual', 'improvements_scan', 'project_init']).nullable().optional(),
+    source: TaskSourceSchema.nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),
+    contract: z.string().nullable().optional(),
+    handoff: z.string().nullable().optional(),
+    evidence: z.string().nullable().optional(),
     workflowProfile: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
     workflowPhase: TaskWorkflowPhaseSchema.nullable().optional(),
     subTasks: TodosSchema.nullable().optional(),

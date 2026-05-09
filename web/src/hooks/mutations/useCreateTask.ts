@@ -24,6 +24,10 @@ type CreateTaskInput = {
     projectId: string
     title: string
     description?: string
+    goalId?: string | null
+    contract?: string | null
+    handoff?: string | null
+    evidence?: string | null
     status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
     priority?: 'high' | 'medium' | 'low'
     workspaceId?: string
@@ -41,6 +45,7 @@ type CreateTaskInput = {
 type CreateTaskMutationContext = {
     projectId: string
     temporaryTaskId: string
+    tasksKey: ReturnType<typeof queryKeys.tasks>
 }
 
 function upsertTask(tasks: Task[], task: Task): Task[] {
@@ -82,6 +87,10 @@ function buildOptimisticTask(input: CreateTaskInput, temporaryTaskId: string): T
         attachments: input.attachments ?? null,
         source: 'manual',
         sourceTaskId: null,
+        goalId: input.goalId ?? null,
+        contract: input.contract ?? null,
+        handoff: input.handoff ?? null,
+        evidence: input.evidence ?? null,
         workflowProfile: input.workflowProfile,
         workflowPhase: input.workflowPhase ?? null,
         subTasks: input.subTasks ?? null,
@@ -125,6 +134,10 @@ export function useCreateTask(api: ApiClient | null): {
                 workflowPhase: input.workflowPhase,
                 sortKey: input.sortKey,
                 attachments: input.attachments,
+                goalId: input.goalId,
+                contract: input.contract,
+                handoff: input.handoff,
+                evidence: input.evidence,
                 subTasks: input.subTasks
             })
             return result.task
@@ -132,23 +145,26 @@ export function useCreateTask(api: ApiClient | null): {
         onMutate: async (input) => {
             const temporaryTaskId = createOptimisticTaskId()
             const optimisticTask = buildOptimisticTask(input, temporaryTaskId)
+            const tasksKey = queryKeys.tasks(input.projectId, input.goalId ?? null)
 
-            await queryClient.cancelQueries({ queryKey: queryKeys.tasks(input.projectId) })
+            await queryClient.cancelQueries({ queryKey: queryKeys.tasksRoot(input.projectId) })
 
-            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(input.projectId), (current) => ({
+            queryClient.setQueryData<TasksResponse>(tasksKey, (current) => ({
                 tasks: upsertTask(current?.tasks ?? [], optimisticTask)
             }))
 
             return {
                 projectId: input.projectId,
-                temporaryTaskId
+                temporaryTaskId,
+                tasksKey
             }
         },
         onSuccess: (task, _input, context) => {
             const projectId = context?.projectId ?? task.projectId
             const temporaryTaskId = context?.temporaryTaskId ?? null
+            const tasksKey = context?.tasksKey ?? queryKeys.tasks(projectId, task.goalId ?? null)
 
-            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(projectId), (current) => {
+            queryClient.setQueryData<TasksResponse>(tasksKey, (current) => {
                 const tasks = current?.tasks ?? []
                 return {
                     tasks: temporaryTaskId
@@ -160,14 +176,15 @@ export function useCreateTask(api: ApiClient | null): {
             if (temporaryTaskId) {
                 void queryClient.removeQueries({ queryKey: queryKeys.task(temporaryTaskId), exact: true })
             }
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(projectId) })
         },
         onError: (_error, input, context) => {
             if (!context?.temporaryTaskId) {
                 return
             }
 
-            queryClient.setQueryData<TasksResponse>(queryKeys.tasks(input.projectId), (current) => {
+            const tasksKey = context.tasksKey ?? queryKeys.tasks(input.projectId, input.goalId ?? null)
+            queryClient.setQueryData<TasksResponse>(tasksKey, (current) => {
                 if (!current?.tasks) {
                     return current
                 }

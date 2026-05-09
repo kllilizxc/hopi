@@ -73,7 +73,7 @@ export const TaskSessionChat = memo(function TaskSessionChat(props: {
                 try {
                     const linked = await props.api.attachTaskSession(props.taskId, resumedSessionId)
                     queryClient.setQueryData(queryKeys.task(linked.task.id), linked)
-                    void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(props.projectId) })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(props.projectId) })
                 } catch {
                 }
             }

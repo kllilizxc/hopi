@@ -3,6 +3,8 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { OmcRuntimeStore } from '../sync/omc/runtimeStore'
+import { GoalDecisionTopicStore } from './goalDecisionTopicStore'
+import { GoalStore } from './goalStore'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
@@ -25,6 +27,8 @@ export type {
     OmcProgramRow,
     OmcWorkAttemptRow,
     OmcWorkOrderRow,
+    StoredGoal,
+    StoredGoalDecisionTopic,
     StoredMachine,
     StoredMessage,
     StoredProject,
@@ -35,6 +39,8 @@ export type {
     StoredWorkspace,
     VersionedUpdateResult
 } from './types'
+export { GoalDecisionTopicStore } from './goalDecisionTopicStore'
+export { GoalStore } from './goalStore'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
 export { OmcRuntimeStore }
@@ -45,7 +51,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 19
+const SCHEMA_VERSION: number = 20
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -55,6 +61,8 @@ const REQUIRED_TABLES = [
     'projects',
     'workspaces',
     'tasks',
+    'goals',
+    'goal_decision_topics',
     'omc_programs',
     'omc_planning_runs',
     'omc_plan_runtimes',
@@ -79,6 +87,8 @@ export class Store {
     readonly projects: ProjectStore
     readonly workspaces: WorkspaceStore
     readonly tasks: TaskStore
+    readonly goals: GoalStore
+    readonly goalDecisionTopics: GoalDecisionTopicStore
     readonly omcRuntime: OmcRuntimeStore
     readonly users: UserStore
     readonly push: PushStore
@@ -124,6 +134,8 @@ export class Store {
         this.projects = new ProjectStore(this.db)
         this.workspaces = new WorkspaceStore(this.db)
         this.tasks = new TaskStore(this.db)
+        this.goals = new GoalStore(this.db)
+        this.goalDecisionTopics = new GoalDecisionTopicStore(this.db)
         this.omcRuntime = new OmcRuntimeStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
@@ -198,6 +210,13 @@ export class Store {
 
         if (currentVersion === 18 && SCHEMA_VERSION === 19) {
             this.migrateFromV18ToV19()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 19 && SCHEMA_VERSION === 20) {
+            this.migrateFromV19ToV20()
+            this.ensureLatestSchemaColumns()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -424,9 +443,29 @@ export class Store {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_project_path ON workspaces(project_id, path);
             CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
 
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                success_criteria TEXT,
+                autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+                deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
+                current_focus TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_goals_project_namespace ON goals(project_id, namespace);
+            CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project_id, status, archived_at);
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
+                goal_id TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL,
@@ -451,11 +490,15 @@ export class Store {
                 merge_runtime TEXT,
                 preview_runtime TEXT,
                 init_runtime TEXT,
+                contract TEXT,
+                handoff TEXT,
+                evidence TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 finished_at INTEGER,
                 archived_at INTEGER,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE SET NULL,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
@@ -463,6 +506,27 @@ export class Store {
             CREATE INDEX IF NOT EXISTS idx_tasks_project_archived ON tasks(project_id, archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, status, sort_key);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_source_status ON tasks(project_id, source, status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
+
+            CREATE TABLE IF NOT EXISTS goal_decision_topics (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                task_id TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                resolution TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
 
             CREATE TABLE IF NOT EXISTS omc_programs (
                 id TEXT PRIMARY KEY,
@@ -839,6 +903,9 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 19) {
             this.migrateFromV18ToV19()
+        }
+        if (SCHEMA_VERSION >= 20) {
+            this.migrateFromV19ToV20()
         }
     }
 
@@ -1292,6 +1359,70 @@ export class Store {
                 FOREIGN KEY (namespace, source_topic_id) REFERENCES omc_topics(namespace, id) ON DELETE SET NULL
             );
             CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
+        `)
+    }
+
+    private migrateFromV19ToV20(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                success_criteria TEXT,
+                autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+                deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
+                current_focus TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_goals_project_namespace ON goals(project_id, namespace);
+            CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project_id, status, archived_at);
+        `)
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v19 to v20 migration.')
+        }
+        if (!taskColumns.has('goal_id')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN goal_id TEXT REFERENCES goals(id) ON DELETE SET NULL')
+        }
+        if (!taskColumns.has('contract')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN contract TEXT')
+        }
+        if (!taskColumns.has('handoff')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN handoff TEXT')
+        }
+        if (!taskColumns.has('evidence')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN evidence TEXT')
+        }
+
+        this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
+
+            CREATE TABLE IF NOT EXISTS goal_decision_topics (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                task_id TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                resolution TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
         `)
     }
 

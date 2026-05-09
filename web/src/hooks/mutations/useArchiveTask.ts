@@ -22,7 +22,7 @@ export function useArchiveTask(api: ApiClient | null): {
             await api.archiveTask(input.taskId)
         },
         onSuccess: (_, input) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(input.projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(input.projectId) })
         }
     })
 
@@ -32,4 +32,3 @@ export function useArchiveTask(api: ApiClient | null): {
         error: mutation.error instanceof Error ? mutation.error.message : mutation.error ? 'Failed to archive task' : null,
     }
 }
-

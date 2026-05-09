@@ -23,6 +23,7 @@ import { createProjectsRoutes } from './routes/projects'
 import { createOmcRoutes } from './routes/omc'
 import { createWorkspacesRoutes } from './routes/workspaces'
 import { createTasksRoutes } from './routes/tasks'
+import { createGoalsRoutes } from './routes/goals'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -140,7 +141,7 @@ function createWebApp(options: {
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
     const corsMiddleware = createCorsMiddleware({
         allowedOrigins: corsOrigins,
-        allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+        allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
         allowHeaders: ['authorization', 'content-type']
     })
     app.use('/api/*', corsMiddleware)
@@ -164,6 +165,7 @@ function createWebApp(options: {
     app.route('/api', createOmcRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
     app.route('/api', createWorkspacesRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
     app.route('/api', createTasksRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createGoalsRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
 
     // Skip static serving in relay mode, show helpful message on root
     if (options.relayMode) {

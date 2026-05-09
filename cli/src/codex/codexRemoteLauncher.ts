@@ -9,7 +9,6 @@ import { DiffProcessor } from './utils/diffProcessor';
 import { logger } from '@/ui/logger';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import type { CodexSessionConfig } from './types';
-import { buildHopiMcpBridge } from './utils/buildHopiMcpBridge';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
@@ -26,8 +25,6 @@ import {
     type RemoteLauncherDisplayContext,
     type RemoteLauncherExitReason
 } from '@/modules/common/remote/RemoteLauncherBase';
-
-type HappyServer = Awaited<ReturnType<typeof buildHopiMcpBridge>>['server'];
 
 function shouldUseAppServer(): boolean {
     const useMcpServer = process.env.CODEX_USE_MCP_SERVER === '1';
@@ -131,7 +128,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     private permissionHandler: CodexPermissionHandler | null = null;
     private reasoningProcessor: ReasoningProcessor | null = null;
     private diffProcessor: DiffProcessor | null = null;
-    private happyServer: HappyServer | null = null;
     private abortController: AbortController = new AbortController();
     private currentThreadId: string | null = null;
     private currentTurnId: string | null = null;
@@ -751,8 +747,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             });
         }
 
-        const { server: happyServer, mcpServers } = await buildHopiMcpBridge(session.client);
-        this.happyServer = happyServer;
+        const mcpServers = {};
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),
@@ -1095,11 +1090,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         }
 
         this.clearAbortHandlers(this.session.client.rpcHandlerManager);
-
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
 
         this.permissionHandler?.reset();
         this.reasoningProcessor?.abort();

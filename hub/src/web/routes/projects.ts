@@ -1,4 +1,5 @@
 import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
@@ -239,6 +240,9 @@ export function createProjectsRoutes(options: {
             status: 'planned',
             sortKey: Date.now(),
             workspaceId: defaultWorkspaceId,
+            agentFlavor: DEFAULT_AGENT_FLAVOR,
+            model: DEFAULT_TASK_MODEL,
+            modelMode: null,
             source: 'project_init',
             workflowProfile: 'default'
         })

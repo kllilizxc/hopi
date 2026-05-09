@@ -192,6 +192,113 @@ describe('startSessionFromTask', () => {
         expect(store.messages.getMessages(spawned.id, 10)).toHaveLength(0)
     })
 
+    it('includes task contract in the default kickoff message', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-task-contract-kickoff'
+        const taskId = 'task-contract-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: 'goal-1',
+            projectId,
+            namespace,
+            title: 'Goal 1'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId: 'goal-1',
+            title: 'Clarify goal and plan first iteration',
+            description: 'Clarify the goal before implementation.',
+            status: 'planned',
+            workspaceId,
+            source: 'planner',
+            contract: [
+                '## Objective',
+                '',
+                'Use the brainstorming protocol to clarify this Goal before implementation.',
+                '',
+                '## Acceptance',
+                '',
+                '- Update .hopi/docs/goals/goal-1.md.'
+            ].join('\n')
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-task-contract-kickoff',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, message: { text?: string }) {
+                kickoffText = message.text ?? ''
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Task: Clarify goal and plan first iteration')
+        expect(kickoffText).toContain('Task Contract:')
+        expect(kickoffText).toContain('Use the brainstorming protocol to clarify this Goal before implementation.')
+        expect(kickoffText).toContain('.hopi/docs/goals/goal-1.md')
+        expect(kickoffText).toContain('Role: Planner')
+        expect(kickoffText).toContain('Allowed transitions:')
+    })
+
     it('blocks task when setup workflow from actions manifest fails', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -1447,6 +1554,900 @@ describe('startSessionFromTask', () => {
         expect(spawnedAgent).toBe('codex')
     })
 
+    it('defaults task sessions to Codex GPT-5.5 when task and project have no agent or model', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-default-codex'
+        const taskId = 'task-default-codex'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planned',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-default-codex',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedAgent = ''
+        let spawnedModel: string | undefined
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(_machineId: string, _path: string, agent: string, model?: string) {
+                spawnedAgent = agent
+                spawnedModel = model
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedAgent).toBe('codex')
+        expect(spawnedModel).toBe('gpt-5.5')
+    })
+
+    it('starts planner goal tasks in safe-yolo Codex mode without requiring an actions manifest', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-no-manifest'
+        const goalId = 'goal-planner-no-manifest'
+        const taskId = 'task-planner-no-manifest'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Clarify autonomous loop',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal',
+            status: 'planned',
+            source: 'planner',
+            workspaceId,
+            contract: '## Objective\nClarify first.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-planner-no-manifest',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let appliedPermissionMode = ''
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig(_sessionId: string, patch: { permissionMode?: string; collaborationMode?: string }) {
+                appliedPermissionMode = patch.permissionMode ?? patch.collaborationMode ?? appliedPermissionMode
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(appliedPermissionMode).toBe('safe-yolo')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(kickoffText).toContain('Role: Planner')
+        expect(kickoffText).toContain('docs maintenance')
+    })
+
+    it('starts planner goal tasks in the main workspace without creating a worktree', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-main-workspace'
+        const goalId = 'goal-planner-main-workspace'
+        const taskId = 'task-planner-main-workspace'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Clarify autonomous loop',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal',
+            status: 'planned',
+            source: 'planner',
+            workspaceId,
+            contract: '## Objective\nClarify first.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-planner-main-workspace',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeName: string | undefined
+        let spawnedWorktreeWorkspacePaths: string[] | undefined
+        let spawnedWorktreeTargetBranch: string | undefined
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                worktreeName?: string,
+                _resumeSessionId?: string,
+                worktreeWorkspacePaths?: string[],
+                worktreeTargetBranch?: string
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeName = worktreeName
+                spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                spawnedWorktreeTargetBranch = worktreeTargetBranch
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(workspacePath)
+        expect(spawnedSessionType).toBe('simple')
+        expect(spawnedWorktreeName).toBeUndefined()
+        expect(spawnedWorktreeWorkspacePaths).toBeUndefined()
+        expect(spawnedWorktreeTargetBranch).toBeUndefined()
+    })
+
+    it('starts radar goal tasks in the main workspace without creating a worktree', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar-main-workspace'
+        const goalId = 'goal-radar-main-workspace'
+        const taskId = 'task-radar-main-workspace'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Maintain autonomous loop',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Radar: scan goal docs and technical debt',
+            status: 'planned',
+            source: 'radar',
+            workspaceId,
+            contract: '## Objective\nScan docs.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-radar-main-workspace',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeName: string | undefined
+        let spawnedWorktreeWorkspacePaths: string[] | undefined
+        let spawnedWorktreeTargetBranch: string | undefined
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                worktreeName?: string,
+                _resumeSessionId?: string,
+                worktreeWorkspacePaths?: string[],
+                worktreeTargetBranch?: string
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeName = worktreeName
+                spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                spawnedWorktreeTargetBranch = worktreeTargetBranch
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(workspacePath)
+        expect(spawnedSessionType).toBe('simple')
+        expect(spawnedWorktreeName).toBeUndefined()
+        expect(spawnedWorktreeWorkspacePaths).toBeUndefined()
+        expect(spawnedWorktreeTargetBranch).toBeUndefined()
+    })
+
+    it('starts goal generator tasks without requiring an actions manifest', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-generator-no-manifest'
+        const goalId = 'goal-generator-no-manifest'
+        const taskId = 'task-generator-no-manifest'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Implement autonomous loop',
+            status: 'active'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement first slice',
+            status: 'planned',
+            source: 'manual',
+            workspaceId,
+            contract: '## Objective\nImplement first slice.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-generator-no-manifest',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let readSessionFileCalled = false
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile() {
+                readSessionFileCalled = true
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(readSessionFileCalled).toBe(false)
+        const updated = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updated?.status).toBe('in_progress')
+        expect(updated?.initRuntime?.status).toBe('succeeded')
+        expect(updated?.initRuntime?.latestNote).toContain('Goal role skipped setup workflow')
+        expect(kickoffText).toContain('Role: Generator')
+        expect(kickoffText).toContain('Task Contract')
+        expect(kickoffText).toContain('{ "type": "update_current_task", "status": "in_review"')
+    })
+
+    it('starts goal review tasks as evaluator handoffs and keeps them in review', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-review'
+        const goalId = 'goal-review'
+        const taskId = 'task-goal-review'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Ship checked work',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-goal-review-session',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: { type: 'text', text: 'raw previous generator transcript that should not be copied' }
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Review implementation',
+            status: 'in_review',
+            source: 'manual',
+            activeSessionId: previousSession.id,
+            workspaceId,
+            contract: '## Acceptance\n- Verify behavior.',
+            handoff: '## Summary\nGenerator says checks passed.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-review',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        const updatedReviewTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedReviewTask?.status).toBe('in_review')
+        expect(updatedReviewTask?.activeSessionId).toBe(previousSession.id)
+        expect(kickoffText).toContain('Role: Evaluator')
+        expect(kickoffText).toContain('Generator Handoff')
+        expect(kickoffText).toContain('Evidence Packet')
+        expect(kickoffText).toContain('HOPI will request the existing worktree merge flow before closing accepted work')
+        expect(kickoffText).not.toContain('Previous session messages')
+        expect(kickoffText).not.toContain('raw previous generator transcript')
+    })
+
+    it('starts goal review sessions in the generator worktree without creating a new worktree', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-review-worktree'
+        const goalId = 'goal-review-worktree'
+        const taskId = 'task-goal-review-worktree'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+        const generatorWorktreePath = '/tmp/workspace-worktrees/task-1234'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Ship checked work',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-goal-review-worktree-session',
+            {
+                path: generatorWorktreePath,
+                host: 'localhost',
+                worktree: {
+                    basePath: workspacePath,
+                    branch: 'hopi-task-1234',
+                    name: 'task-1234',
+                    worktreePath: generatorWorktreePath,
+                    createdAt: 123
+                }
+            },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Review implementation',
+            status: 'in_review',
+            source: 'manual',
+            activeSessionId: previousSession.id,
+            workspaceId,
+            contract: '## Acceptance\n- Verify behavior.',
+            handoff: '## Summary\nGenerator says checks passed.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-review-worktree',
+            { path: generatorWorktreePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeWorkspacePaths: string[] | undefined
+        let spawnedWorktreeTargetBranch: string | undefined
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                worktreeWorkspacePaths?: string[],
+                worktreeTargetBranch?: string
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                spawnedWorktreeTargetBranch = worktreeTargetBranch
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(generatorWorktreePath)
+        expect(spawnedSessionType).toBe('simple')
+        expect(spawnedWorktreeWorkspacePaths).toBeUndefined()
+        expect(spawnedWorktreeTargetBranch).toBeUndefined()
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.activeSessionId).toBe(previousSession.id)
+    })
+
+    it('continues rejected goal generator tasks in the previous worktree', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-generator-rework'
+        const goalId = 'goal-generator-rework'
+        const taskId = 'task-goal-generator-rework'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+        const generatorWorktreePath = '/tmp/workspace-worktrees/task-rework'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Ship checked work',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-goal-generator-rework-session',
+            {
+                path: generatorWorktreePath,
+                host: 'localhost',
+                worktree: {
+                    basePath: workspacePath,
+                    branch: 'hopi-task-rework',
+                    name: 'task-rework',
+                    worktreePath: generatorWorktreePath,
+                    createdAt: 123
+                }
+            },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Revise implementation',
+            status: 'planned',
+            source: 'manual',
+            activeSessionId: previousSession.id,
+            workspaceId,
+            contract: '## Acceptance\n- Fix review feedback.',
+            handoff: '## Feedback\nTraversal helper is missing.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-generator-rework',
+            { path: generatorWorktreePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeWorkspacePaths: string[] | undefined
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                worktreeWorkspacePaths?: string[]
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeWorkspacePaths = worktreeWorkspacePaths
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(generatorWorktreePath)
+        expect(spawnedSessionType).toBe('simple')
+        expect(spawnedWorktreeWorkspacePaths).toBeUndefined()
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.activeSessionId).toBe(spawned.id)
+        expect(kickoffText).toContain('Role: Generator')
+    })
+
     it('passes all project workspace paths for multi-workspace worktree sessions', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -1817,7 +2818,7 @@ describe('startSessionFromTask', () => {
         expect(appliedConfigs.some((patch) => patch.permissionMode === 'plan')).toBe(true)
     })
 
-    it('maps codex task plan mode to collaboration mode when starting session', async () => {
+    it('maps legacy Codex plan mode to safe-yolo permission mode when starting session', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -1890,8 +2891,9 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(appliedConfigs.some((patch) => patch.collaborationMode === 'plan')).toBe(true)
+        expect(appliedConfigs.some((patch) => patch.permissionMode === 'safe-yolo')).toBe(true)
         expect(appliedConfigs.some((patch) => patch.permissionMode === 'plan')).toBe(false)
+        expect(appliedConfigs.some((patch) => patch.collaborationMode === 'plan')).toBe(false)
     })
 
     it('prefers task model mode over project default model mode', async () => {

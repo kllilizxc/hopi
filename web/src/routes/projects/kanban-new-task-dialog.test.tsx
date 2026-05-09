@@ -93,12 +93,12 @@ vi.mock('@/components/NewSession/ModelSelector', () => ({
     )
 }))
 
-function renderDialog(open = true) {
+function renderDialog(open = true, defaultAgent: 'claude' | 'codex' | 'gemini' | 'opencode' = 'claude') {
     return renderWithProviders(
         <NewTaskDialog
             open={open}
             onOpenChange={vi.fn()}
-            defaultAgent="claude"
+            defaultAgent={defaultAgent}
             defaultPermissionMode="acceptEdits"
             workflowStrategies={[
                 { id: 'default', label: 'Default', defaultTaskPhase: null, phaseOptions: [] },
@@ -169,6 +169,13 @@ describe('NewTaskDialog', () => {
         expect(stored).not.toHaveProperty('title')
         expect(stored).not.toHaveProperty('description')
         expect(stored).not.toHaveProperty('draft')
+    })
+
+    it('uses GPT-5.5 when Codex is the default task agent', () => {
+        renderDialog(true, 'codex')
+
+        expect(screen.getByLabelText('Agent')).toHaveValue('codex')
+        expect(screen.getByLabelText('Model')).toHaveValue('gpt-5.5')
     })
 
     it('reloads localStorage values when reopened', async () => {

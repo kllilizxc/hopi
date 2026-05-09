@@ -22,7 +22,7 @@ export function useDeleteTask(api: ApiClient | null): {
             await api.deleteTask(input.taskId)
         },
         onSuccess: (_, input) => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(input.projectId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(input.projectId) })
             void queryClient.removeQueries({ queryKey: queryKeys.task(input.taskId) })
         }
     })

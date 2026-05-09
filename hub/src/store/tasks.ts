@@ -15,6 +15,7 @@ import type { StoredTask } from './types'
 type DbTaskRow = {
     id: string
     project_id: string
+    goal_id: string | null
     title: string
     description: string | null
     status: string
@@ -39,6 +40,9 @@ type DbTaskRow = {
     merge_runtime: string | null
     preview_runtime: string | null
     init_runtime: string | null
+    contract: string | null
+    handoff: string | null
+    evidence: string | null
     created_at: number
     updated_at: number
     finished_at: number | null
@@ -91,6 +95,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
     return {
         id: row.id,
         projectId: row.project_id,
+        goalId: row.goal_id,
         title: row.title,
         description: row.description,
         status: row.status,
@@ -115,6 +120,9 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         mergeRuntime: parseTaskMergeRuntime(safeJsonParse(row.merge_runtime)),
         previewRuntime: parseTaskPreviewRuntime(safeJsonParse(row.preview_runtime)),
         initRuntime: parseTaskInitRuntime(safeJsonParse(row.init_runtime)),
+        contract: row.contract,
+        handoff: row.handoff,
+        evidence: row.evidence,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         finishedAt: row.finished_at,
@@ -165,15 +173,28 @@ export function listTasksByActiveSessionIdAndNamespace(
     return rows.map(toStoredTask)
 }
 
-export function listTasksByProject(db: Database, projectId: string, options?: { includeArchived?: boolean }): StoredTask[] {
+export function listTasksByProject(
+    db: Database,
+    projectId: string,
+    options?: { includeArchived?: boolean; goalId?: string | null }
+): StoredTask[] {
     const includeArchived = Boolean(options?.includeArchived)
-    const rows = includeArchived
-        ? db.prepare(
-            'SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC'
-        ).all(projectId) as DbTaskRow[]
-        : db.prepare(
-            'SELECT * FROM tasks WHERE project_id = ? AND archived_at IS NULL ORDER BY updated_at DESC'
-        ).all(projectId) as DbTaskRow[]
+    const goalId = options?.goalId || null
+    const rows = goalId
+        ? includeArchived
+            ? db.prepare(
+                'SELECT * FROM tasks WHERE project_id = ? AND goal_id = ? ORDER BY updated_at DESC'
+            ).all(projectId, goalId) as DbTaskRow[]
+            : db.prepare(
+                'SELECT * FROM tasks WHERE project_id = ? AND goal_id = ? AND archived_at IS NULL ORDER BY updated_at DESC'
+            ).all(projectId, goalId) as DbTaskRow[]
+        : includeArchived
+            ? db.prepare(
+                'SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC'
+            ).all(projectId) as DbTaskRow[]
+            : db.prepare(
+                'SELECT * FROM tasks WHERE project_id = ? AND archived_at IS NULL ORDER BY updated_at DESC'
+            ).all(projectId) as DbTaskRow[]
     return rows.map(toStoredTask)
 }
 
@@ -181,24 +202,41 @@ export function listTasksByProjectAndNamespace(
     db: Database,
     projectId: string,
     namespace: string,
-    options?: { includeArchived?: boolean }
+    options?: { includeArchived?: boolean; goalId?: string | null }
 ): StoredTask[] {
     const includeArchived = Boolean(options?.includeArchived)
-    const rows = includeArchived
-        ? db.prepare(`
-            SELECT t.*
-            FROM tasks t
-            JOIN projects p ON p.id = t.project_id
-            WHERE t.project_id = ? AND p.namespace = ?
-            ORDER BY t.updated_at DESC
-        `).all(projectId, namespace) as DbTaskRow[]
-        : db.prepare(`
-            SELECT t.*
-            FROM tasks t
-            JOIN projects p ON p.id = t.project_id
-            WHERE t.project_id = ? AND p.namespace = ? AND t.archived_at IS NULL
-            ORDER BY t.updated_at DESC
-        `).all(projectId, namespace) as DbTaskRow[]
+    const goalId = options?.goalId || null
+    const rows = goalId
+        ? includeArchived
+            ? db.prepare(`
+                SELECT t.*
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.project_id = ? AND p.namespace = ? AND t.goal_id = ?
+                ORDER BY t.updated_at DESC
+            `).all(projectId, namespace, goalId) as DbTaskRow[]
+            : db.prepare(`
+                SELECT t.*
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.project_id = ? AND p.namespace = ? AND t.goal_id = ? AND t.archived_at IS NULL
+                ORDER BY t.updated_at DESC
+            `).all(projectId, namespace, goalId) as DbTaskRow[]
+        : includeArchived
+            ? db.prepare(`
+                SELECT t.*
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.project_id = ? AND p.namespace = ?
+                ORDER BY t.updated_at DESC
+            `).all(projectId, namespace) as DbTaskRow[]
+            : db.prepare(`
+                SELECT t.*
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.project_id = ? AND p.namespace = ? AND t.archived_at IS NULL
+                ORDER BY t.updated_at DESC
+            `).all(projectId, namespace) as DbTaskRow[]
     return rows.map(toStoredTask)
 }
 
@@ -207,6 +245,7 @@ export function createTask(
     task: {
         id: string
         projectId: string
+        goalId?: string | null
         title: string
         description?: string | null
         status: string
@@ -231,6 +270,9 @@ export function createTask(
         mergeRuntime?: TaskMergeRuntime | null
         previewRuntime?: TaskPreviewRuntime | null
         initRuntime?: TaskInitRuntime | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
     }
 ): StoredTask {
     const now = Date.now()
@@ -239,21 +281,22 @@ export function createTask(
     const initRuntime = prepareTaskRuntime(task.initRuntime, task.activeSessionId, now, normalizeTaskInitRuntime)
     db.prepare(`
         INSERT INTO tasks (
-            id, project_id, title, description, status, priority,
+            id, project_id, goal_id, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
-            permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime,
+            permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime, contract, handoff, evidence,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
-            @id, @project_id, @title, @description, @status, @priority,
+            @id, @project_id, @goal_id, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
-            @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime,
+            @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime, @contract, @handoff, @evidence,
             @created_at, @updated_at, NULL, NULL
         )
     `).run({
         id: task.id,
         project_id: task.projectId,
+        goal_id: task.goalId ?? null,
         title: task.title,
         description: task.description ?? null,
         status: task.status,
@@ -277,6 +320,9 @@ export function createTask(
         merge_runtime: mergeRuntime !== undefined && mergeRuntime !== null ? JSON.stringify(mergeRuntime) : null,
         preview_runtime: previewRuntime !== undefined && previewRuntime !== null ? JSON.stringify(previewRuntime) : null,
         init_runtime: initRuntime !== undefined && initRuntime !== null ? JSON.stringify(initRuntime) : null,
+        contract: task.contract ?? null,
+        handoff: task.handoff ?? null,
+        evidence: task.evidence ?? null,
         created_at: now,
         updated_at: now
     })
@@ -294,6 +340,7 @@ export function updateTaskByNamespace(
     namespace: string,
     patch: {
         title?: string
+        goalId?: string | null
         description?: string | null
         status?: string
         priority?: string | null
@@ -317,6 +364,9 @@ export function updateTaskByNamespace(
         mergeRuntime?: TaskMergeRuntime | null
         previewRuntime?: TaskPreviewRuntime | null
         initRuntime?: TaskInitRuntime | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
         finishedAt?: number | null
         archivedAt?: number | null
     }
@@ -334,6 +384,7 @@ export function updateTaskByNamespace(
     const next = {
         ...current,
         title: patch.title ?? current.title,
+        goalId: patch.goalId !== undefined ? patch.goalId : current.goalId,
         description: patch.description !== undefined ? patch.description : current.description,
         status: patch.status ?? current.status,
         priority: patch.priority !== undefined ? patch.priority : current.priority,
@@ -367,6 +418,9 @@ export function updateTaskByNamespace(
             : activeSessionChanged
                 ? syncTaskRuntimeForSessionChange(current.initRuntime, nextActiveSessionId, now, normalizeTaskInitRuntime)
                 : current.initRuntime,
+        contract: patch.contract !== undefined ? patch.contract : current.contract,
+        handoff: patch.handoff !== undefined ? patch.handoff : current.handoff,
+        evidence: patch.evidence !== undefined ? patch.evidence : current.evidence,
         worktreeMergedAt: activeSessionChanged
             ? (preserveMergeResultOnSessionChange ? current.worktreeMergedAt : null)
             : patch.worktreeMergedAt !== undefined
@@ -389,6 +443,7 @@ export function updateTaskByNamespace(
     db.prepare(`
         UPDATE tasks SET
             title = @title,
+            goal_id = @goal_id,
             description = @description,
             status = @status,
             priority = @priority,
@@ -408,6 +463,9 @@ export function updateTaskByNamespace(
             merge_runtime = @merge_runtime,
             preview_runtime = @preview_runtime,
             init_runtime = @init_runtime,
+            contract = @contract,
+            handoff = @handoff,
+            evidence = @evidence,
             worktree_merged_at = @worktree_merged_at,
             worktree_merge_commit = @worktree_merge_commit,
             merged_diff_snapshot = @merged_diff_snapshot,
@@ -419,6 +477,7 @@ export function updateTaskByNamespace(
         id: taskId,
         project_id: current.projectId,
         title: next.title,
+        goal_id: next.goalId,
         description: next.description,
         status: next.status,
         priority: next.priority,
@@ -438,6 +497,9 @@ export function updateTaskByNamespace(
         merge_runtime: next.mergeRuntime !== undefined && next.mergeRuntime !== null ? JSON.stringify(next.mergeRuntime) : null,
         preview_runtime: next.previewRuntime !== undefined && next.previewRuntime !== null ? JSON.stringify(next.previewRuntime) : null,
         init_runtime: next.initRuntime !== undefined && next.initRuntime !== null ? JSON.stringify(next.initRuntime) : null,
+        contract: next.contract,
+        handoff: next.handoff,
+        evidence: next.evidence,
         worktree_merged_at: next.worktreeMergedAt,
         worktree_merge_commit: next.worktreeMergeCommit,
         merged_diff_snapshot: next.mergedDiffSnapshot !== undefined && next.mergedDiffSnapshot !== null ? JSON.stringify(next.mergedDiffSnapshot) : null,
