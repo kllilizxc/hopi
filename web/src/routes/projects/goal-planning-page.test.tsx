@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderWithProviders } from '@/test/renderWithProviders'
 import type { GoalTodoResponse } from '@/types/api'
@@ -53,6 +53,51 @@ describe('GoalPlanningDocument', () => {
             '/projects/project-1/tasks/task-123'
         )
         expect(screen.getByTestId('planning-raw-markdown')).toHaveTextContent('## Goal `goal-1` - Story system')
+    })
+
+    it('lays planning sections out as scan-friendly columns', () => {
+        const todo: GoalTodoResponse = {
+            exists: true,
+            path: '/repo/.hopi/docs/todo.md',
+            rawMarkdown: null,
+            updatedAt: null,
+            sections: [
+                {
+                    kind: 'ready',
+                    title: 'Ship the first playable slice',
+                    body: 'Ready now.',
+                    taskId: null
+                },
+                {
+                    kind: 'candidate',
+                    title: 'Tune generated task contracts',
+                    body: 'Candidate notes.',
+                    taskId: null
+                },
+                {
+                    kind: 'candidate',
+                    title: 'Improve planning parser',
+                    body: 'Parser notes.',
+                    taskId: null
+                }
+            ]
+        }
+
+        renderWithProviders(
+            <GoalPlanningDocument
+                projectId="project-1"
+                todo={todo}
+                isLoading={false}
+                error={null}
+            />
+        )
+
+        const grid = screen.getByTestId('planning-section-grid')
+        expect(grid).toHaveClass('grid-cols-[repeat(auto-fit,minmax(320px,1fr))]')
+
+        const candidateColumn = screen.getByTestId('planning-section-candidate')
+        expect(within(candidateColumn).getByText('Tune generated task contracts')).toBeInTheDocument()
+        expect(within(candidateColumn).getByText('Improve planning parser')).toBeInTheDocument()
     })
 
     it('keeps missing planning documents as a full-page state', () => {

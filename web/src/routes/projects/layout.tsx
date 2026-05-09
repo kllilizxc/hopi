@@ -293,17 +293,15 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 isLoading={props.isGoalsLoading}
                 onSelectGoal={props.onSelectGoal}
                 onCreateGoal={props.onOpenCreateGoal}
+                leading={(
+                    <CompactTabs
+                        items={projectViewTabs}
+                        selectedId={isPlanningRoute ? 'planning' : 'board'}
+                        onSelect={handleProjectViewTab}
+                        ariaLabel={t('projects.tabs.label')}
+                    />
+                )}
             />
-
-            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
-                <CompactTabs
-                    items={projectViewTabs}
-                    selectedId={isPlanningRoute ? 'planning' : 'board'}
-                    onSelect={handleProjectViewTab}
-                    ariaLabel={t('projects.tabs.label')}
-                    className="mx-auto w-full max-w-content"
-                />
-            </div>
 
             {isPlanningRoute ? (
                 <div className="flex-1 min-h-0">

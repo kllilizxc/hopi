@@ -8,6 +8,7 @@ type GoalSwitcherProps = {
     goals: Goal[]
     selectedGoalId: string | null
     isLoading?: boolean
+    leading?: React.ReactNode
     onSelectGoal: (goalId: string) => void
     onCreateGoal: () => void
 }
@@ -20,8 +21,16 @@ export function GoalSwitcher(props: GoalSwitcherProps) {
         : selected?.title ?? t('projects.goals.empty')
 
     return (
-        <div className="flex items-center gap-2 border-b border-[var(--app-divider)] px-3 py-2">
-            <div className="min-w-0 flex-1">
+        <div
+            data-testid="goal-switcher-toolbar"
+            className="flex flex-wrap items-end gap-2 border-b border-[var(--app-divider)] px-3 py-2"
+        >
+            {props.leading ? (
+                <div className="max-w-full shrink-0 overflow-x-auto">
+                    {props.leading}
+                </div>
+            ) : null}
+            <div className="min-w-[min(100%,18rem)] flex-1">
                 <div className="text-[11px] font-medium uppercase text-[var(--app-hint)]">
                     {t('projects.goals.current')}
                 </div>

@@ -146,74 +146,62 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                         ) : null}
                     </div>
                 ) : (
-                    <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-                        <aside className="lg:sticky lg:top-3 lg:self-start">
-                            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3">
-                                <div className="text-xs font-semibold text-[var(--app-hint)]">
-                                    {t('projects.planning.sectionIndex')}
-                                </div>
-                                <div className="mt-3 flex flex-col gap-2">
-                                    {groupedSections.map((group) => (
-                                        <a
-                                            key={group.kind}
-                                            href={`#planning-${group.kind}`}
-                                            className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
-                                        >
-                                            <span>{t(`projects.todo.kind.${group.kind}`)}</span>
-                                            <Tag size="xs" variant={TAG_VARIANTS[group.kind]}>
-                                                {group.items.length}
+                    <div className="space-y-4">
+                        <div className="-mx-3 overflow-x-auto px-3 pb-2 lg:mx-0 lg:px-0">
+                            <div
+                                data-testid="planning-section-grid"
+                                className="grid min-w-[960px] grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-3 xl:min-w-0 xl:grid-cols-[repeat(auto-fit,minmax(360px,1fr))]"
+                            >
+                                {groupedSections.map((group) => (
+                                    <section
+                                        key={group.kind}
+                                        id={`planning-${group.kind}`}
+                                        data-testid={`planning-section-${group.kind}`}
+                                        className="flex max-h-[calc(100vh-260px)] min-h-80 min-w-0 scroll-mt-3 flex-col overflow-hidden rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)]"
+                                    >
+                                        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--app-divider)] bg-[var(--app-secondary-bg)] p-3">
+                                            <Tag size="sm" variant={TAG_VARIANTS[group.kind]}>
+                                                {t(`projects.todo.kind.${group.kind}`)}
                                             </Tag>
-                                        </a>
-                                    ))}
-                                </div>
-                            </div>
-                        </aside>
-
-                        <main className="min-w-0 space-y-5">
-                            {groupedSections.map((group) => (
-                                <section key={group.kind} id={`planning-${group.kind}`} className="scroll-mt-3">
-                                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                                        <Tag size="sm" variant={TAG_VARIANTS[group.kind]}>
-                                            {t(`projects.todo.kind.${group.kind}`)}
-                                        </Tag>
-                                        <span className="text-xs text-[var(--app-hint)]">
-                                            {t('projects.todo.count', { n: group.items.length })}
-                                        </span>
-                                    </div>
-                                    <div className="space-y-3">
-                                        {group.items.map((section, index) => (
-                                            <article
-                                                key={`${group.kind}-${section.taskId ?? section.title}-${index}`}
-                                                className="rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-4"
-                                            >
-                                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                                    <h2 className="min-w-0 text-base font-semibold leading-snug text-[var(--app-fg)]">
-                                                        {section.title}
-                                                    </h2>
-                                                    {section.taskId ? (
-                                                        <a
-                                                            href={getTaskUrl(props.projectId, section.taskId)}
-                                                            className="shrink-0 text-xs font-medium text-[var(--app-link)] hover:underline"
-                                                        >
-                                                            {t('projects.todo.linkedTask', { id: section.taskId })}
-                                                        </a>
-                                                    ) : null}
-                                                </div>
-                                                {section.body ? (
-                                                    <div className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--app-hint)]">
-                                                        {section.body}
+                                            <span className="text-xs text-[var(--app-hint)]">
+                                                {t('projects.todo.count', { n: group.items.length })}
+                                            </span>
+                                        </div>
+                                        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+                                            {group.items.map((section, index) => (
+                                                <article
+                                                    key={`${group.kind}-${section.taskId ?? section.title}-${index}`}
+                                                    className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3"
+                                                >
+                                                    <div className="flex flex-col gap-1.5">
+                                                        <h2 className="min-w-0 text-sm font-semibold leading-snug text-[var(--app-fg)]">
+                                                            {section.title}
+                                                        </h2>
+                                                        {section.taskId ? (
+                                                            <a
+                                                                href={getTaskUrl(props.projectId, section.taskId)}
+                                                                className="w-fit text-xs font-medium text-[var(--app-link)] hover:underline"
+                                                            >
+                                                                {t('projects.todo.linkedTask', { id: section.taskId })}
+                                                            </a>
+                                                        ) : null}
                                                     </div>
-                                                ) : null}
-                                            </article>
-                                        ))}
-                                    </div>
-                                </section>
-                            ))}
+                                                    {section.body ? (
+                                                        <div className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--app-hint)]">
+                                                            {section.body}
+                                                        </div>
+                                                    ) : null}
+                                                </article>
+                                            ))}
+                                        </div>
+                                    </section>
+                                ))}
+                            </div>
+                        </div>
 
-                            {rawMarkdown ? (
-                                <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
-                            ) : null}
-                        </main>
+                        {rawMarkdown ? (
+                            <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
+                        ) : null}
                     </div>
                 )}
             </div>
