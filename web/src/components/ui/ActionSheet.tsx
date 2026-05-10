@@ -28,7 +28,7 @@ export function ActionSheet(props: ActionSheetProps) {
                 <DialogPrimitive.Content
                     ref={contentRef}
                     className={cn(
-                        'fixed inset-x-0 bottom-0 z-50 w-full max-h-[calc(var(--app-viewport-h)-12px)] overflow-y-auto rounded-t-2xl border border-[var(--app-border)] bg-[var(--app-secondary-bg)] shadow-2xl outline-none animate-slide-up motion-reduce:animate-none',
+                        'fixed inset-x-0 bottom-0 z-50 w-full max-h-[calc(var(--app-viewport-h)-12px)] overflow-y-auto rounded-t-2xl bg-[var(--app-secondary-bg)] shadow-2xl outline-none animate-slide-up motion-reduce:animate-none',
                         props.contentClassName
                     )}
                 >

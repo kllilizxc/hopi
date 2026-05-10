@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
+import { CompactTabs } from '@/components/ui/CompactTabs'
 
 type AgentSelectorProps = {
     agent: AgentType
@@ -19,28 +20,17 @@ const AgentSelectorComponent = (props: AgentSelectorProps) => {
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.agent')}
             </label>
-            <div className="inline-flex w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-1">
-                {AGENTS.map((agent) => (
-                    <button
-                        key={agent}
-                        type="button"
-                        disabled={props.isDisabled}
-                        onClick={() => props.onAgentChange(agent)}
-                        className={`
-                            flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-all
-                            focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] focus:ring-offset-1
-                            disabled:cursor-not-allowed disabled:opacity-50
-                            ${
-                                props.agent === agent
-                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)] shadow-sm'
-                                    : 'text-[var(--app-fg)] hover:bg-[var(--app-hover)]'
-                            }
-                        `}
-                    >
-                        {t(`agent.${agent}`)}
-                    </button>
-                ))}
-            </div>
+            <CompactTabs
+                items={AGENTS.map((agent) => ({
+                    id: agent,
+                    label: t(`agent.${agent}`)
+                }))}
+                selectedId={props.agent}
+                onSelect={(agent) => props.onAgentChange(agent as AgentType)}
+                ariaLabel={t('newSession.agent')}
+                distribution="equal"
+                disabled={props.isDisabled}
+            />
         </>
     )
 

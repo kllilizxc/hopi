@@ -139,7 +139,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                             placeholder={t('login.placeholder')}
                             autoComplete="current-password"
                             disabled={isLoading}
-                            className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent disabled:opacity-50"
+                            className="w-full px-3 py-2.5 rounded-lg app-shadow-border bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] disabled:opacity-50"
                         />
                     </div>
 
@@ -199,7 +199,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                                                 setServerError(null)
                                             }}
                                             placeholder={t('login.server.placeholder')}
-                                            className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent"
+                                            className="w-full px-3 py-2.5 rounded-lg app-shadow-border bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)]"
                                         />
                                         <div className="text-[11px] text-[var(--app-hint)]">
                                             {t('login.server.hint')}

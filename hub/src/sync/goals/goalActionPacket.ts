@@ -3,8 +3,9 @@ import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
 import type { DecryptedMessage } from '@hopi/protocol/types'
-import type { Store, StoredTask } from '../../store'
+import type { Store, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import type { SyncEngine } from '../syncEngine'
+import { updateGoalTodoTaskState } from './goalTodo'
 
 const taskStatusSchema = z.enum(['planned', 'in_progress', 'in_review', 'finished', 'blocked'])
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
@@ -20,6 +21,7 @@ const goalActionPacketSchema = z.object({
             status: taskStatusSchema.optional(),
             priority: taskPrioritySchema.optional(),
             contract: z.string().max(20_000).nullable().optional(),
+            todoRef: z.string().trim().min(1).max(255).nullable().optional(),
             workflowProfile: z.string().trim().min(1).max(64).optional(),
             source: taskSourceSchema.optional()
         }),
@@ -60,6 +62,15 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeText(value: string): string {
     return value.replace(/\r\n/g, '\n').trim()
+}
+
+function normalizeTaskTitleKey(value: string): string {
+    return value
+        .normalize('NFKC')
+        .trim()
+        .replace(/^\d+[\).\s]+/, '')
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
 }
 
 function stringifyUnknown(value: unknown): string {
@@ -185,6 +196,7 @@ function normalizeActionPacketInput(raw: unknown): unknown {
                 return {
                     ...item,
                     status: normalizeTaskStatus(item.status),
+                    todoRef: getAlias(item, 'todoRef', 'todo_ref'),
                     workflowProfile: getAlias(item, 'workflowProfile', 'workflow_profile'),
                     contract: buildContractFromPlannerFields(item),
                     source: item.source
@@ -435,6 +447,36 @@ function getDefaultCreatedTaskSource(_current: StoredTask): string {
     return 'manual'
 }
 
+function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorkspace | null {
+    return project.defaultWorkspaceId
+        ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function syncGoalTodoRef(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef'>
+    kind: 'promoted' | 'done'
+}): void {
+    if (!options.task.goalId || !options.task.goalTodoRef) {
+        return
+    }
+    const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return
+    }
+    updateGoalTodoTaskState({
+        project: options.project,
+        goal,
+        defaultWorkspace: getDefaultWorkspace(options.store, options.project),
+        todoRef: options.task.goalTodoRef,
+        taskId: options.task.id,
+        kind: options.kind
+    })
+}
+
 function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): 'planner' | 'generator' | 'evaluator' | 'radar' | null {
     if (!task.goalId) return null
 
@@ -490,6 +532,10 @@ export function applyGoalActionPacketFromSession(options: {
     if (!goal || goal.projectId !== current.projectId) {
         return false
     }
+    const project = options.store.projects.getProjectByNamespace(current.projectId, options.namespace)
+    if (!project) {
+        return false
+    }
 
     const messages = options.store.messages.getMessages(options.sessionId, 50)
     const packet = findLatestGoalActionPacket(messages.map((message) => ({
@@ -504,13 +550,36 @@ export function applyGoalActionPacketFromSession(options: {
     }
 
     let touchedProject = false
+    const existingGoalTaskTitleKeys = new Set(
+        options.store.tasks
+            .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
+            .map((task) => normalizeTaskTitleKey(task.title))
+            .filter((title) => title.length > 0)
+    )
+    const existingGoalTaskTodoRefs = new Set(
+        options.store.tasks
+            .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
+            .map((task) => typeof task.goalTodoRef === 'string' ? normalizeTaskTitleKey(task.goalTodoRef) : '')
+            .filter((todoRef) => todoRef.length > 0)
+    )
 
     for (const action of packet.actions) {
         if (action.type === 'create_goal_task') {
+            const titleKey = normalizeTaskTitleKey(action.title)
+            const todoRef = action.todoRef?.trim() || null
+            const todoRefKey = todoRef ? normalizeTaskTitleKey(todoRef) : ''
+            if (todoRefKey && existingGoalTaskTodoRefs.has(todoRefKey)) {
+                continue
+            }
+            if (titleKey && existingGoalTaskTitleKeys.has(titleKey)) {
+                continue
+            }
+
             const created = options.store.tasks.createTask({
                 id: randomUUID(),
                 projectId: current.projectId,
                 goalId: current.goalId,
+                goalTodoRef: todoRef,
                 title: action.title,
                 description: action.description,
                 status: action.status ?? 'planned',
@@ -526,6 +595,19 @@ export function applyGoalActionPacketFromSession(options: {
                 sourceTaskId: current.id,
                 contract: action.contract
             })
+            if (titleKey) {
+                existingGoalTaskTitleKeys.add(titleKey)
+            }
+            if (todoRefKey) {
+                existingGoalTaskTodoRefs.add(todoRefKey)
+                syncGoalTodoRef({
+                    store: options.store,
+                    namespace: options.namespace,
+                    project,
+                    task: created,
+                    kind: 'promoted'
+                })
+            }
             options.engine.handleRealtimeEvent({
                 type: 'task-added',
                 taskId: created.id,
@@ -557,6 +639,15 @@ export function applyGoalActionPacketFromSession(options: {
                 finishedAt: statusChangingToFinished ? Date.now() : undefined
             })
             if (updated) {
+                if (statusChangingToFinished && updated.goalTodoRef) {
+                    syncGoalTodoRef({
+                        store: options.store,
+                        namespace: options.namespace,
+                        project,
+                        task: updated,
+                        kind: 'done'
+                    })
+                }
                 emitTaskUpdated({
                     engine: options.engine,
                     namespace: options.namespace,

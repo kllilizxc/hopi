@@ -26,6 +26,7 @@ const BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_POLL_INTERVAL_MS = 1_000
 const BOOTSTRAP_PREVIEW_TIMEOUT_MS = 120_000
+const EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS = 1
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -41,6 +42,10 @@ function getMessageSentFrom(message: DecryptedMessage): string | null {
     if (!('sentFrom' in record.meta)) return null
     const sentFrom = (record.meta as { sentFrom?: unknown }).sentFrom
     return typeof sentFrom === 'string' ? sentFrom : null
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
 function isInternalAutomationLocalId(localId: unknown): boolean {
@@ -485,6 +490,9 @@ export class TaskAutomation {
                 return
             }
             if (goalActionResult === 'goal_task') {
+                if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
+                    return
+                }
                 if (isMergeRuntimeReadyEvent(message)) {
                     this.maybeRequestAutoMergeAcceptedTask(sessionId)
                 }
@@ -525,6 +533,50 @@ export class TaskAutomation {
         }) ? 'applied' : 'goal_task'
     }
 
+    private tryRecoverMissingEvaluatorActionPacket(sessionId: string): boolean {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return false
+
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current || current.archivedAt || !current.goalId) return false
+        if (current.status !== 'in_review' || current.source !== 'evaluator') return false
+
+        const session = this.engine.getSession(sessionId)
+        const metadata = toRecord(session?.metadata)
+        if (metadata?.hopiTaskRole !== 'evaluator') return false
+
+        const blockedReason = 'Evaluator finished without a HOPI_ACTIONS packet.'
+        const currentRetryCount = current.initRuntime?.retryCount ?? 0
+        const shouldBlock = currentRetryCount >= EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS
+
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: shouldBlock ? 'blocked' : 'in_review',
+            source: 'manual',
+            initRuntime: buildTaskInitRuntime({
+                current: current.initRuntime,
+                activeSessionId: current.activeSessionId,
+                status: shouldBlock ? 'blocked' : 'retrying',
+                sessionId,
+                retryCount: shouldBlock ? currentRetryCount : currentRetryCount + 1,
+                latestNote: shouldBlock
+                    ? `${blockedReason} Review automation is blocked until the task is retried.`
+                    : `${blockedReason} Requeued evaluator review (${currentRetryCount + 1}/${EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS}).`,
+                blockedReason: shouldBlock ? blockedReason : null
+            })
+        })
+        if (!updated) return false
+
+        this.engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: updated.id,
+            projectId: updated.projectId,
+            namespace: linked.namespace,
+            data: { taskId: updated.id }
+        })
+
+        return true
+    }
+
     private maybeRequestAutoMergeAcceptedTask(sessionId: string): void {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
@@ -533,7 +585,8 @@ export class TaskAutomation {
             store: this.store,
             engine: this.engine,
             namespace: linked.namespace,
-            taskId: linked.taskId
+            taskId: linked.taskId,
+            preferredSessionId: sessionId
         })
     }
 

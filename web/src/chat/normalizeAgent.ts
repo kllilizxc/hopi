@@ -1,5 +1,6 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
 import { asNumber, asString, isObject } from '@hopi/protocol'
+import { withCodexPlanUpdateMeta } from '@hopi/protocol/chat'
 
 function asBoolean(value: unknown): boolean | null {
     return typeof value === 'boolean' ? value : null
@@ -394,7 +395,7 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
-                meta
+                meta: withCodexPlanUpdateMeta(meta)
             }
         }
 

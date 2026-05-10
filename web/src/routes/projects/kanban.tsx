@@ -140,8 +140,6 @@ function getTaskPriorityLabelKey(priority: TaskPriority): string {
 type KanbanStatusTheme = {
     accent1: string
     accent2: string
-    wash1: string
-    wash2: string
 }
 
 function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
@@ -149,37 +147,27 @@ function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
         case 'planned':
             return {
                 accent1: 'var(--app-kanban-planned)',
-                accent2: 'var(--app-kanban-planned-2)',
-                wash1: 'var(--app-kanban-planned-bg)',
-                wash2: 'var(--app-kanban-planned-bg-2)'
+                accent2: 'var(--app-kanban-planned-2)'
             }
         case 'in_progress':
             return {
                 accent1: 'var(--app-kanban-in-progress)',
-                accent2: 'var(--app-kanban-in-progress-2)',
-                wash1: 'var(--app-kanban-in-progress-bg)',
-                wash2: 'var(--app-kanban-in-progress-bg-2)'
+                accent2: 'var(--app-kanban-in-progress-2)'
             }
         case 'in_review':
             return {
                 accent1: 'var(--app-kanban-in-review)',
-                accent2: 'var(--app-kanban-in-review-2)',
-                wash1: 'var(--app-kanban-in-review-bg)',
-                wash2: 'var(--app-kanban-in-review-bg-2)'
+                accent2: 'var(--app-kanban-in-review-2)'
             }
         case 'blocked':
             return {
                 accent1: 'var(--app-kanban-blocked)',
-                accent2: 'var(--app-kanban-blocked-2)',
-                wash1: 'var(--app-kanban-blocked-bg)',
-                wash2: 'var(--app-kanban-blocked-bg-2)'
+                accent2: 'var(--app-kanban-blocked-2)'
             }
         case 'finished':
             return {
                 accent1: 'var(--app-kanban-finished)',
-                accent2: 'var(--app-kanban-finished-2)',
-                wash1: 'var(--app-kanban-finished-bg)',
-                wash2: 'var(--app-kanban-finished-bg-2)'
+                accent2: 'var(--app-kanban-finished-2)'
             }
         default: {
             const _exhaustive: never = status
@@ -345,18 +333,6 @@ type TouchDragState = {
     dragStarted: boolean
 }
 
-const ACTIVE_TASK_CARD_BACKGROUND = [
-    'radial-gradient(96% 88% at 8% 0%, var(--kanban-wash-1) 0%, transparent 48%)',
-    'radial-gradient(92% 82% at 100% 0%, var(--kanban-wash-2) 0%, transparent 44%)',
-    'var(--app-bg)'
-].join(', ')
-
-const ARCHIVE_TASK_CARD_BACKGROUND = [
-    'radial-gradient(104% 88% at 8% 0%, var(--app-kanban-archive-bg) 0%, transparent 50%)',
-    'radial-gradient(96% 84% at 100% 0%, var(--app-kanban-archive-bg-2) 0%, transparent 46%)',
-    'var(--app-bg)'
-].join(', ')
-
 type KanbanTaskCardProps = {
     task: Task
     index: number
@@ -388,12 +364,20 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const isCreatingTask = isOptimisticTaskId(props.task.id)
     const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
     const usesProjectDefaultAgent = !props.task.agentFlavor
-    const useArchiveStyle = props.task.status === 'finished'
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
     const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
-    const cardBackground = useArchiveStyle ? ARCHIVE_TASK_CARD_BACKGROUND : ACTIVE_TASK_CARD_BACKGROUND
     const canExpandSubTasks = subTasks.length > 0
+    const cardStyle = {
+        '--app-card-hover-bg': 'color-mix(in srgb, var(--app-bg) 90%, #000 10%)',
+        '--app-card-hover-glow': 'color-mix(in srgb, var(--kanban-accent-1) 42%, transparent)',
+        '--app-card-hover-shadow-1': 'color-mix(in srgb, var(--kanban-accent-1) 24%, rgba(15, 23, 42, 0.32))',
+        '--app-card-hover-shadow-2': 'color-mix(in srgb, var(--kanban-accent-2) 18%, rgba(15, 23, 42, 0.22))',
+        '--app-card-selected-bg': 'color-mix(in srgb, var(--app-bg) 94%, var(--kanban-accent-1) 6%)',
+        '--app-card-selected-glow': 'color-mix(in srgb, var(--kanban-accent-1) 24%, transparent)',
+        '--app-card-selected-shadow-1': 'color-mix(in srgb, var(--kanban-accent-1) 22%, rgba(15, 23, 42, 0.3))',
+        '--app-card-selected-shadow-2': 'color-mix(in srgb, var(--kanban-accent-2) 16%, rgba(15, 23, 42, 0.22))'
+    } as CSSProperties
 
     useEffect(() => {
         if (!canExpandSubTasks) {
@@ -447,21 +431,10 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     event.preventDefault()
                     setIsMoveMenuOpen(true)
                 }}
-                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left shadow-sm ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${useArchiveStyle
-                    ? ''
-                    : 'ring-1 ring-inset ring-[var(--app-divider)]'
-                    } ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
+                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left app-shadow-surface ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
                     } ${props.isDragging ? 'opacity-60' : ''
                     }`}
-                style={{
-                    background: cardBackground,
-                    '--app-card-hover-tint-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
-                    '--app-card-hover-tint-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)',
-                    '--app-card-selected-tint-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
-                    '--app-card-selected-tint-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)',
-                    '--app-card-selected-shadow-1': useArchiveStyle ? 'var(--app-kanban-archive-bg)' : 'var(--kanban-wash-1)',
-                    '--app-card-selected-shadow-2': useArchiveStyle ? 'var(--app-kanban-archive-bg-2)' : 'var(--kanban-wash-2)'
-                } as CSSProperties}
+                style={cardStyle}
             >
                 <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
@@ -595,7 +568,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                             <span>{isSubTasksExpanded ? t('projects.tasks.subtasks.collapse') : t('projects.tasks.subtasks.expand')}</span>
                         </button>
                         {isSubTasksExpanded ? (
-                            <div className="mt-1.5 w-full flex flex-col gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2">
+                            <div className="mt-1.5 w-full flex flex-col gap-1 rounded-md app-shadow-control bg-[var(--app-secondary-bg)] p-2">
                                 {subTasks.map((subTask) => {
                                     const statusLabel = t(getSubTaskStatusLabelKey(subTask.status))
                                     return (
@@ -1097,15 +1070,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                         const columnStyle = {
                             '--kanban-accent-1': theme.accent1,
                             '--kanban-accent-2': theme.accent2,
-                            '--kanban-wash-1': theme.wash1,
-                            '--kanban-wash-2': theme.wash2,
-                            background: [
-                                'radial-gradient(94% 46% at 50% 0%, var(--kanban-wash-1) 0%, transparent 54%)',
-                                'radial-gradient(84% 52% at 0% 0%, var(--kanban-wash-2) 0%, transparent 50%)',
-                                'var(--app-secondary-bg)'
-                            ].join(', ')
-                        } as React.CSSProperties
-                        const columnClass = `flex flex-col h-full shrink-0 rounded-2xl overflow-hidden shadow-sm transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-full'}`
+                            '--kanban-column-bg': 'var(--app-secondary-bg)',
+                            background: 'var(--kanban-column-bg)'
+                        } as CSSProperties
+                        const columnClass = `kanban-column flex flex-col h-full shrink-0 rounded-2xl overflow-hidden transition-[width] duration-200 ${isCollapsed ? 'w-[72px]' : 'w-full'}`
                         const columnWidth = isCollapsed ? undefined : { minWidth: '280px', maxWidth: '360px', width: 'clamp(280px, calc((100vw - 96px) / 5), 360px)' }
                         const headerClass = isCollapsed
                             ? 'px-2 py-2 flex flex-col items-center gap-2 backdrop-blur-sm'
@@ -1140,13 +1108,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                             >
                                 <div
                                     className={headerClass}
-                                    style={{
-                                        background: [
-                                            'radial-gradient(84% 92% at 0% 0%, var(--kanban-wash-1) 0%, transparent 46%)',
-                                            'radial-gradient(82% 88% at 100% 0%, var(--kanban-wash-2) 0%, transparent 42%)',
-                                            'rgba(0,0,0,0)'
-                                        ].join(', ')
-                                    }}
                                 >
                                     <div className={isCollapsed ? 'flex flex-col items-center gap-1 min-w-0' : 'flex items-center gap-2 min-w-0'}>
                                         <div
@@ -1160,7 +1121,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                         </div>
                                     </div>
                                     <div className={isCollapsed ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1.5'}>
-                                        <div className="shrink-0 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--kanban-accent-1)]">
+                                        <div className="shrink-0 rounded-full bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--kanban-accent-1)]">
                                             {colTasks.length}
                                         </div>
                                         <IconButton
@@ -1185,7 +1146,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                     <ScrollShadow
                                         className="flex-1 min-h-0"
                                         viewportClassName="h-full overflow-y-auto px-2 py-2 flex flex-col gap-2"
-                                        style={{ '--scroll-shadow-bg': 'var(--app-secondary-bg)' } as React.CSSProperties}
+                                        style={{ '--scroll-shadow-bg': 'var(--kanban-column-bg)' } as CSSProperties}
                                         onDragOver={(event) => {
                                             event.preventDefault()
                                             if (!dragStateRef.current) return

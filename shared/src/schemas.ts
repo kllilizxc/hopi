@@ -280,11 +280,13 @@ export const GoalSchema = z.object({
     id: z.string(),
     projectId: z.string(),
     namespace: z.string(),
+    goalKey: z.string().trim().min(1),
     title: z.string().trim().min(1),
     description: z.string().nullable().optional(),
     status: GoalStatusSchema,
     successCriteria: z.string().nullable().optional(),
     autopilotEnabled: z.boolean(),
+    automationPausedAt: z.number().nullable().optional(),
     deployRequiresApproval: z.boolean(),
     currentFocus: z.string().nullable().optional(),
     createdAt: z.number(),
@@ -320,6 +322,43 @@ export const GoalResponseSchema = z.object({
     goal: GoalSchema
 })
 export type GoalResponse = z.infer<typeof GoalResponseSchema>
+
+export const GoalDocsImportPreviewItemSchema = z.object({
+    goalKey: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    path: z.string(),
+    existsInDb: z.boolean(),
+    readyCount: z.number().int().min(0),
+    candidateCount: z.number().int().min(0),
+    warning: z.string().nullable().optional()
+})
+export type GoalDocsImportPreviewItem = z.infer<typeof GoalDocsImportPreviewItemSchema>
+
+export const GoalDocsImportPreviewResponseSchema = z.object({
+    docsRoot: z.string().nullable(),
+    goals: z.array(GoalDocsImportPreviewItemSchema),
+    errors: z.array(z.object({
+        path: z.string(),
+        message: z.string()
+    }))
+})
+export type GoalDocsImportPreviewResponse = z.infer<typeof GoalDocsImportPreviewResponseSchema>
+
+export const GoalDocsImportResponseSchema = z.object({
+    imported: z.array(z.object({
+        goalKey: z.string(),
+        goalId: z.string()
+    })),
+    updated: z.array(z.object({
+        goalKey: z.string(),
+        goalId: z.string()
+    })),
+    skipped: z.array(z.object({
+        goalKey: z.string(),
+        reason: z.string()
+    }))
+})
+export type GoalDocsImportResponse = z.infer<typeof GoalDocsImportResponseSchema>
 
 export const GoalDecisionTopicListResponseSchema = z.object({
     topics: z.array(GoalDecisionTopicSchema)
@@ -473,6 +512,7 @@ export const TaskSchema = z.object({
     id: z.string(),
     projectId: z.string(),
     goalId: z.string().nullable().optional(),
+    goalTodoRef: z.string().nullable().optional(),
     title: z.string(),
     description: z.string().nullable().optional(),
     status: TaskStatusSchema,

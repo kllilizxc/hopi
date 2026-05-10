@@ -43,7 +43,7 @@ export const HappyUserMessage = memo(function HappyUserMessage() {
     const canRetry = status === 'failed' && typeof localId === 'string' && Boolean(ctx.onRetryMessage)
     const onRetry = canRetry ? () => ctx.onRetryMessage!(localId) : undefined
 
-    const userBubbleClass = 'w-fit min-w-0 max-w-[92%] ml-auto rounded-xl bg-[var(--app-secondary-bg)] px-3 py-2 text-[var(--app-fg)] shadow-sm'
+    const userBubbleClass = 'w-fit min-w-0 ml-auto rounded-xl px-3 py-2 text-[var(--app-fg)] shadow-sm'
 
     if (isCliOutput) {
         return (

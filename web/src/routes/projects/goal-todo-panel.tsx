@@ -47,7 +47,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
 
     if (isLoading) {
         return (
-            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs text-[var(--app-hint)]">
+            <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 text-xs text-[var(--app-hint)]">
                 {t('projects.todo.loading')}
             </div>
         )
@@ -55,7 +55,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
 
     if (error) {
         return (
-            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs text-red-600">
+            <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 text-xs text-red-600">
                 {error}
             </div>
         )
@@ -66,7 +66,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
     }
 
     return (
-        <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2">
+        <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2">
             <div className="mx-auto flex w-full max-w-content flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="text-xs font-semibold text-[var(--app-fg)]">
@@ -95,7 +95,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
                     <div className="max-h-72 overflow-y-auto pr-1">
                         <div className="grid gap-2 lg:grid-cols-2">
                             {groupedSections.map((group) => (
-                                <div key={group.kind} className="rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2">
+                                <div key={group.kind} className="rounded-lg app-shadow-border bg-[var(--app-secondary-bg)] p-2">
                                     <div className="mb-2 flex items-center gap-2">
                                         <Tag size="xs" variant={TAG_VARIANTS[group.kind]}>
                                             {t(`projects.todo.kind.${group.kind}`)}
@@ -106,7 +106,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
                                     </div>
                                     <div className="space-y-2">
                                         {group.items.map((section, index) => (
-                                            <div key={`${group.kind}-${section.taskId ?? section.title}-${index}`} className="border-t border-[var(--app-divider)] pt-2 first:border-t-0 first:pt-0">
+                                            <div key={`${group.kind}-${section.taskId ?? section.title}-${index}`} className="app-shadow-divider-t pt-2 first:shadow-none first:pt-0">
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0 text-sm font-medium leading-snug break-words">
                                                         {section.title}
@@ -139,7 +139,7 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
                         <summary className="cursor-pointer select-none font-medium text-[var(--app-fg)]">
                             {t('projects.todo.rawMarkdown')}
                         </summary>
-                        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-2 font-mono text-[11px] leading-relaxed">
+                        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md app-shadow-border bg-[var(--app-secondary-bg)] p-2 font-mono text-[11px] leading-relaxed">
                             {todo.rawMarkdown}
                         </pre>
                     </details>

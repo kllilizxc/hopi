@@ -3,6 +3,7 @@ import { useTranslation } from '@/lib/use-translation'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
 import { ChevronDownIcon } from '@/assets/icons'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { AdaptiveSelectTrigger } from '@/components/ui/AdaptiveSelectTrigger'
 
 export function MachineSelector(props: {
     machines: Machine[]
@@ -42,16 +43,14 @@ export function MachineSelector(props: {
                 disabled={isPickerDisabled}
                 align="start"
                 trigger={
-                    <button
-                        type="button"
+                    <AdaptiveSelectTrigger
                         disabled={isPickerDisabled}
-                        className="group flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-3 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <span className="min-w-0 flex-1 truncate text-left">
                             {selectedLabel || t('newSession.machine')}
                         </span>
                         <ChevronDownIcon className="shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-                    </button>
+                    </AdaptiveSelectTrigger>
                 }
             />
         </div>

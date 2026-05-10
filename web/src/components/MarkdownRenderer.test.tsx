@@ -23,7 +23,9 @@ vi.mock('@assistant-ui/react-markdown', async importOriginal => {
     const actual = await importOriginal<typeof import('@assistant-ui/react-markdown')>()
     return {
         ...actual,
-        MarkdownTextPrimitive: () => null
+        MarkdownTextPrimitive: (props: { className?: string }) => (
+            <div data-testid="markdown-primitive" className={props.className} />
+        )
     }
 })
 
@@ -82,5 +84,14 @@ describe('MarkdownRenderer', () => {
         expect(screen.getByText(/Task Contract:/)).toBeInTheDocument()
         expect(screen.getByText(/调整为成熟的游戏架构/)).toBeInTheDocument()
         expect(screen.queryByText('Task finished')).not.toBeInTheDocument()
+    })
+
+    it('allows long paths and ids to wrap inside the message column', () => {
+        renderWithProviders(
+            <MarkdownRenderer content="Read .hopi/docs/goals/d252bb99-35c4-460e-b8ff-very-long-unbroken-path.md before continuing." />
+        )
+
+        expect(screen.getByTestId('markdown-primitive')).toHaveClass('[overflow-wrap:anywhere]')
+        expect(screen.getByTestId('markdown-primitive')).toHaveClass('leading-relaxed')
     })
 })

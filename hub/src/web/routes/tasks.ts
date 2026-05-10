@@ -1985,6 +1985,7 @@ async function persistSuccessfulTaskMerge(options: {
     sessionMetadataWorktreeBaseCommit: string | undefined
     mergeResult: RpcGitMergeWorktreeResponse
     markFinishedOnMerge?: boolean
+    mergeRuntimeNote?: string
     preferredLocale?: string
 }): Promise<StoredTask | null> {
     const mergedAt = Date.now()
@@ -2021,7 +2022,7 @@ async function persistSuccessfulTaskMerge(options: {
             task: options.task,
             status: 'succeeded',
             sessionId: options.sessionId,
-            latestNote: 'Merge completed in the linked session.',
+            latestNote: options.mergeRuntimeNote ?? 'Merge completed in the linked session.',
             blockedReason: null,
             startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
             completedAt: mergedAt
@@ -4847,18 +4848,37 @@ export function createTasksRoutes(options: {
                     return c.json({ error: message }, resolveMergeExecutionErrorStatus(message))
                 }
 
-                const finishedTask = updateTaskMergeRuntime({
-                    store: options.store,
-                    engine,
-                    namespace,
-                    task: resolvedTask,
-                    status: 'succeeded',
-                    sessionId,
-                    latestNote: mergeState.reason === 'already_merged'
-                        ? 'Target branch already contains this task.'
-                        : 'No committed changes are waiting to merge.',
-                    completedAt: Date.now()
-                }) ?? resolvedTask
+                const latestNote = mergeState.reason === 'already_merged'
+                    ? 'Target branch already contains this task.'
+                    : 'No committed changes are waiting to merge.'
+                const shouldFinishNoopReviewMerge = resolvedTask.status === 'in_review'
+                    && !resolvedTask.worktreeMergedAt
+                const finishedTask = shouldFinishNoopReviewMerge
+                    ? await persistSuccessfulTaskMerge({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        task: resolvedTask,
+                        sessionId,
+                        sessionMetadataWorktreeBaseCommit: session.metadata?.worktree?.baseCommit,
+                        mergeResult: {
+                            success: true,
+                            commitHash: undefined
+                        },
+                        markFinishedOnMerge: true,
+                        mergeRuntimeNote: latestNote,
+                        preferredLocale
+                    }) ?? resolvedTask
+                    : updateTaskMergeRuntime({
+                        store: options.store,
+                        engine,
+                        namespace,
+                        task: resolvedTask,
+                        status: 'succeeded',
+                        sessionId,
+                        latestNote,
+                        completedAt: Date.now()
+                    }) ?? resolvedTask
 
                 return c.json(buildMergeKickoffResponse({
                     task: finishedTask,

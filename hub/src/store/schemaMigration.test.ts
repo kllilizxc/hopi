@@ -491,6 +491,118 @@ function createLegacyV19DbMissingGoalTables(path: string): void {
     db.close()
 }
 
+function createLegacyGoalDbWithoutGoalKey(path: string, userVersion = 22): void {
+    const db = new Database(path, { create: true, readwrite: true, strict: true })
+    db.exec(`PRAGMA user_version = ${userVersion}`)
+    db.exec(`
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY,
+            namespace TEXT NOT NULL DEFAULT 'default',
+            machine_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            default_workspace_id TEXT,
+            default_agent_flavor TEXT,
+            default_permission_mode TEXT,
+            default_model TEXT,
+            default_model_mode TEXT,
+            default_session_type TEXT NOT NULL DEFAULT 'simple',
+            worktree_target_branch TEXT,
+            worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off',
+            worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0,
+            auto_run_enabled INTEGER NOT NULL DEFAULT 0,
+            max_running_sessions INTEGER NOT NULL DEFAULT 5,
+            improvements_enabled INTEGER NOT NULL DEFAULT 0,
+            improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
+            automation_readiness_status TEXT NOT NULL DEFAULT 'unknown',
+            automation_readiness_summary TEXT,
+            automation_readiness_checked_at INTEGER,
+            workflow_profile TEXT,
+            last_improvements_at INTEGER,
+            automation_lane_limits TEXT,
+            agent_output_language TEXT NOT NULL DEFAULT 'system',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            archived_at INTEGER
+        );
+
+        CREATE TABLE workspaces (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            label TEXT,
+            path TEXT NOT NULL,
+            sort INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE goals (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            namespace TEXT NOT NULL DEFAULT 'default',
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'planning',
+            success_criteria TEXT,
+            autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+            deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
+            current_focus TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            archived_at INTEGER,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL,
+            priority TEXT,
+            sort_key REAL,
+            active_session_id TEXT,
+            workspace_id TEXT,
+            agent_flavor TEXT,
+            permission_mode TEXT,
+            model TEXT,
+            model_mode TEXT,
+            attachments TEXT,
+            source TEXT,
+            source_task_id TEXT,
+            workflow_profile TEXT,
+            workflow_phase TEXT,
+            goal_id TEXT REFERENCES goals(id) ON DELETE SET NULL,
+            contract TEXT,
+            handoff TEXT,
+            evidence TEXT,
+            sub_tasks TEXT,
+            sub_tasks_updated_at INTEGER,
+            worktree_merged_at INTEGER,
+            worktree_merge_commit TEXT,
+            merged_diff_snapshot TEXT,
+            merge_runtime TEXT,
+            preview_runtime TEXT,
+            init_runtime TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            finished_at INTEGER,
+            archived_at INTEGER
+        );
+    `)
+    const now = Date.now()
+    db.prepare(
+        'INSERT INTO projects (id, namespace, machine_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('p-goal-key', 'default', 'm1', 'Project', now, now)
+    db.prepare(
+        'INSERT INTO goals (id, project_id, namespace, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('g1', 'p-goal-key', 'default', 'Portable Goal', 'active', now, now)
+    db.prepare(
+        'INSERT INTO goals (id, project_id, namespace, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('g2', 'p-goal-key', 'default', 'Portable Goal', 'planning', now + 1, now + 1)
+    db.close()
+}
+
 afterEach(() => {
     while (createdPaths.length > 0) {
         const path = createdPaths.pop()
@@ -588,7 +700,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(22)
+        expect(userVersion.user_version).toBe(25)
 
         db.close()
     })
@@ -620,7 +732,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(22)
+        expect(userVersion.user_version).toBe(25)
 
         db.close()
     })
@@ -643,6 +755,7 @@ describe('Store schema migration safety', () => {
 
         const taskColumns = (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(taskColumns).toContain('goal_id')
+        expect(taskColumns).toContain('goal_todo_ref')
         expect(taskColumns).toContain('contract')
         expect(taskColumns).toContain('handoff')
         expect(taskColumns).toContain('evidence')
@@ -650,6 +763,8 @@ describe('Store schema migration safety', () => {
         const projectColumns = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(projectColumns).toContain('automation_lane_limits')
         expect(projectColumns).toContain('agent_output_language')
+        const goalColumns = (db.prepare('PRAGMA table_info(goals)').all() as Array<{ name: string }>).map((column) => column.name)
+        expect(goalColumns).toContain('automation_paused_at')
 
         const taskForeignKeys = db.prepare('PRAGMA foreign_key_list(tasks)').all() as Array<{
             table: string
@@ -665,7 +780,7 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(22)
+        expect(userVersion.user_version).toBe(25)
 
         const project = store.projects.createProject({
             id: 'goal-project',
@@ -685,6 +800,8 @@ describe('Store schema migration safety', () => {
             namespace: 'default',
             title: 'Ship autopilot foundation'
         })
+        expect(goal.goalKey).toBe('ship-autopilot-foundation')
+        expect(store.goals.getGoalByGoalKeyAndNamespace(project.id, 'default', goal.goalKey)?.id).toBe(goal.id)
         const topic = store.goalDecisionTopics.create({
             id: 'topic-1',
             projectId: project.id,
@@ -699,6 +816,7 @@ describe('Store schema migration safety', () => {
             title: 'Implement store layer',
             status: 'planned',
             goalId: goal.id,
+            goalTodoRef: 'Implement store layer',
             contract: 'Add SQLite goal persistence',
             handoff: 'Store APIs ready',
             evidence: 'Migration smoke test'
@@ -707,11 +825,97 @@ describe('Store schema migration safety', () => {
         expect(topic.status).toBe('waiting')
         expect(topic.blocking).toBe(true)
         expect(task.goalId).toBe(goal.id)
+        expect(task.goalTodoRef).toBe('Implement store layer')
         expect(task.contract).toBe('Add SQLite goal persistence')
         expect(task.handoff).toBe('Store APIs ready')
         expect(task.evidence).toBe('Migration smoke test')
         expect(store.tasks.listTasksByProject(project.id, { goalId: goal.id })).toHaveLength(1)
         expect(store.tasks.listTasksByProject(project.id)).toHaveLength(1)
+
+        db.close()
+    })
+
+    it('adds goal_key to current goal tables and enforces per-project uniqueness', () => {
+        const path = join(tmpdir(), `hopi-schema-goal-key-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+
+        const store = new Store(path)
+        const db = (store as unknown as { db: Database }).db
+        const goalColumns = (db.prepare('PRAGMA table_info(goals)').all() as Array<{ name: string }>).map((column) => column.name)
+        expect(goalColumns).toContain('goal_key')
+        expect(goalColumns).toContain('automation_paused_at')
+
+        const project = store.projects.createProject({
+            id: 'goal-key-project',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Goal Key Project'
+        })
+        const first = store.goals.createGoal({
+            id: 'goal-key-1',
+            projectId: project.id,
+            namespace: 'default',
+            goalKey: 'portable-goal',
+            title: 'Portable Goal'
+        })
+
+        expect(first.goalKey).toBe('portable-goal')
+        expect(store.goals.getGoalByGoalKeyAndNamespace(project.id, 'default', 'portable-goal')?.id).toBe(first.id)
+        expect(() => store.goals.createGoal({
+            id: 'goal-key-2',
+            projectId: project.id,
+            namespace: 'default',
+            goalKey: 'portable-goal',
+            title: 'Duplicate Portable Goal'
+        })).toThrow()
+
+        db.close()
+    })
+
+    it('backfills goal_key when an existing goal table predates portable keys', () => {
+        const path = join(tmpdir(), `hopi-schema-existing-goal-key-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+        createLegacyGoalDbWithoutGoalKey(path)
+
+        const store = new Store(path)
+        const db = (store as unknown as { db: Database }).db
+        const goalColumns = (db.prepare('PRAGMA table_info(goals)').all() as Array<{ name: string }>).map((column) => column.name)
+        expect(goalColumns).toContain('goal_key')
+
+        const rows = db.prepare(`
+            SELECT id, goal_key
+            FROM goals
+            ORDER BY created_at ASC
+        `).all() as Array<{ id: string; goal_key: string }>
+        expect(rows).toEqual([
+            { id: 'g1', goal_key: 'portable-goal' },
+            { id: 'g2', goal_key: 'portable-goal-2' }
+        ])
+        expect(store.goals.getGoalByGoalKeyAndNamespace('p-goal-key', 'default', 'portable-goal')?.id).toBe('g1')
+
+        const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
+        expect(userVersion.user_version).toBe(25)
+
+        db.close()
+    })
+
+    it('backfills goal_key before creating current indexes on unversioned legacy goal tables', () => {
+        const path = join(tmpdir(), `hopi-schema-unversioned-goal-key-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+        createLegacyGoalDbWithoutGoalKey(path, 0)
+
+        const store = new Store(path)
+        const db = (store as unknown as { db: Database }).db
+        const rows = db.prepare(`
+            SELECT id, goal_key
+            FROM goals
+            ORDER BY created_at ASC
+        `).all() as Array<{ id: string; goal_key: string }>
+
+        expect(rows).toEqual([
+            { id: 'g1', goal_key: 'portable-goal' },
+            { id: 'g2', goal_key: 'portable-goal-2' }
+        ])
 
         db.close()
     })

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'bun:test'
 import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
+import type { SyncEngine } from '../../sync/syncEngine'
 import { createProjectsRoutes } from './projects'
 import { createWorkspacesRoutes } from './workspaces'
 
-function createTestApp(store: Store): Hono {
+function createTestApp(store: Store, engine: SyncEngine | null = null): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
         const setContext = c.set as unknown as (key: string, value: unknown) => void
@@ -13,8 +14,8 @@ function createTestApp(store: Store): Hono {
         setContext('namespace', 'default')
         await next()
     })
-    app.route('/api', createProjectsRoutes({ store, getSyncEngine: () => null }))
-    app.route('/api', createWorkspacesRoutes({ store, getSyncEngine: () => null }))
+    app.route('/api', createProjectsRoutes({ store, getSyncEngine: () => engine }))
+    app.route('/api', createWorkspacesRoutes({ store, getSyncEngine: () => engine }))
     return app
 }
 

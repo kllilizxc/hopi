@@ -133,11 +133,13 @@ export type StoredGoal = {
     id: string
     projectId: string
     namespace: string
+    goalKey: string
     title: string
     description: string | null
     status: 'planning' | 'active' | 'blocked' | 'paused' | 'done' | 'archived'
     successCriteria: string | null
     autopilotEnabled: boolean
+    automationPausedAt: number | null
     deployRequiresApproval: boolean
     currentFocus: string | null
     createdAt: number
@@ -358,6 +360,7 @@ export type StoredTask = {
     id: string
     projectId: string
     goalId: string | null
+    goalTodoRef: string | null
     title: string
     description: string | null
     status: string

@@ -189,7 +189,7 @@ export function MachineDirectoryPicker(props: MachineDirectoryPickerProps) {
     const tree = useMachineDirectoryTreeState()
 
     return (
-        <div className="overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]">
+        <div className="overflow-hidden rounded-md app-shadow-border bg-[var(--app-bg)]">
             <MachineDirectoryNode
                 api={props.api}
                 machineId={props.machineId}

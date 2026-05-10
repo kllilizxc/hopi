@@ -190,10 +190,10 @@ function TaskReviewStageCard(props: {
     const view = getTaskReviewStageView(t, props.stage)
     return (
         <div
-            className={`rounded-md border px-3 py-2 text-xs ${
+            className={`rounded-md px-3 py-2 text-xs ${
                 view.tone === 'warning'
-                    ? 'border-[var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]'
-                    : 'border-[var(--app-border)] bg-[var(--app-secondary-bg)] text-[var(--app-hint)]'
+                    ? 'shadow-[inset_0_0_0_1px_var(--app-badge-warning-border)] bg-[var(--app-badge-warning-bg)] text-[var(--app-badge-warning-text)]'
+                    : 'app-shadow-border bg-[var(--app-secondary-bg)] text-[var(--app-hint)]'
             }`}
         >
             <div className="flex items-center gap-2 font-medium">
@@ -223,7 +223,7 @@ function TaskSessionSwitcher(props: {
 
     return (
         <div className="flex justify-end">
-            <div className="w-full sm:max-w-sm">
+            <div className="w-full">
                 <AdaptiveSelectField
                     title={t('projects.sessions.quickSwitch')}
                     value={selectedValue}
@@ -483,7 +483,7 @@ function AttachSessionDialog(props: {
                     </label>
                 </div>
 
-                <div className="mt-3 max-h-[50vh] overflow-y-auto border-t border-[var(--app-divider)]">
+                <div className="mt-3 max-h-[50vh] overflow-y-auto app-shadow-divider-t">
                     {isLoading ? (
                         <div className="p-4">
                             <LoadingState label={t('loading')} className="text-sm" />
@@ -502,7 +502,7 @@ function AttachSessionDialog(props: {
                         </div>
                     ) : null}
 
-                    <div className="divide-y divide-[var(--app-divider)]">
+                    <div className="app-shadow-list-y">
                         {filtered.map((session) => {
                             const title = getSessionDisplayTitle(session)
                             const linked = Boolean(session.metadata?.taskId)
@@ -563,7 +563,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
     const { t } = useTranslation()
 
     return (
-        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                     <input
@@ -571,7 +571,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                         value={props.title}
                         onChange={(e) => props.onTitleChange(e.target.value)}
                         onBlur={props.onTitleBlur}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                         disabled={props.isUpdatingTask}
                     />
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
@@ -594,7 +594,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                     variant="ghost"
                     size="sm"
                     onClick={props.onCopyLink}
-                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
+                    className="shrink-0 rounded-md bg-[var(--app-bg)]"
                     title={t('projects.task.copyLink')}
                     aria-label={t('projects.task.copyLink')}
                 >
@@ -612,7 +612,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                     onBlur={props.onDescriptionBlur}
                     rows={8}
                     disabled={props.isUpdatingTask}
-                    className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    className="w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 />
             </div>
         </section>
@@ -641,7 +641,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
     ]), [t])
 
     return (
-        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
             <div>
                 <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
                 <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
@@ -654,7 +654,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
             ) : (
                 <div className="flex flex-col gap-2">
                     {props.subTasks.map((subTask) => (
-                        <div key={subTask.id} className="space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
+                        <div key={subTask.id} className="space-y-2 rounded-md app-shadow-border bg-[var(--app-bg)] p-2">
                             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                                 <label className="min-w-0 flex items-center gap-2 cursor-pointer select-none">
                                     <Checkbox
@@ -708,14 +708,14 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                                     props.onSubTaskContentBlur(subTask.id)
                                 }}
                                 disabled={props.isUpdatingTask}
-                                className={`w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
+                                className={`w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
                             />
                         </div>
                     ))}
                 </div>
             )}
 
-            <div className="space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2">
+            <div className="space-y-2 rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-2">
                 <input
                     type="text"
                     value={props.newSubTaskContent}
@@ -728,7 +728,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                     }}
                     disabled={props.isUpdatingTask}
                     placeholder={t('projects.task.subtasks.placeholder')}
-                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 />
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <AdaptiveSelectField
@@ -769,7 +769,7 @@ const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
     const fileInputRef = useRef<HTMLInputElement | null>(null)
 
     return (
-        <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
@@ -813,7 +813,7 @@ const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
             ) : (
                 <div className="flex flex-col gap-2">
                     {props.attachments.map((att) => (
-                        <div key={att.id} className="flex items-center justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2">
+                        <div key={att.id} className="flex items-center justify-between gap-3 rounded-md app-shadow-border bg-[var(--app-bg)] p-2">
                             <div className="min-w-0">
                                 <div className="text-sm font-medium truncate">{att.filename}</div>
                                 <div className="text-xs text-[var(--app-hint)]">
@@ -872,7 +872,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
 
     return (
         <div className="space-y-4">
-            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+            <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
                 <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
 
                 <div className="space-y-1.5">
@@ -977,7 +977,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                 ) : null}
             </section>
 
-            <section className="space-y-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+            <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
                 <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
 
                 <TaskReviewStageCard stage={props.reviewStage} />
@@ -1008,7 +1008,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                                 return (
                                     <div
                                         key={item.session.id}
-                                        className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2"
+                                        className="rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-2"
                                     >
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0">
@@ -1092,7 +1092,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                 ) : null}
             </section>
 
-            <section className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/20 p-3">
+            <section className="space-y-2 rounded-lg app-shadow-border-error bg-rose-50/20 p-3">
                 <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
                 <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
                 <Button type="button" variant="destructive" onClick={props.onOpenArchive} disabled={props.isUpdatingTask || props.isArchiving}>
@@ -1676,7 +1676,7 @@ function WorkbenchHeader(props: {
                     variant="ghost"
                     size="sm"
                     onClick={props.onCopyLink}
-                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]"
+                    className="shrink-0 rounded-md bg-[var(--app-bg)]"
                     aria-label={props.copyLabel}
                     title={props.copyLabel}
                 >

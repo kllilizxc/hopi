@@ -124,6 +124,8 @@ describe('GoalPlanningDocument', () => {
         expect(workspace).toHaveClass('xl:grid-cols-[16rem_minmax(0,1fr)]')
 
         const sectionIndex = screen.getByTestId('planning-section-index')
+        expect(sectionIndex).not.toHaveClass('app-shadow-border')
+        expect(sectionIndex).toHaveClass('app-shadow-surface')
         expect(within(sectionIndex).getByRole('link', { name: 'Ready 1 items' })).toHaveAttribute(
             'href',
             '#planning-ready'
@@ -134,8 +136,14 @@ describe('GoalPlanningDocument', () => {
         )
 
         const candidateColumn = screen.getByTestId('planning-section-candidate')
+        expect(candidateColumn).not.toHaveClass('app-shadow-border')
+        expect(candidateColumn).toHaveClass('app-shadow-surface')
         expect(within(candidateColumn).getByText('Tune generated task contracts')).toBeInTheDocument()
         expect(within(candidateColumn).getByText('Improve planning parser')).toBeInTheDocument()
+
+        const candidateCard = within(candidateColumn).getByText('Tune generated task contracts').closest('article')
+        expect(candidateCard).not.toBeNull()
+        expect(candidateCard!).not.toHaveClass('app-shadow-border')
     })
 
     it('keeps missing planning documents as a full-page state', () => {

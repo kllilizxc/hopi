@@ -16,6 +16,7 @@ type DbTaskRow = {
     id: string
     project_id: string
     goal_id: string | null
+    goal_todo_ref: string | null
     title: string
     description: string | null
     status: string
@@ -96,6 +97,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         id: row.id,
         projectId: row.project_id,
         goalId: row.goal_id,
+        goalTodoRef: row.goal_todo_ref,
         title: row.title,
         description: row.description,
         status: row.status,
@@ -246,6 +248,7 @@ export function createTask(
         id: string
         projectId: string
         goalId?: string | null
+        goalTodoRef?: string | null
         title: string
         description?: string | null
         status: string
@@ -281,13 +284,13 @@ export function createTask(
     const initRuntime = prepareTaskRuntime(task.initRuntime, task.activeSessionId, now, normalizeTaskInitRuntime)
     db.prepare(`
         INSERT INTO tasks (
-            id, project_id, goal_id, title, description, status, priority,
+            id, project_id, goal_id, goal_todo_ref, title, description, status, priority,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
             permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime, contract, handoff, evidence,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
-            @id, @project_id, @goal_id, @title, @description, @status, @priority,
+            @id, @project_id, @goal_id, @goal_todo_ref, @title, @description, @status, @priority,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
             @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime, @contract, @handoff, @evidence,
@@ -297,6 +300,7 @@ export function createTask(
         id: task.id,
         project_id: task.projectId,
         goal_id: task.goalId ?? null,
+        goal_todo_ref: task.goalTodoRef ?? null,
         title: task.title,
         description: task.description ?? null,
         status: task.status,
@@ -341,6 +345,7 @@ export function updateTaskByNamespace(
     patch: {
         title?: string
         goalId?: string | null
+        goalTodoRef?: string | null
         description?: string | null
         status?: string
         priority?: string | null
@@ -385,6 +390,7 @@ export function updateTaskByNamespace(
         ...current,
         title: patch.title ?? current.title,
         goalId: patch.goalId !== undefined ? patch.goalId : current.goalId,
+        goalTodoRef: patch.goalTodoRef !== undefined ? patch.goalTodoRef : current.goalTodoRef,
         description: patch.description !== undefined ? patch.description : current.description,
         status: patch.status ?? current.status,
         priority: patch.priority !== undefined ? patch.priority : current.priority,
@@ -444,6 +450,7 @@ export function updateTaskByNamespace(
         UPDATE tasks SET
             title = @title,
             goal_id = @goal_id,
+            goal_todo_ref = @goal_todo_ref,
             description = @description,
             status = @status,
             priority = @priority,
@@ -478,6 +485,7 @@ export function updateTaskByNamespace(
         project_id: current.projectId,
         title: next.title,
         goal_id: next.goalId,
+        goal_todo_ref: next.goalTodoRef,
         description: next.description,
         status: next.status,
         priority: next.priority,

@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite'
+import { buildUniqueGoalKey, normalizeGoalKey } from '@hopi/protocol'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -51,7 +52,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 22
+const SCHEMA_VERSION: number = 25
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -449,11 +450,13 @@ export class Store {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 namespace TEXT NOT NULL DEFAULT 'default',
+                goal_key TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL DEFAULT 'planning',
                 success_criteria TEXT,
                 autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+                automation_paused_at INTEGER,
                 deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
                 current_focus TEXT,
                 created_at INTEGER NOT NULL,
@@ -468,6 +471,7 @@ export class Store {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 goal_id TEXT,
+                goal_todo_ref TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL,
@@ -764,6 +768,7 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
         `)
+        this.ensureGoalKeyColumnAndIndex()
     }
 
     private migrateLegacySchemaIfNeeded(): void {
@@ -914,6 +919,15 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 22) {
             this.migrateFromV21ToV22()
+        }
+        if (SCHEMA_VERSION >= 23) {
+            this.migrateFromV22ToV23()
+        }
+        if (SCHEMA_VERSION >= 24) {
+            this.migrateFromV23ToV24()
+        }
+        if (SCHEMA_VERSION >= 25) {
+            this.migrateFromV24ToV25()
         }
     }
 
@@ -1452,6 +1466,71 @@ export class Store {
         if (!projectColumns.has('agent_output_language')) {
             this.db.exec("ALTER TABLE projects ADD COLUMN agent_output_language TEXT NOT NULL DEFAULT 'system'")
         }
+    }
+
+    private migrateFromV22ToV23(): void {
+        this.ensureGoalKeyColumnAndIndex()
+    }
+
+    private migrateFromV23ToV24(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for v23 to v24 migration.')
+        }
+        if (!goalColumns.has('automation_paused_at')) {
+            this.db.exec('ALTER TABLE goals ADD COLUMN automation_paused_at INTEGER')
+        }
+    }
+
+    private migrateFromV24ToV25(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v24 to v25 migration.')
+        }
+        if (!taskColumns.has('goal_todo_ref')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN goal_todo_ref TEXT')
+        }
+    }
+
+    private ensureGoalKeyColumnAndIndex(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for v22 to v23 migration.')
+        }
+
+        if (!goalColumns.has('goal_key')) {
+            this.db.exec("ALTER TABLE goals ADD COLUMN goal_key TEXT NOT NULL DEFAULT ''")
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, project_id, namespace, title, goal_key
+            FROM goals
+            ORDER BY project_id ASC, namespace ASC, created_at ASC
+        `).all() as Array<{
+            id: string
+            project_id: string
+            namespace: string
+            title: string
+            goal_key: string | null
+        }>
+
+        const usedByProjectNamespace = new Map<string, Set<string>>()
+        const update = this.db.prepare('UPDATE goals SET goal_key = ? WHERE id = ? AND namespace = ?')
+
+        for (const row of rows) {
+            const bucketKey = `${row.project_id}:${row.namespace}`
+            const used = usedByProjectNamespace.get(bucketKey) ?? new Set<string>()
+            usedByProjectNamespace.set(bucketKey, used)
+
+            const normalizedExisting = row.goal_key ? normalizeGoalKey(row.goal_key) : ''
+            const goalKey = normalizedExisting && !used.has(normalizedExisting)
+                ? normalizedExisting
+                : buildUniqueGoalKey(row.title, (candidate) => used.has(candidate))
+            used.add(goalKey)
+            update.run(goalKey, row.id, row.namespace)
+        }
+
+        this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_project_namespace_goal_key ON goals(project_id, namespace, goal_key)')
     }
 
     private getMachineColumnNames(): Set<string> {

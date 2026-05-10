@@ -39,10 +39,10 @@ export function SyntaxHighlighter(props: SyntaxHighlighterProps) {
     return (
         <div
             ref={containerRef}
-            className="aui-md-codeblock min-w-0 w-full max-w-full overflow-x-auto overflow-y-hidden rounded-b-md bg-[var(--app-code-bg)]"
+            className="aui-md-codeblock min-w-0 w-full max-w-full overflow-x-hidden overflow-y-hidden rounded-b-md bg-[var(--app-code-bg)]"
         >
-            <pre className="shiki m-0 w-max min-w-full p-2 text-sm font-mono">
-                <code className="block">{highlighted ?? props.code}</code>
+            <pre className="shiki m-0 w-full min-w-0 whitespace-pre-wrap break-words p-3 text-[13px] font-mono leading-relaxed [overflow-wrap:anywhere]">
+                <code className="block whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{highlighted ?? props.code}</code>
             </pre>
         </div>
     )

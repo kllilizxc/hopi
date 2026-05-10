@@ -42,13 +42,12 @@ export function SessionFileDiffContent(props: {
         <>
             {props.viewer.hasDiffContent ? (
                 <div className="bg-[var(--app-bg)]">
-                    <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center gap-2 border-b border-[var(--app-divider)]">
+                    <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center gap-2 app-shadow-divider-b">
                         <Tag
                             asChild
                             variant={props.viewer.displayMode === 'diff' ? 'primary' : 'secondary'}
                             size="md"
                             shape="rounded"
-                            bordered={false}
                             className="cursor-pointer"
                         >
                             <button
@@ -64,7 +63,6 @@ export function SessionFileDiffContent(props: {
                                 variant={props.viewer.displayMode === 'file' ? 'primary' : 'secondary'}
                                 size="md"
                                 shape="rounded"
-                                bordered={false}
                                 className="cursor-pointer"
                             >
                                 <button
@@ -158,7 +156,7 @@ function DiffDisplay(props: { diffContent: string }) {
     const lines = props.diffContent.split('\n')
 
     return (
-        <div className="overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]">
+        <div className="overflow-hidden rounded-md app-shadow-border bg-[var(--app-bg)]">
             {lines.map((line, index) => {
                 const isAdd = line.startsWith('+') && !line.startsWith('+++')
                 const isRemove = line.startsWith('-') && !line.startsWith('---')
@@ -195,7 +193,7 @@ function FileContentSkeleton(props: { label: string }) {
     return (
         <div role="status" aria-live="polite">
             <span className="sr-only">{props.label}</span>
-            <div className="animate-pulse space-y-2 rounded-md border border-[var(--app-border)] bg-[var(--app-code-bg)] p-3">
+            <div className="animate-pulse space-y-2 rounded-md app-shadow-border bg-[var(--app-code-bg)] p-3">
                 {Array.from({ length: 12 }).map((_, index) => (
                     <div key={`file-skeleton-${index}`} className={`h-3 ${widths[index % widths.length]} rounded bg-[var(--app-subtle-bg)]`} />
                 ))}

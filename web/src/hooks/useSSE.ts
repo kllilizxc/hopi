@@ -10,7 +10,8 @@ import type {
     SyncEvent
 } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
-import { clearMessageWindow, ingestIncomingMessages } from '@/lib/message-window-store'
+import { clearMessageWindow, flushIncomingMessages, ingestIncomingMessages } from '@/lib/message-window-store'
+import { shouldFlushIncomingMessage } from '@/lib/realtime-message-priority'
 
 type SSESubscription = {
     all?: boolean
@@ -303,6 +304,13 @@ export function useSSE(options: {
         }
 
         const enqueueIncomingMessage = (sessionId: string, message: DecryptedMessage) => {
+            if (shouldFlushIncomingMessage(message)) {
+                flushQueuedMessages()
+                ingestIncomingMessages(sessionId, [message])
+                flushIncomingMessages(sessionId)
+                return
+            }
+
             const queued = queuedMessagesBySession.get(sessionId)
             if (queued) {
                 queued.push(message)

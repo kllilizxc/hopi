@@ -57,6 +57,107 @@ function createProjectWithTask(store: Store, options: {
 }
 
 describe('AutoRunScheduler workflow strategy gate', () => {
+    it('does not start planned tasks while goal automation is paused', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-paused-auto-run'
+        const goalId = 'goal-paused-auto-run'
+        const taskId = 'task-goal-paused-auto-run'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'ready'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Paused goal',
+            status: 'active',
+            autopilotEnabled: true,
+            automationPausedAt: Date.now()
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Task',
+            status: 'planned',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
+        expect(realtimeEvents).toEqual([])
+    })
+
+    it('does not create autopilot tasks while goal automation is paused', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-paused-goal-autopilot'
+        const goalId = 'goal-paused-autopilot'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Paused autonomous goal',
+            status: 'active',
+            autopilotEnabled: true,
+            automationPausedAt: Date.now()
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })).toEqual([])
+        expect(realtimeEvents).toEqual([])
+    })
+
     it('auto-runs planner tasks for an enabled goal even when project auto-run is off', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

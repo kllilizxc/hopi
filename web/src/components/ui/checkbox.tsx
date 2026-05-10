@@ -19,9 +19,9 @@ export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
                 checked={checked}
                 onCheckedChange={(next) => onCheckedChange(next === true)}
                 className={cn(
-                    'h-5 w-5 shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] shadow-sm outline-none transition-colors',
+                    'h-5 w-5 shrink-0 rounded-md bg-[var(--app-bg)] app-shadow-border outline-none transition-colors',
                     'focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
-                    'data-[state=checked]:border-[var(--app-link)] data-[state=checked]:bg-[var(--app-link)]',
+                    'data-[state=checked]:bg-[var(--app-link)] data-[state=checked]:shadow-none',
                     'disabled:cursor-not-allowed disabled:opacity-50',
                     className
                 )}
@@ -35,4 +35,3 @@ export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
     }
 )
 Checkbox.displayName = 'Checkbox'
-

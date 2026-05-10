@@ -4,6 +4,7 @@ import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
 import { ChevronDownIcon } from '@/assets/icons'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { AdaptiveSelectTrigger } from '@/components/ui/AdaptiveSelectTrigger'
 
 const CUSTOM_MODEL_VALUE = '__custom__'
 
@@ -71,14 +72,14 @@ const ModelSelectorComponent = (props: ModelSelectorProps) => {
                 disabled={props.isDisabled}
                 align="start"
                 trigger={
-                    <button
-                        type="button"
+                    <AdaptiveSelectTrigger
                         disabled={props.isDisabled}
-                        className="group flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                        size="sm"
+                        className="rounded-lg px-3"
                     >
                         <span className="min-w-0 flex-1 truncate text-left">{selectedLabel}</span>
                         <ChevronDownIcon className="shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-                    </button>
+                    </AdaptiveSelectTrigger>
                 }
             />
             {showCustomInput ? (
@@ -92,7 +93,7 @@ const ModelSelectorComponent = (props: ModelSelectorProps) => {
                         }}
                         disabled={props.isDisabled}
                         placeholder={t('newSession.model.custom.placeholder')}
-                        className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="w-full rounded-lg app-shadow-border bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:cursor-not-allowed disabled:opacity-50"
                     />
                     <div className="text-xs text-[var(--app-hint)]">{t('newSession.model.custom.hint')}</div>
                 </>

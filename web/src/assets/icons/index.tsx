@@ -151,6 +151,43 @@ export function PlusIcon(props: IconProps) {
     )
 }
 
+export function PlayIcon(props: IconProps) {
+    const { className, style, ...rest } = props
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            className={className}
+            style={style}
+            {...rest}
+        >
+            <path d="M8 5.5v13l11-6.5z" />
+        </svg>
+    )
+}
+
+export function PauseIcon(props: IconProps) {
+    const { className, style, ...rest } = props
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            className={className}
+            style={style}
+            {...rest}
+        >
+            <rect x="7" y="5" width="4" height="14" rx="1" />
+            <rect x="13" y="5" width="4" height="14" rx="1" />
+        </svg>
+    )
+}
+
 export function SettingsIcon(props: IconProps) {
     return createIcon(
         <>

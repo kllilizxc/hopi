@@ -27,6 +27,8 @@ export type BestTaskSessionResolution =
         reason: 'not-found' | 'access-denied'
     }
 
+type FoundBestTaskSessionResolution = Extract<BestTaskSessionResolution, { ok: true }>
+
 export type ResolveBestUsableTaskSessionResult =
     | {
         ok: true
@@ -276,7 +278,7 @@ function buildFoundResolution(options: {
     session: Session | null
     source: 'task-active-session' | 'merge-runtime' | 'session-metadata'
     task: StoredTask
-}): BestTaskSessionResolution {
+}): FoundBestTaskSessionResolution {
     return {
         ok: true,
         sessionId: options.sessionId,
@@ -322,6 +324,34 @@ function resolveExplicitSession(options: {
     return { ok: false, reason: 'not-found' }
 }
 
+function resolveMetadataSession(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTask
+    requireActive?: boolean
+}): FoundBestTaskSessionResolution | null {
+    const runtimeMatches = getRuntimeSessionsByNamespace(options.engine, options.namespace)
+        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
+    const storedMatches = options.store.sessions.getSessionsByNamespace(options.namespace)
+        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
+    const metadataCandidates = sortMetadataCandidates(runtimeMatches, storedMatches)
+    const bestMetadataMatch = metadataCandidates.find((candidate) => {
+        return !options.requireActive || isSessionActive(candidate.session)
+    })
+
+    if (!bestMetadataMatch) {
+        return null
+    }
+
+    return buildFoundResolution({
+        sessionId: bestMetadataMatch.sessionId,
+        session: bestMetadataMatch.session,
+        source: 'session-metadata',
+        task: options.task
+    })
+}
+
 export function resolveBestTaskSession(options: {
     store: Store
     engine: SyncEngine
@@ -335,7 +365,20 @@ export function resolveBestTaskSession(options: {
             sessionId: linkedSessionId,
             source: 'task-active-session'
         })
-        if (linked.ok || linked.reason === 'access-denied') {
+        if (linked.ok && isSessionActive(linked.session)) {
+            return linked
+        }
+        if (linked.ok) {
+            const activeMetadataMatch = resolveMetadataSession({
+                ...options,
+                requireActive: true
+            })
+            if (activeMetadataMatch && activeMetadataMatch.sessionId !== linked.sessionId) {
+                return activeMetadataMatch
+            }
+            return linked
+        }
+        if (linked.reason === 'access-denied') {
             return linked
         }
     }
@@ -347,25 +390,27 @@ export function resolveBestTaskSession(options: {
             sessionId: runtimeSessionId,
             source: 'merge-runtime'
         })
-        if (runtime.ok || runtime.reason === 'access-denied') {
+        if (runtime.ok && isSessionActive(runtime.session)) {
+            return runtime
+        }
+        if (runtime.ok) {
+            const activeMetadataMatch = resolveMetadataSession({
+                ...options,
+                requireActive: true
+            })
+            if (activeMetadataMatch && activeMetadataMatch.sessionId !== runtime.sessionId) {
+                return activeMetadataMatch
+            }
+            return runtime
+        }
+        if (runtime.reason === 'access-denied') {
             return runtime
         }
     }
 
-    const runtimeMatches = getRuntimeSessionsByNamespace(options.engine, options.namespace)
-        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
-    const storedMatches = options.store.sessions.getSessionsByNamespace(options.namespace)
-        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
-    const metadataCandidates = sortMetadataCandidates(runtimeMatches, storedMatches)
-    const bestMetadataMatch = metadataCandidates[0]
-
-    if (bestMetadataMatch) {
-        return buildFoundResolution({
-            sessionId: bestMetadataMatch.sessionId,
-            session: bestMetadataMatch.session,
-            source: 'session-metadata',
-            task: options.task
-        })
+    const metadataMatch = resolveMetadataSession(options)
+    if (metadataMatch) {
+        return metadataMatch
     }
 
     return { ok: false, reason: 'not-found' }

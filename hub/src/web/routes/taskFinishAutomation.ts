@@ -1,5 +1,6 @@
 import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
+import { updateGoalTodoTaskState } from '../../sync/goals/goalTodo'
 import { runImprovementsScan, selectLatestActiveProjectSession } from '../../sync/improvementsScan'
 import { KeyedMutex } from '../../utils/keyedMutex'
 
@@ -20,6 +21,23 @@ export async function handleTaskMovedToFinished(options: {
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
     if (!project) {
         return
+    }
+
+    if (task.goalId && task.goalTodoRef) {
+        const goal = options.store.goals.getGoalByNamespace(task.goalId, options.namespace)
+        const defaultWorkspace = project.defaultWorkspaceId
+            ? options.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+            : options.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+        if (goal && goal.projectId === project.id) {
+            updateGoalTodoTaskState({
+                project,
+                goal,
+                defaultWorkspace,
+                todoRef: task.goalTodoRef,
+                taskId: task.id,
+                kind: 'done'
+            })
+        }
     }
 
     if (project.improvementsEnabled) {

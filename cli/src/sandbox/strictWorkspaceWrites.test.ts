@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PRODUCT_ENV, PRODUCT_HOME_DIRNAME, PRODUCT_SLUG } from '@hopi/protocol/brand';
@@ -60,7 +60,7 @@ describe('strictWorkspaceWrites', () => {
             env
         });
 
-        const sandboxRoot = join(workspace, PRODUCT_HOME_DIRNAME, 'sandbox');
+        const sandboxRoot = join(realpathSync(workspace), PRODUCT_HOME_DIRNAME, 'sandbox');
         expect(wrapped.env.HOME).toBe(join(sandboxRoot, 'home'));
         expect(wrapped.env[PRODUCT_ENV.HOME]).toBe(join(sandboxRoot, `${PRODUCT_SLUG}-home`));
         expect(wrapped.env.CODEX_HOME).toBe(join(sandboxRoot, 'codex-home'));

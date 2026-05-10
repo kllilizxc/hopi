@@ -122,6 +122,33 @@ describe('createSessionMessageWindowStore', () => {
         unsubscribe()
     })
 
+    it('can flush buffered live incoming messages synchronously', async () => {
+        vi.mocked(api.getMessages).mockResolvedValue(buildPage([
+            buildMessage('message-1', 1),
+        ], false))
+
+        const store = createSessionMessageWindowStore<DecryptedMessage>({
+            isVisibleMessage: () => true,
+        })
+        const unsubscribe = store.subscribeMessageWindow(sessionId, () => {})
+
+        await store.fetchLatestMessages(api, sessionId)
+        store.ingestIncomingMessages(sessionId, [buildMessage('message-2', 2)])
+
+        expect(store.getMessageWindowState(sessionId).messages.map((message) => message.id)).toEqual([
+            'message-1',
+        ])
+
+        store.flushIncomingMessages(sessionId)
+
+        expect(store.getMessageWindowState(sessionId).messages.map((message) => message.id)).toEqual([
+            'message-1',
+            'message-2',
+        ])
+
+        unsubscribe()
+    })
+
     it('queues live incoming messages into pending when the viewport is away from bottom', async () => {
         vi.mocked(api.getMessages).mockResolvedValue(buildPage([
             buildMessage('message-1', 1),

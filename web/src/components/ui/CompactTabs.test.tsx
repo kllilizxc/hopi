@@ -18,7 +18,9 @@ describe('CompactTabs', () => {
             />
         )
 
-        expect(screen.getByRole('tablist', { name: 'Projects' })).not.toHaveClass('w-full')
+        const tablist = screen.getByRole('tablist', { name: 'Projects' })
+        expect(tablist).not.toHaveClass('w-full')
+        expect(tablist).not.toHaveClass('border')
         expect(screen.getByRole('tab', { name: 'CardGame' })).toHaveClass('shrink-0')
         expect(screen.getByRole('tab', { name: 'CardGame' })).not.toHaveClass('flex-1')
     })
@@ -39,6 +41,22 @@ describe('CompactTabs', () => {
 
         expect(screen.getByRole('tablist', { name: 'Project view' })).toHaveClass('w-full')
         expect(screen.getByRole('tab', { name: 'Board' })).toHaveClass('flex-1')
-        expect(screen.getByRole('tab', { name: 'Planning' })).toHaveClass('flex-1')
+        const selectedTab = screen.getByRole('tab', { name: 'Planning' })
+        expect(selectedTab).toHaveClass('flex-1')
+        expect(selectedTab).not.toHaveClass('border')
+    })
+
+    it('can disable all tab buttons', () => {
+        renderWithProviders(
+            <CompactTabs
+                items={[{ id: 'claude', label: 'Claude' }]}
+                selectedId="claude"
+                onSelect={vi.fn()}
+                ariaLabel="Agent"
+                disabled
+            />
+        )
+
+        expect(screen.getByRole('tab', { name: 'Claude' })).toBeDisabled()
     })
 })

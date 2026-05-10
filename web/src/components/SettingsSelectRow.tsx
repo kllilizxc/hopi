@@ -1,5 +1,6 @@
 import { ChevronDownIcon } from '@/assets/icons'
 import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { AdaptiveSelectTrigger } from '@/components/ui/AdaptiveSelectTrigger'
 import type { ActionSheetSelectOption } from '@/components/ui/ActionSheetSelect'
 
 export function SettingsSelectRow<TValue extends string | number | null>(props: {
@@ -20,17 +21,15 @@ export function SettingsSelectRow<TValue extends string | number | null>(props: 
             align="end"
             disabled={props.disabled}
             trigger={(
-                <button
-                    type="button"
+                <AdaptiveSelectTrigger
                     disabled={props.disabled}
-                    className="group flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <span className="text-[var(--app-fg)]">{props.label}</span>
                     <span className="flex items-center gap-1 text-[var(--app-hint)]">
                         <span>{props.valueLabel}</span>
                         <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
                     </span>
-                </button>
+                </AdaptiveSelectTrigger>
             )}
         />
     )

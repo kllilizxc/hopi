@@ -463,7 +463,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
-            '- create_goal_task: create a small ready task for this Goal.',
+            '- create_goal_task: create a small ready task for this Goal; include todoRef when promoting a .hopi/docs/todo.md item.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
@@ -509,7 +509,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Role: Planner',
             '',
             'Context strategy:',
-            '- Read .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, the current Goal doc, and the current Goal kanban snapshot.',
+            '- Read .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, the current Goal doc addressed by goalKey, and the current Goal kanban snapshot.',
             '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
             '',
             'Allowed transitions:',
@@ -532,6 +532,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
             '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
+            '- When accepting linked todo work, HOPI closes the matching .hopi/docs/todo.md item from the stored task link.',
             '',
             'Allowed transitions:',
             '- Record evidence and move accepted work to finished; HOPI will request the existing worktree merge flow before closing accepted work.',
@@ -566,7 +567,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
         '',
         'Context strategy:',
         '- Read the Task Contract, Goal doc, relevant decisions, linked files/search results, current git status, and latest Planner handoff.',
-        '- Update repo docs when behavior, architecture, or lasting product knowledge changes.',
+        '- Update durable behavior or architecture docs when lasting product knowledge changes; do not mark linked todo work done before Evaluator acceptance.',
         '',
         'Allowed transitions:',
         '- Record handoff/evidence and move complete work to in_review.',

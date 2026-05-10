@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { StoredGoal, StoredProject, StoredWorkspace } from '../../store'
 
@@ -17,6 +17,11 @@ export type GoalTodoResponse = {
     rawMarkdown: string | null
     sections: GoalTodoSection[]
     updatedAt: number | null
+}
+
+type GoalTodoScope = {
+    goalId: string
+    goalKey?: string | null
 }
 
 function normalizeMarkdown(markdown: string): string {
@@ -56,6 +61,13 @@ function stripTaskReference(text: string): string {
         .trim()
 }
 
+function normalizeTodoRef(value: string): string {
+    return cleanTitle(value)
+        .normalize('NFKC')
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+}
+
 function cleanTitle(text: string): string {
     return stripTaskReference(stripBracketKind(text))
         .replace(/^\d+[.)]\s+/, '')
@@ -73,7 +85,24 @@ function extractTaskId(text: string): string | null {
     return plainMatch?.[1]?.trim() ?? null
 }
 
-function findGoalScopedMarkdown(markdown: string, goalId: string): string {
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function headingMatchesGoal(line: string, scope: GoalTodoScope): boolean {
+    const goalKey = scope.goalKey?.trim()
+    if (goalKey && new RegExp(`\\b${escapeRegExp(goalKey)}\\b`, 'i').test(line)) {
+        return true
+    }
+    return line.toLowerCase().includes(scope.goalId.toLowerCase())
+}
+
+function findGoalScopedMarkdown(markdown: string, scope: GoalTodoScope): string {
+    const range = findGoalScopedRange(markdown, scope)
+    return range ? range.markdown : ''
+}
+
+function findGoalScopedRange(markdown: string, scope: GoalTodoScope): { start: number; end: number; markdown: string } | null {
     const lines = markdown.split('\n')
     const goalHeadingIndexes: number[] = []
     for (let index = 0; index < lines.length; index += 1) {
@@ -83,16 +112,20 @@ function findGoalScopedMarkdown(markdown: string, goalId: string): string {
     }
 
     if (goalHeadingIndexes.length === 0) {
-        return markdown.trim()
+        return { start: 0, end: lines.length, markdown: markdown.trim() }
     }
 
-    const startHeading = goalHeadingIndexes.find((index) => (lines[index] ?? '').includes(goalId))
+    const startHeading = goalHeadingIndexes.find((index) => headingMatchesGoal(lines[index] ?? '', scope))
     if (startHeading === undefined) {
-        return ''
+        return null
     }
 
     const endHeading = goalHeadingIndexes.find((index) => index > startHeading) ?? lines.length
-    return lines.slice(startHeading, endHeading).join('\n').trim()
+    return {
+        start: startHeading,
+        end: endHeading,
+        markdown: lines.slice(startHeading, endHeading).join('\n').trim()
+    }
 }
 
 function collectBlock(lines: string[], start: number, stop: (line: string) => boolean): { body: string; nextIndex: number } {
@@ -112,8 +145,8 @@ function collectBlock(lines: string[], start: number, stop: (line: string) => bo
     }
 }
 
-export function parseGoalTodoMarkdown(markdown: string, goalId: string): Pick<GoalTodoResponse, 'rawMarkdown' | 'sections'> {
-    const rawMarkdown = findGoalScopedMarkdown(normalizeMarkdown(markdown), goalId)
+export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'rawMarkdown' | 'sections'> {
+    const rawMarkdown = findGoalScopedMarkdown(normalizeMarkdown(markdown), scope)
     const lines = rawMarkdown.split('\n')
     const sections: GoalTodoSection[] = []
     let currentKind: GoalTodoSectionKind = 'unknown'
@@ -183,6 +216,94 @@ export function parseGoalTodoMarkdown(markdown: string, goalId: string): Pick<Go
     return { rawMarkdown, sections }
 }
 
+function lineMatchesTodoRef(line: string, todoRef: string, taskId: string): boolean {
+    if (extractTaskId(line) === taskId) {
+        return true
+    }
+    return normalizeTodoRef(line) === normalizeTodoRef(todoRef)
+}
+
+function replaceTaskReference(text: string, taskId: string): string {
+    return `${stripTaskReference(text)} -> task \`${taskId}\``
+}
+
+export function updateGoalTodoMarkdown(markdown: string, input: GoalTodoScope & {
+    todoRef: string
+    taskId: string
+    kind: 'promoted' | 'done'
+}): string {
+    const normalizedMarkdown = normalizeMarkdown(markdown)
+    const lines = normalizedMarkdown.split('\n')
+    const range = findGoalScopedRange(normalizedMarkdown, input)
+    if (!range) {
+        return normalizedMarkdown
+    }
+
+    for (let index = range.start; index < range.end; index += 1) {
+        const line = lines[index] ?? ''
+        const bulletMatch = /^(\s*)[-*]\s+(.+?)\s*$/.exec(line)
+        if (bulletMatch) {
+            const text = bulletMatch[2]!
+            if (!lineMatchesTodoRef(text, input.todoRef, input.taskId)) {
+                continue
+            }
+            const title = cleanTitle(text)
+            if (!title) {
+                continue
+            }
+            lines[index] = `${bulletMatch[1]!}- [${input.kind}] ${replaceTaskReference(title, input.taskId)}`
+            return lines.join('\n')
+        }
+
+        const headingMatch = /^(#{4,6})\s+(.+?)\s*$/.exec(line)
+        if (headingMatch) {
+            const text = headingMatch[2]!
+            if (!lineMatchesTodoRef(text, input.todoRef, input.taskId)) {
+                continue
+            }
+            const title = cleanTitle(text)
+            if (!title) {
+                continue
+            }
+            lines[index] = `${headingMatch[1]!} [${input.kind}] ${replaceTaskReference(title, input.taskId)}`
+            return lines.join('\n')
+        }
+    }
+
+    return normalizedMarkdown
+}
+
+export function updateGoalTodoTaskState(input: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    todoRef: string | null | undefined
+    taskId: string
+    kind: 'promoted' | 'done'
+}): boolean {
+    const todoRef = input.todoRef?.trim()
+    const path = input.defaultWorkspace?.path
+        ? join(input.defaultWorkspace.path, '.hopi', 'docs', 'todo.md')
+        : null
+    if (!todoRef || !path || !existsSync(path)) {
+        return false
+    }
+
+    const current = readFileSync(path, 'utf8')
+    const next = updateGoalTodoMarkdown(current, {
+        goalId: input.goal.id,
+        goalKey: input.goal.goalKey,
+        todoRef,
+        taskId: input.taskId,
+        kind: input.kind
+    })
+    if (next === normalizeMarkdown(current)) {
+        return false
+    }
+    writeFileSync(path, next, 'utf8')
+    return true
+}
+
 export function readGoalTodo(input: {
     project: StoredProject
     goal: StoredGoal
@@ -202,7 +323,10 @@ export function readGoalTodo(input: {
     }
 
     const markdown = readFileSync(path, 'utf8')
-    const parsed = parseGoalTodoMarkdown(markdown, input.goal.id)
+    const parsed = parseGoalTodoMarkdown(markdown, {
+        goalId: input.goal.id,
+        goalKey: input.goal.goalKey
+    })
     return {
         exists: true,
         path,

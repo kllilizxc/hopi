@@ -42,8 +42,11 @@ function StatusBadge(props: { status: GitFileStatus['status'] }) {
 
     return (
         <span
-            className="inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[10px] font-semibold"
-            style={{ color: badge.color, borderColor: badge.color }}
+            className="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold"
+            style={{
+                color: badge.color,
+                boxShadow: `inset 0 0 0 1px ${badge.color}`
+            }}
         >
             {badge.label}
         </span>
@@ -76,7 +79,7 @@ function GitChangeRow(props: {
     return (
         <Pressable
             onClick={props.onOpen}
-            className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
+            className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'app-shadow-divider-b' : ''}`}
         >
             <FileIcon fileName={props.file.fileName} size={22} />
             <div className="min-w-0 flex-1">
@@ -125,7 +128,7 @@ export function GitChangeList(props: GitChangeListProps) {
         <div>
             {sections.map((section) => (
                 <div key={section.key}>
-                    <div className={`border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold ${section.titleClassName ?? 'text-[var(--app-hint)]'}`}>
+                    <div className={`app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 text-xs font-semibold ${section.titleClassName ?? 'text-[var(--app-hint)]'}`}>
                         {section.title} ({section.files.length})
                     </div>
                     {section.files.map((file, index) => (

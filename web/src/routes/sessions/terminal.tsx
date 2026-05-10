@@ -162,7 +162,7 @@ function QuickKeyButton(props: {
             onPointerDown={handlePointerDown}
             disabled={disabled}
             aria-pressed={modifier ? isActive : undefined}
-            className={`flex-1 border-l border-[var(--app-border)] px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:border-l-0 active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
+            className={`flex-1 app-shadow-divider-l px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:shadow-none active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
                 isActive ? 'bg-[var(--app-link)] text-[var(--app-bg)]' : 'hover:bg-[var(--app-subtle-bg)]'
             }`}
             aria-label={description}
@@ -467,7 +467,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                     subtitle={subtitle}
                     onBack={props.onBack ?? goBack}
                     backLabel={t('projects.files.back')}
-                    borderClassName="border-b border-[var(--app-border)]"
+                    borderClassName="app-shadow-divider-b"
                     contentClassName="p-3"
                     right={<ConnectionIndicator status={status} />}
                 />
@@ -483,7 +483,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
 
             {errorMessage ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
-                    <div className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
+                    <div className="rounded-md app-shadow-border-error bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
                         {errorMessage}
                     </div>
                 </div>
@@ -491,7 +491,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
 
             {exitInfo ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
-                    <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
+                    <div className="rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
                         {exitMessage}
                     </div>
                 </div>
@@ -503,7 +503,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                 </div>
             </div>
 
-            <div className="bg-[var(--app-bg)] border-t border-[var(--app-border)] pb-[env(safe-area-inset-bottom)]">
+            <div className="bg-[var(--app-bg)] app-shadow-divider-t pb-[env(safe-area-inset-bottom)]">
                 <div className="mx-auto w-full max-w-content px-3">
                     <div className="flex flex-col gap-2 py-2">
                         <button
@@ -512,7 +512,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                                 void handlePasteAction()
                             }}
                             disabled={quickInputDisabled}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-3 py-2 text-sm font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="w-full rounded-md app-shadow-border bg-[var(--app-secondary-bg)] px-3 py-2 text-sm font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {t('button.paste')}
                         </button>
@@ -563,7 +563,7 @@ export function SessionTerminal(props: { sessionId: string; onBack?: () => void;
                         value={manualPasteText}
                         onChange={(event) => setManualPasteText(event.target.value)}
                         placeholder={t('terminal.paste.placeholder')}
-                        className="mt-2 min-h-32 w-full resize-y rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                        className="mt-2 min-h-32 w-full resize-y rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                         autoCapitalize="none"
                         autoCorrect="off"
                     />

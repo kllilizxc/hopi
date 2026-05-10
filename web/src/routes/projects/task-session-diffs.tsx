@@ -230,7 +230,7 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
             />
 
             {combinedError ? (
-                <div className="px-3 py-2 border-b border-[var(--app-divider)] bg-amber-500/10 text-xs text-[var(--app-hint)]">
+                <div className="px-3 py-2 app-shadow-divider-b bg-amber-500/10 text-xs text-[var(--app-hint)]">
                     {combinedError}
                 </div>
             ) : null}

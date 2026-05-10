@@ -69,7 +69,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 </DialogHeader>
 
                 {error ? (
-                    <div className="mt-3 rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
+                    <div className="mt-3 rounded-md app-shadow-border-error bg-[var(--app-badge-error-bg)] p-3 text-sm text-[var(--app-badge-error-text)]">
                         {error}
                     </div>
                 ) : null}

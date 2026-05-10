@@ -59,14 +59,14 @@ export default function SettingsPage() {
                 title={t('settings.title')}
                 onBack={goBack}
                 backLabel={t('projects.actions.back')}
-                borderClassName="border-b border-[var(--app-border)]"
+                borderClassName="app-shadow-divider-b"
                 contentClassName="p-3"
             />
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">
                     {/* Language section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.language.title')}
                         </div>
@@ -81,7 +81,7 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Display section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.display.title')}
                         </div>
@@ -105,7 +105,7 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Theme section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.theme.title')}
                         </div>
@@ -139,7 +139,7 @@ export default function SettingsPage() {
                     </div>
 
                     {/* Voice Assistant section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.voice.title')}
                         </div>
@@ -170,7 +170,7 @@ export default function SettingsPage() {
                     </div>
 
                     {/* About section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.about.title')}
                         </div>

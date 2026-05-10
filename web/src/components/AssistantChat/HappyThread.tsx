@@ -29,6 +29,8 @@ function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
     )
 }
 
+export const MESSAGE_STREAM_CLASS_NAME = 'flex flex-col gap-4 sm:gap-5'
+
 function MessageSkeleton() {
     const { t } = useTranslation()
     const rows = [
@@ -41,7 +43,7 @@ function MessageSkeleton() {
     return (
         <div role="status" aria-live="polite">
             <span className="sr-only">{t('misc.loadingMessages')}</span>
-            <div className="space-y-3 animate-pulse">
+            <div className="space-y-4 sm:space-y-5 animate-pulse">
                 {rows.map((row, index) => (
                     <div key={`skeleton-${index}`} className={row.align === 'end' ? 'flex justify-end' : 'flex justify-start'}>
                         <div className={`${row.height} ${row.width} rounded-xl bg-[var(--app-subtle-bg)]`} />
@@ -425,7 +427,7 @@ export function HappyThread(props: {
 
     return (
         <HappyChatProvider value={chatContextValue}>
-            <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative border-0">
+            <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 <ThreadPrimitive.Viewport asChild autoScroll={autoScrollEnabled}>
                     <ScrollShadow
                         ref={viewportRef}
@@ -479,7 +481,7 @@ export function HappyThread(props: {
                                     ) : null}
                                 </>
                             )}
-                            <div className="flex flex-col gap-3">
+                            <div className={MESSAGE_STREAM_CLASS_NAME}>
                                 <ThreadPrimitive.Messages components={THREAD_MESSAGE_COMPONENTS} />
                             </div>
                             {showActionRow ? (

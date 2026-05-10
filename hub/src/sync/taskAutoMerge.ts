@@ -14,6 +14,7 @@ import {
     resolveMergeConflictResolutionMode,
     runMergeVerifyChecks
 } from './mergeWorkflowRunner'
+import { relinkTaskToSession } from './sessionTaskLink'
 import { getWorkflowStrategy } from './workflowStrategy'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from './syncEngine'
 
@@ -31,12 +32,16 @@ function normalizeText(value: unknown): string {
     return String(value ?? '').trim()
 }
 
-function normalizeBranchName(value: string | undefined | null): string | null {
+function normalizeNonEmptyString(value: string | undefined | null): string | null {
     if (typeof value !== 'string') {
         return null
     }
     const trimmed = value.trim()
     return trimmed.length > 0 ? trimmed : null
+}
+
+function normalizeBranchName(value: string | undefined | null): string | null {
+    return normalizeNonEmptyString(value)
 }
 
 function readableRpcError(result: {
@@ -231,6 +236,62 @@ function resolveDefaultMergeRootPath(taskSession: NonNullable<ReturnType<SyncEng
     return taskSession.metadata?.worktree?.worktreePath
         ?? taskSession.metadata?.path
         ?? ''
+}
+
+function isUsableWorktreeSession(
+    session: ReturnType<SyncEngine['getSessionByNamespace']> | null | undefined
+): session is NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>> {
+    return Boolean(session && session.active !== false && session.metadata?.worktree)
+}
+
+function resolveAutoMergeTaskSession(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    task: StoredTask
+    preferredSessionId?: string
+}): {
+    task: StoredTask
+    sessionId: string
+    session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
+} | null {
+    const preferredSessionId = normalizeNonEmptyString(options.preferredSessionId)
+    if (preferredSessionId) {
+        const preferredSession = options.engine.getSessionByNamespace(preferredSessionId, options.namespace)
+        if (isUsableWorktreeSession(preferredSession)) {
+            const task = preferredSessionId === options.task.activeSessionId
+                ? options.task
+                : relinkTaskToSession({
+                    store: options.store,
+                    engine: options.engine,
+                    task: options.task,
+                    namespace: options.namespace,
+                    sessionId: preferredSessionId,
+                    preserveMergeResultOnSessionChange: true
+                }) ?? options.task
+            return {
+                task,
+                sessionId: preferredSessionId,
+                session: preferredSession
+            }
+        }
+    }
+
+    const activeSessionId = normalizeNonEmptyString(options.task.activeSessionId)
+    if (!activeSessionId) {
+        return null
+    }
+
+    const activeSession = options.engine.getSessionByNamespace(activeSessionId, options.namespace)
+    if (!activeSession?.metadata?.worktree) {
+        return null
+    }
+
+    return {
+        task: options.task,
+        sessionId: activeSessionId,
+        session: activeSession
+    }
 }
 
 async function cleanupTaskWorktreeAfterSuccessfulMerge(options: {
@@ -615,8 +676,9 @@ export async function autoMergeAcceptedTask(options: {
     engine: SyncEngine
     namespace: string
     taskId: string
+    preferredSessionId?: string
 }): Promise<'not_applicable' | 'merged' | 'blocked'> {
-    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    let task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!task || !isAutoMergeCandidate(task) || !task.activeSessionId) {
         return 'not_applicable'
     }
@@ -626,8 +688,21 @@ export async function autoMergeAcceptedTask(options: {
         return 'not_applicable'
     }
 
-    const session = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
-    if (!session?.metadata?.worktree) {
+    const resolvedSession = resolveAutoMergeTaskSession({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        task,
+        preferredSessionId: options.preferredSessionId
+    })
+    if (!resolvedSession) {
+        return 'not_applicable'
+    }
+    task = resolvedSession.task
+    const sessionId = resolvedSession.sessionId
+    const session = resolvedSession.session
+    const worktree = session.metadata?.worktree
+    if (!worktree) {
         return 'not_applicable'
     }
 
@@ -637,7 +712,7 @@ export async function autoMergeAcceptedTask(options: {
         namespace: options.namespace,
         task,
         status: 'running',
-        sessionId: task.activeSessionId,
+        sessionId,
         latestNote: 'Auto-merge started after evaluator acceptance.',
         startedAt: Date.now(),
         completedAt: null,
@@ -646,7 +721,7 @@ export async function autoMergeAcceptedTask(options: {
 
     const mergeWorkflowLoad = await loadMergeWorkflowFromSession({
         engine: options.engine,
-        sessionId: task.activeSessionId,
+        sessionId,
         session
     })
     if (mergeWorkflowLoad.kind === 'invalid') {
@@ -655,7 +730,7 @@ export async function autoMergeAcceptedTask(options: {
             engine: options.engine,
             namespace: options.namespace,
             task: runningTask,
-            sessionId: task.activeSessionId,
+            sessionId,
             reason: mergeWorkflowLoad.error
         })
         return 'blocked'
@@ -675,7 +750,7 @@ export async function autoMergeAcceptedTask(options: {
             engine: options.engine,
             namespace: options.namespace,
             task: runningTask,
-            sessionId: task.activeSessionId,
+            sessionId,
             reason: 'Target branch not configured'
         })
         return 'blocked'
@@ -683,14 +758,14 @@ export async function autoMergeAcceptedTask(options: {
 
     let mergeState: RpcGitMergeWorktreeStateResponse
     try {
-        mergeState = await options.engine.gitMergeWorktreeState(task.activeSessionId, { targetBranch })
+        mergeState = await options.engine.gitMergeWorktreeState(sessionId, { targetBranch })
     } catch (error) {
         blockMerge({
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
             task: runningTask,
-            sessionId: task.activeSessionId,
+            sessionId,
             reason: normalizeText(error) || 'Merge state check failed'
         })
         return 'blocked'
@@ -703,7 +778,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: readableRpcError(mergeState)
             })
             return 'blocked'
@@ -717,22 +792,22 @@ export async function autoMergeAcceptedTask(options: {
             namespace: options.namespace,
             project,
             task: runningTask,
-            sessionId: task.activeSessionId,
+            sessionId,
             targetHead,
-            baseCommit: session.metadata.worktree.baseCommit
+            baseCommit: worktree.baseCommit
         })
         return 'merged'
     }
 
     const sourceBranch = normalizeBranchName(mergeState.sourceBranch)
-        ?? normalizeBranchName(session.metadata.worktree.branch)
+        ?? normalizeBranchName(worktree.branch)
     const maxRepairAttempts = resolveMergeConflictResolutionMaxAttempts(workflow)
     let repairsAttempted = runningTask.mergeRuntime?.retryCount ?? 0
 
     while (true) {
         const attempt = await runAutoMergeAttempt({
             engine: options.engine,
-            sessionId: task.activeSessionId,
+            sessionId,
             session,
             task: runningTask,
             workflow,
@@ -749,9 +824,9 @@ export async function autoMergeAcceptedTask(options: {
                 namespace: options.namespace,
                 project,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 targetHead: attempt.targetHead,
-                baseCommit: session.metadata.worktree.baseCommit
+                baseCommit: worktree.baseCommit
             })
             return 'merged'
         }
@@ -762,7 +837,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: attempt.reason
             })
             return 'blocked'
@@ -775,7 +850,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: `Conflict in blocked path ${blockedConflict}`
             })
             return 'blocked'
@@ -787,7 +862,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: attempt.reason
             })
             return 'blocked'
@@ -799,7 +874,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: runningTask,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: `Merge conflicts persisted after ${maxRepairAttempts} agent repair attempt(s)`
             })
             return 'blocked'
@@ -811,11 +886,11 @@ export async function autoMergeAcceptedTask(options: {
             engine: options.engine,
             namespace: options.namespace,
             task: runningTask,
-            sessionId: task.activeSessionId,
+            sessionId,
             targetBranch,
             sourceBranch,
             workflowRootPath,
-            worktreeBasePath: session.metadata.worktree.basePath,
+            worktreeBasePath: worktree.basePath,
             conflictFiles: attempt.conflictFiles,
             mergeFailureReason: attempt.reason,
             repairAttempt,
@@ -828,7 +903,7 @@ export async function autoMergeAcceptedTask(options: {
                 engine: options.engine,
                 namespace: options.namespace,
                 task: repair.task,
-                sessionId: task.activeSessionId,
+                sessionId,
                 reason: repair.reason
             })
             return 'blocked'
@@ -844,6 +919,7 @@ export function requestAutoMergeAcceptedTask(options: {
     engine: SyncEngine
     namespace: string
     taskId: string
+    preferredSessionId?: string
 }): boolean {
     const key = `${options.namespace}:${options.taskId}`
     if (inFlightAutoMergeKeys.has(key)) {

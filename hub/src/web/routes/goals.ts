@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
+import { buildUniqueGoalKey, DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import { GoalStatusSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHandoff'
 import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
+import { buildGoalDocsImportPreview, importGoalDocs } from '../../sync/goals/goalDocsImport'
 import { readGoalTodo } from '../../sync/goals/goalTodo'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
@@ -84,6 +85,7 @@ function emitTaskUpdated(options: {
 
 function buildPlannerSeedTaskContract(goal: {
     id: string
+    goalKey: string
     title: string
     description: string | null
     successCriteria: string | null
@@ -98,7 +100,7 @@ function buildPlannerSeedTaskContract(goal: {
         '',
         '## Acceptance',
         '',
-        `- Read and update .hopi/docs/goals/${goal.id}.md.`,
+        `- Read and update .hopi/docs/goals/${goal.goalKey}.md.`,
         '- Update .hopi/docs/todo.md with curated candidate/ready work.',
         '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough, usually 2-3 independent tasks when the lane is empty.',
         '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
@@ -138,6 +140,10 @@ function ensurePlannerSeedTask(options: {
     goal: StoredGoal
     namespace: string
 }): StoredTask | null {
+    if (options.goal.automationPausedAt !== null) {
+        return null
+    }
+
     if (options.goal.status !== 'planning') {
         return null
     }
@@ -211,8 +217,14 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Project not found' }, 404)
         }
 
-        const goals = options.store.goals.listGoalsByProjectAndNamespace(projectId, namespace)
         const engine = options.getSyncEngine()
+        const imported = importGoalDocs({
+            store: options.store,
+            project,
+            namespace,
+            defaultWorkspace: getDefaultWorkspace(options.store, project)
+        })
+        const goals = options.store.goals.listGoalsByProjectAndNamespace(projectId, namespace)
         let repaired = false
         for (const goal of goals) {
             const seedTask = ensurePlannerSeedTask({
@@ -232,7 +244,7 @@ export function createGoalsRoutes(options: {
                 taskId: seedTask.id
             })
         }
-        if (repaired) {
+        if (imported.imported.length > 0 || repaired) {
             emitProjectUpdated({
                 engine,
                 projectId,
@@ -263,6 +275,52 @@ export function createGoalsRoutes(options: {
         }))
     })
 
+    app.get('/projects/:projectId/goal-docs/import-preview', (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const project = options.store.projects.getProjectByNamespace(projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const preview = buildGoalDocsImportPreview({
+            store: options.store,
+            project,
+            namespace,
+            defaultWorkspace: getDefaultWorkspace(options.store, project)
+        })
+
+        return c.json({
+            docsRoot: preview.docsRoot,
+            goals: preview.goals.map(({ parsed: _parsed, ...goal }) => goal),
+            errors: preview.errors
+        })
+    })
+
+    app.post('/projects/:projectId/goal-docs/import', (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const project = options.store.projects.getProjectByNamespace(projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const result = importGoalDocs({
+            store: options.store,
+            project,
+            namespace,
+            defaultWorkspace: getDefaultWorkspace(options.store, project)
+        })
+
+        emitProjectUpdated({
+            engine: options.getSyncEngine(),
+            projectId,
+            namespace
+        })
+
+        return c.json(result)
+    })
+
     app.post('/projects/:projectId/goals', async (c) => {
         const namespace = c.get('namespace')
         const projectId = c.req.param('projectId')
@@ -277,10 +335,14 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
+        const goalKey = buildUniqueGoalKey(parsed.data.title, (candidate) => (
+            Boolean(options.store.goals.getGoalByGoalKeyAndNamespace(projectId, namespace, candidate))
+        ))
         const goal = options.store.goals.createGoal({
             id: randomUUID(),
             projectId,
             namespace,
+            goalKey,
             title: parsed.data.title,
             description: parsed.data.description ?? null,
             successCriteria: parsed.data.successCriteria ?? null,
@@ -344,6 +406,56 @@ export function createGoalsRoutes(options: {
             projectId: existing.projectId,
             namespace
         })
+
+        return c.json({ goal })
+    })
+
+    app.post('/goals/:goalId/automation/pause', (c) => {
+        const namespace = c.get('namespace')
+        const goalId = c.req.param('goalId')
+        const existing = options.store.goals.getGoalByNamespace(goalId, namespace)
+        if (!existing) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+
+        const goal = options.store.goals.updateGoalByNamespace(goalId, namespace, {
+            automationPausedAt: Date.now()
+        })
+        if (!goal) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+
+        emitProjectUpdated({
+            engine: options.getSyncEngine(),
+            projectId: existing.projectId,
+            namespace
+        })
+
+        return c.json({ goal })
+    })
+
+    app.post('/goals/:goalId/automation/resume', (c) => {
+        const namespace = c.get('namespace')
+        const goalId = c.req.param('goalId')
+        const existing = options.store.goals.getGoalByNamespace(goalId, namespace)
+        if (!existing) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+
+        const goal = options.store.goals.updateGoalByNamespace(goalId, namespace, {
+            automationPausedAt: null
+        })
+        if (!goal) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+
+        const engine = options.getSyncEngine()
+        emitProjectUpdated({
+            engine,
+            projectId: existing.projectId,
+            namespace
+        })
+        engine?.requestAutoRunTick(namespace, existing.projectId)
 
         return c.json({ goal })
     })

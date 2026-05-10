@@ -90,6 +90,19 @@ export type NormalizedMessage = ({
     originalText?: string
 }
 
+const CODEX_PLAN_UPDATE_META_KEY = '__hopiCodexPlanUpdate'
+
+export function isCodexPlanUpdateMeta(meta: unknown): boolean {
+    return isObject(meta) && meta[CODEX_PLAN_UPDATE_META_KEY] === true
+}
+
+export function withCodexPlanUpdateMeta(meta: unknown): Record<string, unknown> {
+    if (isObject(meta)) {
+        return { ...meta, [CODEX_PLAN_UPDATE_META_KEY]: true }
+    }
+    return { [CODEX_PLAN_UPDATE_META_KEY]: true, originalMeta: meta }
+}
+
 export type TranscriptMessageLike = {
     id: string
     localId?: string | null
@@ -550,7 +563,7 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
-                meta,
+                meta: withCodexPlanUpdateMeta(meta),
             }
         }
 

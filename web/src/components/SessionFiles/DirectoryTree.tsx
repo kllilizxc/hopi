@@ -151,7 +151,7 @@ export const DirectoryTree = memo(function DirectoryTree(props: {
     const expandedStateRef = useRef<Map<string, boolean>>(new Map([['', true]]))
 
     return (
-        <div className="border-t border-[var(--app-divider)]">
+        <div className="app-shadow-divider-t">
             <DirectoryNode
                 api={props.api}
                 sessionId={props.sessionId}

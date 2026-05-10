@@ -67,7 +67,7 @@ export function SpawnSession(props: {
                             placeholder="/path/to/project"
                             value={directory}
                             onChange={(e) => setDirectory(e.target.value)}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                            className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                         />
 
                         <div className="flex flex-col gap-2">
@@ -99,7 +99,7 @@ export function SpawnSession(props: {
                                         value={worktreeName}
                                         onChange={(e) => setWorktreeName(e.target.value)}
                                         disabled={isPending}
-                                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
                                     />
                                 ) : null}
                             </div>

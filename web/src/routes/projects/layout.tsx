@@ -22,6 +22,7 @@ import { useGoals } from '@/hooks/queries/useGoals'
 import { useCreateProject } from '@/hooks/mutations/useCreateProject'
 import { useCreateGoal } from '@/hooks/mutations/useCreateGoal'
 import { useCreateTask } from '@/hooks/mutations/useCreateTask'
+import { useGoalAutomationControl } from '@/hooks/mutations/useGoalAutomationControl'
 import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
@@ -31,6 +32,7 @@ import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
 import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
+import { useSelectedProjectGoal } from '@/routes/projects/selected-goal-storage'
 import type { AgentType } from '@/components/NewSession/types'
 
 function TopBar(props: {
@@ -148,7 +150,7 @@ function ProjectsListPanel(props: {
                                 <Pressable
                                     key={project.id}
                                     onClick={() => props.onSelectProject(project.id)}
-                                    className="app-interactive-card w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 text-left"
+                                    className="app-interactive-card w-full rounded-lg app-shadow-border bg-[var(--app-bg)] p-3 text-left"
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
@@ -194,14 +196,19 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
 }) {
     const { api } = useAppContext()
     const { t } = useTranslation()
+    const { addToast } = useToast()
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
     const { project } = useProject(api, props.projectId)
     const { projects } = useProjects(api, { includeArchived: false })
+    const {
+        pauseGoalAutomation,
+        resumeGoalAutomation,
+        isPending: isGoalAutomationTogglePending
+    } = useGoalAutomationControl(api)
     const { recentProjectIds, markProjectUsed } = useRecentProjects()
     const planningMatch = matchRoute({ to: '/projects/$projectId/planning' })
     const isPlanningRoute = Boolean(planningMatch && planningMatch.projectId === props.projectId)
-
     const recentProjects = useRecentProjectTabs({
         projects,
         currentProjectId: props.projectId,
@@ -249,6 +256,39 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
         void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
     }, [navigate, props.projectId])
 
+    const handleToggleGoalAutomationPause = useCallback((goalId: string) => {
+        if (isGoalAutomationTogglePending) return
+        const goal = props.goals.find((candidate) => candidate.id === goalId)
+        if (!goal) return
+
+        void (async () => {
+            try {
+                if (goal.automationPausedAt) {
+                    const updated = await resumeGoalAutomation(goal.id)
+                    addToast({ title: t('projects.toast.automationResumed'), body: updated.title, sessionId: '', url: '' })
+                    return
+                }
+
+                const updated = await pauseGoalAutomation(goal.id)
+                addToast({ title: t('projects.toast.automationPaused'), body: updated.title, sessionId: '', url: '' })
+            } catch (error) {
+                addToast({
+                    title: t('projects.toast.automationToggleFailed'),
+                    body: error instanceof Error ? error.message : 'Failed to update goal automation',
+                    sessionId: '',
+                    url: ''
+                })
+            }
+        })()
+    }, [
+        addToast,
+        isGoalAutomationTogglePending,
+        pauseGoalAutomation,
+        props.goals,
+        resumeGoalAutomation,
+        t
+    ])
+
     return (
         <div className="flex h-full min-h-0 flex-col">
             <TopBar
@@ -277,12 +317,10 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                     </>
                 }
                 right={
-                    <>
-                        <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
-                            <ProjectIcon className="h-4 w-4" />
-                            {t('projects.actions.projectSettings')}
-                        </Button>
-                    </>
+                    <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
+                        <ProjectIcon className="h-4 w-4" />
+                        {t('projects.actions.projectSettings')}
+                    </Button>
                 }
             />
 
@@ -290,6 +328,8 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 goals={props.goals}
                 selectedGoalId={props.selectedGoalId}
                 isLoading={props.isGoalsLoading}
+                onToggleGoalAutomationPause={handleToggleGoalAutomationPause}
+                isAutomationTogglePending={isGoalAutomationTogglePending}
                 onSelectGoal={props.onSelectGoal}
                 onCreateGoal={props.onOpenCreateGoal}
                 leading={(
@@ -355,21 +395,13 @@ export default function ProjectsPage() {
     const [createOpen, setCreateOpen] = useState(false)
     const [createGoalOpen, setCreateGoalOpen] = useState(false)
     const [newTaskOpen, setNewTaskOpen] = useState(false)
-    const [selectedGoalByProject, setSelectedGoalByProject] = useState<Record<string, string>>({})
 
     const { project } = useProject(api, selectedProjectId ?? '')
     const { goals, isLoading: isGoalsLoading } = useGoals(api, selectedProjectId)
     const { strategies: workflowStrategies } = useWorkflowStrategies(api)
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
     const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
-    const selectedGoalId = useMemo(() => {
-        if (!selectedProjectId) return null
-        const storedGoalId = selectedGoalByProject[selectedProjectId] ?? null
-        if (storedGoalId && goals.some((goal) => goal.id === storedGoalId)) {
-            return storedGoalId
-        }
-        return goals[0]?.id ?? null
-    }, [goals, selectedGoalByProject, selectedProjectId])
+    const { selectedGoalId, selectGoal } = useSelectedProjectGoal(selectedProjectId, goals)
 
     const handleCreateProject = useCallback(async (input: {
         machineId: string
@@ -490,7 +522,7 @@ export default function ProjectsPage() {
                 autopilotEnabled: input.autopilotEnabled,
                 deployRequiresApproval: input.deployRequiresApproval
             })
-            setSelectedGoalByProject((current) => ({ ...current, [selectedProjectId]: created.id }))
+            selectGoal(created.id)
             setCreateGoalOpen(false)
             return true
         } catch (error) {
@@ -502,7 +534,7 @@ export default function ProjectsPage() {
             })
             return false
         }
-    }, [addToast, createGoal, selectedProjectId, t])
+    }, [addToast, createGoal, selectGoal, selectedProjectId, t])
 
     const handleBackToProjects = useCallback(() => {
         void navigate({ to: '/projects' })
@@ -544,7 +576,7 @@ export default function ProjectsPage() {
                     shouldShowLeftOnMobile
                         ? 'translate-x-0'
                         : '-translate-x-full pointer-events-none'
-                } lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto`}
+                } lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:shadow-[1px_0_0_var(--app-divider)] lg:pointer-events-auto`}
             >
                 {selectedProjectId ? (
                     <ProjectBoardPanel
@@ -554,9 +586,7 @@ export default function ProjectsPage() {
                         isGoalsLoading={isGoalsLoading}
                         onBackToProjects={handleBackToProjects}
                         onOpenSettings={handleOpenProjectSettings}
-                        onSelectGoal={(goalId) => {
-                            setSelectedGoalByProject((current) => ({ ...current, [selectedProjectId]: goalId }))
-                        }}
+                        onSelectGoal={selectGoal}
                         onOpenCreateGoal={() => setCreateGoalOpen(true)}
                         onOpenNewTask={handleOpenNewTaskDialog}
                     />

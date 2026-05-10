@@ -3,11 +3,11 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const toastVariants = cva(
-    'pointer-events-auto relative w-full max-w-[28rem] overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] shadow-xl ring-1 ring-[var(--app-border)] backdrop-blur-sm',
+    'pointer-events-auto relative w-full max-w-[28rem] overflow-hidden rounded-2xl bg-[var(--app-bg)] text-[var(--app-fg)] shadow-2xl backdrop-blur-sm',
     {
         variants: {
             variant: {
-                default: 'border-[var(--app-border)] bg-[var(--app-bg)]'
+                default: 'bg-[var(--app-bg)]'
             }
         },
         defaultVariants: {
@@ -97,7 +97,7 @@ export function Toast({ title, body, onClose, className, variant, ...props }: To
     return (
         <div className={cn(toastVariants({ variant }), className)} role="status" {...props}>
             <div className="flex items-start gap-3 p-4">
-                <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-secondary-bg)] text-sm font-semibold text-[var(--app-link)]">
+                <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--app-secondary-bg)] text-sm font-semibold text-[var(--app-link)] shadow-sm">
                     !
                 </div>
                 <div className="min-w-0 flex-1">
@@ -107,7 +107,7 @@ export function Toast({ title, body, onClose, className, variant, ...props }: To
                 {onClose ? (
                     <button
                         type="button"
-                        className="-m-1 inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-full border border-[var(--app-border)] bg-[var(--app-secondary-bg)] text-sm text-[var(--app-hint)] transition-colors hover:text-[var(--app-fg)]"
+                        className="-m-1 inline-flex h-8 w-8 touch-manipulation items-center justify-center rounded-full bg-[var(--app-secondary-bg)] text-sm text-[var(--app-hint)] shadow-sm transition-colors hover:text-[var(--app-fg)]"
                         onClick={handleCloseClick}
                         onPointerDown={handleClosePointerDown}
                         aria-label="Dismiss"

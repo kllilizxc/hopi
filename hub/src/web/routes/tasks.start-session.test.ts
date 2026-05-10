@@ -1,10 +1,48 @@
 import { describe, expect, it } from 'bun:test'
 import type { TaskInitRuntime, TaskSessionStartFailure } from '@hopi/protocol/types'
-import { PRODUCT_INIT_SCRIPT_RELATIVE_PATH } from '@hopi/protocol/brand'
+import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { createTasksRoutes } from './tasks'
+
+function encodeBase64(value: string): string {
+    return Buffer.from(value, 'utf8').toString('base64')
+}
+
+const VALID_ACTIONS_MANIFEST = [
+    'version: 1',
+    'setup:',
+    '  steps:',
+    '    - id: deps',
+    '      type: run',
+    '      cwd: .',
+    '      run: ["bun", "install"]',
+    'preview:',
+    '  services:',
+    '    - id: web',
+    '      type: run',
+    '      cwd: .',
+    '      run: ["bun", "run", "dev"]',
+    '      ready:',
+    '        type: process_alive',
+    '      expose: primary',
+    'merge:',
+    '  targetBranch: main',
+    '  strategy: squash'
+].join('\n')
+
+function withValidActionsManifest<T extends Record<string, unknown>>(engine: T): T {
+    return {
+        ...engine,
+        async readSessionFile() {
+            return {
+                success: true,
+                content: encodeBase64(VALID_ACTIONS_MANIFEST)
+            }
+        }
+    }
+}
 
 function createTestApp(store: Store, engine: SyncEngine): Hono {
     const app = new Hono()
@@ -76,7 +114,7 @@ describe('tasks start-session route', () => {
         )
 
         let sentPrompt: { text?: string; localId?: string } = {}
-        const engine = {
+        const engine = withValidActionsManifest({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -128,7 +166,7 @@ describe('tasks start-session route', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/start-session`, {
@@ -150,13 +188,12 @@ describe('tasks start-session route', () => {
         expect(body.task?.initRuntime?.failure ?? null).toBeNull()
         expect(body.initRecoveryAttempted).toBe(false)
         expect(sentPrompt.localId?.startsWith('auto:kickoff:')).toBe(true)
-        expect(sentPrompt.text).not.toContain('System note: Ran `.hopi/init.sh` successfully before this prompt.')
+        expect(sentPrompt.text).not.toContain(`HOPI ran setup workflow from \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\``)
 
         const messages = store.messages.getMessages(spawned.id, 10)
         expect(messages).toHaveLength(1)
         const transcript = JSON.stringify(messages.map((message) => message.content))
-        expect(transcript).not.toContain('auto-ran `.hopi/init.sh`')
-        expect(transcript).not.toContain('Init script completed successfully.')
+        expect(transcript).not.toContain(`HOPI ran setup workflow from \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\``)
     })
 
     it('keeps the session alive and hands init failures back into the agent flow', async () => {
@@ -181,7 +218,7 @@ describe('tasks start-session route', () => {
 
         let archiveCalls = 0
         let sentPrompt: { text?: string; localId?: string } = {}
-        const engine = {
+        const engine = withValidActionsManifest({
             getMachineByNamespace() {
                 return {
                     id: machineId,
@@ -237,7 +274,7 @@ describe('tasks start-session route', () => {
             },
             handleRealtimeEvent() {
             }
-        } as unknown as SyncEngine
+        }) as unknown as SyncEngine
 
         const app = createTestApp(store, engine)
         const response = await app.request(`/api/tasks/${taskId}/start-session`, {
@@ -257,26 +294,23 @@ describe('tasks start-session route', () => {
         expect(body.task?.initRuntime).toMatchObject({
             status: 'blocked',
             sessionId: spawned.id,
-            blockedReason: 'init failed',
-            retryCount: 1
+            blockedReason: 'init failed'
         })
         expect(body.task?.initRuntime?.failure).toMatchObject({
             code: 'init_script_failed',
             blockedReason: 'init failed',
             retry: {
-                count: 1,
+                count: 0,
                 action: 'manual_fix_then_retry_start',
                 available: true
             }
         })
-        expect(body.task?.initRuntime?.latestNote).toContain('Same blocker repeated')
-        expect(body.initRecoveryAttempted).toBe(true)
+        expect(body.task?.initRuntime?.latestNote).toContain('Setup workflow failed')
+        expect(body.initRecoveryAttempted).toBe(false)
         expect(body.initRecoveryError).toBeUndefined()
         expect(archiveCalls).toBe(0)
-        expect(sentPrompt.localId?.startsWith('auto:init_setup:')).toBe(true)
-        expect(sentPrompt.text).toContain(PRODUCT_INIT_SCRIPT_RELATIVE_PATH)
-        expect(sentPrompt.text).toContain('Repair init then continue task work.')
-        expect(sentPrompt.text).toContain('Check init script')
+        expect(sentPrompt.localId).toBeUndefined()
+        expect(sentPrompt.text).toBeUndefined()
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
         expect(updatedTask?.activeSessionId).toBe(spawned.id)
@@ -284,13 +318,12 @@ describe('tasks start-session route', () => {
         expect(updatedTask?.initRuntime).toMatchObject({
             status: 'blocked',
             sessionId: spawned.id,
-            blockedReason: 'init failed',
-            retryCount: 1
+            blockedReason: 'init failed'
         })
         expect(updatedTask?.initRuntime?.failure?.code).toBe('init_script_failed')
 
         const transcript = JSON.stringify(store.messages.getMessages(spawned.id, 10).map((message) => message.content))
-        expect(transcript).toContain('auto-ran `.hopi/init.sh`')
+        expect(transcript).toContain(`HOPI ran setup workflow from \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`, but it failed before kickoff.`)
         expect(transcript).toContain('init failed')
     })
 

@@ -620,6 +620,10 @@ export function createSessionMessageWindowStore<TMessage extends SessionMessageL
             scheduleIncomingBufferFlush(sessionId)
         },
 
+        flushIncomingMessages(sessionId: string): void {
+            flushIncomingBuffer(sessionId)
+        },
+
         flushPendingMessages(sessionId: string): boolean {
             const current = getState(sessionId)
             if (current.pending.length === 0 && current.pendingOverflowVisibleCount === 0) {

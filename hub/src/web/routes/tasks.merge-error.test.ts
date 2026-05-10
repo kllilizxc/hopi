@@ -423,6 +423,115 @@ describe('tasks merge route runtime behavior', () => {
         expect(updatedTask?.activeSessionId).toBe(backlinkSession.id)
     })
 
+    it('finishes an in-review task when merge retry finds no committed changes', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-merge-no-changes-finish'
+        const taskId = 'task-merge-no-changes-finish'
+        const session = seedWorktreeSession(store, {
+            namespace,
+            tag: 'session-no-changes-finish',
+            path: '/tmp/no-changes-finish',
+            taskId,
+            projectId
+        })
+
+        seedMergeTask(store, {
+            namespace,
+            projectId,
+            taskId,
+            sessionId: session.id,
+            status: 'in_review'
+        })
+
+        const engine = withValidContract({
+            resolveSessionAccess(sessionId: string) {
+                if (sessionId !== session.id) {
+                    return { ok: false, reason: 'not-found' }
+                }
+                return {
+                    ok: true as const,
+                    sessionId,
+                    session: {
+                        id: sessionId,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: {
+                            path: '/tmp/no-changes-finish',
+                            host: 'test-host',
+                            projectId,
+                            taskId,
+                            worktree: {
+                                basePath: '/tmp/no-changes-finish',
+                                branch: 'task-branch',
+                                name: 'no-changes-finish-worktree'
+                            }
+                        },
+                        agentState: null
+                    }
+                }
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== session.id) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: {
+                        path: '/tmp/no-changes-finish',
+                        host: 'test-host',
+                        projectId,
+                        taskId,
+                        worktree: {
+                            basePath: '/tmp/no-changes-finish',
+                            branch: 'task-branch',
+                            name: 'no-changes-finish-worktree'
+                        }
+                    },
+                    agentState: null
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    mergeable: false,
+                    sourceBranch: 'task-branch',
+                    targetBranch: 'main',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 0
+                }
+            },
+            handleRealtimeEvent() {}
+        }) as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            ok?: boolean
+            skippedReason?: string | null
+            mergedAt?: number | null
+        }
+        expect(body.ok).toBe(true)
+        expect(body.skippedReason).toBe('no_changes')
+        expect(body.mergedAt).toBeNumber()
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.status).toBe('finished')
+        expect(updatedTask?.finishedAt).toBeNumber()
+        expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
+        expect(updatedTask?.worktreeMergedAt).toBeNumber()
+    })
+
     it('queues merge behind a thinking session and keeps durable runtime state', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

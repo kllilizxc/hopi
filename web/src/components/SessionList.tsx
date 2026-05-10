@@ -317,7 +317,7 @@ export function SessionList(props: {
                             <button
                                 type="button"
                                 onClick={() => toggleGroup(group.directory, isCollapsed)}
-                                className="sticky top-0 z-10 flex w-full items-center gap-2 px-3 py-2 text-left bg-[var(--app-bg)] border-b border-[var(--app-divider)] transition-colors hover:bg-[var(--app-secondary-bg)]"
+                                className="sticky top-0 z-10 flex w-full items-center gap-2 px-3 py-2 text-left bg-[var(--app-bg)] app-shadow-divider-b transition-colors hover:bg-[var(--app-secondary-bg)]"
                             >
                                 <ChevronRightIcon
                                     className={`h-4 w-4 text-[var(--app-hint)] transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`}
@@ -332,7 +332,7 @@ export function SessionList(props: {
                                 </div>
                             </button>
                             {!isCollapsed ? (
-                                <div className="flex flex-col divide-y divide-[var(--app-divider)] border-b border-[var(--app-divider)]">
+                                <div className="flex flex-col app-shadow-list-y app-shadow-divider-b">
                                     {group.sessions.map((s) => (
                                         <SessionItem
                                             key={s.id}

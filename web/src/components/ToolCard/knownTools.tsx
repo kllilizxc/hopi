@@ -4,6 +4,7 @@ import { isObject } from '@hopi/protocol'
 import { BulbIcon, ClipboardIcon, EyeIcon, FileDiffIcon, GlobeIcon, PuzzleIcon, QuestionIcon, RocketIcon, SearchIcon, TerminalIcon, WrenchIcon } from '@/components/ToolCard/icons'
 import { basename, resolveDisplayPath } from '@/utils/path'
 import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
+import { getCodexPatchPaths } from '@/components/ToolCard/codexPatchTargets'
 
 const DEFAULT_ICON_CLASS = 'h-3.5 w-3.5'
 // Tool presentation registry for `hopi/web` (aligned with `hopi-app`).
@@ -64,6 +65,11 @@ export const knownTools: Record<string, {
             return prompt ? truncate(prompt, 120) : null
         },
         minimal: (opts) => opts.childrenCount === 0
+    },
+    ToolGroup: {
+        icon: () => <PuzzleIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => `Tool calls (${opts.childrenCount})`,
+        minimal: true
     },
     Bash: {
         icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
@@ -252,35 +258,11 @@ export const knownTools: Record<string, {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Apply changes',
         subtitle: (opts) => {
-            // Try to extract file info from input.changes
-            if (isObject(opts.input) && isObject(opts.input.changes)) {
-                const files = Object.keys(opts.input.changes)
-                if (files.length === 0) return null
-                const first = files[0]
-                const display = resolveDisplayPath(first, opts.metadata)
-                const name = basename(display)
-                return files.length > 1 ? `${name} (+${files.length - 1})` : name
-            }
-
-            // Fallback: try to extract file info from result.stdout
-            if (isObject(opts.result)) {
-                const stdout = typeof opts.result.stdout === 'string' ? opts.result.stdout : null
-                if (stdout) {
-                    // Parse "M /path/to/file.ts" format
-                    const fileMatches = stdout.match(/^[MAD]\s+(.+)$/m)
-                    if (fileMatches && fileMatches[1]) {
-                        const filePath = fileMatches[1].trim()
-                        const display = resolveDisplayPath(filePath, opts.metadata)
-                        const name = basename(display)
-                        // Count total files
-                        const allMatches = stdout.match(/^[MAD]\s+/gm)
-                        const count = allMatches ? allMatches.length : 1
-                        return count > 1 ? `${name} (+${count - 1})` : name
-                    }
-                }
-            }
-
-            return null
+            const files = getCodexPatchPaths(opts.input, opts.result)
+            if (files.length === 0) return null
+            const display = resolveDisplayPath(files[0], opts.metadata)
+            const name = basename(display)
+            return files.length > 1 ? `${name} (+${files.length - 1})` : name
         },
         minimal: true
     },

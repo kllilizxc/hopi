@@ -207,4 +207,104 @@ describe('resolveBestUsableTaskSession', () => {
         expect(resolved.task.initRuntime?.sessionId).toBe(bestSession.id)
         expect(resolved.relinked).toBe(true)
     })
+
+    it('prefers an active metadata-matched session over an inactive explicit task session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-1'
+        const taskId = 'task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        const inactiveSession = createSession(store, {
+            id: 'session-inactive',
+            namespace,
+            metadata: {
+                path: '/tmp/worktree',
+                host: 'test',
+                projectId,
+                taskId,
+                worktree: {
+                    basePath: '/tmp/base',
+                    branch: 'task-branch',
+                    name: 'task-branch'
+                }
+            },
+            active: false,
+            updatedAt: Date.now() - 2_000
+        })
+        const activeSession = createSession(store, {
+            id: 'session-active',
+            namespace,
+            metadata: {
+                path: '/tmp/worktree',
+                host: 'test',
+                projectId,
+                taskId,
+                hopiTaskRole: 'evaluator',
+                worktree: {
+                    basePath: '/tmp/base',
+                    branch: 'task-branch',
+                    name: 'task-branch'
+                }
+            },
+            active: true,
+            updatedAt: Date.now()
+        })
+
+        const task = store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'in_review',
+            workflowProfile: 'default',
+            activeSessionId: inactiveSession.id
+        })
+
+        const runtimeSessions = new Map<string, Session>([
+            [inactiveSession.id, inactiveSession],
+            [activeSession.id, activeSession]
+        ])
+        const engine = {
+            resolveSessionAccess(sessionId: string, ns: string) {
+                const session = runtimeSessions.get(sessionId)
+                if (!session || ns !== namespace) {
+                    return { ok: false as const, reason: 'not-found' as const }
+                }
+                return { ok: true as const, sessionId, session }
+            },
+            getSessionByNamespace(sessionId: string, ns: string) {
+                return ns === namespace ? runtimeSessions.get(sessionId) : undefined
+            },
+            getSessionsByNamespace(ns: string) {
+                return ns === namespace ? Array.from(runtimeSessions.values()) : []
+            },
+            async resumeSession() {
+                return { type: 'error' as const, message: 'not needed', code: 'resume_unavailable' as const }
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const resolved = await resolveBestUsableTaskSession({
+            store,
+            engine,
+            namespace,
+            task,
+            requireWorktree: true,
+            allowResume: true
+        })
+
+        expect(resolved.ok).toBe(true)
+        if (!resolved.ok) {
+            return
+        }
+        expect(resolved.sessionId).toBe(activeSession.id)
+        expect(resolved.task.activeSessionId).toBe(activeSession.id)
+        expect(resolved.relinked).toBe(true)
+    })
 })

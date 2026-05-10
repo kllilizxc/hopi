@@ -359,6 +359,20 @@ export class ApiClient {
         })
     }
 
+    async pauseGoalAutomation(goalId: string): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}/automation/pause`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async resumeGoalAutomation(goalId: string): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}/automation/resume`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
     async listGoalDecisionTopics(goalId: string): Promise<GoalDecisionTopicsResponse> {
         return await this.request<GoalDecisionTopicsResponse>(`/api/goals/${encodeURIComponent(goalId)}/topics`)
     }

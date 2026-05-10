@@ -3,7 +3,7 @@ import {
     parseRequestUserInputInput,
     parseRequestUserInputAnswers
 } from '@/components/ToolCard/requestUserInput'
-import { cn } from '@/lib/utils'
+import { ToolAnswerOption } from '@/components/ToolCard/ToolAnswerOption'
 
 function getSelectionMark(isSelected: boolean): string {
     return isSelected ? '●' : '○'
@@ -40,7 +40,7 @@ export function RequestUserInputView(props: ToolViewProps) {
                 const isPureTextQuestion = q.options.length === 0
 
                 return (
-                    <div key={q.id} className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                    <div key={q.id} className="rounded-md app-shadow-border bg-[var(--app-bg)] p-3">
                         {q.question ? (
                             <div className="text-sm text-[var(--app-fg)] break-words">
                                 {q.question}
@@ -51,16 +51,11 @@ export function RequestUserInputView(props: ToolViewProps) {
                             // Pure text question - show the answer directly
                             hasAnswers && answer?.userNote ? (
                                 <div className="mt-3">
-                                    <div className="rounded-md border border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-2">
-                                        <div className="flex items-start gap-2">
-                                            <span className="shrink-0 text-sm text-emerald-600">●</span>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="text-sm text-emerald-700 dark:text-emerald-300 font-medium break-words">
-                                                    {answer.userNote}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <ToolAnswerOption
+                                        tone="success"
+                                        marker="●"
+                                        label={answer.userNote}
+                                    />
                                 </div>
                             ) : null
                         ) : (
@@ -70,59 +65,24 @@ export function RequestUserInputView(props: ToolViewProps) {
                                     const isSelected = answer?.selected === opt.label
 
                                     return (
-                                        <div
+                                        <ToolAnswerOption
                                             key={optIdx}
-                                            className={cn(
-                                                "rounded-md border px-2 py-2",
-                                                isSelected
-                                                    ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
-                                                    : "border-[var(--app-border)]"
-                                            )}
-                                        >
-                                            <div className="flex items-start gap-2">
-                                                {hasAnswers && (
-                                                    <span className={cn(
-                                                        "shrink-0 text-sm",
-                                                        isSelected
-                                                            ? "text-emerald-600"
-                                                            : "text-[var(--app-hint)]"
-                                                    )}>
-                                                        {getSelectionMark(isSelected)}
-                                                    </span>
-                                                )}
-                                                <div className="min-w-0 flex-1">
-                                                    <div className={cn(
-                                                        "text-sm break-words",
-                                                        isSelected
-                                                            ? "text-emerald-700 dark:text-emerald-300 font-medium"
-                                                            : "text-[var(--app-fg)]"
-                                                    )}>
-                                                        {opt.label}
-                                                    </div>
-                                                    {opt.description ? (
-                                                        <div className="mt-0.5 text-xs text-[var(--app-hint)] break-words">
-                                                            {opt.description}
-                                                        </div>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-                                        </div>
+                                            tone={isSelected ? 'success' : 'neutral'}
+                                            marker={hasAnswers ? getSelectionMark(isSelected) : undefined}
+                                            label={opt.label}
+                                            description={opt.description}
+                                        />
                                     )
                                 })}
 
                                 {/* Show user note if present */}
                                 {hasAnswers && answer?.userNote ? (
-                                    <div className="mt-2 rounded-md border border-blue-300 bg-blue-50 dark:bg-blue-950/30 px-2 py-2">
-                                        <div className="flex items-start gap-2">
-                                            <span className="shrink-0 text-xs text-blue-500">📝</span>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="text-xs text-[var(--app-hint)]">Note:</div>
-                                                <div className="text-sm text-blue-700 dark:text-blue-300 break-words">
-                                                    {answer.userNote}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <ToolAnswerOption
+                                        tone="info"
+                                        marker="Note"
+                                        label={answer.userNote}
+                                        className="mt-2"
+                                    />
                                 ) : null}
                             </div>
                         )}

@@ -68,7 +68,7 @@ export const ReasoningGroup: FC<PropsWithChildren> = ({ children }) => {
             </button>
 
             {expanded ? (
-                <div className="pl-4 pt-2 border-l-2 border-[var(--app-border)] ml-0.5">
+                <div className="pl-4 pt-2 shadow-[inset_2px_0_0_var(--app-border)] ml-0.5">
                     {children}
                 </div>
             ) : null}

@@ -196,7 +196,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                             value={name}
                             onChange={(event) => setName(event.target.value)}
                             disabled={props.isPending}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                         />
                     </div>
 
@@ -209,7 +209,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                             onChange={(event) => setDescription(event.target.value)}
                             disabled={props.isPending}
                             rows={4}
-                            className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            className="w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                         />
                     </div>
 
@@ -232,7 +232,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('projects.workspaces.fields.path')}
                         </label>
-                        <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm text-[var(--app-fg)]">
+                        <div className="rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm text-[var(--app-fg)]">
                             {workspacePath || t('projects.workspaces.picker.emptySelection')}
                         </div>
                         {machineId ? (
@@ -244,7 +244,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                 onSelect={setWorkspacePath}
                             />
                         ) : (
-                            <div className="rounded-md border border-dashed border-[var(--app-border)] px-3 py-4 text-xs text-[var(--app-hint)]">
+                            <div className="rounded-md app-shadow-border px-3 py-4 text-xs text-[var(--app-hint)]">
                                 {t('projects.workspaces.picker.selectMachine')}
                             </div>
                         )}
@@ -260,7 +260,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                 value={workspaceLabel}
                                 onChange={(event) => setWorkspaceLabel(event.target.value)}
                                 disabled={props.isPending}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 placeholder={t('projects.workspaces.fields.labelPlaceholder')}
                             />
                             <Button
@@ -283,7 +283,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                 {workspaces.map((workspace, index) => (
                                     <div
                                         key={workspace.path}
-                                        className="flex items-start justify-between gap-3 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2"
+                                        className="flex items-start justify-between gap-3 rounded-md app-shadow-border bg-[var(--app-bg)] p-2"
                                     >
                                         <div className="min-w-0">
                                             <div className="text-xs font-medium truncate">
@@ -334,7 +334,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                             value={automationLaneLimits[lane]}
                                             onChange={(event) => setAutomationLaneLimit(lane, Number(event.target.value))}
                                             disabled={props.isPending}
-                                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                            className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                         />
                                     </div>
                                 ))}
@@ -356,7 +356,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                     value={improvementsMaxPendingTasks}
                                     onChange={(event) => setImprovementsMaxPendingTasks(Number(event.target.value))}
                                     disabled={props.isPending}
-                                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                    className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                 />
                             </div>
                         </div>
@@ -387,7 +387,7 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                                 onChange={(event) => setWorktreeTargetBranch(event.target.value)}
                                 disabled={props.isPending || defaultSessionType !== 'worktree'}
                                 placeholder={t('projects.worktree.targetBranchPlaceholder')}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
                             <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.targetBranchHint')}</div>
                         </div>

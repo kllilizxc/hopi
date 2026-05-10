@@ -42,7 +42,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
 
     if (isLoading) {
         return (
-            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs text-[var(--app-hint)]">
+            <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 text-xs text-[var(--app-hint)]">
                 {t('projects.decisions.loading')}
             </div>
         )
@@ -50,7 +50,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
 
     if (error) {
         return (
-            <div className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs text-red-600">
+            <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 text-xs text-red-600">
                 {error}
             </div>
         )
@@ -96,7 +96,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
     return (
         <section
             data-testid="goal-decision-tray"
-            className="border-b border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-3"
+            className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-3"
         >
             <div
                 data-testid="goal-decision-panel"
@@ -127,7 +127,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
                                 <form
                                     key={topic.id}
                                     data-testid={`goal-decision-topic-${topic.id}`}
-                                    className="grid min-w-0 gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
+                                    className="grid min-w-0 gap-3 rounded-lg app-shadow-border bg-[var(--app-secondary-bg)] p-3 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
                                     onSubmit={handleSubmit(topic)}
                                 >
                                     <div className="min-w-0">
@@ -156,7 +156,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
                                             {topic.body}
                                         </div>
                                     </div>
-                                    <div className="flex min-w-0 flex-col gap-2 border-t border-[var(--app-divider)] pt-3 xl:border-l xl:border-t-0 xl:pl-3 xl:pt-0">
+                                    <div className="flex min-w-0 flex-col gap-2 shadow-[0_-1px_0_var(--app-divider)] pt-3 xl:shadow-[-1px_0_0_var(--app-divider)] xl:pl-3 xl:pt-0">
                                         <textarea
                                             id={`decision-resolution-${topic.id}`}
                                             name={`decision-resolution-${topic.id}`}
@@ -170,7 +170,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
                                             disabled={isTopicPending}
                                             rows={3}
                                             placeholder={t('projects.decisions.answerPlaceholder')}
-                                            className="min-h-24 w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                            className="min-h-24 w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                         />
                                         <Button
                                             type="submit"
@@ -196,7 +196,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
                             {recentResolvedTopics.map((topic) => (
                                 <article
                                     key={topic.id}
-                                    className="min-w-0 rounded-lg border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-3"
+                                    className="min-w-0 rounded-lg app-shadow-border bg-[var(--app-secondary-bg)] p-3"
                                 >
                                     <div className="flex flex-wrap items-start justify-between gap-2">
                                         <h2 className="min-w-0 text-sm font-semibold leading-snug break-words text-[var(--app-fg)]">
@@ -209,7 +209,7 @@ export function GoalDecisionTopicsPanel(props: GoalDecisionTopicsPanelProps) {
                                     <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--app-hint)] break-words">
                                         {topic.body}
                                     </div>
-                                    <div className="mt-3 rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)] p-2">
+                                    <div className="mt-3 rounded-md app-shadow-border bg-[var(--app-bg)] p-2">
                                         <div className="text-[11px] font-semibold uppercase tracking-normal text-[var(--app-hint)]">
                                             {t('projects.decisions.answerLabel')}
                                         </div>

@@ -72,7 +72,7 @@ export function AdaptiveSelect<TValue extends string | number | null>(props: Ada
                     sideOffset={props.sideOffset ?? 8}
                     align={props.align ?? 'start'}
                     className={cn(
-                        'z-50 min-w-[200px] max-h-[min(60vh,420px)] overflow-y-auto rounded-xl border border-[var(--app-border)] bg-[var(--app-secondary-bg)] p-1 shadow-2xl outline-none',
+                        'z-50 min-w-[200px] max-h-[min(60vh,420px)] overflow-y-auto rounded-xl app-shadow-popover bg-[var(--app-secondary-bg)] p-1 outline-none',
                         'animate-menu-pop motion-reduce:animate-none',
                         props.dropdownContentClassName
                     )}
@@ -109,7 +109,10 @@ export function AdaptiveSelect<TValue extends string | number | null>(props: Ada
                                             {opt.icon}
                                         </span>
                                     ) : null}
-                                    <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                                    <span className="min-w-0 truncate">{opt.label}</span>
+                                    {opt.trailing ? (
+                                        <span className="shrink-0">{opt.trailing}</span>
+                                    ) : null}
                                 </span>
                                 {isSelected ? (
                                     <span className="shrink-0 text-[var(--app-link)]" aria-hidden="true">

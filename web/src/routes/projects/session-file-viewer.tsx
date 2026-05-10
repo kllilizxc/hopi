@@ -40,7 +40,7 @@ export function SessionFileViewer(props: {
         <div className="h-full flex flex-col">
             <div className={cn('bg-[var(--app-bg)]', props.showSafeAreaTop ? 'pt-[env(safe-area-inset-top)]' : undefined)}>
                 <div className={cn(
-                    'px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between gap-3',
+                    'px-3 py-2 app-shadow-divider-b flex items-center justify-between gap-3',
                     props.constrainHeaderWidth ? 'mx-auto w-full max-w-content' : undefined
                 )}>
                     <IconButton
@@ -61,7 +61,7 @@ export function SessionFileViewer(props: {
             </div>
 
             <div className={cn(
-                'bg-[var(--app-bg)] px-3 py-2 border-b border-[var(--app-divider)] flex items-center gap-2',
+                'bg-[var(--app-bg)] px-3 py-2 app-shadow-divider-b flex items-center gap-2',
                 props.constrainHeaderWidth ? 'mx-auto w-full max-w-content' : undefined
             )}>
                 <FileIcon fileName={viewer.fileName} size={20} />

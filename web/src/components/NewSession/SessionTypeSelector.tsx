@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 import type { SessionType } from './types'
 import { useTranslation } from '@/lib/use-translation'
-import { SegmentedControl } from '@/components/ui/segmented-control'
+import { CompactTabs } from '@/components/ui/CompactTabs'
 
 export function SessionTypeSelector(props: {
     sessionType: SessionType
@@ -19,16 +19,17 @@ export function SessionTypeSelector(props: {
                 {t('newSession.type')}
             </label>
             <div className="flex flex-col gap-2">
-                <SegmentedControl.Root
-                    value={props.sessionType}
-                    onValueChange={(value) => props.onSessionTypeChange(value as SessionType)}
+                <CompactTabs
+                    items={[
+                        { id: 'simple', label: t('newSession.type.simple') },
+                        { id: 'worktree', label: t('newSession.type.worktree') }
+                    ]}
+                    selectedId={props.sessionType}
+                    onSelect={(value) => props.onSessionTypeChange(value as SessionType)}
+                    ariaLabel={t('newSession.type')}
+                    distribution="equal"
                     disabled={props.isDisabled}
-                    size="2"
-                    variant="surface"
-                >
-                    <SegmentedControl.Item value="simple">{t('newSession.type.simple')}</SegmentedControl.Item>
-                    <SegmentedControl.Item value="worktree">{t('newSession.type.worktree')}</SegmentedControl.Item>
-                </SegmentedControl.Root>
+                />
 
                 <div className="text-xs text-[var(--app-hint)]">
                     {props.sessionType === 'worktree'
@@ -44,7 +45,7 @@ export function SessionTypeSelector(props: {
                         value={props.worktreeName}
                         onChange={(e) => props.onWorktreeNameChange(e.target.value)}
                         disabled={props.isDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
+                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-60"
                     />
                 ) : null}
             </div>

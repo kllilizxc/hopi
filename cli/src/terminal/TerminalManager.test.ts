@@ -60,6 +60,7 @@ describe('TerminalManager', () => {
         const onExitHandlers: Array<(subprocess: FakeSubprocess, code: number | null) => void> = []
 
         const bunMock = {
+            version: '1.3.11',
             spawn: vi.fn((_cmd: string[], options: { onExit?: (subprocess: FakeSubprocess, code: number | null) => void }) => {
                 const subprocess = onExitHandlers.length === 0 ? first : second
                 if (!options.onExit) {

@@ -255,7 +255,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                                 disabled={props.isCreating}
                                 rows={6}
                                 placeholder={t('projects.tasks.detailsPlaceholder')}
-                                className="w-full resize-none rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                className="w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
                         </div>
                         <div className="space-y-1.5">

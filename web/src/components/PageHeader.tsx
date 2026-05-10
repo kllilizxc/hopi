@@ -29,7 +29,7 @@ export function PageHeader(props: {
                 className={cn(
                     'flex items-center gap-2',
                     props.constrainWidth === false ? 'w-full' : 'mx-auto w-full max-w-content',
-                    props.borderClassName ?? 'border-b border-[var(--app-divider)]',
+                    props.borderClassName ?? 'app-shadow-divider-b',
                     props.contentClassName ?? 'px-3 py-2'
                 )}
             >

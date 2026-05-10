@@ -78,6 +78,7 @@ describe('goal routes', () => {
         const body = await response.json() as {
             goal: {
                 id: string
+                goalKey: string
                 title: string
                 autopilotEnabled: boolean
                 deployRequiresApproval: boolean
@@ -85,6 +86,7 @@ describe('goal routes', () => {
         }
 
         expect(body.goal.title).toBe('Ship Goal Autopilot')
+        expect(body.goal.goalKey).toBe('ship-goal-autopilot')
         expect(body.goal.autopilotEnabled).toBe(true)
         expect(body.goal.deployRequiresApproval).toBe(true)
 
@@ -94,9 +96,11 @@ describe('goal routes', () => {
         expect(existsSync(join(docsRoot, 'decisions.md'))).toBe(true)
         expect(existsSync(join(docsRoot, 'tech-debt.md'))).toBe(true)
 
-        const goalFile = join(docsRoot, 'goals', `${body.goal.id}.md`)
+        const goalFile = join(docsRoot, 'goals', `${body.goal.goalKey}.md`)
         expect(existsSync(goalFile)).toBe(true)
-        expect(readFileSync(goalFile, 'utf8')).toContain('Ship Goal Autopilot')
+        const goalMarkdown = readFileSync(goalFile, 'utf8')
+        expect(goalMarkdown).toContain('goalKey: ship-goal-autopilot')
+        expect(goalMarkdown).toContain('title: "Ship Goal Autopilot"')
         const tasks = store.tasks.listTasksByProjectAndNamespace(project.id, 'default', {
             goalId: body.goal.id
         })
@@ -114,7 +118,7 @@ describe('goal routes', () => {
             modelMode: null
         })
         expect(tasks[0]?.contract).toContain('Use the brainstorming protocol to clarify this Goal')
-        expect(tasks[0]?.contract).toContain(`.hopi/docs/goals/${body.goal.id}.md`)
+        expect(tasks[0]?.contract).toContain(`.hopi/docs/goals/${body.goal.goalKey}.md`)
         expect(tasks[0]?.contract).toContain('HOPI_ACTIONS JSON packet')
         expect(tasks[0]?.contract).toContain('HOPI applies the final JSON packet')
         expect(tasks[0]?.contract).not.toContain('HOPI MCP')
@@ -123,6 +127,68 @@ describe('goal routes', () => {
             projectId: project.id,
             namespace: 'default'
         }))
+    })
+
+    it('pauses and resumes goal automation with a project resume tick', async () => {
+        const store = new Store(':memory:')
+        const realtimeEvents: Array<{ type: string; projectId?: string }> = []
+        const ticks: Array<{ namespace: string; projectId: string }> = []
+        const engine = {
+            handleRealtimeEvent(event: { type: string; projectId?: string }) {
+                realtimeEvents.push(event)
+            },
+            requestAutoRunTick(namespace: string, projectId: string) {
+                ticks.push({ namespace, projectId })
+            }
+        } as unknown as SyncEngine
+        const app = createTestApp(store, engine)
+        const project = await createProject(app, createTempWorkspace())
+
+        const goalResponse = await app.request(`/api/projects/${project.id}/goals`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Pause Goal Automation' })
+        })
+        expect(goalResponse.status).toBe(200)
+        const goalBody = await goalResponse.json() as {
+            goal: {
+                id: string
+                automationPausedAt?: number | null
+            }
+        }
+        expect(goalBody.goal.automationPausedAt).toBeNull()
+        realtimeEvents.length = 0
+
+        const pauseResponse = await app.request(`/api/goals/${goalBody.goal.id}/automation/pause`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+        expect(pauseResponse.status).toBe(200)
+        const pauseBody = await pauseResponse.json() as {
+            goal: {
+                id: string
+                automationPausedAt?: number | null
+            }
+        }
+        expect(typeof pauseBody.goal.automationPausedAt).toBe('number')
+        expect(ticks).toEqual([])
+
+        const resumeResponse = await app.request(`/api/goals/${goalBody.goal.id}/automation/resume`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+        expect(resumeResponse.status).toBe(200)
+        const resumeBody = await resumeResponse.json() as {
+            goal: {
+                id: string
+                automationPausedAt?: number | null
+            }
+        }
+        expect(resumeBody.goal.automationPausedAt).toBeNull()
+        expect(ticks).toEqual([{ namespace: 'default', projectId: project.id }])
+        expect(realtimeEvents.filter((event) => event.type === 'project-updated').length).toBe(2)
     })
 
     it('creates and resolves goal decision topics', async () => {
@@ -234,7 +300,7 @@ describe('goal routes', () => {
             permissionMode: 'safe-yolo',
             modelMode: null
         })
-        expect(readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', `${goal.id}.md`), 'utf8')).toContain(goal.title)
+        expect(readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', `${goal.goalKey}.md`), 'utf8')).toContain(goal.title)
         expect(events).toContainEqual(expect.objectContaining({
             type: 'task-added',
             projectId: project.id,
@@ -575,6 +641,342 @@ describe('goal routes', () => {
             taskId: 'task-done-1'
         })
         expect(body.rawMarkdown).not.toContain('Ignore other goal')
+    })
+
+    it('previews docs-backed goals missing from the local database', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        writeFileSync(join(docsRoot, 'goals', 'mobile-remote-control.md'), [
+            '---',
+            'goalKey: mobile-remote-control',
+            'title: Mobile remote control',
+            'status: active',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Mobile remote control',
+            '',
+            '## Objective',
+            '',
+            'Control local agent sessions from mobile.'
+        ].join('\n'))
+        writeFileSync(join(docsRoot, 'todo.md'), [
+            '# HOPI Todo',
+            '',
+            '## Goal mobile-remote-control',
+            '',
+            '### Ready',
+            '',
+            '- Add reconnect indicator',
+            '',
+            '### Candidate',
+            '',
+            '- Improve resume affordance'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goal-docs/import-preview`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            goals: Array<{ goalKey: string; existsInDb: boolean; readyCount: number; candidateCount: number }>
+            errors: unknown[]
+        }
+        expect(body.errors).toEqual([])
+        expect(body.goals).toEqual([
+            expect.objectContaining({
+                goalKey: 'mobile-remote-control',
+                existsInDb: false,
+                readyCount: 1,
+                candidateCount: 1
+            })
+        ])
+    })
+
+    it('auto-imports docs-backed goals when listing project goals', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        writeFileSync(join(docsRoot, 'goals', 'mobile-remote-control.md'), [
+            '---',
+            'goalKey: mobile-remote-control',
+            'title: Mobile remote control',
+            'status: active',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Mobile remote control',
+            '',
+            '## Objective',
+            '',
+            'Control local agent sessions from mobile.',
+            '',
+            '## Success Criteria',
+            '',
+            '- Mobile user can inspect current sessions.'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goals`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            goals: Array<{ id: string; goalKey: string; title: string; status: string }>
+        }
+        expect(body.goals).toEqual([
+            expect.objectContaining({
+                goalKey: 'mobile-remote-control',
+                title: 'Mobile remote control',
+                status: 'active'
+            })
+        ])
+        const goal = store.goals.getGoalByGoalKeyAndNamespace(project.id, 'default', 'mobile-remote-control')
+        expect(goal?.successCriteria).toBe('- Mobile user can inspect current sessions.')
+        expect(store.tasks.listTasksByProjectAndNamespace(project.id, 'default', { goalId: goal?.id ?? 'missing' })).toEqual([])
+    })
+
+    it('relinks a legacy goal document keyed by the local goal id without overwriting goal fields', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const legacyGoal = store.goals.createGoal({
+            id: 'legacy-goal-id',
+            projectId: project.id,
+            namespace: 'default',
+            goalKey: 'local-portable-key',
+            title: 'Local goal title',
+            description: 'Local DB description wins.',
+            status: 'active',
+            successCriteria: 'Local DB criteria wins.',
+            autopilotEnabled: false,
+            deployRequiresApproval: false,
+            currentFocus: 'Local DB focus wins.'
+        })
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        writeFileSync(join(docsRoot, 'goals', 'legacy-goal-id.md'), [
+            '---',
+            'goalKey: legacy-goal-id',
+            'title: "Document title must not overwrite"',
+            'status: blocked',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Document title must not overwrite',
+            '',
+            '## Objective',
+            '',
+            'Document objective must not overwrite.',
+            '',
+            '## Success Criteria',
+            '',
+            'Document criteria must not overwrite.',
+            '',
+            '## Current Focus',
+            '',
+            'Document focus must not overwrite.'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goals`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            goals: Array<{ id: string; goalKey: string; title: string; status: string }>
+        }
+        expect(body.goals).toEqual([
+            expect.objectContaining({
+                id: legacyGoal.id,
+                goalKey: 'legacy-goal-id',
+                title: 'Local goal title',
+                status: 'active'
+            })
+        ])
+        expect(store.goals.listGoalsByProjectAndNamespace(project.id, 'default', { includeArchived: true })).toHaveLength(1)
+        expect(store.goals.getGoalByNamespace(legacyGoal.id, 'default')).toMatchObject({
+            goalKey: 'legacy-goal-id',
+            title: 'Local goal title',
+            description: 'Local DB description wins.',
+            status: 'active',
+            successCriteria: 'Local DB criteria wins.',
+            autopilotEnabled: false,
+            deployRequiresApproval: false,
+            currentFocus: 'Local DB focus wins.'
+        })
+    })
+
+    it('archives a previously imported legacy-doc duplicate without changing the canonical goal', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const canonicalGoal = store.goals.createGoal({
+            id: 'legacy-goal-id',
+            projectId: project.id,
+            namespace: 'default',
+            goalKey: 'local-portable-key',
+            title: 'Local goal title',
+            description: 'Local DB description wins.',
+            status: 'active',
+            successCriteria: 'Local DB criteria wins.',
+            autopilotEnabled: false,
+            deployRequiresApproval: false,
+            currentFocus: 'Local DB focus wins.'
+        })
+        const importedDuplicate = store.goals.createGoal({
+            id: 'imported-duplicate-goal',
+            projectId: project.id,
+            namespace: 'default',
+            goalKey: 'legacy-goal-id',
+            title: 'Document title duplicate',
+            description: 'Imported duplicate description',
+            status: 'planning'
+        })
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        writeFileSync(join(docsRoot, 'goals', 'legacy-goal-id.md'), [
+            '---',
+            'goalKey: legacy-goal-id',
+            'title: "Document title duplicate"',
+            'status: blocked',
+            '---',
+            '',
+            '# Document title duplicate'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goals`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            goals: Array<{ id: string; goalKey: string; title: string; status: string }>
+        }
+        expect(body.goals).toEqual([
+            expect.objectContaining({
+                id: canonicalGoal.id,
+                goalKey: 'legacy-goal-id',
+                title: 'Local goal title',
+                status: 'active'
+            })
+        ])
+        expect(store.goals.getGoalByNamespace(canonicalGoal.id, 'default')).toMatchObject({
+            goalKey: 'legacy-goal-id',
+            title: 'Local goal title',
+            description: 'Local DB description wins.',
+            status: 'active',
+            successCriteria: 'Local DB criteria wins.',
+            autopilotEnabled: false,
+            deployRequiresApproval: false,
+            currentFocus: 'Local DB focus wins.',
+            archivedAt: null
+        })
+        expect(store.goals.getGoalByNamespace(importedDuplicate.id, 'default')?.archivedAt).toEqual(expect.any(Number))
+    })
+
+    it('prefers legacy uuid goal docs over generated goal slug docs during fresh migration', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        const legacyGoalKey = '11111111-1111-4111-8111-111111111111'
+        writeFileSync(join(docsRoot, 'goals', `${legacyGoalKey}.md`), [
+            '---',
+            `goalKey: ${legacyGoalKey}`,
+            'title: "Same Chinese Title"',
+            'status: active',
+            '---',
+            '',
+            '# Same Chinese Title',
+            '',
+            '## Objective',
+            '',
+            'Rich legacy objective should migrate.'
+        ].join('\n'))
+        writeFileSync(join(docsRoot, 'goals', 'goal-2.md'), [
+            '---',
+            'goalKey: goal-2',
+            'title: "Same Chinese Title"',
+            'status: active',
+            '---',
+            '',
+            '# Same Chinese Title',
+            '',
+            '## Objective',
+            '',
+            'Generated fallback objective should be ignored.'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goals`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            goals: Array<{ id: string; goalKey: string; title: string; description: string | null }>
+        }
+        expect(body.goals).toEqual([
+            expect.objectContaining({
+                goalKey: legacyGoalKey,
+                title: 'Same Chinese Title',
+                description: 'Rich legacy objective should migrate.'
+            })
+        ])
+        expect(store.goals.listGoalsByProjectAndNamespace(project.id, 'default', { includeArchived: true })).toHaveLength(1)
+    })
+
+    it('imports docs-backed goals without creating task cards', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const workspacePath = createTempWorkspace()
+        const project = await createProject(app, workspacePath)
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
+        writeFileSync(join(docsRoot, 'goals', 'mobile-remote-control.md'), [
+            '---',
+            'goalKey: mobile-remote-control',
+            'title: Mobile remote control',
+            'status: active',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Mobile remote control',
+            '',
+            '## Objective',
+            '',
+            'Control local agent sessions from mobile.',
+            '',
+            '## Success Criteria',
+            '',
+            '- Mobile user can inspect current sessions.'
+        ].join('\n'))
+
+        const response = await app.request(`/api/projects/${project.id}/goal-docs/import`, {
+            method: 'POST'
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            imported: Array<{ goalKey: string; goalId: string }>
+        }
+        expect(body.imported).toHaveLength(1)
+        const goal = store.goals.getGoalByGoalKeyAndNamespace(project.id, 'default', 'mobile-remote-control')
+        expect(goal).toMatchObject({
+            title: 'Mobile remote control',
+            description: 'Control local agent sessions from mobile.',
+            successCriteria: '- Mobile user can inspect current sessions.',
+            status: 'active',
+            autopilotEnabled: true,
+            deployRequiresApproval: true
+        })
+        expect(store.tasks.listTasksByProjectAndNamespace(project.id, 'default', { goalId: goal?.id ?? 'missing' })).toEqual([])
     })
 
     it('returns 404 when the goal belongs to another project', async () => {

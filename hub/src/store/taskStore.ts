@@ -51,6 +51,7 @@ export class TaskStore {
         id: string
         projectId: string
         goalId?: string | null
+        goalTodoRef?: string | null
         title: string
         description?: string | null
         status: string
@@ -88,6 +89,7 @@ export class TaskStore {
         patch: {
             title?: string
             goalId?: string | null
+            goalTodoRef?: string | null
             description?: string | null
             status?: string
             priority?: string | null

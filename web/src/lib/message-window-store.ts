@@ -30,6 +30,7 @@ export const subscribeMessageWindow = store.subscribeMessageWindow
 export const clearMessageWindow = store.clearMessageWindow
 export const seedMessageWindowFromSession = store.seedMessageWindowFromSession
 export const ingestIncomingMessages = store.ingestIncomingMessages
+export const flushIncomingMessages = store.flushIncomingMessages
 export const flushPendingMessages = store.flushPendingMessages
 export const setAtBottom = store.setAtBottom
 export const appendOptimisticMessage = store.appendOptimisticMessage

@@ -83,7 +83,7 @@ export function InstallPrompt() {
         }
 
         return (
-            <div className="fixed bottom-4 left-4 right-4 bg-[var(--app-secondary-bg)] border border-[var(--app-border)] rounded-lg p-4 shadow-lg z-50">
+            <div className="fixed bottom-4 left-4 right-4 bg-[var(--app-secondary-bg)] app-shadow-popover rounded-lg p-4 z-50">
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[var(--app-fg)]">
@@ -131,7 +131,7 @@ export function InstallPrompt() {
     }
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 bg-[var(--app-secondary-bg)] border border-[var(--app-border)] rounded-lg p-4 shadow-lg z-50">
+        <div className="fixed bottom-4 left-4 right-4 bg-[var(--app-secondary-bg)] app-shadow-popover rounded-lg p-4 z-50">
             <div className="flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--app-fg)]">

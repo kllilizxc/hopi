@@ -154,8 +154,13 @@ function isGoalRunnable(goal: StoredGoal): boolean {
         && ACTIVE_GOAL_STATUSES.has(goal.status)
 }
 
+function isGoalAutomationPaused(goal: StoredGoal): boolean {
+    return goal.automationPausedAt !== null
+}
+
 function isGoalAutopilotRunnable(goal: StoredGoal): boolean {
     return goal.autopilotEnabled
+        && !isGoalAutomationPaused(goal)
         && isGoalRunnable(goal)
 }
 
@@ -173,7 +178,12 @@ function getTaskAutopilotPolicy(options: {
     }
 
     const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
-    if (!goal || goal.projectId !== options.project.id || !isGoalRunnable(goal)) {
+    if (
+        !goal
+        || goal.projectId !== options.project.id
+        || isGoalAutomationPaused(goal)
+        || !isGoalRunnable(goal)
+    ) {
         return {
             enabled: false,
             allowBeforeReadiness: false
@@ -208,7 +218,7 @@ function buildPlannerLoopContract(options: {
         '',
         '## Acceptance',
         '',
-        `- Read and update .hopi/docs/goals/${options.goal.id}.md when strategy or status changed.`,
+        `- Read and update .hopi/docs/goals/${options.goal.goalKey}.md when strategy or status changed.`,
         '- Read and curate .hopi/docs/todo.md; promote only a small ready batch into kanban.',
         '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
         '- Create blocking DecisionTopics for unclear product direction, one question at a time.',

@@ -32,6 +32,7 @@ function createGoal(overrides: Partial<Goal> = {}): Goal {
         id: overrides.id ?? 'goal-1',
         projectId: overrides.projectId ?? 'project-1',
         namespace: overrides.namespace ?? 'default',
+        goalKey: overrides.goalKey ?? 'ship-goal-autopilot',
         title: overrides.title ?? 'Ship Goal Autopilot',
         description: overrides.description ?? null,
         status: overrides.status ?? 'planning',

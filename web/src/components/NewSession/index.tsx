@@ -239,7 +239,7 @@ export function NewSession(props: {
     const canCreate = Boolean(machineId && directory.trim() && !isFormDisabled)
 
     return (
-        <div className="flex flex-col divide-y divide-[var(--app-divider)]">
+        <div className="flex flex-col app-shadow-list-y">
             <MachineSelector
                 machines={props.machines}
                 machineId={machineId}

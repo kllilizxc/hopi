@@ -18,6 +18,72 @@ export type HappyChatMessageMetadata = {
     attachments?: AttachmentMetadata[]
 }
 
+function getToolGroupState(blocks: ToolCallBlock[]): ToolCallBlock['tool']['state'] {
+    if (blocks.some((block) => block.tool.state === 'running')) return 'running'
+    if (blocks.some((block) => block.tool.state === 'pending')) return 'pending'
+    if (blocks.some((block) => block.tool.state === 'error')) return 'error'
+    return 'completed'
+}
+
+function getToolGroupCompletedAt(blocks: ToolCallBlock[]): number | null {
+    const completedAt = blocks
+        .map((block) => block.tool.completedAt)
+        .filter((value): value is number => typeof value === 'number')
+
+    if (completedAt.length !== blocks.length) return null
+    return Math.max(...completedAt)
+}
+
+function createToolGroupBlock(blocks: ToolCallBlock[]): ToolCallBlock {
+    const first = blocks[0]
+    const id = `tool-group:${first.id}`
+    const startedAtValues = blocks
+        .map((block) => block.tool.startedAt ?? block.tool.createdAt)
+        .filter((value): value is number => typeof value === 'number')
+
+    return {
+        kind: 'tool-call',
+        id,
+        localId: null,
+        createdAt: first.createdAt,
+        tool: {
+            id,
+            name: 'ToolGroup',
+            state: getToolGroupState(blocks),
+            input: { count: blocks.length },
+            createdAt: first.tool.createdAt,
+            startedAt: startedAtValues.length > 0 ? Math.min(...startedAtValues) : null,
+            completedAt: getToolGroupCompletedAt(blocks),
+            description: null,
+        },
+        children: blocks,
+    }
+}
+
+export function groupConsecutiveToolBlocks(blocks: readonly ChatBlock[]): ChatBlock[] {
+    const grouped: ChatBlock[] = []
+    let pendingTools: ToolCallBlock[] = []
+
+    const flushPendingTools = () => {
+        if (pendingTools.length === 0) return
+        grouped.push(pendingTools.length === 1 ? pendingTools[0] : createToolGroupBlock(pendingTools))
+        pendingTools = []
+    }
+
+    for (const block of blocks) {
+        if (block.kind === 'tool-call') {
+            pendingTools.push(block)
+            continue
+        }
+
+        flushPendingTools()
+        grouped.push(block)
+    }
+
+    flushPendingTools()
+    return grouped
+}
+
 function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
     if (block.kind === 'user-text') {
         const messageId = `user:${block.id}`
@@ -179,12 +245,13 @@ export function useHappyRuntime(props: {
     isRunning?: boolean
 }) {
     const isRunning = props.isRunning ?? props.session.thinking
+    const groupedBlocks = useMemo(() => groupConsecutiveToolBlocks(props.blocks), [props.blocks])
 
     // Use cached message converter for performance optimization
     // This prevents re-converting all messages on every render
     const convertedMessages = useExternalMessageConverter<ChatBlock>({
         callback: toThreadMessageLike,
-        messages: props.blocks as ChatBlock[],
+        messages: groupedBlocks,
         isRunning,
     })
 

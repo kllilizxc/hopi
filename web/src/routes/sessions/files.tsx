@@ -32,7 +32,7 @@ function SearchResultRow(props: {
         <button
             type="button"
             onClick={props.onOpen}
-            className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'border-b border-[var(--app-divider)]' : ''}`}
+            className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors ${props.showDivider ? 'app-shadow-divider-b' : ''}`}
         >
             {icon}
             <div className="min-w-0 flex-1">
@@ -150,7 +150,7 @@ export default function FilesPage() {
                 subtitle={subtitle}
                 onBack={goBack}
                 backLabel={t('projects.files.back')}
-                borderClassName="border-b border-[var(--app-border)]"
+                borderClassName="app-shadow-divider-b"
                 contentClassName="p-3"
                 right={(
                     <IconButton
@@ -166,7 +166,7 @@ export default function FilesPage() {
             />
 
             <div className="bg-[var(--app-bg)]">
-                <div className="mx-auto w-full max-w-content p-3 border-b border-[var(--app-border)]">
+                <div className="mx-auto w-full max-w-content p-3 app-shadow-divider-b">
                     <div className="flex items-center gap-2 rounded-md bg-[var(--app-subtle-bg)] px-3 py-2">
                         <SearchIcon className="text-[var(--app-hint)]" />
                         <input
@@ -181,7 +181,7 @@ export default function FilesPage() {
                 </div>
             </div>
 
-            <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)]" role="tablist">
+            <div className="bg-[var(--app-bg)] app-shadow-divider-b" role="tablist">
                 <div className="mx-auto w-full max-w-content grid grid-cols-2">
                     <button
                         type="button"
@@ -212,7 +212,7 @@ export default function FilesPage() {
 
             {!gitLoading && gitStatus && !searchQuery && activeTab === 'changes' ? (
                 <div className="bg-[var(--app-bg)]">
-                    <div className="mx-auto w-full max-w-content px-3 py-2 border-b border-[var(--app-divider)]">
+                    <div className="mx-auto w-full max-w-content px-3 py-2 app-shadow-divider-b">
                         <div className="flex items-center gap-2 text-sm">
                             <GitBranchIcon className="text-[var(--app-hint)]" />
                             <span className="font-semibold">{branchLabel}</span>
@@ -232,7 +232,7 @@ export default function FilesPage() {
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">
                     {showGitErrorBanner && activeTab === 'changes' ? (
-                        <div className="border-b border-[var(--app-divider)] bg-amber-500/10 px-3 py-2 text-xs text-[var(--app-hint)]">
+                        <div className="app-shadow-divider-b bg-amber-500/10 px-3 py-2 text-xs text-[var(--app-hint)]">
                             {gitError}
                         </div>
                     ) : null}
@@ -246,7 +246,7 @@ export default function FilesPage() {
                                 {searchQuery ? t('session.files.searchNoMatch') : t('session.files.searchNoFiles')}
                             </div>
                         ) : (
-                            <div className="border-t border-[var(--app-divider)]">
+                            <div className="app-shadow-divider-t">
                                 {searchResults.files.map((file, index) => (
                                     <SearchResultRow
                                         key={`${file.fullPath}-${index}`}

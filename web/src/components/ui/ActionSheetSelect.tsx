@@ -8,6 +8,7 @@ export type ActionSheetSelectOption<TValue extends string | number | null> = {
     label: string
     disabled?: boolean
     icon?: React.ReactNode
+    trailing?: React.ReactNode
     destructive?: boolean
 }
 
@@ -50,7 +51,12 @@ export function ActionSheetSelect<TValue extends string | number | null>(props: 
                             className={cn(isSelected ? 'bg-[var(--app-subtle-bg)]' : undefined)}
                         >
                             <span className="flex w-full items-center justify-between gap-3">
-                                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                                <span className="flex min-w-0 flex-1 items-center gap-2">
+                                    <span className="min-w-0 truncate">{opt.label}</span>
+                                    {opt.trailing ? (
+                                        <span className="shrink-0">{opt.trailing}</span>
+                                    ) : null}
+                                </span>
                                 {isSelected ? (
                                     <span className="shrink-0 text-[var(--app-link)]" aria-hidden="true">
                                         <CheckIcon />

@@ -9,15 +9,15 @@ function translateWithFallback(t: (key: string) => string, key: string, fallback
 
 function actionToneClass(action: HopiActionView): string {
     if (action.status === 'blocked') {
-        return 'border-red-500/35 bg-red-500/5'
+        return 'shadow-[inset_0_0_0_1px_rgb(239_68_68_/_0.35)] bg-red-500/5'
     }
     if (action.status === 'finished') {
-        return 'border-emerald-500/30 bg-emerald-500/5'
+        return 'shadow-[inset_0_0_0_1px_rgb(16_185_129_/_0.30)] bg-emerald-500/5'
     }
     if (action.status === 'in_review') {
-        return 'border-amber-500/30 bg-amber-500/5'
+        return 'shadow-[inset_0_0_0_1px_rgb(245_158_11_/_0.30)] bg-amber-500/5'
     }
-    return 'border-[var(--app-border)] bg-[var(--app-subtle-bg)]'
+    return 'app-shadow-border bg-[var(--app-subtle-bg)]'
 }
 
 function ActionTextSection(props: { label: string; text: string }) {
@@ -41,12 +41,12 @@ function HopiActionItem(props: { action: HopiActionView }) {
         : t('hopiActions.field.handoff')
 
     return (
-        <div className={cn('rounded-lg border p-3', actionToneClass(props.action))}>
+        <div className={cn('rounded-lg p-3', actionToneClass(props.action))}>
             <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
                 <div className="min-w-0 text-sm font-semibold text-[var(--app-fg)]">
                     {title}
                 </div>
-                <div className="rounded border border-[var(--app-border)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--app-hint)]">
+                <div className="rounded app-shadow-border px-1.5 py-0.5 font-mono text-[11px] text-[var(--app-hint)]">
                     {props.action.type}
                 </div>
             </div>
@@ -69,7 +69,7 @@ export function HopiActionPacketCard(props: { packet: HopiActionPacketView }) {
     const { t } = useTranslation()
 
     return (
-        <div className="min-w-0 max-w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <div className="min-w-0 max-w-full rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
             <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
                 <div className="min-w-0">
                     <div className="text-xs font-medium uppercase tracking-wide text-[var(--app-hint)]">

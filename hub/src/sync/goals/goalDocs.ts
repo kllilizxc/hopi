@@ -7,6 +7,45 @@ function ensureFile(path: string, content: string): void {
     writeFileSync(path, content, 'utf8')
 }
 
+function yamlString(value: string): string {
+    return JSON.stringify(value)
+}
+
+function buildGoalDoc(goal: StoredGoal): string {
+    return [
+        '---',
+        `goalKey: ${goal.goalKey}`,
+        `title: ${yamlString(goal.title)}`,
+        `status: ${goal.status}`,
+        `autopilotEnabled: ${goal.autopilotEnabled ? 'true' : 'false'}`,
+        `deployRequiresApproval: ${goal.deployRequiresApproval ? 'true' : 'false'}`,
+        '---',
+        '',
+        `# ${goal.title}`,
+        '',
+        '## Objective',
+        '',
+        goal.description?.trim() || goal.title,
+        '',
+        '## Success Criteria',
+        '',
+        goal.successCriteria?.trim() || '- Clarify success criteria during Planning.',
+        '',
+        '## Current Strategy',
+        '',
+        '- Planner starts by clarifying this Goal before implementation.',
+        '',
+        '## Current Focus',
+        '',
+        goal.currentFocus?.trim() || '- None recorded yet.',
+        '',
+        '## Open Questions',
+        '',
+        '- None recorded yet.',
+        ''
+    ].join('\n')
+}
+
 export function bootstrapGoalDocs(input: {
     project: StoredProject
     goal: StoredGoal
@@ -46,24 +85,13 @@ export function bootstrapGoalDocs(input: {
         ''
     ].join('\n'))
 
-    const goalFile = join(goalsRoot, `${input.goal.id}.md`)
+    const goalFile = join(goalsRoot, `${input.goal.goalKey}.md`)
     if (!existsSync(goalFile)) {
-        writeFileSync(goalFile, [
-            `# ${input.goal.title}`, '',
-            '## Objective', '',
-            input.goal.description?.trim() || input.goal.title, '',
-            '## Success Criteria', '',
-            input.goal.successCriteria?.trim() || '- Clarify success criteria during Planning.', '',
-            '## Current Strategy', '',
-            '- Planner starts by clarifying this Goal before implementation.', '',
-            '## Open Questions', '',
-            '- None recorded yet.',
-            ''
-        ].join('\n'), 'utf8')
+        writeFileSync(goalFile, buildGoalDoc(input.goal), 'utf8')
     } else {
         const existing = readFileSync(goalFile, 'utf8')
-        if (!existing.includes(input.goal.title)) {
-            writeFileSync(goalFile, `${existing.trim()}\n\n## Linked Goal\n\n${input.goal.title}\n`, 'utf8')
+        if (!existing.startsWith('---')) {
+            writeFileSync(goalFile, `${buildGoalDoc(input.goal).trim()}\n\n## Imported Legacy Notes\n\n${existing.trim()}\n`, 'utf8')
         }
     }
 

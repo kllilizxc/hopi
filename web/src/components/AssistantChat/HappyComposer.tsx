@@ -492,10 +492,10 @@ export const HappyComposer = memo(function HappyComposer(props: {
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div
-                                            className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                                            className={`flex h-4 w-4 items-center justify-center rounded-full ${
                                                 permissionMode === option.mode
-                                                    ? 'border-[var(--app-link)]'
-                                                    : 'border-[var(--app-hint)]'
+                                                    ? 'shadow-[inset_0_0_0_2px_var(--app-link)]'
+                                                    : 'shadow-[inset_0_0_0_2px_var(--app-hint)]'
                                             }`}
                                         >
                                             {permissionMode === option.mode && (
@@ -533,10 +533,10 @@ export const HappyComposer = memo(function HappyComposer(props: {
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div
-                                            className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                                            className={`flex h-4 w-4 items-center justify-center rounded-full ${
                                                 modelMode === mode
-                                                    ? 'border-[var(--app-link)]'
-                                                    : 'border-[var(--app-hint)]'
+                                                    ? 'shadow-[inset_0_0_0_2px_var(--app-link)]'
+                                                    : 'shadow-[inset_0_0_0_2px_var(--app-hint)]'
                                             }`}
                                         >
                                             {modelMode === mode && (
@@ -603,7 +603,7 @@ export const HappyComposer = memo(function HappyComposer(props: {
                         voiceStatus={voiceStatus}
                     />
 
-                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] ring-1 ring-inset ring-[var(--app-border)] transition-shadow focus-within:ring-2 focus-within:ring-[var(--app-link)]">
+                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] app-shadow-border transition-shadow focus-within:ring-2 focus-within:ring-[var(--app-link)]">
                         {attachments.length > 0 ? (
                             <div className="flex flex-wrap gap-2 px-4 pt-3">
                                 <ComposerPrimitive.Attachments components={{ Attachment: AttachmentItem }} />
