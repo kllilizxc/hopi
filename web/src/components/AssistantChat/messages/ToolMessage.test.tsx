@@ -107,6 +107,12 @@ describe('HappyToolMessage', () => {
         expectTextNotVisible('BASH_RESULT_SENTINEL')
         expect(screen.getByRole('button', { name: /Ran bun test/ })).toBeVisible()
         expect(screen.queryByRole('button', { name: /Terminal/ })).not.toBeInTheDocument()
+        expect(screen.getByTestId('tool-card')).toHaveClass('-ml-6')
+        expect(screen.getByTestId('tool-card')).toHaveClass('mr-3')
+        expect(screen.getByTestId('tool-card')).toHaveClass('rounded-l-none')
+        expect(screen.getByTestId('tool-card')).toHaveClass('rounded-r-xl')
+        expect(screen.getByTestId('tool-card')).toHaveClass('app-shadow-control')
+        expect(screen.getByTestId('tool-card')).toHaveClass('overflow-visible')
 
         fireEvent.click(screen.getByRole('button', { name: /Ran bun test/ }))
 
@@ -166,6 +172,8 @@ describe('HappyToolMessage', () => {
 
         expect(screen.getByText('Tool calls (2)')).toBeVisible()
         expect(screen.getByRole('button', { name: /Ran bun test/ })).toBeVisible()
+        expect(screen.getAllByTestId('tool-card').some(card => card.className.includes('mr-2'))).toBe(true)
+        expect(screen.getAllByTestId('tool-card').some(card => card.className.includes('-ml-3'))).toBe(true)
         expectTextNotVisible('CHILD_BASH_RESULT_SENTINEL')
         expectTextNotVisible('READ_RESULT_SENTINEL')
 

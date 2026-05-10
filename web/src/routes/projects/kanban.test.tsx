@@ -5,7 +5,7 @@ import { renderWithProviders } from '@/test/renderWithProviders'
 import type { Task } from '@/types/api'
 import { ProjectKanbanBoard } from './kanban'
 
-const indexCss = readFileSync('src/index.css', 'utf8')
+const indexCss = readFileSync('src/index.css', 'utf8').replace(/\r\n/g, '\n')
 
 const mocks = vi.hoisted(() => ({
     tasks: [] as Task[],

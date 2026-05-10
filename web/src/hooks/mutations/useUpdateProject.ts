@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { AgentFlavor, AgentOutputLanguage, AutomationLaneLimits, ModelMode, PermissionMode, Project } from '@/types/api'
+import type { AgentFlavor, AgentOutputLanguage, AutomationBackstopPolicy, AutomationLaneLimits, ModelMode, PermissionMode, Project } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type UpdateProjectInput = {
@@ -20,6 +20,7 @@ type UpdateProjectInput = {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }

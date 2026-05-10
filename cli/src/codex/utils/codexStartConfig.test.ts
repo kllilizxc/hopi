@@ -47,4 +47,15 @@ describe('buildCodexStartConfig', () => {
 
         expect(config.model).toBe('o3');
     });
+
+    it('strips xhigh from model when building start config', () => {
+        const config = buildCodexStartConfig({
+            message: 'hello',
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh' },
+            first: false,
+            mcpServers
+        });
+
+        expect(config.model).toBe('gpt-5.3-codex-spark');
+    });
 });

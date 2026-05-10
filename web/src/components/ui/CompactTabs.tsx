@@ -32,8 +32,8 @@ export function CompactTabs(props: {
                         role="tab"
                         aria-selected={isSelected}
                         aria-current={isSelected ? 'page' : undefined}
-                        title={item.title ?? item.label}
-                        className={`${isEqual ? 'min-w-0 flex-1 text-center' : 'shrink-0'} rounded-md px-3 py-1.5 text-sm whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        title={item.title}
+                        className={`${isEqual ? 'min-w-0 flex-1 text-center' : 'shrink-0'} rounded-md px-4 py-1.5 text-sm whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             isSelected
                                 ? 'bg-[var(--app-subtle-bg)] text-[var(--app-fg)] font-semibold shadow-sm'
                                 : 'text-[var(--app-hint)] hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'

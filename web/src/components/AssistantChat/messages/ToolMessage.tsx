@@ -61,6 +61,7 @@ function ToolBlockItem(props: {
                 defaultExpanded={hasPendingPermission(props.block)}
                 nestedContent={nestedContent}
                 nestedCount={props.block.children.length}
+                compact={props.compact}
             />
         </div>
     )
@@ -151,8 +152,8 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
         const resultText = hasResult ? safeStringify(props.result) : ''
 
         return (
-            <div className="py-1 min-w-0 max-w-full overflow-x-hidden">
-                <div className="rounded-xl bg-[var(--app-secondary-bg)] px-3 py-1.5 shadow-sm">
+            <div className="py-1 min-w-0 max-w-full overflow-x-visible">
+                <div className="-ml-6 mr-3 rounded-l-none rounded-r-xl bg-[var(--app-secondary-bg)] px-3 py-1.5 app-shadow-control">
                     <button
                         type="button"
                         className="flex w-full cursor-pointer items-center justify-between gap-3 text-left text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
@@ -198,7 +199,7 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
     const block = artifact
 
     return (
-        <div className="py-1 min-w-0 max-w-full overflow-x-hidden">
+        <div className="py-1 min-w-0 max-w-full overflow-x-visible">
             <ToolBlockItem block={block} />
         </div>
     )

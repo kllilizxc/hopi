@@ -465,7 +465,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         ? [
             '- create_goal_task: create a small ready task for this Goal; include todoRef when promoting a .hopi/docs/todo.md item.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
-            '- create_decision_topic: ask one blocking human question when needed.',
+            '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
         ]
         : role === 'Evaluator'

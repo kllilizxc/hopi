@@ -52,7 +52,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 25
+const SCHEMA_VERSION: number = 26
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -418,6 +418,7 @@ export class Store {
                 auto_run_enabled INTEGER NOT NULL DEFAULT 0,
                 max_running_sessions INTEGER NOT NULL DEFAULT 5,
                 automation_lane_limits TEXT,
+                automation_backstop_policy TEXT,
                 improvements_enabled INTEGER NOT NULL DEFAULT 0,
                 improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
                 automation_readiness_status TEXT NOT NULL DEFAULT 'unknown',
@@ -928,6 +929,9 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 25) {
             this.migrateFromV24ToV25()
+        }
+        if (SCHEMA_VERSION >= 26) {
+            this.migrateFromV25ToV26()
         }
     }
 
@@ -1489,6 +1493,16 @@ export class Store {
         }
         if (!taskColumns.has('goal_todo_ref')) {
             this.db.exec('ALTER TABLE tasks ADD COLUMN goal_todo_ref TEXT')
+        }
+    }
+
+    private migrateFromV25ToV26(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v25 to v26 migration.')
+        }
+        if (!projectColumns.has('automation_backstop_policy')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_backstop_policy TEXT')
         }
     }
 

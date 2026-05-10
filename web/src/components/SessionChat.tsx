@@ -116,6 +116,7 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
 }
 
 const CONTINUE_PROMPT_TEXT = '继续'
+export const SESSION_CHAT_SURFACE_CLASS_NAME = 'relative z-10 flex min-h-0 flex-1 flex-col bg-[var(--app-bg)] app-shadow-chat-surface'
 
 function toErrorMessage(error: unknown): string {
     if (error instanceof Error && error.message.trim().length > 0) {
@@ -781,7 +782,7 @@ export function SessionChat(props: {
             ) : null}
 
             <AssistantRuntimeProvider runtime={runtime}>
-                <div className="relative flex min-h-0 flex-1 flex-col">
+                <div className={SESSION_CHAT_SURFACE_CLASS_NAME}>
                     <HappyThread
                         key={props.session.id}
                         api={props.api}

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL, normalizeAutomationLaneLimits } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL, normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from '@hopi/protocol'
 import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
 import type { AutomationLane } from '@hopi/protocol/types'
 import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
-import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../store'
+import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
@@ -15,6 +15,13 @@ type ProjectKey = `${string}:${string}`
 type TaskAutopilotPolicy = {
     enabled: boolean
     allowBeforeReadiness: boolean
+}
+type PlannerBackstopSignal = {
+    baselineAt: number
+    elapsedHours: number
+    completedGeneratorTasks: number
+    completedPlannerRefills: number
+    reasons: string[]
 }
 
 const GOAL_RADAR_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -198,22 +205,112 @@ function getTaskAutopilotPolicy(options: {
     }
 }
 
+function getTaskCompletedAt(task: StoredTask): number | null {
+    if (task.status !== 'finished') {
+        return null
+    }
+    return task.finishedAt ?? task.updatedAt
+}
+
+function buildPlannerBackstopSignal(options: {
+    goal: StoredGoal
+    tasks: StoredTask[]
+    topics: StoredGoalDecisionTopic[]
+    project: StoredProject
+    now?: number
+}): PlannerBackstopSignal {
+    const now = options.now ?? Date.now()
+    const latestResolvedDecisionAt = options.topics
+        .filter((topic) => topic.status === 'resolved' && Boolean(topic.resolution?.trim()))
+        .reduce((latest, topic) => Math.max(latest, topic.updatedAt), 0)
+    const baselineAt = Math.max(options.goal.createdAt, latestResolvedDecisionAt)
+    const policy = normalizeAutomationBackstopPolicy(options.project.automationBackstopPolicy)
+    const completedGeneratorTasks = options.tasks.filter((task) => {
+        const completedAt = getTaskCompletedAt(task)
+        return completedAt !== null
+            && completedAt >= baselineAt
+            && !task.archivedAt
+            && task.source !== 'planner'
+            && task.source !== 'radar'
+    }).length
+    const completedPlannerRefills = options.tasks.filter((task) => {
+        const completedAt = getTaskCompletedAt(task)
+        return completedAt !== null
+            && completedAt >= baselineAt
+            && !task.archivedAt
+            && task.source === 'planner'
+    }).length
+    const elapsedHours = Math.max(0, (now - baselineAt) / (60 * 60 * 1000))
+    const reasons: string[] = []
+
+    if (policy.maxHoursWithoutMilestone > 0 && elapsedHours >= policy.maxHoursWithoutMilestone) {
+        reasons.push(`${Math.floor(elapsedHours)} hours since the last resolved DecisionTopic or Goal start (limit ${policy.maxHoursWithoutMilestone}h).`)
+    }
+    if (
+        policy.maxGeneratorTasksWithoutMilestone > 0
+        && completedGeneratorTasks >= policy.maxGeneratorTasksWithoutMilestone
+    ) {
+        reasons.push(`${completedGeneratorTasks} completed generator tasks since the last milestone baseline (limit ${policy.maxGeneratorTasksWithoutMilestone}).`)
+    }
+    if (
+        policy.maxPlannerRefillsWithoutMilestone > 0
+        && completedPlannerRefills >= policy.maxPlannerRefillsWithoutMilestone
+    ) {
+        reasons.push(`${completedPlannerRefills} completed Planner refills since the last milestone baseline (limit ${policy.maxPlannerRefillsWithoutMilestone}).`)
+    }
+
+    return {
+        baselineAt,
+        elapsedHours,
+        completedGeneratorTasks,
+        completedPlannerRefills,
+        reasons
+    }
+}
+
+function formatBackstopHours(hours: number): string {
+    return hours >= 10 ? String(Math.floor(hours)) : hours.toFixed(1)
+}
+
 function buildPlannerLoopContract(options: {
     goal: StoredGoal
     targetOpenGeneratorTasks: number
     currentOpenGeneratorTasks: number
+    backstop: PlannerBackstopSignal
 }): string {
     const taskBudget = Math.max(0, options.targetOpenGeneratorTasks - options.currentOpenGeneratorTasks)
+    const backstopLines = options.backstop.reasons.length > 0
+        ? [
+            '',
+            '## Backstop Triggered',
+            '',
+            `- Baseline: ${new Date(options.backstop.baselineAt).toISOString()}.`,
+            `- Elapsed: ${formatBackstopHours(options.backstop.elapsedHours)}h.`,
+            `- Completed generator tasks since baseline: ${options.backstop.completedGeneratorTasks}.`,
+            `- Completed Planner refills since baseline: ${options.backstop.completedPlannerRefills}.`,
+            ...options.backstop.reasons.map((reason) => `- Trigger: ${reason}`),
+            '- This is not an automatic stop. You must make the milestone assessment explicit before creating more work.',
+            '- Prefer creating a blocking goal-level DecisionTopic now unless you can justify one clearly bounded, high-value next batch.'
+        ]
+        : []
     return [
         '## Objective',
         '',
         `Continue the Planner loop for Goal ${options.goal.id}: ${options.goal.title}.`,
         '',
+        '## Milestone Stop Assessment',
+        '',
+        '- Before filling the lane, judge whether continuing this Goal is still clearly higher-value than a human milestone review.',
+        '- Stop and ask for a milestone review when the Goal success criteria look materially satisfied, remaining candidates are mostly speculative/cleanup, the next valuable step requires a product or priority choice, or more architecture work should be validated against real content first.',
+        '- For a milestone stop, create exactly one blocking goal-level DecisionTopic with taskId null, set the Goal status to blocked with a concise currentFocus, finish this Planner task, and do not promote new generator tasks.',
+        '- Time or task-count limits are only backstops; use this assessment every Planner refill even when no backstop has fired.',
+        ...backstopLines,
+        '',
         '## Kanban Fill Target',
         '',
         `- Target open generator tasks: ${options.targetOpenGeneratorTasks}.`,
         `- Current open generator tasks: ${options.currentOpenGeneratorTasks}.`,
-        `- Create up to ${taskBudget} independent ready generator tasks to fill the generator lane.`,
+        `- If the milestone assessment says continuing is worthwhile, create up to ${taskBudget} independent ready generator tasks to fill the generator lane.`,
         '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
         '',
         '## Acceptance',
@@ -221,11 +318,11 @@ function buildPlannerLoopContract(options: {
         `- Read and update .hopi/docs/goals/${options.goal.goalKey}.md when strategy or status changed.`,
         '- Read and curate .hopi/docs/todo.md; promote only a small ready batch into kanban.',
         '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
-        '- Create blocking DecisionTopics for unclear product direction, one question at a time.',
+        '- Create blocking DecisionTopics for unclear product direction, milestone review, or risky priority choices, one question at a time.',
         '- Create goal-scoped tasks with lightweight contracts using the final HOPI_ACTIONS packet.',
-        '- Leave Goal completion to explicit user archive/done actions; do not create a completion DecisionTopic.',
+        '- Leave final Goal done/archive to explicit user actions; milestone review is allowed and should block the Goal rather than marking it done.',
         '- Do not mark the Goal paused, done, or archived just because the current iteration looks complete.',
-        '- If later candidates remain, promote enough independent ready candidates to keep the generator lane usefully filled.',
+        '- If later candidates remain and the milestone assessment says continuing is valuable, promote enough independent ready candidates to keep the generator lane usefully filled.',
         '- If no next work is actionable, update docs/currentFocus and finish without changing Goal lifecycle status.',
         '',
         '## Suggested Checks',
@@ -439,9 +536,14 @@ export class AutoRunScheduler {
             return null
         }
 
-        const handoff = buildResolvedDecisionHandoff(
-            this.store.goalDecisionTopics.listByGoalAndNamespace(options.goal.id, options.project.namespace)
-        )
+        const topics = this.store.goalDecisionTopics.listByGoalAndNamespace(options.goal.id, options.project.namespace)
+        const handoff = buildResolvedDecisionHandoff(topics)
+        const backstop = buildPlannerBackstopSignal({
+            goal: options.goal,
+            tasks: options.tasks,
+            topics,
+            project: options.project
+        })
 
         return this.store.tasks.createTask({
             id: randomUUID(),
@@ -462,7 +564,8 @@ export class AutoRunScheduler {
             contract: buildPlannerLoopContract({
                 goal: options.goal,
                 targetOpenGeneratorTasks,
-                currentOpenGeneratorTasks: activeWorkCount
+                currentOpenGeneratorTasks: activeWorkCount,
+                backstop
             }),
             handoff
         })

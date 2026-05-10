@@ -113,6 +113,33 @@ export function normalizeAutomationLaneLimits(value?: AutomationLaneLimits | nul
     }
 }
 
+const AutomationBackstopLimitSchema = z.number().int().min(0)
+
+export const AutomationBackstopPolicySchema = z.object({
+    maxHoursWithoutMilestone: AutomationBackstopLimitSchema.max(720).optional(),
+    maxGeneratorTasksWithoutMilestone: AutomationBackstopLimitSchema.max(200).optional(),
+    maxPlannerRefillsWithoutMilestone: AutomationBackstopLimitSchema.max(100).optional()
+})
+export type AutomationBackstopPolicy = z.infer<typeof AutomationBackstopPolicySchema>
+
+export const DEFAULT_AUTOMATION_BACKSTOP_POLICY: Required<AutomationBackstopPolicy> = {
+    maxHoursWithoutMilestone: 24,
+    maxGeneratorTasksWithoutMilestone: 50,
+    maxPlannerRefillsWithoutMilestone: 12
+}
+
+export function normalizeAutomationBackstopPolicy(
+    value?: AutomationBackstopPolicy | null
+): Required<AutomationBackstopPolicy> {
+    const parsed = AutomationBackstopPolicySchema.safeParse(value ?? {})
+    const policy = parsed.success ? parsed.data : {}
+    return {
+        maxHoursWithoutMilestone: policy.maxHoursWithoutMilestone ?? DEFAULT_AUTOMATION_BACKSTOP_POLICY.maxHoursWithoutMilestone,
+        maxGeneratorTasksWithoutMilestone: policy.maxGeneratorTasksWithoutMilestone ?? DEFAULT_AUTOMATION_BACKSTOP_POLICY.maxGeneratorTasksWithoutMilestone,
+        maxPlannerRefillsWithoutMilestone: policy.maxPlannerRefillsWithoutMilestone ?? DEFAULT_AUTOMATION_BACKSTOP_POLICY.maxPlannerRefillsWithoutMilestone
+    }
+}
+
 export const MetadataSchema = z.object({
     path: z.string(),
     host: z.string(),
@@ -259,6 +286,7 @@ export const ProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     automationLaneLimits: AutomationLaneLimitsSchema.optional(),
+    automationBackstopPolicy: AutomationBackstopPolicySchema.optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
     automationReadinessStatus: AutomationReadinessStatusSchema.optional(),

@@ -8,9 +8,11 @@ export * from './modes'
 export * from './sessionMessages'
 export {
     AgentOutputLanguageSchema,
+    AutomationBackstopPolicySchema,
     AutomationLaneLimitsSchema,
     AutomationLaneSchema,
     DEFAULT_AGENT_OUTPUT_LANGUAGE,
+    DEFAULT_AUTOMATION_BACKSTOP_POLICY,
     DEFAULT_AUTOMATION_LANE_LIMITS,
     OmcAttemptSchema,
     OmcAttemptDetailResponseSchema,
@@ -33,6 +35,7 @@ export {
     OmcProgramOverviewResponseSchema,
     OmcProgramSchema,
     normalizeAgentOutputLanguage,
+    normalizeAutomationBackstopPolicy,
     normalizeAutomationLaneLimits
 } from './schemas'
 export * from './socket'

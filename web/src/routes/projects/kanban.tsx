@@ -431,7 +431,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     event.preventDefault()
                     setIsMoveMenuOpen(true)
                 }}
-                className={`group app-interactive-card rounded-xl bg-[var(--app-bg)] p-3 text-left app-shadow-surface ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
+                className={`group app-interactive-card task-card-hover rounded-xl bg-[var(--app-bg)] p-3 text-left app-shadow-surface ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
                     } ${props.isDragging ? 'opacity-60' : ''
                     }`}
                 style={cardStyle}

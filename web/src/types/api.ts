@@ -20,6 +20,7 @@ export type {
     AttachmentMetadata,
     AgentFlavor,
     AgentOutputLanguage,
+    AutomationBackstopPolicy,
     AutomationLaneLimits,
     DirectoryEntry,
     Goal,

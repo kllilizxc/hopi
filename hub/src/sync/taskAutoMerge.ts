@@ -221,15 +221,15 @@ function blockMerge(options: {
     })
 }
 
-function parseMergeChangedCount(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0
-        ? Math.floor(value)
-        : null
-}
-
 function mergeStateCanMerge(result: RpcGitMergeWorktreeStateResponse): boolean {
     if (!result.success) return false
     return result.mergeable === true
+}
+
+function buildNoCommittedChangesBlockedReason(result: RpcGitMergeWorktreeStateResponse): string {
+    const sourceBranch = normalizeBranchName(result.sourceBranch)
+    const branchSuffix = sourceBranch ? ` on ${sourceBranch}` : ''
+    return `No committed changes are waiting to merge${branchSuffix}. Confirm the linked worktree changes were committed to the source branch, then retry merge.`
 }
 
 function resolveDefaultMergeRootPath(taskSession: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>): string {
@@ -784,19 +784,15 @@ export async function autoMergeAcceptedTask(options: {
             return 'blocked'
         }
 
-        const changedCount = parseMergeChangedCount(mergeState.committedChangedCount)
-        const targetHead = changedCount === 0 ? null : normalizeBranchName(mergeState.targetBranch)
-        await persistSuccessfulAutoMerge({
+        blockMerge({
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
-            project,
             task: runningTask,
             sessionId,
-            targetHead,
-            baseCommit: worktree.baseCommit
+            reason: buildNoCommittedChangesBlockedReason(mergeState)
         })
-        return 'merged'
+        return 'blocked'
     }
 
     const sourceBranch = normalizeBranchName(mergeState.sourceBranch)

@@ -223,6 +223,20 @@ html[data-theme="dark"] .app-shadow-surface {
     box-shadow: 0 16px 32px -26px rgba(0, 0, 0, 0.7);
 }
 
+.app-shadow-chat-surface {
+    box-shadow:
+        -12px 0 24px -18px rgba(15, 23, 42, 0.58),
+        0 22px 42px -30px rgba(15, 23, 42, 0.62),
+        0 3px 14px -10px rgba(15, 23, 42, 0.36);
+}
+
+html[data-theme="dark"] .app-shadow-chat-surface {
+    box-shadow:
+        -14px 0 30px -18px rgba(0, 0, 0, 0.95),
+        0 24px 48px -30px rgba(0, 0, 0, 0.9),
+        0 3px 14px -10px rgba(255, 255, 255, 0.2);
+}
+
 .app-shadow-popover {
     box-shadow:
         0 10px 15px -3px rgba(15, 23, 42, 0.12),
@@ -483,6 +497,44 @@ html[data-theme="dark"] .app-interactive-card-selected {
 
 .app-interactive-card:active {
     transform: translateY(0);
+}
+
+.task-card-hover::after {
+    content: "";
+    position: absolute;
+    inset: -12%;
+    z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(14px);
+    background-image: radial-gradient(
+        circle,
+        rgba(255, 255, 255, 0.16) 0%,
+        rgba(255, 255, 255, 0.07) 45%,
+        transparent 72%
+    );
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .task-card-hover:hover::after {
+        animation: task-card-glow 820ms var(--app-motion-ease-out);
+    }
+}
+
+@keyframes task-card-glow {
+    0% {
+        opacity: 0;
+        transform: scale(0.4);
+    }
+    25% {
+        opacity: 0.45;
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.2);
+    }
 }
 
 .kanban-column {

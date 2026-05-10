@@ -13,6 +13,7 @@ export const MODEL_PRESET_OPTIONS: Record<AgentFlavor, readonly ModelPresetOptio
     claude: [
         { value: 'auto', label: 'Auto' },
         { value: 'opus', label: 'Opus' },
+        { value: 'claude-opus-4-7', label: 'Opus 4.7' },
         { value: 'opus[1m]', label: 'Opus (1M context)' },
         { value: 'sonnet', label: 'Sonnet' },
     ],
@@ -20,6 +21,7 @@ export const MODEL_PRESET_OPTIONS: Record<AgentFlavor, readonly ModelPresetOptio
         { value: 'auto', label: 'Auto' },
         { value: 'gpt-5.5', label: 'GPT-5.5' },
         { value: 'gpt-5.4', label: 'GPT-5.4' },
+        { value: 'gpt-5.3-codex-spark xhigh', label: 'GPT-5.3 Codex Spark (xhigh)' },
         { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
         { value: 'gpt-5.2', label: 'GPT-5.2' },
         { value: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },

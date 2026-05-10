@@ -92,7 +92,7 @@ export function shouldTreatBlockedMergeAsRecoveredSuccess(
         return false
     }
 
-    return mergeState.reason === 'already_merged' || mergeState.reason === 'no_changes'
+    return mergeState.reason === 'already_merged'
 }
 
 export function buildRecoveredBlockedMergeSummary(
@@ -105,9 +105,7 @@ export function buildRecoveredBlockedMergeSummary(
 
     return {
         title: 'Merge 已完成',
-        detail: mergeState?.reason === 'already_merged'
-            ? '目标分支已包含当前任务变更。'
-            : '当前已无待合并的已提交变更。',
+        detail: '目标分支已包含当前任务变更。',
         tone: 'success'
     }
 }

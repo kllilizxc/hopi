@@ -520,6 +520,7 @@ function createLegacyGoalDbWithoutGoalKey(path: string, userVersion = 22): void 
             workflow_profile TEXT,
             last_improvements_at INTEGER,
             automation_lane_limits TEXT,
+            automation_backstop_policy TEXT,
             agent_output_language TEXT NOT NULL DEFAULT 'system',
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
@@ -700,7 +701,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(25)
+        expect(userVersion.user_version).toBe(26)
 
         db.close()
     })
@@ -732,7 +733,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(25)
+        expect(userVersion.user_version).toBe(26)
 
         db.close()
     })
@@ -762,6 +763,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
         const projectColumns = (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(projectColumns).toContain('automation_lane_limits')
+        expect(projectColumns).toContain('automation_backstop_policy')
         expect(projectColumns).toContain('agent_output_language')
         const goalColumns = (db.prepare('PRAGMA table_info(goals)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(goalColumns).toContain('automation_paused_at')
@@ -780,7 +782,7 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(25)
+        expect(userVersion.user_version).toBe(26)
 
         const project = store.projects.createProject({
             id: 'goal-project',
@@ -791,9 +793,19 @@ describe('Store schema migration safety', () => {
         })
         expect(project.agentOutputLanguage).toBe('zh-CN')
         const updatedProject = store.projects.updateProject(project.id, 'default', {
-            agentOutputLanguage: 'en'
+            agentOutputLanguage: 'en',
+            automationBackstopPolicy: {
+                maxHoursWithoutMilestone: 36,
+                maxGeneratorTasksWithoutMilestone: 80,
+                maxPlannerRefillsWithoutMilestone: 16
+            }
         })
         expect(updatedProject?.agentOutputLanguage).toBe('en')
+        expect(updatedProject?.automationBackstopPolicy).toEqual({
+            maxHoursWithoutMilestone: 36,
+            maxGeneratorTasksWithoutMilestone: 80,
+            maxPlannerRefillsWithoutMilestone: 16
+        })
         const goal = store.goals.createGoal({
             id: 'goal-1',
             projectId: project.id,
@@ -894,7 +906,7 @@ describe('Store schema migration safety', () => {
         expect(store.goals.getGoalByGoalKeyAndNamespace('p-goal-key', 'default', 'portable-goal')?.id).toBe('g1')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(25)
+        expect(userVersion.user_version).toBe(26)
 
         db.close()
     })

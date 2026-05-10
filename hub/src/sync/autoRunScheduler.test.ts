@@ -313,9 +313,10 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(planner?.contract).toContain('.hopi/docs/todo.md')
         expect(planner?.contract).toContain('Target open generator tasks: 3')
         expect(planner?.contract).toContain('Current open generator tasks: 0')
-        expect(planner?.contract).toContain('Create up to 3 independent ready generator tasks')
+        expect(planner?.contract).toContain('If the milestone assessment says continuing is worthwhile, create up to 3 independent ready generator tasks')
         expect(planner?.contract).not.toContain('create a DecisionTopic proposing completion')
-        expect(planner?.contract).toContain('Leave Goal completion to explicit user archive/done actions')
+        expect(planner?.contract).toContain('Leave final Goal done/archive to explicit user actions')
+        expect(planner?.contract).toContain('milestone review is allowed and should block the Goal')
         expect(planner?.contract).toContain('Do not mark the Goal paused, done, or archived just because the current iteration looks complete')
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
     })
@@ -380,9 +381,72 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
             .find((task) => task.source === 'planner' && task.title.includes('Plan next'))
+        expect(planner?.contract).toContain('## Milestone Stop Assessment')
+        expect(planner?.contract).toContain('create exactly one blocking goal-level DecisionTopic with taskId null')
+        expect(planner?.contract).toContain('set the Goal status to blocked')
+        expect(planner?.contract).toContain('If the milestone assessment says continuing is worthwhile')
+        expect(planner?.contract).not.toContain('do not create a completion DecisionTopic')
         expect(planner?.handoff).toContain('Resolved DecisionTopic: Choose story entry')
         expect(planner?.handoff).toContain('Should story content enter from MainMenu or a debug-only button?')
         expect(planner?.handoff).toContain('Use MainMenu as the player-facing entry.')
+    })
+
+    it('surfaces project-configured milestone backstops in the planner contract', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-backstop'
+        const goalId = 'goal-planner-backstop'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationBackstopPolicy: {
+                maxHoursWithoutMilestone: 0,
+                maxGeneratorTasksWithoutMilestone: 1,
+                maxPlannerRefillsWithoutMilestone: 0
+            },
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep iterating with a soft stop',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: 'finished-generator-task',
+            projectId,
+            goalId,
+            title: 'Completed generator work',
+            status: 'finished',
+            source: 'manual'
+        })
+
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'planner' && task.title.includes('Plan next')))
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner' && task.title.includes('Plan next'))
+        expect(planner?.contract).toContain('## Backstop Triggered')
+        expect(planner?.contract).toContain('1 completed generator tasks since the last milestone baseline')
+        expect(planner?.contract).toContain('This is not an automatic stop')
     })
 
     it('continues a reactivated goal planner in its active linked session with decision context', async () => {

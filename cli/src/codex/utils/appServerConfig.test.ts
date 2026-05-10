@@ -118,4 +118,38 @@ describe('appServerConfig', () => {
         expect(params.approvalPolicy).toBe('on-request');
         expect(params.model).toBe('gpt-5');
     });
+
+    it('strips xhigh from model and maps to effort for turn params', () => {
+        const params = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: 'hello',
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh' }
+        });
+
+        expect(params.model).toBe('gpt-5.3-codex-spark');
+        expect(params.effort).toBe('high');
+    });
+
+    it('trims model suffix in collaboration mode settings', () => {
+        const params = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: 'hello',
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh', collaborationMode: 'plan' }
+        });
+
+        expect(params.collaborationMode).toEqual({
+            mode: 'plan',
+            settings: { model: 'gpt-5.3-codex-spark' }
+        });
+        expect(params.model).toBeUndefined();
+    });
+
+    it('strips xhigh from model for thread params', () => {
+        const params = buildThreadStartParams({
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh' },
+            mcpServers: {}
+        });
+
+        expect(params.model).toBe('gpt-5.3-codex-spark');
+    });
 });

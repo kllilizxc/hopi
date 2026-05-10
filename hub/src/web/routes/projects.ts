@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationBackstopPolicySchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
@@ -33,6 +33,7 @@ const createProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     automationLaneLimits: AutomationLaneLimitsSchema.optional(),
+    automationBackstopPolicy: AutomationBackstopPolicySchema.optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
 })
@@ -53,6 +54,7 @@ const updateProjectSchema = z.object({
     autoRunEnabled: z.boolean().optional(),
     maxRunningSessions: z.number().int().min(1).max(50).optional(),
     automationLaneLimits: AutomationLaneLimitsSchema.nullable().optional(),
+    automationBackstopPolicy: AutomationBackstopPolicySchema.nullable().optional(),
     improvementsEnabled: z.boolean().optional(),
     improvementsMaxPendingTasks: z.number().int().min(1).max(50).optional(),
 })
@@ -205,6 +207,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             automationLaneLimits: parsed.data.automationLaneLimits,
+            automationBackstopPolicy: parsed.data.automationBackstopPolicy,
             improvementsEnabled: parsed.data.improvementsEnabled,
             improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })
@@ -345,6 +348,7 @@ export function createProjectsRoutes(options: {
             autoRunEnabled: parsed.data.autoRunEnabled,
             maxRunningSessions: parsed.data.maxRunningSessions,
             automationLaneLimits: parsed.data.automationLaneLimits,
+            automationBackstopPolicy: parsed.data.automationBackstopPolicy,
             improvementsEnabled: parsed.data.improvementsEnabled,
             improvementsMaxPendingTasks: parsed.data.improvementsMaxPendingTasks
         })

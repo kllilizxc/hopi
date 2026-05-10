@@ -21,8 +21,24 @@ describe('CompactTabs', () => {
         const tablist = screen.getByRole('tablist', { name: 'Projects' })
         expect(tablist).not.toHaveClass('w-full')
         expect(tablist).not.toHaveClass('border')
-        expect(screen.getByRole('tab', { name: 'CardGame' })).toHaveClass('shrink-0')
-        expect(screen.getByRole('tab', { name: 'CardGame' })).not.toHaveClass('flex-1')
+        const cardGameTab = screen.getByRole('tab', { name: 'CardGame' })
+        expect(cardGameTab).toHaveClass('shrink-0')
+        expect(cardGameTab).toHaveClass('px-4')
+        expect(cardGameTab).not.toHaveClass('flex-1')
+        expect(cardGameTab).not.toHaveAttribute('title')
+    })
+
+    it('only renders native tab tooltips when explicitly provided', () => {
+        renderWithProviders(
+            <CompactTabs
+                items={[{ id: 'planning', label: 'Planning', title: 'Planning view' }]}
+                selectedId="planning"
+                onSelect={vi.fn()}
+                ariaLabel="Project view"
+            />
+        )
+
+        expect(screen.getByRole('tab', { name: 'Planning' })).toHaveAttribute('title', 'Planning view')
     })
 
     it('fills its width and distributes tabs evenly when requested', () => {
@@ -43,6 +59,7 @@ describe('CompactTabs', () => {
         expect(screen.getByRole('tab', { name: 'Board' })).toHaveClass('flex-1')
         const selectedTab = screen.getByRole('tab', { name: 'Planning' })
         expect(selectedTab).toHaveClass('flex-1')
+        expect(selectedTab).toHaveClass('px-4')
         expect(selectedTab).not.toHaveClass('border')
     })
 

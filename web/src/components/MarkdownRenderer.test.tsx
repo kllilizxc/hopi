@@ -56,6 +56,32 @@ describe('MarkdownRenderer', () => {
         expect(screen.getByText('Tests pass, but main uses presentation.mapWidth.')).toBeInTheDocument()
     })
 
+    it('renders HOPI_ACTIONS surfaces without border styling', () => {
+        const { container } = renderWithProviders(
+            <MarkdownRenderer
+                content={[
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [{
+                            type: 'update_current_task',
+                            status: 'finished',
+                            handoff: 'Done.',
+                            evidence: 'Commit created.'
+                        }]
+                    }, null, 2),
+                    '```'
+                ].join('\n')}
+            />
+        )
+
+        expect(screen.getByText('HOPI_ACTIONS')).toBeInTheDocument()
+        expect(container.querySelector('[class*="app-shadow-border"]')).toBeNull()
+        expect(container.querySelector('[class*="inset_0_0_0_1px"]')).toBeNull()
+        expect(container.querySelector('.app-shadow-surface')).toBeInTheDocument()
+        expect(container.querySelector('.app-shadow-control')).toBeInTheDocument()
+    })
+
     it('keeps kickoff task contracts visible when they include instructional HOPI_ACTIONS examples', () => {
         renderWithProviders(
             <MarkdownRenderer

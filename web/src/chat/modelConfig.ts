@@ -17,6 +17,7 @@ const MODEL_CONTEXT_WINDOWS: Record<ModelMode, number> = {
     default: 200_000,
     sonnet: 200_000,
     opus: 200_000,
+    'claude-opus-4-7': 200_000,
     'opus[1m]': 1_000_000
 }
 

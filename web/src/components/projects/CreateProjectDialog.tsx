@@ -232,9 +232,22 @@ export function CreateProjectDialog(props: CreateProjectDialogProps) {
                         <label className="text-xs font-medium text-[var(--app-hint)]">
                             {t('projects.workspaces.fields.path')}
                         </label>
-                        <div className="rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm text-[var(--app-fg)]">
-                            {workspacePath || t('projects.workspaces.picker.emptySelection')}
-                        </div>
+                        <input
+                            type="text"
+                            value={workspacePath}
+                            onChange={(event) => setWorkspacePath(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                    event.preventDefault()
+                                    handleAddWorkspace()
+                                }
+                            }}
+                            disabled={props.isPending || !machineId}
+                            placeholder={t('projects.workspaces.picker.emptySelection')}
+                            aria-label={t('projects.workspaces.fields.path')}
+                            spellCheck={false}
+                            className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                        />
                         {machineId ? (
                             <MachineDirectoryPicker
                                 key={machineId}

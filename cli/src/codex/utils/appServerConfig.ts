@@ -1,5 +1,6 @@
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
+import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
 import type {
     ApprovalPolicy,
@@ -116,8 +117,9 @@ export function buildThreadStartParams(args: {
         params.cwd = args.cwd;
     }
 
-    if (args.mode.model) {
-        params.model = args.mode.model;
+    const resolvedModelSpec = resolveCodexModelSpec(args.mode.model);
+    if (resolvedModelSpec?.model) {
+        params.model = resolvedModelSpec.model;
     }
 
     return params;
@@ -161,7 +163,10 @@ export function buildTurnStartParams(args: {
     }
 
     const collaborationMode = args.mode?.collaborationMode;
-    const model = args.overrides?.model ?? args.mode?.model;
+    const modelSpec = resolveCodexModelSpec(args.overrides?.model ?? args.mode?.model);
+    const model = modelSpec?.model;
+    const effort = modelSpec?.effort;
+
     if (collaborationMode) {
         const settings = model ? { model } : undefined;
         params.collaborationMode = settings
@@ -169,6 +174,9 @@ export function buildTurnStartParams(args: {
             : { mode: collaborationMode };
     } else if (model) {
         params.model = model;
+        if (effort) {
+            params.effort = effort;
+        }
     }
 
     return params;

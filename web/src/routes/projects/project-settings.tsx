@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTOMATION_LANE_LIMITS, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeAutomationLaneLimits, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
-import type { AgentFlavor, AgentOutputLanguage, PermissionMode, Workspace } from '@/types/api'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTOMATION_BACKSTOP_POLICY, DEFAULT_AUTOMATION_LANE_LIMITS, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import type { AgentFlavor, AgentOutputLanguage, AutomationBackstopPolicy, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
 import { getAgentOutputLanguageOptions, normalizeProjectAgentOutputLanguage } from '@/lib/agent-output-language'
@@ -22,14 +22,27 @@ import { useVerifyProjectAutomation } from '@/hooks/mutations/useVerifyProjectAu
 
 type AutomationReadinessStatus = 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
 type AutomationLaneKey = 'planner' | 'generator' | 'evaluator' | 'radar'
+type AutomationBackstopPolicyKey = keyof Required<AutomationBackstopPolicy>
 
 const AUTOMATION_LANE_FIELDS: AutomationLaneKey[] = ['planner', 'generator', 'evaluator', 'radar']
+const AUTOMATION_BACKSTOP_FIELDS: Array<{ key: AutomationBackstopPolicyKey; max: number }> = [
+    { key: 'maxHoursWithoutMilestone', max: 720 },
+    { key: 'maxGeneratorTasksWithoutMilestone', max: 200 },
+    { key: 'maxPlannerRefillsWithoutMilestone', max: 100 }
+]
 
 function clampLaneLimit(value: number): number {
     if (!Number.isFinite(value)) {
         return 0
     }
     return Math.max(0, Math.min(50, Math.trunc(value)))
+}
+
+function clampBackstopLimit(value: number, max: number): number {
+    if (!Number.isFinite(value)) {
+        return 0
+    }
+    return Math.max(0, Math.min(max, Math.trunc(value)))
 }
 
 function getAutomationReadinessVariant(status: AutomationReadinessStatus): 'default' | 'secondary' | 'success' | 'warning' | 'error' {
@@ -139,6 +152,9 @@ export function ProjectSettingsPage() {
     const [automationLaneLimits, setAutomationLaneLimits] = useState<Record<AutomationLaneKey, number>>({
         ...DEFAULT_AUTOMATION_LANE_LIMITS
     })
+    const [automationBackstopPolicy, setAutomationBackstopPolicy] = useState<Required<AutomationBackstopPolicy>>({
+        ...DEFAULT_AUTOMATION_BACKSTOP_POLICY
+    })
     const [improvementsEnabled, setImprovementsEnabled] = useState(false)
     const [improvementsMaxPendingTasks, setImprovementsMaxPendingTasks] = useState(5)
 
@@ -164,6 +180,7 @@ export function ProjectSettingsPage() {
         setAgentOutputLanguage(normalizeProjectAgentOutputLanguage(project.agentOutputLanguage))
         setAutoRunEnabled(Boolean(project.autoRunEnabled))
         setAutomationLaneLimits(normalizeAutomationLaneLimits(project.automationLaneLimits))
+        setAutomationBackstopPolicy(normalizeAutomationBackstopPolicy(project.automationBackstopPolicy))
         setImprovementsEnabled(Boolean(project.improvementsEnabled))
         setImprovementsMaxPendingTasks(project.improvementsMaxPendingTasks ?? 5)
     }, [project])
@@ -230,6 +247,14 @@ export function ProjectSettingsPage() {
         }))
     }, [])
 
+    const setAutomationBackstopLimit = useCallback((key: AutomationBackstopPolicyKey, value: number) => {
+        const field = AUTOMATION_BACKSTOP_FIELDS.find((item) => item.key === key)
+        setAutomationBackstopPolicy((previous) => ({
+            ...previous,
+            [key]: clampBackstopLimit(value, field?.max ?? 100)
+        }))
+    }, [])
+
     const handleSaveBasics = useCallback(async () => {
         if (!project) return
 
@@ -253,6 +278,7 @@ export function ProjectSettingsPage() {
                 agentOutputLanguage,
                 autoRunEnabled,
                 automationLaneLimits,
+                automationBackstopPolicy,
                 improvementsEnabled,
                 improvementsMaxPendingTasks
             }
@@ -275,6 +301,7 @@ export function ProjectSettingsPage() {
         agentOutputLanguage,
         autoRunEnabled,
         automationLaneLimits,
+        automationBackstopPolicy,
         improvementsEnabled,
         improvementsMaxPendingTasks
     ])
@@ -495,6 +522,29 @@ export function ProjectSettingsPage() {
                                     ))}
                                 </div>
                                 <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.laneLimitsHint')}</div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.backstopPolicy')}</div>
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                                    {AUTOMATION_BACKSTOP_FIELDS.map((field) => (
+                                        <div key={field.key} className="space-y-1.5">
+                                            <label className="text-xs font-medium text-[var(--app-hint)]">
+                                                {t(`projects.automation.backstop.${field.key}`)}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={field.max}
+                                                value={automationBackstopPolicy[field.key]}
+                                                onChange={(e) => setAutomationBackstopLimit(field.key, Number(e.target.value))}
+                                                disabled={isPending}
+                                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="text-xs text-[var(--app-hint)]">{t('projects.automation.backstopPolicyHint')}</div>
                             </div>
 
                             <label className="flex items-center gap-2 text-sm cursor-pointer select-none">

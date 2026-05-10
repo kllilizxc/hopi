@@ -60,12 +60,12 @@ export const HappyAssistantMessage = memo(function HappyAssistantMessage() {
         return parts.length > 0 && parts.every((part) => part.type === 'tool-call')
     })
     const rootClass = toolOnly
-        ? 'py-1 min-w-0 max-w-full overflow-x-hidden'
-        : 'px-1 min-w-0 max-w-full overflow-x-hidden'
+        ? 'py-1 min-w-0 max-w-full'
+        : 'px-1 min-w-0 max-w-full'
 
     if (isCliOutput) {
         return (
-            <MessagePrimitive.Root className="px-1 min-w-0 max-w-full overflow-x-hidden">
+            <MessagePrimitive.Root className="px-1 min-w-0 max-w-full">
                 <CliOutputBlock text={cliText} />
                 {showTypingIndicator ? (
                     <div className="mt-2">

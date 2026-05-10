@@ -182,6 +182,7 @@ type ToolCardProps = {
     defaultExpanded?: boolean
     nestedContent?: ReactNode
     nestedCount?: number
+    compact?: boolean
 }
 
 function ToolCardInner(props: ToolCardProps) {
@@ -305,8 +306,12 @@ function ToolCardInner(props: ToolCardProps) {
         </div>
     )
 
+    const segmentClass = props.compact
+        ? '-ml-3 mr-2 rounded-l-none rounded-r-xl app-shadow-control'
+        : '-ml-6 mr-3 rounded-l-none rounded-r-xl app-shadow-control'
+
     return (
-        <Card className="overflow-hidden shadow-sm">
+        <Card data-testid="tool-card" className={cn('overflow-visible', segmentClass)}>
             <CardHeader className="px-3 py-1.5 space-y-0">
                 <button
                     type="button"

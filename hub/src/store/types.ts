@@ -28,6 +28,7 @@ import type {
     TaskMergeRuntime,
     TaskPreviewRuntime,
     AgentOutputLanguage,
+    AutomationBackstopPolicy,
     AutomationLaneLimits
 } from '@hopi/protocol/types'
 
@@ -108,6 +109,7 @@ export type StoredProject = {
     autoRunEnabled: boolean
     maxRunningSessions: number
     automationLaneLimits: AutomationLaneLimits | null
+    automationBackstopPolicy: AutomationBackstopPolicy | null
     improvementsEnabled: boolean
     improvementsMaxPendingTasks: number
     automationReadinessStatus: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'

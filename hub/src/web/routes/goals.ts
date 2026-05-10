@@ -520,6 +520,10 @@ export function createGoalsRoutes(options: {
                     })
                 }
             }
+        } else if (topic.blocking) {
+            options.store.goals.updateGoalByNamespace(goal.id, namespace, {
+                status: 'blocked'
+            })
         }
 
         emitProjectUpdated({

@@ -1,11 +1,14 @@
 import type { Database } from 'bun:sqlite'
 import {
+    AutomationBackstopPolicySchema,
     AutomationLaneLimitsSchema,
+    DEFAULT_AUTOMATION_BACKSTOP_POLICY,
     DEFAULT_AUTOMATION_LANE_LIMITS,
     normalizeAgentOutputLanguage,
+    normalizeAutomationBackstopPolicy,
     normalizeAutomationLaneLimits
 } from '@hopi/protocol'
-import type { AgentOutputLanguage, AutomationLaneLimits } from '@hopi/protocol/types'
+import type { AgentOutputLanguage, AutomationBackstopPolicy, AutomationLaneLimits } from '@hopi/protocol/types'
 
 import type { StoredProject } from './types'
 
@@ -28,6 +31,7 @@ type DbProjectRow = {
     auto_run_enabled: number
     max_running_sessions: number
     automation_lane_limits?: string | null
+    automation_backstop_policy?: string | null
     improvements_enabled: number
     improvements_max_pending_tasks?: number
     improvements_max_generated_new?: number
@@ -54,6 +58,22 @@ function parseAutomationLaneLimits(value: string | null | undefined): Automation
 
 function serializeAutomationLaneLimits(value: AutomationLaneLimits | null | undefined): string {
     return JSON.stringify(normalizeAutomationLaneLimits(value ?? DEFAULT_AUTOMATION_LANE_LIMITS))
+}
+
+function parseAutomationBackstopPolicy(value: string | null | undefined): AutomationBackstopPolicy | null {
+    if (!value) {
+        return null
+    }
+    try {
+        const parsed = AutomationBackstopPolicySchema.safeParse(JSON.parse(value))
+        return parsed.success ? parsed.data : null
+    } catch {
+        return null
+    }
+}
+
+function serializeAutomationBackstopPolicy(value: AutomationBackstopPolicy | null | undefined): string {
+    return JSON.stringify(normalizeAutomationBackstopPolicy(value ?? DEFAULT_AUTOMATION_BACKSTOP_POLICY))
 }
 
 function toStoredProject(row: DbProjectRow): StoredProject {
@@ -84,6 +104,7 @@ function toStoredProject(row: DbProjectRow): StoredProject {
         autoRunEnabled: Boolean(row.auto_run_enabled),
         maxRunningSessions: row.max_running_sessions,
         automationLaneLimits: parseAutomationLaneLimits(row.automation_lane_limits),
+        automationBackstopPolicy: parseAutomationBackstopPolicy(row.automation_backstop_policy),
         improvementsEnabled: Boolean(row.improvements_enabled),
         improvementsMaxPendingTasks: row.improvements_max_pending_tasks ?? row.improvements_max_generated_new ?? 5,
         automationReadinessStatus: row.automation_readiness_status === 'checking'
@@ -125,6 +146,7 @@ export function createProject(
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -139,7 +161,7 @@ export function createProject(
             name, description, default_workspace_id,
             default_agent_flavor, default_permission_mode, default_model, default_model_mode,
             default_session_type, worktree_target_branch, worktree_auto_commit_mode, worktree_cleanup_after_merge,
-            agent_output_language, auto_run_enabled, max_running_sessions, automation_lane_limits,
+            agent_output_language, auto_run_enabled, max_running_sessions, automation_lane_limits, automation_backstop_policy,
             improvements_enabled, improvements_max_pending_tasks,
             automation_readiness_status, automation_readiness_summary, automation_readiness_checked_at,
             created_at, updated_at, archived_at
@@ -148,7 +170,7 @@ export function createProject(
             @name, @description, @default_workspace_id,
             @default_agent_flavor, @default_permission_mode, @default_model, @default_model_mode,
             @default_session_type, @worktree_target_branch, @worktree_auto_commit_mode, @worktree_cleanup_after_merge,
-            @agent_output_language, @auto_run_enabled, @max_running_sessions, @automation_lane_limits,
+            @agent_output_language, @auto_run_enabled, @max_running_sessions, @automation_lane_limits, @automation_backstop_policy,
             @improvements_enabled, @improvements_max_pending_tasks,
             @automation_readiness_status, @automation_readiness_summary, @automation_readiness_checked_at,
             @created_at, @updated_at, NULL
@@ -172,6 +194,7 @@ export function createProject(
         auto_run_enabled: project.autoRunEnabled ? 1 : 0,
         max_running_sessions: project.maxRunningSessions ?? 5,
         automation_lane_limits: serializeAutomationLaneLimits(project.automationLaneLimits),
+        automation_backstop_policy: serializeAutomationBackstopPolicy(project.automationBackstopPolicy),
         improvements_enabled: project.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: project.improvementsMaxPendingTasks ?? 5,
         automation_readiness_status: project.automationReadinessStatus ?? 'unknown',
@@ -247,6 +270,7 @@ export function updateProject(
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -282,6 +306,9 @@ export function updateProject(
         automationLaneLimits: patch.automationLaneLimits !== undefined
             ? normalizeAutomationLaneLimits(patch.automationLaneLimits)
             : current.automationLaneLimits,
+        automationBackstopPolicy: patch.automationBackstopPolicy !== undefined
+            ? normalizeAutomationBackstopPolicy(patch.automationBackstopPolicy)
+            : current.automationBackstopPolicy,
         improvementsEnabled: patch.improvementsEnabled !== undefined ? patch.improvementsEnabled : current.improvementsEnabled,
         improvementsMaxPendingTasks: patch.improvementsMaxPendingTasks ?? current.improvementsMaxPendingTasks,
         automationReadinessStatus: patch.automationReadinessStatus !== undefined ? patch.automationReadinessStatus : current.automationReadinessStatus,
@@ -309,6 +336,7 @@ export function updateProject(
             auto_run_enabled = @auto_run_enabled,
             max_running_sessions = @max_running_sessions,
             automation_lane_limits = @automation_lane_limits,
+            automation_backstop_policy = @automation_backstop_policy,
             improvements_enabled = @improvements_enabled,
             improvements_max_pending_tasks = @improvements_max_pending_tasks,
             automation_readiness_status = @automation_readiness_status,
@@ -336,6 +364,7 @@ export function updateProject(
         auto_run_enabled: next.autoRunEnabled ? 1 : 0,
         max_running_sessions: next.maxRunningSessions,
         automation_lane_limits: serializeAutomationLaneLimits(next.automationLaneLimits),
+        automation_backstop_policy: serializeAutomationBackstopPolicy(next.automationBackstopPolicy),
         improvements_enabled: next.improvementsEnabled ? 1 : 0,
         improvements_max_pending_tasks: next.improvementsMaxPendingTasks,
         automation_readiness_status: next.automationReadinessStatus,

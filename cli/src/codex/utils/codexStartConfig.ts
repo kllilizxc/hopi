@@ -1,6 +1,7 @@
 import type { CodexSessionConfig } from '../types';
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
+import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
 
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
@@ -64,8 +65,9 @@ export function buildCodexStartConfig(args: {
         startConfig.cwd = args.cwd;
     }
 
-    if (args.mode.model) {
-        startConfig.model = args.mode.model;
+    const modelSpec = resolveCodexModelSpec(args.mode.model);
+    if (modelSpec?.model) {
+        startConfig.model = modelSpec.model;
     }
 
     return startConfig;

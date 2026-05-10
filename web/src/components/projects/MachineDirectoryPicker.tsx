@@ -141,7 +141,7 @@ const MachineDirectoryNode = memo(function MachineDirectoryNode(props: {
                         <div className="truncate text-sm font-medium">{getPathLabel(resolvedPath)}</div>
                         <div className="truncate text-xs text-[var(--app-hint)]">{resolvedPath || t('misc.loading')}</div>
                     </div>
-                    {isSelected ? <CheckIcon className="shrink-0 text-[var(--app-link)]" /> : null}
+                    {isSelected ? <CheckIcon className="h-4 w-4 shrink-0 text-[var(--app-link)]" /> : null}
                 </button>
             </div>
 

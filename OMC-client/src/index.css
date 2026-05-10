@@ -190,18 +190,70 @@ input {
 }
 
 .omc-card {
+    position: relative;
     display: grid;
     gap: 12px;
     padding: 16px;
     border-radius: 20px;
     border: 1px solid rgba(82, 61, 25, 0.12);
     background: var(--omc-surface-strong);
-    transition: transform 140ms ease, box-shadow 140ms ease;
+    overflow: hidden;
+    will-change: transform;
+    transition:
+        transform 220ms cubic-bezier(0.2, 0.85, 0.25, 1),
+        box-shadow 220ms cubic-bezier(0.2, 0.85, 0.25, 1),
+        border-color 220ms cubic-bezier(0.2, 0.85, 0.25, 1);
+}
+
+.omc-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 0% 0%, rgba(183, 96, 45, 0.16), transparent 58%);
+    background-size: 220% 220%;
+    background-position: 0% 0%;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 0;
+    transition: opacity 220ms cubic-bezier(0.2, 0.85, 0.25, 1);
+}
+
+.omc-card > * {
+    position: relative;
+    z-index: 1;
 }
 
 .omc-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 30px rgba(71, 48, 18, 0.09);
+    transform: translateY(-4px) scale(1.008);
+    border-color: rgba(71, 48, 18, 0.24);
+    box-shadow: 0 16px 30px rgba(71, 48, 18, 0.15);
+}
+
+.omc-card:hover::before,
+.omc-card:focus-visible::before {
+    opacity: 1;
+    animation: omc-card-glow 4s ease-in-out infinite;
+}
+
+@keyframes omc-card-glow {
+    0%,
+    100% {
+        background-position: 0% 0%;
+        opacity: 0.85;
+    }
+
+    50% {
+        background-position: 100% 100%;
+        opacity: 0.45;
+    }
+}
+
+.omc-card:focus-visible {
+    outline: 2px solid rgba(183, 96, 45, 0.35);
+    outline-offset: 3px;
+    transform: translateY(-4px) scale(1.008);
+    border-color: rgba(71, 48, 18, 0.24);
+    box-shadow: 0 16px 30px rgba(71, 48, 18, 0.15);
 }
 
 .omc-card h4,

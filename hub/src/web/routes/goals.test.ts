@@ -420,6 +420,55 @@ describe('goal routes', () => {
         }))
     })
 
+    it('blocks and reactivates a goal for a goal-level blocking decision topic', async () => {
+        const store = new Store(':memory:')
+        const events: unknown[] = []
+        const engine = {
+            handleRealtimeEvent(event: unknown) {
+                events.push(event)
+            }
+        } as SyncEngine
+        const app = createTestApp(store, engine)
+        const project = await createProject(app, createTempWorkspace())
+
+        const goalResponse = await app.request(`/api/projects/${project.id}/goals`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Milestone Review Goal' })
+        })
+        expect(goalResponse.status).toBe(200)
+        const goalBody = await goalResponse.json() as { goal: { id: string } }
+
+        const topicResponse = await app.request(`/api/goals/${goalBody.goal.id}/topics`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                title: 'Review milestone',
+                body: 'Is the architecture spine good enough for the next content phase?',
+                blocking: true
+            })
+        })
+
+        expect(topicResponse.status).toBe(200)
+        const topicBody = await topicResponse.json() as { topic: { id: string } }
+        expect(store.goals.getGoalByNamespace(goalBody.goal.id, 'default')?.status).toBe('blocked')
+        events.length = 0
+
+        const resolveResponse = await app.request(`/api/goal-topics/${topicBody.topic.id}/resolve`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ resolution: 'Move to content validation next.' })
+        })
+
+        expect(resolveResponse.status).toBe(200)
+        expect(store.goals.getGoalByNamespace(goalBody.goal.id, 'default')?.status).toBe('active')
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'project-updated',
+            projectId: project.id,
+            namespace: 'default'
+        }))
+    })
+
     it('reactivates a blocked goal after the last blocking decision topic is resolved', async () => {
         const store = new Store(':memory:')
         const events: unknown[] = []

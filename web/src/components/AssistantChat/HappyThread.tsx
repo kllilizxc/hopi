@@ -30,6 +30,7 @@ function NewMessagesIndicator(props: { count: number; onClick: () => void }) {
 }
 
 export const MESSAGE_STREAM_CLASS_NAME = 'flex flex-col gap-4 sm:gap-5'
+export const MESSAGE_VIEWPORT_CONTENT_CLASS_NAME = 'mx-auto w-full max-w-content min-w-0 py-3 pl-5 pr-3'
 
 function MessageSkeleton() {
     const { t } = useTranslation()
@@ -435,7 +436,7 @@ export function HappyThread(props: {
                         viewportClassName="h-full overflow-y-auto overflow-x-hidden"
                         viewportStyle={{ WebkitOverflowScrolling: 'touch' }}
                     >
-                        <div className="mx-auto w-full max-w-content min-w-0 p-3">
+                        <div className={MESSAGE_VIEWPORT_CONTENT_CLASS_NAME}>
                             <div ref={topSentinelRef} className="h-px w-full" aria-hidden="true" />
                             {showSkeleton ? (
                                 <MessageSkeleton />

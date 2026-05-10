@@ -1,6 +1,7 @@
 import type {
     AttachmentMetadata,
     AgentOutputLanguage,
+    AutomationBackstopPolicy,
     AutomationLaneLimits,
     AuthResponse,
     DeleteUploadResponse,
@@ -276,6 +277,7 @@ export class ApiClient {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits
+        automationBackstopPolicy?: AutomationBackstopPolicy
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {
@@ -300,6 +302,7 @@ export class ApiClient {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
     }): Promise<ProjectResponse> {

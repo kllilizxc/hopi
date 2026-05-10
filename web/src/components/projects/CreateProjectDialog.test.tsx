@@ -89,7 +89,7 @@ describe('CreateProjectDialog', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
         expect(screen.getByText('/tmp/workspace-alpha')).toBeInTheDocument()
-        expect(screen.getByText('Select a directory from the tree below.')).toBeInTheDocument()
+        expect(screen.getByPlaceholderText('Enter a path or select a directory below.')).toBeInTheDocument()
 
         fireEvent.change(screen.getAllByRole('textbox')[0], {
             target: { value: 'Project Alpha' },
@@ -101,6 +101,41 @@ describe('CreateProjectDialog', () => {
                 machineId: 'machine-1',
                 name: 'Project Alpha',
                 workspaces: [{ path: '/tmp/workspace-alpha', label: undefined }],
+            }))
+        })
+    })
+
+    it('adds a manually typed workspace path', async () => {
+        const onCreate = vi.fn(async () => null)
+
+        renderWithProviders(
+            <CreateProjectDialog
+                api={null as ApiClient | null}
+                isOpen
+                onClose={vi.fn()}
+                machines={[createMachine()]}
+                isMachinesLoading={false}
+                onCreate={onCreate}
+                isPending={false}
+                error={null}
+            />
+        )
+
+        fireEvent.change(screen.getByRole('textbox', { name: 'Path' }), {
+            target: { value: '/tmp/manual-workspace' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+        fireEvent.change(screen.getAllByRole('textbox')[0], {
+            target: { value: 'Manual Project' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+        await waitFor(() => {
+            expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: 'machine-1',
+                name: 'Manual Project',
+                workspaces: [{ path: '/tmp/manual-workspace', label: undefined }],
             }))
         })
     })

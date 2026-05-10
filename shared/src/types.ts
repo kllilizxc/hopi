@@ -1,5 +1,6 @@
 export type {
     AgentOutputLanguage,
+    AutomationBackstopPolicy,
     AutomationReadinessStatus,
     AutomationLane,
     AutomationLaneLimits,

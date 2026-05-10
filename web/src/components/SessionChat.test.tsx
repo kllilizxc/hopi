@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Task } from '@/types/api'
+import { SESSION_CHAT_SURFACE_CLASS_NAME } from '@/components/SessionChat'
 import {
     buildInitStatusSummary,
     buildMergeRuntimeSummary,
@@ -26,6 +27,12 @@ function createTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe('SessionChat runtime summaries', () => {
+    it('renders the message stream as a raised surface above surrounding project content', () => {
+        expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('app-shadow-chat-surface')
+        expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('z-10')
+        expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('bg-[var(--app-bg)]')
+    })
+
     it('builds merge summaries from durable runtime state', () => {
         const task = createTask({
             status: 'in_review',
@@ -106,7 +113,7 @@ describe('SessionChat runtime summaries', () => {
         })).toBe(true)
     })
 
-    it('treats blocked merge as recovered success when repo state shows nothing left to merge', () => {
+    it('treats blocked merge as recovered success when target already contains the task', () => {
         const task = createTask({
             status: 'in_review',
             mergeRuntime: {
@@ -125,7 +132,7 @@ describe('SessionChat runtime summaries', () => {
         const mergeState = {
             ok: true as const,
             canMerge: false,
-            reason: 'no_changes' as const,
+            reason: 'already_merged' as const,
             targetBranch: 'main',
             sourceBranch: 'task-branch',
             hasWorkingTreeChanges: false,
@@ -144,9 +151,42 @@ describe('SessionChat runtime summaries', () => {
         })).toBe(true)
         expect(buildRecoveredBlockedMergeSummary(task.mergeRuntime, mergeState)).toEqual({
             title: 'Merge 已完成',
-            detail: '当前已无待合并的已提交变更。',
+            detail: '目标分支已包含当前任务变更。',
             tone: 'success'
         })
+    })
+
+    it('keeps blocked merge visible when the source branch has no committed changes', () => {
+        const task = createTask({
+            status: 'in_review',
+            mergeRuntime: {
+                status: 'blocked',
+                sessionId: 'session-1',
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 1,
+                failureFingerprint: 'merge:no_changes',
+                latestNote: 'Auto-merge blocked: No committed changes are waiting to merge.',
+                blockedReason: 'No committed changes are waiting to merge.'
+            }
+        })
+        const mergeState = {
+            ok: true as const,
+            canMerge: false,
+            reason: 'no_changes' as const,
+            targetBranch: 'main',
+            sourceBranch: 'task-branch',
+            hasWorkingTreeChanges: false,
+            committedChangedCount: 0,
+            mergedAt: null,
+            mergeCommit: null,
+            error: null
+        }
+
+        expect(shouldTreatBlockedMergeAsRecoveredSuccess(task.mergeRuntime, mergeState)).toBe(false)
+        expect(buildRecoveredBlockedMergeSummary(task.mergeRuntime, mergeState)).toBeNull()
     })
 
     it('prefers live ready preview state over stale waiting runtime', () => {

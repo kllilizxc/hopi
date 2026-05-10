@@ -293,6 +293,105 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
 
+    it('blocks a goal when a packet creates a goal-level blocking decision topic', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-checkpoint-actions'
+        const goalId = 'goal-checkpoint-actions'
+        const taskId = 'planner-task-checkpoint-actions'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal checkpoint project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build architecture spine',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: [
+                        'HOPI_ACTIONS:',
+                        '```json',
+                        JSON.stringify({
+                            actions: [
+                                {
+                                    type: 'create_decision_topic',
+                                    taskId: null,
+                                    title: 'Milestone review',
+                                    body: 'Is this architecture stage sufficient before adding real content?',
+                                    blocking: true
+                                },
+                                {
+                                    type: 'update_current_task',
+                                    status: 'finished',
+                                    handoff: 'Stopped for milestone review.',
+                                    evidence: 'Remaining work needs human priority review.'
+                                }
+                            ]
+                        }),
+                        '```'
+                    ].join('\n')
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        expect(topics).toHaveLength(1)
+        expect(topics[0]?.taskId).toBeNull()
+        expect(topics[0]?.blocking).toBe(true)
+        expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('finished')
+        expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
+    })
+
     it('skips duplicate goal task creation when a non-archived task with the same title already exists', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -1171,6 +1270,143 @@ describe('TaskAutomation', () => {
         expect(mergeCalls).toBe(1)
         expect(cleanupCalls).toBe(1)
         expect(archiveCalls).toBe(1)
+    })
+
+    it('blocks accepted auto-merge when the source branch has no committed changes', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-auto-merge-no-commits'
+        const goalId = 'goal-evaluator-auto-merge-no-commits'
+        const taskId = 'generator-task-auto-merge-no-commits'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main',
+            worktreeCleanupAfterMerge: true
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false,
+            worktree: true
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'in_review',
+            activeSessionId: sessionId,
+            source: 'evaluator'
+        })
+
+        let mergeCalls = 0
+        let cleanupCalls = 0
+        let archiveCalls = 0
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            getSessionByNamespace(id: string, ns: string) {
+                return id === sessionId && ns === namespace ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 0,
+                    mergeable: false
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitRemoveWorktree() {
+                cleanupCalls += 1
+                return { success: true }
+            },
+            async archiveSession() {
+                archiveCalls += 1
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Accepted.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'finished',
+                                handoff: 'Accepted map traversal.',
+                                evidence: 'Tests and diff reviewed.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        await waitForTask({
+            store,
+            namespace,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'blocked'
+        })
+
+        const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(accepted?.status).toBe('in_review')
+        expect(accepted?.finishedAt).toBeNull()
+        expect(accepted?.worktreeMergedAt).toBeNull()
+        expect(accepted?.worktreeMergeCommit).toBeNull()
+        expect(accepted?.mergeRuntime?.blockedReason).toContain('No committed changes are waiting to merge')
+        expect(mergeCalls).toBe(0)
+        expect(cleanupCalls).toBe(0)
+        expect(archiveCalls).toBe(0)
     })
 
     it('auto-merges evaluator acceptance through the evaluator session when the generator session is stale', async () => {

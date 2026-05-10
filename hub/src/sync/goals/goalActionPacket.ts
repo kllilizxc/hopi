@@ -88,7 +88,9 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function getAlias(record: Record<string, unknown>, camelKey: string, snakeKey: string): unknown {
-    return record[camelKey] ?? record[snakeKey]
+    return Object.prototype.hasOwnProperty.call(record, camelKey)
+        ? record[camelKey]
+        : record[snakeKey]
 }
 
 function normalizeStringItems(value: unknown): string[] {
@@ -707,6 +709,10 @@ export function applyGoalActionPacketFromSession(options: {
                         })
                     }
                 }
+            } else if (topic.blocking) {
+                options.store.goals.updateGoalByNamespace(goal.id, options.namespace, {
+                    status: 'blocked'
+                })
             }
         }
     }

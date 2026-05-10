@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite'
-import type { AgentOutputLanguage, AutomationLaneLimits } from '@hopi/protocol/types'
+import type { AgentOutputLanguage, AutomationBackstopPolicy, AutomationLaneLimits } from '@hopi/protocol/types'
 
 import type { StoredProject } from './types'
 import { archiveProject, createProject, getProject, getProjectByNamespace, listProjects, listProjectsByNamespace, updateProject } from './projects'
@@ -30,6 +30,7 @@ export class ProjectStore {
         autoRunEnabled?: boolean
         maxRunningSessions?: number
         automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
         improvementsEnabled?: boolean
         improvementsMaxPendingTasks?: number
         automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
@@ -74,6 +75,7 @@ export class ProjectStore {
             autoRunEnabled?: boolean
             maxRunningSessions?: number
             automationLaneLimits?: AutomationLaneLimits | null
+            automationBackstopPolicy?: AutomationBackstopPolicy | null
             improvementsEnabled?: boolean
             improvementsMaxPendingTasks?: number
             automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
