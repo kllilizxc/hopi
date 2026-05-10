@@ -34,6 +34,21 @@ describe('markdown text layout', () => {
         expect(code.closest('pre')).not.toHaveClass('w-max')
     })
 
+    it('renders ordinary list item content', () => {
+        const ListItem = defaultComponents.li as ComponentType<ComponentPropsWithoutRef<'li'>>
+
+        render(
+            <ul>
+                <ListItem>Fill current kanban column target</ListItem>
+            </ul>
+        )
+
+        const item = screen.getByRole('listitem')
+        expect(item).toHaveClass('aui-md-li')
+        expect(item).not.toHaveClass('aui-md-task-list-item')
+        expect(item).toHaveTextContent('Fill current kanban column target')
+    })
+
     it('renders todo list items with compact checklist markers', () => {
         const ListItem = defaultComponents.li as ComponentType<ComponentPropsWithoutRef<'li'>>
 

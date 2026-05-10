@@ -172,7 +172,7 @@ function ListItem(props: ComponentPropsWithoutRef<'li'>) {
     const parsed = parseTodoListItem(children)
 
     if (!parsed.isTodoListItem) {
-        return <li {...rest} className={cn('aui-md-li min-w-0 pl-1 [overflow-wrap:anywhere]', className)} />
+        return <li {...rest} className={cn('aui-md-li min-w-0 pl-1 [overflow-wrap:anywhere]', className)}>{children}</li>
     }
 
     return (
