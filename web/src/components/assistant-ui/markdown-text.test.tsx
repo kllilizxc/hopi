@@ -33,4 +33,33 @@ describe('markdown text layout', () => {
         expect(code.closest('pre')).toHaveClass('whitespace-pre-wrap')
         expect(code.closest('pre')).not.toHaveClass('w-max')
     })
+
+    it('renders todo list items with compact checklist markers', () => {
+        const ListItem = defaultComponents.li as ComponentType<ComponentPropsWithoutRef<'li'>>
+
+        render(
+            <ul>
+                <ListItem>
+                    <input type="checkbox" checked />
+                    {' Read task context'}
+                </ListItem>
+                <ListItem>
+                    <input type="checkbox" />
+                    {' Run checks'}
+                </ListItem>
+            </ul>
+        )
+
+        const firstItem = screen.getAllByRole('listitem')[0]
+        const secondItem = screen.getAllByRole('listitem')[1]
+
+        expect(firstItem).toHaveClass('aui-md-task-list-item')
+        expect(secondItem).toHaveClass('aui-md-task-list-item')
+        expect(firstItem.querySelector('.aui-md-task-check')).toBeTruthy()
+        expect(firstItem.querySelector('.aui-md-task-check')).toHaveClass(
+            'border-[var(--app-link)]'
+        )
+        expect(firstItem).toHaveTextContent('Read task context')
+        expect(secondItem).toHaveTextContent('Run checks')
+    })
 })

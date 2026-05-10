@@ -1,4 +1,10 @@
-import type { ComponentPropsWithoutRef } from 'react'
+import {
+    Children,
+    isValidElement,
+    type ComponentPropsWithoutRef,
+    type ReactElement,
+    type ReactNode,
+} from 'react'
 import {
     MarkdownTextPrimitive,
     unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
@@ -110,8 +116,89 @@ function OrderedList(props: ComponentPropsWithoutRef<'ol'>) {
     return <ol {...props} className={cn('aui-md-ol my-2.5 list-decimal space-y-1.5 pl-5 leading-relaxed [overflow-wrap:anywhere]', props.className)} />
 }
 
+function parseTodoListItem(children: ReactNode): {
+    isTodoListItem: boolean
+    isDone: boolean
+    content: ReactNode[]
+} {
+    const nodes = Children.toArray(children)
+    let checkboxIndex = -1
+    let checkbox: ReactElement<{ checked?: boolean; defaultChecked?: boolean }> | null = null
+
+    for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i]
+        if (!isValidElement(node) || node.type !== 'input') {
+            continue
+        }
+
+        const props = node.props as { type?: string; checked?: boolean; defaultChecked?: boolean }
+        if (props.type === 'checkbox') {
+            checkboxIndex = i
+            checkbox = node as ReactElement<{ checked?: boolean; defaultChecked?: boolean }>
+            break
+        }
+    }
+
+    if (checkboxIndex < 0 || checkbox === null) {
+        return {
+            isTodoListItem: false,
+            isDone: false,
+            content: nodes,
+        }
+    }
+
+    const isDone = Boolean(checkbox.props.checked ?? checkbox.props.defaultChecked)
+
+    const content = nodes
+        .filter((_, index) => index !== checkboxIndex)
+        .map(node => {
+            if (typeof node === 'string') {
+                const text = node.replace(/^[\t\r\n ]+/, '')
+                return text
+            }
+            return node
+        })
+        .filter(node => !(typeof node === 'string' && node.length === 0))
+
+    return {
+        isTodoListItem: true,
+        isDone,
+        content,
+    }
+}
+
 function ListItem(props: ComponentPropsWithoutRef<'li'>) {
-    return <li {...props} className={cn('aui-md-li min-w-0 pl-1 [overflow-wrap:anywhere]', props.className)} />
+    const { className, children, ...rest } = props
+    const parsed = parseTodoListItem(children)
+
+    if (!parsed.isTodoListItem) {
+        return <li {...rest} className={cn('aui-md-li min-w-0 pl-1 [overflow-wrap:anywhere]', className)} />
+    }
+
+    return (
+        <li
+            {...rest}
+            className={cn(
+                'aui-md-li aui-md-task-list-item flex min-w-0 list-none items-start gap-2 pl-0 [overflow-wrap:anywhere]',
+                className
+            )}
+        >
+            <span
+                aria-hidden="true"
+                className={cn(
+                    'aui-md-task-check h-4 w-4 rounded border text-[10px] leading-none shrink-0 mt-1 inline-flex items-center justify-center transition-all',
+                    parsed.isDone
+                        ? 'border-[var(--app-link)] bg-[var(--app-link)] text-[var(--app-button-text)]'
+                        : 'border-[var(--app-border)] bg-transparent text-transparent'
+                )}
+            >
+                {parsed.isDone ? <CheckIcon className="h-3 w-3" /> : null}
+            </span>
+            <span className={cn('aui-md-task-text min-w-0', parsed.isDone ? 'opacity-75 line-through' : null)}>
+                {parsed.content}
+            </span>
+        </li>
+    )
 }
 
 function Hr(props: ComponentPropsWithoutRef<'hr'>) {
