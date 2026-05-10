@@ -234,7 +234,7 @@ describe('startSessionFromTask', () => {
                 '',
                 '## Acceptance',
                 '',
-                '- Update .hopi/docs/goals/goal-1.md.'
+                '- Update .hopi/docs/goals/goal-1/goal.md.'
             ].join('\n')
         })
 
@@ -294,9 +294,12 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('Task: Clarify goal and plan first iteration')
         expect(kickoffText).toContain('Task Contract:')
         expect(kickoffText).toContain('Use the brainstorming protocol to clarify this Goal before implementation.')
-        expect(kickoffText).toContain('.hopi/docs/goals/goal-1.md')
+        expect(kickoffText).toContain('.hopi/docs/goals/goal-1/goal.md')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('Allowed transitions:')
+        expect(kickoffText).toContain('Task creation quality bar:')
+        expect(kickoffText).toContain('Involved Files / Areas')
+        expect(kickoffText).toContain('bugfix, feature, refactor, test, content, infra, or performance')
         expect(kickoffText).toContain('Do not mark the Goal paused, done, or archived')
         expect(kickoffText).not.toContain('Mark this Goal active, paused, blocked')
     })
@@ -1814,6 +1817,107 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(spawnedAgent).toBe('codex')
         expect(spawnedModel).toBe('gpt-5.5')
+    })
+
+    it('uses project default model for inherited review tasks', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-review-model-default'
+        const goalId = 'goal-review-model-default'
+        const taskId = 'task-review-model-default'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultAgentFlavor: 'codex',
+            defaultModel: 'gpt-5.3-codex-spark xhigh'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Review with project defaults'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Ready for evaluator',
+            status: 'in_review',
+            workspaceId,
+            source: 'manual'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-review-model-default',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedAgent = ''
+        let spawnedModel: string | undefined
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession(_machineId: string, _path: string, agent: string, model?: string) {
+                spawnedAgent = agent
+                spawnedModel = model
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedAgent).toBe('codex')
+        expect(spawnedModel).toBe('gpt-5.3-codex-spark xhigh')
+        expect(store.sessions.getSessionByNamespace(spawned.id, namespace)?.metadata).toMatchObject({
+            hopiTaskRole: 'evaluator'
+        })
     })
 
     it('starts planner goal tasks in safe-yolo Codex mode without requiring an actions manifest', async () => {

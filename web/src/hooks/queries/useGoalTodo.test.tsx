@@ -33,15 +33,16 @@ describe('useGoalTodo', () => {
         const queryClient = createTestQueryClient()
         const response = {
             exists: true,
-            path: '/repo/.hopi/docs/todo.md',
-            rawMarkdown: '## Goal `goal-1`',
+            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
+            rawYaml: 'version: 1\ngoals: []\n',
             updatedAt: 1_700_000_000_000,
             sections: [
                 {
                     kind: 'ready',
                     title: 'Implement first slice',
                     body: 'Acceptance details',
-                    taskId: null
+                    taskId: null,
+                    todoRef: 'first-slice'
                 }
             ]
         }

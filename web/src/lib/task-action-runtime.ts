@@ -117,10 +117,11 @@ export function shouldShowMergeActionButton(options: {
     canStartMerge: boolean
 }): boolean {
     const { task, hasActiveMergeRuntime, mergeRuntimeStatus, canStartMerge } = options
+    const canRetryBlockedMerge = task?.status === 'blocked' && isRetryableMergeRuntimeStatus(mergeRuntimeStatus)
 
     return Boolean(
         task
-        && task.status === 'in_review'
+        && (task.status === 'in_review' || canRetryBlockedMerge)
         && !task.archivedAt
         && !task.finishedAt
         && (hasActiveMergeRuntime || isRetryableMergeRuntimeStatus(mergeRuntimeStatus) || canStartMerge)
@@ -407,5 +408,44 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
             const _exhaustive: never = runtime.status
             return _exhaustive
         }
+    }
+}
+
+function resolveTaskBlockedDetail(task: Task): string | null {
+    if (task.blockedReason) {
+        return task.blockedReason
+    }
+    if (task.mergeRuntime?.status === 'blocked') {
+        return resolveTaskActionFailureDetail(task.mergeRuntime)
+    }
+    if (task.previewRuntime?.status === 'blocked') {
+        return resolveTaskActionFailureDetail(task.previewRuntime)
+    }
+    if (task.initRuntime?.status === 'blocked') {
+        return resolveTaskActionFailureDetail(task.initRuntime)
+    }
+    return null
+}
+
+export function buildTaskBlockedStatusSummary(task: Task | null | undefined): TaskActionStatusSummary | null {
+    if (!task || task.status !== 'blocked') {
+        return null
+    }
+
+    const source = task.blockedSource
+    const title = source === 'merge'
+        ? 'Merge 受阻'
+        : source === 'preview'
+            ? 'Preview 受阻'
+            : source === 'init'
+                ? 'Init 受阻'
+                : source === 'evaluator'
+                    ? 'Review 受阻'
+                    : '任务受阻'
+
+    return {
+        title,
+        detail: resolveTaskBlockedDetail(task) ?? '需要先解决阻塞后再继续。',
+        tone: 'error'
     }
 }

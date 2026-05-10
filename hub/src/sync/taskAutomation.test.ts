@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Store } from '../store'
 import { TaskAutomation } from './taskAutomation'
 import type { SyncEngine } from './syncEngine'
+import { autoMergeAcceptedTask } from './taskAutoMerge'
 
 const createdPaths: string[] = []
 const MERGE_BASE = '1111111111111111111111111111111111111111'
@@ -278,7 +279,8 @@ describe('TaskAutomation', () => {
         expect(created?.status).toBe('planned')
         expect(created?.goalId).toBe(goalId)
         expect(created?.source).toBe('manual')
-        expect(created?.model).toBe('gpt-5.5')
+        expect(created?.agentFlavor).toBeNull()
+        expect(created?.model).toBeNull()
         expect(created?.permissionMode).toBe('safe-yolo')
 
         const planner = store.tasks.getTaskByNamespace(taskId, namespace)
@@ -507,14 +509,16 @@ describe('TaskAutomation', () => {
         const workspacePath = createTempWorkspace()
         const docsRoot = join(workspacePath, '.hopi', 'docs')
         mkdirSync(docsRoot, { recursive: true })
-        writeFileSync(join(docsRoot, 'todo.md'), [
-            '# HOPI Todo',
-            '',
-            '## Goal todo-ref-goal',
-            '',
-            '### Ready',
-            '',
-            '- [ready] Restore archive docs through storage adapter',
+        writeFileSync(join(docsRoot, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            '  - goalKey: todo-ref-goal',
+            `    goalId: ${goalId}`,
+            '    title: Todo ref goal',
+            '    items:',
+            '      - ref: Restore archive docs through storage adapter',
+            '        status: ready',
+            '        title: Restore archive docs through storage adapter',
             ''
         ].join('\n'), 'utf8')
 
@@ -584,7 +588,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'create_goal_task',
-                                title: 'Restore archive docs through storage adapter',
+                                title: 'ref: Restore archive docs through storage adapter - Wrong generated title',
                                 todoRef: 'Restore archive docs through storage adapter'
                             },
                             {
@@ -616,8 +620,9 @@ describe('TaskAutomation', () => {
         expect(created?.goalTodoRef).toBe('Restore archive docs through storage adapter')
         expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
             .filter((task) => task.goalTodoRef === 'Restore archive docs through storage adapter')).toHaveLength(1)
-        expect(readFileSync(join(docsRoot, 'todo.md'), 'utf8'))
-            .toContain('- [promoted] Restore archive docs through storage adapter -> task `' + created?.id + '`')
+        const promotedTodo = readFileSync(join(docsRoot, 'goals', 'todo-ref-goal', 'todo.yml'), 'utf8')
+        expect(promotedTodo).toContain('status: promoted')
+        expect(promotedTodo).toContain(`taskId: ${created?.id}`)
 
         const evaluatorSession = createLinkedSession(store, {
             namespace,
@@ -669,8 +674,9 @@ describe('TaskAutomation', () => {
         })
         evaluatorAutomation.handleEvent(toMessageReceivedEvent(evaluatorSession.sessionId, evaluatorReady))
 
-        expect(readFileSync(join(docsRoot, 'todo.md'), 'utf8'))
-            .toContain('- [done] Restore archive docs through storage adapter -> task `' + created?.id + '`')
+        const doneTodo = readFileSync(join(docsRoot, 'goals', 'todo-ref-goal', 'todo.yml'), 'utf8')
+        expect(doneTodo).toContain('status: done')
+        expect(doneTodo).toContain(`taskId: ${created?.id}`)
     })
 
     it('moves generator finished action packets to review instead of finished', () => {
@@ -760,7 +766,117 @@ describe('TaskAutomation', () => {
         expect(generator?.evidence).toBe('bun test passed.')
     })
 
-    it('applies bare goal action packet JSON from manual goal tasks on ready', () => {
+    it('syncs linked goal todo status when generator work enters review', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-todo-runtime-status'
+        const goalId = 'goal-todo-runtime-status'
+        const reviewTaskId = 'generator-task-review-sync'
+        const workspacePath = createTempWorkspace()
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(docsRoot, { recursive: true })
+        writeFileSync(join(docsRoot, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            '  - goalKey: runtime-status-goal',
+            `    goalId: ${goalId}`,
+            '    title: Runtime status goal',
+            '    items:',
+            '      - ref: review-ref',
+            '        status: promoted',
+            '        title: Review sync task',
+            ''
+        ].join('\n'), 'utf8')
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal todo runtime status project',
+            defaultWorkspaceId: 'workspace-1'
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            label: 'Workspace',
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Runtime status goal',
+            goalKey: 'runtime-status-goal',
+            status: 'active'
+        })
+
+        const reviewSession = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId: reviewTaskId,
+            thinking: false
+        })
+        store.tasks.createTask({
+            id: reviewTaskId,
+            projectId,
+            goalId,
+            title: 'Review sync task',
+            status: 'in_progress',
+            activeSessionId: reviewSession.sessionId,
+            workspaceId: 'workspace-1',
+            source: 'manual',
+            goalTodoRef: 'review-ref'
+        })
+
+        const engine = {
+            getSession(id: string) {
+                if (id === reviewSession.sessionId) return reviewSession.session
+                return undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId: reviewSession.sessionId })
+
+        const reviewMsg = store.messages.addMessage(reviewSession.sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Ready for review.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'finished',
+                                handoff: 'Review me.',
+                                evidence: 'Focused checks passed.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(reviewSession.sessionId, reviewMsg))
+        const reviewReady = store.messages.addMessage(reviewSession.sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(reviewSession.sessionId, reviewReady))
+
+        const todo = readFileSync(join(docsRoot, 'goals', 'runtime-status-goal', 'todo.yml'), 'utf8')
+        expect(todo).toContain('ref: review-ref')
+        expect(todo).toContain('status: in_review')
+        expect(todo).toContain(`taskId: ${reviewTaskId}`)
+    })
+
+    it('applies fenced goal action packet JSON from manual goal tasks on ready', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-goal-generator-bare-json'
@@ -813,16 +929,108 @@ describe('TaskAutomation', () => {
             role: 'agent',
             content: {
                 type: 'text',
-                text: JSON.stringify({
-                    actions: [
-                        {
-                            type: 'update_current_task',
-                            status: 'in_review',
-                            handoff: 'Localized runtime copy.',
-                            evidence: 'bun test and npm run build-nolog passed.'
-                        }
-                    ]
-                })
+                text: [
+                    'Completed the implementation.',
+                    '',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'in_review',
+                                handoff: 'Localized runtime copy.',
+                                evidence: 'bun test and npm run build-nolog passed.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(task?.status).toBe('in_review')
+        expect(task?.handoff).toBe('Localized runtime copy.')
+        expect(task?.evidence).toBe('bun test and npm run build-nolog passed.')
+    })
+
+    it('applies goal action packets when the marker is inside a fenced json block', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-marker-inside-json-fence'
+        const goalId = 'goal-marker-inside-json-fence'
+        const taskId = 'generator-task-marker-inside-json-fence'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal generator project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build localized UI',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Localize visible copy',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'manual'
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Completed the implementation.',
+                    '',
+                    '```json',
+                    'HOPI_ACTIONS:',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'in_review',
+                                handoff: 'Localized runtime copy.',
+                                evidence: 'bun test and npm run build-nolog passed.'
+                            }
+                        ]
+                    }, null, 2),
+                    '```'
+                ].join('\n')
             }
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
@@ -1104,21 +1312,45 @@ describe('TaskAutomation', () => {
         const projectId = 'project-goal-evaluator-auto-merge'
         const goalId = 'goal-evaluator-auto-merge'
         const taskId = 'generator-task-auto-merge'
+        const workspacePath = createTempWorkspace()
+        const docsRoot = join(workspacePath, '.hopi', 'docs')
+        mkdirSync(docsRoot, { recursive: true })
+        writeFileSync(join(docsRoot, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            '  - goalKey: auto-merge-goal',
+            `    goalId: ${goalId}`,
+            '    title: Auto merge goal',
+            '    items:',
+            '      - ref: map-traversal',
+            '        status: promoted',
+            '        title: Implement map traversal',
+            '        taskId: generator-task-auto-merge',
+            ''
+        ].join('\n'), 'utf8')
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId: 'machine-1',
             name: 'Goal evaluator project',
+            defaultWorkspaceId: 'workspace-1',
             defaultSessionType: 'worktree',
             worktreeTargetBranch: 'main',
             worktreeCleanupAfterMerge: true
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            label: 'Workspace',
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
             title: 'Build autopilot',
+            goalKey: 'auto-merge-goal',
             status: 'active'
         })
 
@@ -1137,6 +1369,8 @@ describe('TaskAutomation', () => {
             title: 'Implement map traversal',
             status: 'in_review',
             activeSessionId: sessionId,
+            workspaceId: 'workspace-1',
+            goalTodoRef: 'map-traversal',
             source: 'evaluator'
         })
 
@@ -1270,6 +1504,10 @@ describe('TaskAutomation', () => {
         expect(mergeCalls).toBe(1)
         expect(cleanupCalls).toBe(1)
         expect(archiveCalls).toBe(1)
+        const doneTodo = readFileSync(join(docsRoot, 'goals', 'auto-merge-goal', 'todo.yml'), 'utf8')
+        expect(doneTodo).toContain('ref: map-traversal')
+        expect(doneTodo).toContain('status: done')
+        expect(doneTodo).toContain('taskId: generator-task-auto-merge')
     })
 
     it('blocks accepted auto-merge when the source branch has no committed changes', async () => {
@@ -1399,7 +1637,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('in_review')
+        expect(accepted?.status).toBe('blocked')
         expect(accepted?.finishedAt).toBeNull()
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
@@ -1604,6 +1842,106 @@ describe('TaskAutomation', () => {
         expect(accepted?.status).toBe('finished')
         expect(accepted?.mergeRuntime?.status).toBe('succeeded')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+    })
+
+    it('does not auto-merge through an inactive linked worktree session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-inactive-merge-session'
+        const goalId = 'goal-inactive-merge-session'
+        const taskId = 'generator-task-inactive-merge-session'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const inactiveMetadata: NonNullable<Session['metadata']> = {
+            path: '/tmp/worktree',
+            host: 'test',
+            projectId,
+            taskId,
+            hopiTaskRole: 'generator',
+            worktree: {
+                basePath: '/tmp/base',
+                branch: 'task-branch',
+                name: 'task-branch',
+                worktreePath: '/tmp/worktree',
+                baseCommit: MERGE_BASE
+            }
+        }
+        const storedSession = store.sessions.getOrCreateSession(
+            'inactive-worktree-session',
+            inactiveMetadata,
+            null,
+            namespace
+        )
+        const now = Date.now()
+        const inactiveSession: Session = {
+            id: storedSession.id,
+            namespace,
+            seq: 0,
+            createdAt: now - 1_000,
+            updatedAt: now - 1_000,
+            active: false,
+            activeAt: now - 1_000,
+            metadata: inactiveMetadata,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: now - 1_000
+        }
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'in_review',
+            activeSessionId: storedSession.id,
+            source: 'evaluator'
+        })
+
+        let readCalls = 0
+        const engine = {
+            getSessionByNamespace(id: string, ns: string) {
+                return id === storedSession.id && ns === namespace ? inactiveSession : undefined
+            },
+            async readSessionFile() {
+                readCalls += 1
+                throw new Error('readSessionFile should not be called for inactive sessions')
+            },
+            async gitMergeWorktreeState() {
+                throw new Error('gitMergeWorktreeState should not be called for inactive sessions')
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const result = await autoMergeAcceptedTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(result).toBe('not_applicable')
+        expect(readCalls).toBe(0)
+        expect(task?.status).toBe('in_review')
+        expect(task?.mergeRuntime).toBeNull()
     })
 
     it('lets the agent repair auto-merge conflicts before retrying the accepted task merge', async () => {
@@ -2409,7 +2747,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('in_review')
+        expect(accepted?.status).toBe('blocked')
         expect(accepted?.finishedAt).toBeNull()
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
@@ -2730,6 +3068,96 @@ describe('TaskAutomation', () => {
         expect(rejected?.source).toBe('manual')
         expect(rejected?.handoff).toBe('Traversal helper is missing.')
         expect(rejected?.evidence).toBe('Expected file was not present.')
+    })
+
+    it('moves evaluator review requeues back to generator ownership', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-requeue-review'
+        const goalId = 'goal-evaluator-requeue-review'
+        const taskId = 'generator-task-requeue-review'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Review map traversal',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'evaluator'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Needs another review pass.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'in_review',
+                                handoff: 'Requeue this review with updated evidence.',
+                                evidence: 'The evaluator did not accept or reject.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const requeued = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(requeued?.status).toBe('in_review')
+        expect(requeued?.source).toBe('manual')
+        expect(requeued?.handoff).toBe('Requeue this review with updated evidence.')
+        expect(requeued?.evidence).toBe('The evaluator did not accept or reject.')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === taskId)).toBe(true)
     })
 
     it('accepts planner-friendly snake_case goal action packets', () => {
@@ -3212,6 +3640,15 @@ describe('TaskAutomation', () => {
 
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(updated?.status).toBe('blocked')
+        expect(updated?.blockedReason).toBe('Task failed: {"detail":"Instructions are required"}')
+        expect(updated?.blockedSource).toBe('agent')
+        expect(updated?.blockedSessionId).toBe(sessionId)
+
+        const messages = store.messages.getMessages(sessionId)
+        expect(messages.some((message) => {
+            const content = message.content as { content?: { text?: unknown } }
+            return content.content?.text === 'Task blocked: Task failed: {"detail":"Instructions are required"}'
+        })).toBe(true)
     })
 
     it('converts bootstrap init success into blocked when the agent exits before continuing', () => {

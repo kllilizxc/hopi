@@ -20,13 +20,15 @@ type GoalPlanningDocumentProps = {
     error: string | null
 }
 
-const SECTION_ORDER: GoalTodoSectionKind[] = ['ready', 'candidate', 'deferred', 'promoted', 'done', 'unknown']
+const SECTION_ORDER: GoalTodoSectionKind[] = ['ready', 'candidate', 'promoted', 'in_review', 'blocked', 'deferred', 'done', 'unknown']
 
 const TAG_VARIANTS: Record<GoalTodoSectionKind, 'default' | 'warning' | 'success' | 'secondary'> = {
     ready: 'success',
     candidate: 'default',
-    deferred: 'warning',
     promoted: 'secondary',
+    in_review: 'warning',
+    blocked: 'warning',
+    deferred: 'warning',
     done: 'secondary',
     unknown: 'secondary'
 }
@@ -88,9 +90,9 @@ function PlanningSectionIndex(props: {
     )
 }
 
-function RawMarkdownPanel(props: {
+function RawYamlPanel(props: {
     title: string
-    rawMarkdown: string
+    rawYaml: string
 }) {
     return (
         <section className={`p-4 ${PLANNING_PANEL_CLASS}`}>
@@ -98,10 +100,10 @@ function RawMarkdownPanel(props: {
                 {props.title}
             </h2>
             <pre
-                data-testid="planning-raw-markdown"
+                data-testid="planning-raw-yaml"
                 className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-[var(--app-bg)] p-3 font-mono text-[11px] leading-relaxed text-[var(--app-hint)]"
             >
-                {props.rawMarkdown}
+                {props.rawYaml}
             </pre>
         </section>
     )
@@ -112,7 +114,7 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
     const groupedSections = useMemo(() => groupSections(props.todo?.sections ?? []), [props.todo?.sections])
     const updatedAt = formatUpdatedAt(props.todo?.updatedAt ?? null)
     const totalSections = props.todo?.sections.length ?? 0
-    const rawMarkdown = props.todo?.rawMarkdown ?? null
+    const rawYaml = props.todo?.rawYaml ?? null
 
     return (
         <section data-testid="planning-document" className="bg-[var(--app-bg)]">
@@ -178,8 +180,8 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                         <div className="py-10 text-sm text-[var(--app-hint)]">
                             {t('projects.todo.empty')}
                         </div>
-                        {rawMarkdown ? (
-                            <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
+                        {rawYaml ? (
+                            <RawYamlPanel title={t('projects.todo.rawYaml')} rawYaml={rawYaml} />
                         ) : null}
                     </div>
                 ) : (
@@ -239,8 +241,8 @@ export function GoalPlanningDocument(props: GoalPlanningDocumentProps) {
                                 ))}
                             </div>
 
-                            {rawMarkdown ? (
-                                <RawMarkdownPanel title={t('projects.todo.rawMarkdown')} rawMarkdown={rawMarkdown} />
+                            {rawYaml ? (
+                                <RawYamlPanel title={t('projects.todo.rawYaml')} rawYaml={rawYaml} />
                             ) : null}
                         </div>
                     </div>

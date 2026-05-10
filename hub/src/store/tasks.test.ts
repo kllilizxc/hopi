@@ -253,6 +253,45 @@ describe('Task store worktree merge fields', () => {
         }
     })
 
+    it('persists durable task blocker fields and clears them after unblock', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-blocked-fields',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        store.tasks.createTask({
+            id: 'task-blocked-fields',
+            projectId: 'project-blocked-fields',
+            title: 'Task',
+            status: 'in_progress',
+            workflowProfile: 'default'
+        })
+
+        const blocked = store.tasks.updateTaskByNamespace('task-blocked-fields', 'default', {
+            status: 'blocked',
+            blockedReason: '  Codex usage limit reached  ',
+            blockedSource: 'agent',
+            blockedSessionId: 'session-1'
+        })
+
+        expect(blocked?.blockedReason).toBe('Codex usage limit reached')
+        expect(blocked?.blockedSource).toBe('agent')
+        expect(blocked?.blockedSessionId).toBe('session-1')
+        expect(blocked?.blockedAt).toBeTypeOf('number')
+
+        const unblocked = store.tasks.updateTaskByNamespace('task-blocked-fields', 'default', {
+            status: 'planned'
+        })
+
+        expect(unblocked?.blockedReason).toBeNull()
+        expect(unblocked?.blockedSource).toBeNull()
+        expect(unblocked?.blockedSessionId).toBeNull()
+        expect(unblocked?.blockedAt).toBeNull()
+    })
+
     it('preserves merge markers when relinking with preserve flag', () => {
         const store = new Store(':memory:')
         store.projects.createProject({

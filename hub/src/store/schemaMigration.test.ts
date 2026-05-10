@@ -701,7 +701,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(26)
+        expect(userVersion.user_version).toBe(29)
 
         db.close()
     })
@@ -733,7 +733,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(26)
+        expect(userVersion.user_version).toBe(29)
 
         db.close()
     })
@@ -782,7 +782,7 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(26)
+        expect(userVersion.user_version).toBe(29)
 
         const project = store.projects.createProject({
             id: 'goal-project',
@@ -884,6 +884,186 @@ describe('Store schema migration safety', () => {
         db.close()
     })
 
+    it('clears legacy generated task runtime defaults so project defaults can apply', () => {
+        const path = join(tmpdir(), `hopi-schema-generated-task-defaults-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+
+        const seedStore = new Store(path)
+        const project = seedStore.projects.createProject({
+            id: 'project-generated-defaults',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Generated Defaults'
+        })
+        seedStore.tasks.createTask({
+            id: 'task-generated',
+            projectId: project.id,
+            title: 'Generated task',
+            status: 'planned',
+            source: 'manual',
+            sourceTaskId: 'task-planner',
+            agentFlavor: 'codex',
+            permissionMode: 'safe-yolo',
+            model: 'gpt-5.5',
+            modelMode: null
+        })
+        seedStore.tasks.createTask({
+            id: 'task-planner',
+            projectId: project.id,
+            title: 'Planner task',
+            status: 'planned',
+            source: 'planner',
+            agentFlavor: 'codex',
+            permissionMode: 'safe-yolo',
+            model: 'gpt-5.5',
+            modelMode: null
+        })
+        seedStore.tasks.createTask({
+            id: 'task-manual',
+            projectId: project.id,
+            title: 'Manual task',
+            status: 'planned',
+            source: 'manual',
+            agentFlavor: 'codex',
+            permissionMode: 'safe-yolo',
+            model: 'gpt-5.5',
+            modelMode: null
+        })
+        const seedDb = (seedStore as unknown as { db: Database }).db
+        seedDb.exec('PRAGMA user_version = 26')
+        seedDb.close()
+
+        const migratedStore = new Store(path)
+        const generated = migratedStore.tasks.getTaskByNamespace('task-generated', 'default')
+        expect(generated?.agentFlavor).toBeNull()
+        expect(generated?.model).toBeNull()
+        expect(generated?.modelMode).toBeNull()
+        expect(generated?.permissionMode).toBe('safe-yolo')
+
+        const planner = migratedStore.tasks.getTaskByNamespace('task-planner', 'default')
+        expect(planner?.agentFlavor).toBeNull()
+        expect(planner?.model).toBeNull()
+
+        const manual = migratedStore.tasks.getTaskByNamespace('task-manual', 'default')
+        expect(manual?.agentFlavor).toBe('codex')
+        expect(manual?.model).toBe('gpt-5.5')
+
+        const migratedDb = (migratedStore as unknown as { db: Database }).db
+        const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        expect(userVersion.user_version).toBe(29)
+        migratedDb.close()
+    })
+
+    it('moves merge-blocked tasks into blocked status during migration', () => {
+        const path = join(tmpdir(), `hopi-schema-merge-blocked-status-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+
+        const seedStore = new Store(path)
+        const project = seedStore.projects.createProject({
+            id: 'project-merge-blocked',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Merge Blocked'
+        })
+        seedStore.tasks.createTask({
+            id: 'task-merge-blocked',
+            projectId: project.id,
+            title: 'Merge blocked task',
+            status: 'in_review',
+            mergeRuntime: {
+                status: 'blocked',
+                sessionId: 'session-merge',
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 2,
+                failureFingerprint: 'merge-conflict',
+                latestNote: 'Auto-merge blocked: conflicts persisted.',
+                blockedReason: 'conflicts persisted'
+            }
+        })
+        seedStore.tasks.updateTaskByNamespace('task-merge-blocked', 'default', { finishedAt: Date.now() })
+        seedStore.tasks.createTask({
+            id: 'task-review',
+            projectId: project.id,
+            title: 'Review task',
+            status: 'in_review',
+            mergeRuntime: {
+                status: 'running',
+                sessionId: 'session-running',
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: null,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Merge running.',
+                blockedReason: null
+            }
+        })
+        const quotaSession = seedStore.sessions.getOrCreateSession('quota-session', {
+            path: '/tmp/quota',
+            host: 'test',
+            projectId: project.id,
+            taskId: 'task-quota-blocked'
+        }, null, 'default')
+        seedStore.tasks.createTask({
+            id: 'task-quota-blocked',
+            projectId: project.id,
+            title: 'Quota blocked task',
+            status: 'blocked',
+            activeSessionId: quotaSession.id
+        })
+        seedStore.messages.addMessage(quotaSession.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'error',
+                    message: 'Task failed: Codex usage limit reached. Switch model or retry later.',
+                    reason: 'task-failed'
+                }
+            }
+        })
+        seedStore.messages.addMessage(quotaSession.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'error',
+                    message: 'Task failed. Check logs for details.',
+                    reason: 'task-failed'
+                }
+            }
+        })
+        const seedDb = (seedStore as unknown as { db: Database }).db
+        seedDb.exec('PRAGMA user_version = 27')
+        seedDb.close()
+
+        const migratedStore = new Store(path)
+        const blocked = migratedStore.tasks.getTaskByNamespace('task-merge-blocked', 'default')
+        expect(blocked?.status).toBe('blocked')
+        expect(blocked?.finishedAt).toBeNull()
+        expect(blocked?.blockedReason).toBe('conflicts persisted')
+        expect(blocked?.blockedSource).toBe('merge')
+        expect(blocked?.blockedSessionId).toBe('session-merge')
+        expect(blocked?.blockedAt).toBeTypeOf('number')
+
+        const review = migratedStore.tasks.getTaskByNamespace('task-review', 'default')
+        expect(review?.status).toBe('in_review')
+
+        const quotaBlocked = migratedStore.tasks.getTaskByNamespace('task-quota-blocked', 'default')
+        expect(quotaBlocked?.blockedReason).toBe('Task failed: Codex usage limit reached. Switch model or retry later.')
+        expect(quotaBlocked?.blockedSource).toBe('agent')
+        expect(quotaBlocked?.blockedSessionId).toBe(quotaSession.id)
+
+        const migratedDb = (migratedStore as unknown as { db: Database }).db
+        const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        expect(userVersion.user_version).toBe(29)
+        migratedDb.close()
+    })
+
     it('backfills goal_key when an existing goal table predates portable keys', () => {
         const path = join(tmpdir(), `hopi-schema-existing-goal-key-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
         createdPaths.push(path)
@@ -906,7 +1086,7 @@ describe('Store schema migration safety', () => {
         expect(store.goals.getGoalByGoalKeyAndNamespace('p-goal-key', 'default', 'portable-goal')?.id).toBe('g1')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(26)
+        expect(userVersion.user_version).toBe(29)
 
         db.close()
     })

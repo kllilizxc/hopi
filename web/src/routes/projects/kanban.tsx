@@ -22,6 +22,7 @@ import { isMobileViewport } from '@/lib/device'
 import { isOptimisticTaskId } from '@/lib/optimistic-task'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
+import { buildTaskBlockedStatusSummary } from '@/lib/task-action-runtime'
 import type { AgentType } from '@/components/NewSession/types'
 import { ChevronDownIcon, ChevronRightIcon, PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
 import { productStorageKey } from '@hopi/protocol/brand'
@@ -367,6 +368,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
     const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
+    const blockedSummary = buildTaskBlockedStatusSummary(props.task)
     const canExpandSubTasks = subTasks.length > 0
     const cardStyle = {
         '--app-card-hover-bg': 'color-mix(in srgb, var(--app-bg) 90%, #000 10%)',
@@ -485,6 +487,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 </Tag>
                             ) : null}
                         </div>
+                        {blockedSummary?.detail ? (
+                            <div className="mt-2 rounded-md bg-[var(--app-badge-error-bg)] px-2 py-1.5 text-[11px] leading-snug text-[var(--app-badge-error-text)] shadow-[inset_0_0_0_1px_var(--app-badge-error-border)]">
+                                {blockedSummary.detail}
+                            </div>
+                        ) : null}
                         {isGeneratedPending ? (
                             <div className="mt-2 flex items-center gap-1.5">
                                 <Button

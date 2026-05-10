@@ -366,6 +366,10 @@ export type StoredTask = {
     title: string
     description: string | null
     status: string
+    blockedReason: string | null
+    blockedAt: number | null
+    blockedSource: string | null
+    blockedSessionId: string | null
     priority: string | null
     sortKey: number | null
     activeSessionId: string | null

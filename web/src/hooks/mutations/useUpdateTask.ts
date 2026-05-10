@@ -25,6 +25,9 @@ type UpdateTaskInput = {
         title?: string
         description?: string | null
         status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         source?: 'manual'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null

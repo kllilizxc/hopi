@@ -22,6 +22,7 @@ const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 const AUTO_BOOTSTRAP_REPAIR_LOCAL_ID_PREFIX = 'auto:bootstrap_repair:'
 const AUTO_BOOTSTRAP_PREVIEW_REPAIR_LOCAL_ID_PREFIX = 'auto:bootstrap_preview_repair:'
 const AUTO_TASK_KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
+const AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX = 'auto:task_blocked:'
 const BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_POLL_INTERVAL_MS = 1_000
@@ -306,8 +307,62 @@ function buildBootstrapPreviewTaskKey(linked: LinkedTask): string {
     return `${linked.namespace}:${linked.taskId}`
 }
 
+function appendTaskBlockedMessage(options: {
+    store: Store
+    engine: SyncEngine
+    sessionId: string
+    taskId: string
+    reason: string
+    localId: string
+}): void {
+    const message = options.store.messages.addMessage(options.sessionId, {
+        role: 'assistant',
+        content: {
+            type: 'text',
+            text: `Task blocked: ${options.reason}`
+        },
+        meta: {
+            sentFrom: 'webapp',
+            hopiEvent: 'task_blocked',
+            taskId: options.taskId
+        }
+    }, options.localId)
+
+    const handler = options.engine.handleRealtimeEvent
+    if (typeof handler !== 'function') {
+        return
+    }
+
+    handler.call(options.engine, {
+        type: 'message-received',
+        sessionId: options.sessionId,
+        message: {
+            id: message.id,
+            seq: message.seq,
+            localId: message.localId,
+            content: message.content,
+            createdAt: message.createdAt
+        }
+    })
+}
+
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getBlockedReasonSpecificity(reason: string | null | undefined): number {
+    const normalized = reason?.trim().toLowerCase() ?? ''
+    if (!normalized) return 0
+    if (normalized.includes('usage limit') || normalized.includes('rate limit') || normalized.includes('quota')) return 4
+    if (normalized.includes('rpc handler not registered') || normalized.includes('missing ') || normalized.includes('invalid ')) return 3
+    if (normalized.includes('check logs') || normalized.includes('systemerror state') || normalized === 'agent session reported an error') return 1
+    return 2
+}
+
+function chooseBlockedReason(currentReason: string | null | undefined, nextReason: string): string {
+    return getBlockedReasonSpecificity(currentReason) > getBlockedReasonSpecificity(nextReason)
+        ? currentReason!.trim()
+        : nextReason
 }
 
 function isAutomationPromptMessage(message: DecryptedMessage): boolean {
@@ -552,6 +607,9 @@ export class TaskAutomation {
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: shouldBlock ? 'blocked' : 'in_review',
             source: 'manual',
+            blockedReason: shouldBlock ? blockedReason : null,
+            blockedSource: shouldBlock ? 'evaluator' : null,
+            blockedSessionId: shouldBlock ? sessionId : null,
             initRuntime: buildTaskInitRuntime({
                 current: current.initRuntime,
                 activeSessionId: current.activeSessionId,
@@ -573,6 +631,16 @@ export class TaskAutomation {
             namespace: linked.namespace,
             data: { taskId: updated.id }
         })
+        if (shouldBlock) {
+            appendTaskBlockedMessage({
+                store: this.store,
+                engine: this.engine,
+                sessionId,
+                taskId: updated.id,
+                reason: blockedReason,
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:missing-evaluator-action`
+            })
+        }
 
         return true
     }
@@ -1264,7 +1332,9 @@ export class TaskAutomation {
         const details = getTaskInterruptionDetails(errorMessage)
         if (!details) return
 
-        const blockedReason = details.message ?? 'Agent session reported an error'
+        const reportedBlockedReason = details.message ?? 'Agent session reported an error'
+        const blockedReason = chooseBlockedReason(current.blockedReason, reportedBlockedReason)
+        const shouldAppendBlockedMessage = current.status !== 'blocked' || blockedReason !== current.blockedReason
         const isBootstrapTask = current.source === 'project_init'
         const shouldBlockInitRuntime = current.initRuntime?.sessionId === sessionId
             && (current.initRuntime.status === 'running'
@@ -1287,6 +1357,9 @@ export class TaskAutomation {
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: 'blocked',
+            blockedReason,
+            blockedSource: 'agent',
+            blockedSessionId: sessionId,
             initRuntime
         })
         if (!updated) {
@@ -1310,5 +1383,15 @@ export class TaskAutomation {
                 url: ''
             }
         })
+        if (shouldAppendBlockedMessage) {
+            appendTaskBlockedMessage({
+                store: this.store,
+                engine: this.engine,
+                sessionId,
+                taskId: updated.id,
+                reason: blockedReason,
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:${errorMessage.id}`
+            })
+        }
     }
 }

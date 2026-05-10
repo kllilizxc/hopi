@@ -1,6 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { StoredGoal, StoredProject, StoredWorkspace } from '../../store'
+import {
+    getDocsRoot,
+    getGoalDecisionsPath,
+    getGoalDocPath,
+    getGoalDocsDir,
+    getGoalTodoPath,
+    getLegacyGoalDocPath
+} from './goalDocPaths'
 
 function ensureFile(path: string, content: string): void {
     if (existsSync(path)) return
@@ -51,31 +59,51 @@ export function bootstrapGoalDocs(input: {
     goal: StoredGoal
     defaultWorkspace: StoredWorkspace | null
 }): { docsRoot: string | null } {
-    if (!input.defaultWorkspace?.path) return { docsRoot: null }
+    const docsRoot = getDocsRoot(input.defaultWorkspace)
+    if (!docsRoot) return { docsRoot: null }
 
-    const docsRoot = join(input.defaultWorkspace.path, '.hopi', 'docs')
-    const goalsRoot = join(docsRoot, 'goals')
-    mkdirSync(goalsRoot, { recursive: true })
+    const goalDir = getGoalDocsDir(docsRoot, input.goal.goalKey)
+    mkdirSync(goalDir, { recursive: true })
 
     ensureFile(join(docsRoot, 'index.md'), [
         '# HOPI Project Context', '',
         `Project: ${input.project.name}`, '',
+        '## Layout', '',
+        'Root docs are shared across Goals. Goal-owned planning state lives under `.hopi/docs/goals/<goal-key>/`.', '',
+        '- `decisions.md`: decisions that affect more than one Goal.',
+        '- `tech-debt.md`: curated cross-Goal technical debt and radar findings.',
+        '- `goals/<goal-key>/goal.md`: the Goal brief, strategy, focus, and planning history.',
+        '- `goals/<goal-key>/todo.yml`: the Goal todo reservoir.',
+        '- `goals/<goal-key>/decisions.md`: decisions local to that Goal.',
+        '',
         '## Working Rules', '',
         '- Repo docs are long-term memory.',
         '- Ask one blocking question when product intent is unclear.',
         '- Keep kanban tasks small and verifiable.',
+        '- Keep goal-specific todo, planning history, and local decisions inside that Goal directory.',
         ''
     ].join('\n'))
 
-    ensureFile(join(docsRoot, 'todo.md'), [
-        '# HOPI Todo', '',
-        'This file is the planning reservoir. The kanban is the active execution queue.',
+    ensureFile(getGoalTodoPath(docsRoot, input.goal.goalKey), [
+        'version: 1',
+        'goals:',
+        `  - goalKey: ${input.goal.goalKey}`,
+        `    goalId: ${input.goal.id}`,
+        `    title: ${yamlString(input.goal.title)}`,
+        '    items: []',
         ''
     ].join('\n'))
 
     ensureFile(join(docsRoot, 'decisions.md'), [
-        '# HOPI Decisions', '',
+        '# HOPI Shared Decisions', '',
         '- Code changes may be automated inside a Goal; deploy/release requires explicit human approval.',
+        '- Keep decisions here only when they affect more than one Goal.',
+        ''
+    ].join('\n'))
+
+    ensureFile(getGoalDecisionsPath(docsRoot, input.goal.goalKey), [
+        `# ${input.goal.title} Decisions`, '',
+        '- None recorded yet.',
         ''
     ].join('\n'))
 
@@ -85,9 +113,16 @@ export function bootstrapGoalDocs(input: {
         ''
     ].join('\n'))
 
-    const goalFile = join(goalsRoot, `${input.goal.goalKey}.md`)
+    const goalFile = getGoalDocPath(docsRoot, input.goal.goalKey)
+    const legacyGoalFile = getLegacyGoalDocPath(docsRoot, input.goal.goalKey)
     if (!existsSync(goalFile)) {
-        writeFileSync(goalFile, buildGoalDoc(input.goal), 'utf8')
+        const legacy = existsSync(legacyGoalFile) ? readFileSync(legacyGoalFile, 'utf8') : null
+        const content = legacy?.startsWith('---')
+            ? legacy
+            : legacy?.trim()
+                ? `${buildGoalDoc(input.goal).trim()}\n\n## Imported Legacy Notes\n\n${legacy.trim()}\n`
+                : buildGoalDoc(input.goal)
+        writeFileSync(goalFile, content, 'utf8')
     } else {
         const existing = readFileSync(goalFile, 'utf8')
         if (!existing.startsWith('---')) {

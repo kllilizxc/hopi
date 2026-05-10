@@ -114,7 +114,7 @@ describe('MarkdownRenderer', () => {
 
     it('allows long paths and ids to wrap inside the message column', () => {
         renderWithProviders(
-            <MarkdownRenderer content="Read .hopi/docs/goals/d252bb99-35c4-460e-b8ff-very-long-unbroken-path.md before continuing." />
+            <MarkdownRenderer content="Read .hopi/docs/goals/d252bb99-35c4-460e-b8ff-very-long-unbroken-path/goal.md before continuing." />
         )
 
         expect(screen.getByTestId('markdown-primitive')).toHaveClass('[overflow-wrap:anywhere]')

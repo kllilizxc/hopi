@@ -10,13 +10,15 @@ type GoalTodoPanelProps = {
     goalId: string | null
 }
 
-const SECTION_ORDER: GoalTodoSectionKind[] = ['ready', 'candidate', 'deferred', 'promoted', 'done', 'unknown']
+const SECTION_ORDER: GoalTodoSectionKind[] = ['ready', 'candidate', 'promoted', 'in_review', 'blocked', 'deferred', 'done', 'unknown']
 
 const TAG_VARIANTS: Record<GoalTodoSectionKind, 'default' | 'warning' | 'success' | 'secondary'> = {
     ready: 'success',
     candidate: 'default',
-    deferred: 'warning',
     promoted: 'secondary',
+    in_review: 'warning',
+    blocked: 'warning',
+    deferred: 'warning',
     done: 'secondary',
     unknown: 'secondary'
 }
@@ -134,13 +136,13 @@ export function GoalTodoPanel(props: GoalTodoPanelProps) {
                     </div>
                 )}
 
-                {todo.rawMarkdown ? (
+                {todo.rawYaml ? (
                     <details className="text-xs text-[var(--app-hint)]">
                         <summary className="cursor-pointer select-none font-medium text-[var(--app-fg)]">
-                            {t('projects.todo.rawMarkdown')}
+                            {t('projects.todo.rawYaml')}
                         </summary>
                         <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-md app-shadow-border bg-[var(--app-secondary-bg)] p-2 font-mono text-[11px] leading-relaxed">
-                            {todo.rawMarkdown}
+                            {todo.rawYaml}
                         </pre>
                     </details>
                 ) : null}

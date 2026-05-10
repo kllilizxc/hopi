@@ -327,7 +327,7 @@ describe('buildTaskReviewStage', () => {
 
     it('reports merge blocked when auto-merge needs manual intervention', () => {
         const task = createTask({
-            status: 'in_review',
+            status: 'blocked',
             source: 'evaluator',
             mergeRuntime: {
                 status: 'blocked',

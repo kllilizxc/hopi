@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { buildUniqueGoalKey, DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
+import { buildUniqueGoalKey } from '@hopi/protocol'
 import { GoalStatusSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
@@ -8,6 +8,7 @@ import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHand
 import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
 import { buildGoalDocsImportPreview, importGoalDocs } from '../../sync/goals/goalDocsImport'
 import { readGoalTodo } from '../../sync/goals/goalTodo'
+import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 
@@ -100,19 +101,21 @@ function buildPlannerSeedTaskContract(goal: {
         '',
         '## Acceptance',
         '',
-        `- Read and update .hopi/docs/goals/${goal.goalKey}.md.`,
-        '- Update .hopi/docs/todo.md with curated candidate/ready work.',
+        `- Read and update .hopi/docs/goals/${goal.goalKey}/goal.md.`,
+        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml as structured YAML with curated candidate/ready items.`,
         '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough, usually 2-3 independent tasks when the lane is empty.',
         '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
         '- If product intent is unclear, create one blocking DecisionTopic with a concrete question and stop.',
         '- Finish with a HOPI_ACTIONS JSON packet that creates ready kanban tasks or a blocking DecisionTopic.',
+        '- For each create_goal_task, write a concise description and a lightweight markdown contract with Type, Context, Involved Files / Areas, Scope, Acceptance, Suggested Checks, and Non-goals / Constraints.',
+        '- Include verified files when known; otherwise name likely areas and unknowns instead of inventing paths.',
         '- Use update_current_task inside HOPI_ACTIONS to record handoff/evidence before finishing this planning task.',
         '- HOPI applies the final JSON packet after the turn; do not call separate HOPI state mutation tools.',
         '',
         '## Suggested Checks',
         '',
         '- Confirm the Goal objective, success criteria, and constraints are captured in repo docs.',
-        '- Confirm generated tasks have lightweight contracts and stay scoped to this Goal.',
+        '- Confirm generated tasks have lightweight but executable contracts and stay scoped to this Goal.',
         '',
         '## Non-goals / Constraints',
         '',
@@ -172,10 +175,7 @@ function ensurePlannerSeedTask(options: {
         priority: 'high',
         sortKey: Date.now(),
         workspaceId: defaultWorkspace?.id ?? null,
-        agentFlavor: DEFAULT_AGENT_FLAVOR,
-        permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
-        model: DEFAULT_TASK_MODEL,
-        modelMode: null,
+        ...getProjectDefaultTaskRuntimeSettings(options.project, { autonomous: true }),
         workflowProfile: 'default',
         source: 'planner',
         contract: buildPlannerSeedTaskContract(options.goal),

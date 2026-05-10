@@ -41,6 +41,7 @@ import { SessionTerminal } from '@/routes/sessions/terminal'
 import { CopyIcon } from '@/assets/icons'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 import { buildInitStatusSummary, type InitStatusSummary } from '@/lib/task-init-runtime'
+import { buildTaskBlockedStatusSummary, type TaskActionStatusSummary } from '@/lib/task-action-runtime'
 import { buildTaskReviewStage, buildTaskSessionTimeline, resolveTaskSessionSelection, type TaskReviewStage, type TaskSessionTimelineItem } from '@/lib/task-session-timeline'
 
 const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
@@ -205,6 +206,25 @@ function TaskReviewStageCard(props: {
             <div className="mt-1 opacity-80">
                 {view.detail}
             </div>
+        </div>
+    )
+}
+
+function TaskBlockedStatusCard(props: {
+    summary: TaskActionStatusSummary | null
+}) {
+    if (!props.summary) {
+        return null
+    }
+
+    return (
+        <div className="rounded-md bg-[var(--app-badge-error-bg)] px-3 py-2 text-xs text-[var(--app-badge-error-text)] shadow-[inset_0_0_0_1px_var(--app-badge-error-border)]">
+            <div className="font-medium">{props.summary.title}</div>
+            {props.summary.detail ? (
+                <div className="mt-1 opacity-90">
+                    {props.summary.detail}
+                </div>
+            ) : null}
         </div>
     )
 }
@@ -852,6 +872,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     sessionsError: string | null
     reviewStage: TaskReviewStage | null
     initStatus: InitStatusSummary | null
+    blockedStatus: TaskActionStatusSummary | null
     overLimit: boolean
     isUpdatingTask: boolean
     isArchiving: boolean
@@ -980,6 +1001,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
             <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
                 <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
 
+                <TaskBlockedStatusCard summary={props.blockedStatus} />
                 <TaskReviewStageCard stage={props.reviewStage} />
 
                 <div className="space-y-2">
@@ -1151,6 +1173,7 @@ function TaskDetailsPanel(props: {
     const [attachOpen, setAttachOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const initStatus = useMemo(() => buildInitStatusSummary(props.task), [props.task])
+    const blockedStatus = useMemo(() => buildTaskBlockedStatusSummary(props.task), [props.task])
     const sessionTimeline = useMemo(() => buildTaskSessionTimeline(props.task, sessions), [props.task, sessions])
     const reviewStage = useMemo(() => buildTaskReviewStage(props.task, sessionTimeline), [props.task, sessionTimeline])
     const sessionId = resolveTaskSessionSelection(
@@ -1592,6 +1615,7 @@ function TaskDetailsPanel(props: {
                             sessionsError={sessionsError}
                             reviewStage={reviewStage}
                             initStatus={initStatus}
+                            blockedStatus={blockedStatus}
                             overLimit={overLimit}
                             isUpdatingTask={isUpdatingTask}
                             isArchiving={isArchiving}
@@ -1755,6 +1779,10 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         () => task ? buildTaskReviewStage(task, sessionTimeline) : null,
         [sessionTimeline, task]
     )
+    const blockedStatus = useMemo(
+        () => task ? buildTaskBlockedStatusSummary(task) : null,
+        [task]
+    )
     const hasSession = Boolean(sessionId)
     const shouldResolveWorkbenchSessions = !props.forceTask
     const activeTab: TaskWorkbenchTab = props.forceTask ? 'task' : (props.tab === 'task' && hasSession ? 'chat' : props.tab)
@@ -1900,8 +1928,9 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
             onChange={handleSessionSelectionChange}
         />
     )
-    const sessionHeaderExtra = reviewStage || sessionSwitcherValue ? (
+    const sessionHeaderExtra = blockedStatus || reviewStage || sessionSwitcherValue ? (
         <div className="space-y-2">
+            <TaskBlockedStatusCard summary={blockedStatus} />
             <TaskReviewStageCard stage={reviewStage} />
             {sessionSwitcher}
         </div>

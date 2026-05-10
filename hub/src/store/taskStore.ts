@@ -55,6 +55,10 @@ export class TaskStore {
         title: string
         description?: string | null
         status: string
+        blockedReason?: string | null
+        blockedAt?: number | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         priority?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
@@ -92,6 +96,10 @@ export class TaskStore {
             goalTodoRef?: string | null
             description?: string | null
             status?: string
+            blockedReason?: string | null
+            blockedAt?: number | null
+            blockedSource?: string | null
+            blockedSessionId?: string | null
             priority?: string | null
             sortKey?: number | null
             activeSessionId?: string | null

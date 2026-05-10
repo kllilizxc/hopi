@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL } from '@hopi/protocol'
+import { stripLeadingTaskTitleRef } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
 import type { DecryptedMessage } from '@hopi/protocol/types'
-import type { Store, StoredProject, StoredTask, StoredWorkspace } from '../../store'
+import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import type { SyncEngine } from '../syncEngine'
-import { updateGoalTodoTaskState } from './goalTodo'
+import { getProjectDefaultTaskRuntimeSettings } from '../projectTaskDefaults'
+import { readGoalTodo, updateGoalTodoTaskState, type GoalTodoUpdateKind } from './goalTodo'
 
 const taskStatusSchema = z.enum(['planned', 'in_progress', 'in_review', 'finished', 'blocked'])
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
@@ -195,10 +196,14 @@ function normalizeActionPacketInput(raw: unknown): unknown {
             if (!isPlainRecord(item)) return item
             const type = item.type
             if (type === 'create_goal_task') {
+                const todoRef = getAlias(item, 'todoRef', 'todo_ref')
                 return {
                     ...item,
+                    title: typeof item.title === 'string'
+                        ? stripLeadingTaskTitleRef(item.title, typeof todoRef === 'string' ? todoRef : null)
+                        : item.title,
                     status: normalizeTaskStatus(item.status),
-                    todoRef: getAlias(item, 'todoRef', 'todo_ref'),
+                    todoRef,
                     workflowProfile: getAlias(item, 'workflowProfile', 'workflow_profile'),
                     contract: buildContractFromPlannerFields(item),
                     source: item.source
@@ -207,6 +212,9 @@ function normalizeActionPacketInput(raw: unknown): unknown {
             if (type === 'update_current_task') {
                 return {
                     ...item,
+                    title: typeof item.title === 'string'
+                        ? stripLeadingTaskTitleRef(item.title)
+                        : item.title,
                     status: normalizeTaskStatus(item.status)
                 }
             }
@@ -368,11 +376,49 @@ function extractJsonPayload(text: string): string | null {
     }
 
     const afterMarker = text.slice(markerIndex + 'HOPI_ACTIONS'.length)
-    const jsonStart = afterMarker.indexOf('{')
+    return extractFirstJsonObjectPayload(afterMarker)
+}
+
+function extractFirstJsonObjectPayload(text: string): string | null {
+    const jsonStart = text.indexOf('{')
     if (jsonStart < 0) {
         return null
     }
-    return afterMarker.slice(jsonStart).trim()
+
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let index = jsonStart; index < text.length; index += 1) {
+        const char = text[index]
+
+        if (inString) {
+            if (escaped) {
+                escaped = false
+            } else if (char === '\\') {
+                escaped = true
+            } else if (char === '"') {
+                inString = false
+            }
+            continue
+        }
+
+        if (char === '"') {
+            inString = true
+            continue
+        }
+        if (char === '{') {
+            depth += 1
+            continue
+        }
+        if (char === '}') {
+            depth -= 1
+            if (depth === 0) {
+                return text.slice(jsonStart, index + 1).trim()
+            }
+        }
+    }
+
+    return null
 }
 
 function looksLikeGoalActionPacketPayload(payload: string): boolean {
@@ -392,10 +438,28 @@ function extractBareJsonPayload(text: string): string | null {
 
     const fenced = /^```(?:json)?\s*([\s\S]*?)```\s*$/iu.exec(trimmed)
     const fencedPayload = fenced?.[1]?.trim()
+    const markedFencedPayload = fencedPayload ? extractJsonPayload(fencedPayload) : null
+    if (markedFencedPayload && looksLikeGoalActionPacketPayload(markedFencedPayload)) {
+        return markedFencedPayload
+    }
     if (fencedPayload?.startsWith('{')
         && fencedPayload.endsWith('}')
         && looksLikeGoalActionPacketPayload(fencedPayload)) {
         return fencedPayload
+    }
+
+    const fencedJsonBlocks = Array.from(trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu))
+    for (let index = fencedJsonBlocks.length - 1; index >= 0; index -= 1) {
+        const payload = fencedJsonBlocks[index]?.[1]?.trim()
+        const markedPayload = payload ? extractJsonPayload(payload) : null
+        if (markedPayload && looksLikeGoalActionPacketPayload(markedPayload)) {
+            return markedPayload
+        }
+        if (payload?.startsWith('{')
+            && payload.endsWith('}')
+            && looksLikeGoalActionPacketPayload(payload)) {
+            return payload
+        }
     }
 
     return null
@@ -455,12 +519,35 @@ function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorksp
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
+function findGoalTodoTitle(options: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    todoRef: string | null
+}): string | null {
+    const todoRef = options.todoRef?.trim()
+    if (!todoRef) {
+        return null
+    }
+
+    const todo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    const todoRefKey = normalizeTaskTitleKey(todoRef)
+    const section = todo.sections.find((item) => (
+        item.todoRef && normalizeTaskTitleKey(item.todoRef) === todoRefKey
+    ))
+    return section?.title.trim() || null
+}
+
 function syncGoalTodoRef(options: {
     store: Store
     namespace: string
     project: StoredProject
-    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef'>
-    kind: 'promoted' | 'done'
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'title'>
+    kind: GoalTodoUpdateKind
 }): void {
     if (!options.task.goalId || !options.task.goalTodoRef) {
         return
@@ -475,8 +562,16 @@ function syncGoalTodoRef(options: {
         defaultWorkspace: getDefaultWorkspace(options.store, options.project),
         todoRef: options.task.goalTodoRef,
         taskId: options.task.id,
-        kind: options.kind
+        kind: options.kind,
+        title: options.task.title
     })
+}
+
+function getGoalTodoKindForTaskStatus(status: GoalActionTaskStatus): GoalTodoUpdateKind {
+    if (status === 'finished') return 'done'
+    if (status === 'in_review') return 'in_review'
+    if (status === 'blocked') return 'blocked'
+    return 'promoted'
 }
 
 function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): 'planner' | 'generator' | 'evaluator' | 'radar' | null {
@@ -511,7 +606,7 @@ function getUpdateCurrentTaskSourceForRole(
     if (role !== 'evaluator') {
         return undefined
     }
-    if (status === 'planned' || status === 'blocked') {
+    if (status === 'planned' || status === 'blocked' || status === 'in_review') {
         return 'manual'
     }
     return undefined
@@ -564,11 +659,18 @@ export function applyGoalActionPacketFromSession(options: {
             .map((task) => typeof task.goalTodoRef === 'string' ? normalizeTaskTitleKey(task.goalTodoRef) : '')
             .filter((todoRef) => todoRef.length > 0)
     )
+    const defaultWorkspace = getDefaultWorkspace(options.store, project)
 
     for (const action of packet.actions) {
         if (action.type === 'create_goal_task') {
-            const titleKey = normalizeTaskTitleKey(action.title)
             const todoRef = action.todoRef?.trim() || null
+            const taskTitle = findGoalTodoTitle({
+                project,
+                goal,
+                defaultWorkspace,
+                todoRef
+            }) ?? stripLeadingTaskTitleRef(action.title, todoRef)
+            const titleKey = normalizeTaskTitleKey(taskTitle)
             const todoRefKey = todoRef ? normalizeTaskTitleKey(todoRef) : ''
             if (todoRefKey && existingGoalTaskTodoRefs.has(todoRefKey)) {
                 continue
@@ -582,16 +684,13 @@ export function applyGoalActionPacketFromSession(options: {
                 projectId: current.projectId,
                 goalId: current.goalId,
                 goalTodoRef: todoRef,
-                title: action.title,
+                title: taskTitle,
                 description: action.description,
                 status: action.status ?? 'planned',
                 priority: action.priority ?? null,
                 sortKey: Date.now(),
                 workspaceId: current.workspaceId,
-                agentFlavor: DEFAULT_AGENT_FLAVOR,
-                permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
-                model: DEFAULT_TASK_MODEL,
-                modelMode: null,
+                ...getProjectDefaultTaskRuntimeSettings(project, { autonomous: true }),
                 workflowProfile: action.workflowProfile ?? 'default',
                 source: action.source ?? getDefaultCreatedTaskSource(current),
                 sourceTaskId: current.id,
@@ -629,8 +728,11 @@ export function applyGoalActionPacketFromSession(options: {
             const status = normalizeUpdateCurrentTaskStatusForRole(action.status, latest)
             const source = getUpdateCurrentTaskSourceForRole(status, latest)
             const statusChangingToFinished = status === 'finished' && latest.status !== 'finished'
+            const nextTitle = action.title === undefined
+                ? undefined
+                : stripLeadingTaskTitleRef(action.title, latest.goalTodoRef)
             const updated = options.store.tasks.updateTaskByNamespace(current.id, options.namespace, {
-                title: action.title,
+                title: nextTitle,
                 description: action.description,
                 status,
                 priority: action.priority,
@@ -641,13 +743,13 @@ export function applyGoalActionPacketFromSession(options: {
                 finishedAt: statusChangingToFinished ? Date.now() : undefined
             })
             if (updated) {
-                if (statusChangingToFinished && updated.goalTodoRef) {
+                if (updated.goalTodoRef) {
                     syncGoalTodoRef({
                         store: options.store,
                         namespace: options.namespace,
                         project,
                         task: updated,
-                        kind: 'done'
+                        kind: getGoalTodoKindForTaskStatus(status)
                     })
                 }
                 emitTaskUpdated({
@@ -699,7 +801,9 @@ export function applyGoalActionPacketFromSession(options: {
                 const linkedTask = options.store.tasks.getTaskByNamespace(topic.taskId, options.namespace)
                 if (linkedTask && linkedTask.status !== 'finished' && linkedTask.status !== 'blocked') {
                     const blocked = options.store.tasks.updateTaskByNamespace(linkedTask.id, options.namespace, {
-                        status: 'blocked'
+                        status: 'blocked',
+                        blockedReason: topic.title,
+                        blockedSource: 'decision'
                     })
                     if (blocked) {
                         emitTaskUpdated({

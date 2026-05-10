@@ -35,7 +35,8 @@ export async function handleTaskMovedToFinished(options: {
                 defaultWorkspace,
                 todoRef: task.goalTodoRef,
                 taskId: task.id,
-                kind: 'done'
+                kind: 'done',
+                title: task.title
             })
         }
     }

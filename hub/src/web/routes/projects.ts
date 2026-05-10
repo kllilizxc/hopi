@@ -1,5 +1,4 @@
 import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationBackstopPolicySchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
@@ -9,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
 import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
+import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { listWorkflowStrategyDescriptors } from '../../sync/workflowStrategy'
 import type { WebAppEnv } from '../middleware/auth'
@@ -249,9 +249,7 @@ export function createProjectsRoutes(options: {
             status: 'planned',
             sortKey: Date.now(),
             workspaceId: defaultWorkspaceId,
-            agentFlavor: DEFAULT_AGENT_FLAVOR,
-            model: DEFAULT_TASK_MODEL,
-            modelMode: null,
+            ...getProjectDefaultTaskRuntimeSettings(project),
             source: 'project_init',
             workflowProfile: 'default'
         })

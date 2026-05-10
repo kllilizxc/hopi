@@ -35,7 +35,7 @@ describe('SessionChat runtime summaries', () => {
 
     it('builds merge summaries from durable runtime state', () => {
         const task = createTask({
-            status: 'in_review',
+            status: 'blocked',
             worktreeMergeCommit: 'abc123',
             mergeRuntime: {
                 status: 'blocked',
@@ -58,6 +58,31 @@ describe('SessionChat runtime summaries', () => {
             tone: 'error'
         })
         expect(summary?.detail).toContain('retry merge')
+    })
+
+    it('keeps retry merge action visible after a merge-blocked task moves to blocked', () => {
+        const task = createTask({
+            status: 'blocked',
+            mergeRuntime: {
+                status: 'blocked',
+                sessionId: 'session-1',
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: 20,
+                retryCount: 2,
+                failureFingerprint: 'merge:abc123',
+                latestNote: 'Auto-merge blocked: merge conflict.',
+                blockedReason: 'merge conflict'
+            }
+        })
+
+        expect(shouldShowMergeActionButton({
+            task,
+            hasActiveMergeRuntime: false,
+            mergeRuntimeStatus: task.mergeRuntime?.status,
+            canStartMerge: false
+        })).toBe(true)
     })
 
     it('describes conflict repair retrying state as agent work, not generic loading', () => {
@@ -115,7 +140,7 @@ describe('SessionChat runtime summaries', () => {
 
     it('treats blocked merge as recovered success when target already contains the task', () => {
         const task = createTask({
-            status: 'in_review',
+            status: 'blocked',
             mergeRuntime: {
                 status: 'blocked',
                 sessionId: 'session-1',
@@ -158,7 +183,7 @@ describe('SessionChat runtime summaries', () => {
 
     it('keeps blocked merge visible when the source branch has no committed changes', () => {
         const task = createTask({
-            status: 'in_review',
+            status: 'blocked',
             mergeRuntime: {
                 status: 'blocked',
                 sessionId: 'session-1',

@@ -32,13 +32,16 @@ describe('GoalPlanningDocument', () => {
     it('renders the full planning document information', () => {
         const todo: GoalTodoResponse = {
             exists: true,
-            path: '/repo/.hopi/docs/todo.md',
-            rawMarkdown: [
-                '## Goal `goal-1` - Story system',
-                '',
-                '### Ready candidates',
-                '',
-                '#### Ship the first playable slice'
+            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
+            rawYaml: [
+                'version: 1',
+                'goals:',
+                '  - goalKey: goal-1',
+                '    title: Story system',
+                '    items:',
+                '      - ref: first-playable-slice',
+                '        status: ready',
+                '        title: Ship the first playable slice'
             ].join('\n'),
             updatedAt: 1_700_000_000_000,
             sections: [
@@ -46,13 +49,15 @@ describe('GoalPlanningDocument', () => {
                     kind: 'ready',
                     title: 'Ship the first playable slice',
                     body: '**Objective:** render the map.\n\n**Acceptance:** user can pick a path.',
-                    taskId: null
+                    taskId: null,
+                    todoRef: null
                 },
                 {
                     kind: 'candidate',
                     title: 'Tune generated task contracts',
                     body: 'Notes: Keep contracts lightweight.',
-                    taskId: 'task-123'
+                    taskId: 'task-123',
+                    todoRef: null
                 }
             ]
         }
@@ -67,7 +72,7 @@ describe('GoalPlanningDocument', () => {
         )
 
         expect(screen.getByRole('heading', { name: 'Planning' })).toBeInTheDocument()
-        expect(screen.getByText('/repo/.hopi/docs/todo.md')).toBeInTheDocument()
+        expect(screen.getByText('/repo/.hopi/docs/goals/goal-1/todo.yml')).toBeInTheDocument()
         expect(screen.getByText('2 items')).toBeInTheDocument()
         expect(screen.getByText('Ship the first playable slice')).toBeInTheDocument()
         expect(screen.getByText(/\*\*Objective:\*\* render the map/)).toBeInTheDocument()
@@ -76,33 +81,36 @@ describe('GoalPlanningDocument', () => {
             'href',
             '/projects/project-1/tasks/task-123'
         )
-        expect(screen.getByTestId('planning-raw-markdown')).toHaveTextContent('## Goal `goal-1` - Story system')
+        expect(screen.getByTestId('planning-raw-yaml')).toHaveTextContent('goalKey: goal-1')
     })
 
     it('lays planning sections out as a responsive document workspace', () => {
         const todo: GoalTodoResponse = {
             exists: true,
-            path: '/repo/.hopi/docs/todo.md',
-            rawMarkdown: null,
+            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
+            rawYaml: null,
             updatedAt: null,
             sections: [
                 {
                     kind: 'ready',
                     title: 'Ship the first playable slice',
                     body: 'Ready now.',
-                    taskId: null
+                    taskId: null,
+                    todoRef: null
                 },
                 {
                     kind: 'candidate',
                     title: 'Tune generated task contracts',
                     body: 'Candidate notes.',
-                    taskId: null
+                    taskId: null,
+                    todoRef: null
                 },
                 {
                     kind: 'candidate',
                     title: 'Improve planning parser',
                     body: 'Parser notes.',
-                    taskId: null
+                    taskId: null,
+                    todoRef: null
                 }
             ]
         }
@@ -149,8 +157,8 @@ describe('GoalPlanningDocument', () => {
     it('keeps missing planning documents as a full-page state', () => {
         const todo: GoalTodoResponse = {
             exists: false,
-            path: '/repo/.hopi/docs/todo.md',
-            rawMarkdown: null,
+            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
+            rawYaml: null,
             updatedAt: null,
             sections: []
         }
@@ -165,22 +173,23 @@ describe('GoalPlanningDocument', () => {
         )
 
         expect(screen.getByRole('heading', { name: 'Planning' })).toBeInTheDocument()
-        expect(screen.getByText('.hopi/docs/todo.md not found.')).toBeInTheDocument()
-        expect(screen.getAllByText('/repo/.hopi/docs/todo.md').length).toBeGreaterThan(0)
+        expect(screen.getByText('Goal todo.yml not found.')).toBeInTheDocument()
+        expect(screen.getAllByText('/repo/.hopi/docs/goals/goal-1/todo.yml').length).toBeGreaterThan(0)
     })
 
     it('keeps decisions and planning in one scrollable page flow', () => {
         mocks.todoState.todo = {
             exists: true,
-            path: '/repo/.hopi/docs/todo.md',
-            rawMarkdown: null,
+            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
+            rawYaml: null,
             updatedAt: null,
             sections: [
                 {
                     kind: 'ready',
                     title: 'Keep planning reachable',
                     body: 'Planning should stay in the main page scroll after decisions.',
-                    taskId: null
+                    taskId: null,
+                    todoRef: null
                 }
             ]
         }

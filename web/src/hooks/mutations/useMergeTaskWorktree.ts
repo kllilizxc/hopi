@@ -36,6 +36,11 @@ function areMergeRuntimesEqual(left: Task['mergeRuntime'] | null | undefined, ri
     return areTaskActionRuntimesEqual(left, right)
 }
 
+function shouldMarkFinishedAfterMerge(task: Task): boolean {
+    return task.status === 'in_review'
+        || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
+}
+
 function buildRuntimeNoteFromSkippedReason(reason: TaskWorktreeMergeSkippedReason): string {
     switch (reason) {
         case 'queued':
@@ -107,11 +112,20 @@ function buildOptimisticMergeRuntime(task: Task, result: TaskWorktreeMergeRespon
 function applyMergeResultToTask(task: Task, result: TaskWorktreeMergeResponse): Task {
     const mergedAt = result.mergedAt ?? task.worktreeMergedAt ?? null
     const mergeCommit = result.commitHash ?? task.worktreeMergeCommit ?? null
-    const shouldMarkFinished = task.status === 'in_review' && result.mergedAt !== null && result.skippedReason === null
-    const nextStatus = shouldMarkFinished ? 'finished' : task.status
+    const shouldMarkFinished = shouldMarkFinishedAfterMerge(task) && result.mergedAt !== null
+    const shouldReturnToReview = task.status === 'blocked'
+        && task.mergeRuntime?.status === 'blocked'
+        && isActiveMergeSkippedReason(result.skippedReason)
+    const nextStatus = shouldMarkFinished
+        ? 'finished'
+        : shouldReturnToReview
+            ? 'in_review'
+            : task.status
     const nextFinishedAt = shouldMarkFinished
         ? (result.mergedAt ?? task.finishedAt ?? Date.now())
-        : task.finishedAt
+        : shouldReturnToReview
+            ? null
+            : task.finishedAt
     const nextMergeRuntime = buildOptimisticMergeRuntime(task, result)
 
     if (

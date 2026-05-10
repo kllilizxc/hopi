@@ -16,6 +16,7 @@ import {
 } from './mergeWorkflowRunner'
 import { relinkTaskToSession } from './sessionTaskLink'
 import { getWorkflowStrategy } from './workflowStrategy'
+import { updateGoalTodoTaskState } from './goals/goalTodo'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from './syncEngine'
 
 const inFlightAutoMergeKeys = new Set<string>()
@@ -42,6 +43,33 @@ function normalizeNonEmptyString(value: string | undefined | null): string | nul
 
 function normalizeBranchName(value: string | undefined | null): string | null {
     return normalizeNonEmptyString(value)
+}
+
+function syncAcceptedGoalTodoToDone(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    task: StoredTask
+}): void {
+    if (!options.task.goalId || !options.task.goalTodoRef) {
+        return
+    }
+    const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return
+    }
+    const defaultWorkspace = options.project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(options.project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(options.project.id)[0] ?? null
+    updateGoalTodoTaskState({
+        project: options.project,
+        goal,
+        defaultWorkspace,
+        todoRef: options.task.goalTodoRef,
+        taskId: options.task.id,
+        kind: 'done',
+        title: options.task.title
+    })
 }
 
 function readableRpcError(result: {
@@ -173,9 +201,17 @@ function updateMergeRuntime(options: {
     completedAt?: number | null
     forceReviewStatus?: boolean
 }): StoredTask | null {
+    const taskStatus = options.status === 'blocked'
+        ? 'blocked'
+        : options.forceReviewStatus
+            ? 'in_review'
+            : undefined
+    const finishedAt = options.status === 'blocked' || options.forceReviewStatus
+        ? null
+        : undefined
     const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
-        status: options.forceReviewStatus ? 'in_review' : undefined,
-        finishedAt: options.forceReviewStatus ? null : undefined,
+        status: taskStatus,
+        finishedAt,
         mergeRuntime: buildTaskMergeRuntime({
             current: options.task.mergeRuntime,
             activeSessionId: options.task.activeSessionId,
@@ -193,7 +229,11 @@ function updateMergeRuntime(options: {
             engine: options.engine,
             namespace: options.namespace,
             task: updated,
-            data: { mergeRuntime: updated.mergeRuntime }
+            data: {
+                mergeRuntime: updated.mergeRuntime,
+                status: updated.status,
+                finishedAt: updated.finishedAt
+            }
         })
     }
     return updated
@@ -283,7 +323,7 @@ function resolveAutoMergeTaskSession(options: {
     }
 
     const activeSession = options.engine.getSessionByNamespace(activeSessionId, options.namespace)
-    if (!activeSession?.metadata?.worktree) {
+    if (!isUsableWorktreeSession(activeSession)) {
         return null
     }
 
@@ -640,6 +680,12 @@ async function persistSuccessfulAutoMerge(options: {
     if (!updated) {
         return null
     }
+    syncAcceptedGoalTodoToDone({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        task: updated
+    })
 
     emitTaskUpdated({
         engine: options.engine,

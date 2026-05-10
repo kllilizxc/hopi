@@ -277,6 +277,32 @@ function isActiveMergeRuntimeStatus(status: string | null | undefined): boolean 
         || status === 'retrying'
 }
 
+function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTask['mergeRuntime']>['status']): {
+    status?: string
+    finishedAt?: number | null
+} {
+    if (status === 'blocked') {
+        return {
+            status: 'blocked',
+            finishedAt: null
+        }
+    }
+
+    if (isActiveMergeRuntimeStatus(status)) {
+        return {
+            status: 'in_review',
+            finishedAt: null
+        }
+    }
+
+    return {}
+}
+
+function shouldMarkFinishedAfterSuccessfulMerge(task: Pick<StoredTask, 'status' | 'mergeRuntime'>): boolean {
+    return task.status === 'in_review'
+        || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
+}
+
 function isPendingPreviewRuntimeStatus(status: TaskPreviewRuntimeStatus | null | undefined): boolean {
     return status === 'queued'
         || status === 'waiting'
@@ -332,7 +358,9 @@ function updateTaskMergeRuntime(options: {
     startedAt?: number | null
     completedAt?: number | null
 }): StoredTask | null {
+    const taskStatusPatch = buildTaskStatusPatchForMergeRuntimeStatus(options.status)
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
+        ...taskStatusPatch,
         mergeRuntime: buildTaskMergeRuntime({
             task: options.task,
             status: options.status,
@@ -356,6 +384,8 @@ function updateTaskMergeRuntime(options: {
         projectId: updatedTask.projectId,
         data: {
             activeSessionId: updatedTask.activeSessionId,
+            status: updatedTask.status,
+            finishedAt: updatedTask.finishedAt,
             mergeRuntime: updatedTask.mergeRuntime,
             worktreeMergedAt: updatedTask.worktreeMergedAt
         }
@@ -1641,7 +1671,7 @@ function scheduleConversationMergeMonitor(options: {
                         success: true,
                         commitHash: targetHead ?? undefined
                     },
-                    markFinishedOnMerge: task.status === 'in_review',
+                    markFinishedOnMerge: shouldMarkFinishedAfterSuccessfulMerge(task),
                     preferredLocale: options.preferredLocale
                 })
             }
@@ -1989,7 +2019,7 @@ async function persistSuccessfulTaskMerge(options: {
     preferredLocale?: string
 }): Promise<StoredTask | null> {
     const mergedAt = Date.now()
-    const shouldMarkFinished = options.markFinishedOnMerge ?? options.task.status === 'in_review'
+    const shouldMarkFinished = options.markFinishedOnMerge ?? shouldMarkFinishedAfterSuccessfulMerge(options.task)
     const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'finished'
     const strategy = getWorkflowStrategy(options.task)
     const finishedTransitionPatch = statusChangingToFinished
@@ -2042,6 +2072,8 @@ async function persistSuccessfulTaskMerge(options: {
         projectId: updatedTask.projectId,
         data: {
             worktreeMergedAt: updatedTask.worktreeMergedAt,
+            status: updatedTask.status,
+            finishedAt: updatedTask.finishedAt,
             mergeRuntime: updatedTask.mergeRuntime
         }
     })
@@ -2081,6 +2113,9 @@ const createTaskSchema = z.object({
     description: z.string().max(200_000).optional(),
     goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
+    blockedReason: z.string().min(1).max(512).nullable().optional(),
+    blockedSource: z.string().min(1).max(64).nullable().optional(),
+    blockedSessionId: z.string().min(1).max(128).nullable().optional(),
     priority: z.enum(['high', 'medium', 'low']).optional(),
     workspaceId: z.string().min(1).optional(),
     agentFlavor: AgentFlavorSchema.optional(),
@@ -2103,6 +2138,9 @@ const updateTaskSchema = z.object({
     description: z.string().max(200_000).nullable().optional(),
     goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
+    blockedReason: z.string().min(1).max(512).nullable().optional(),
+    blockedSource: z.string().min(1).max(64).nullable().optional(),
+    blockedSessionId: z.string().min(1).max(128).nullable().optional(),
     source: TaskSourceSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
     workspaceId: z.string().min(1).nullable().optional(),
@@ -3929,6 +3967,9 @@ export function createTasksRoutes(options: {
             title: parsed.data.title,
             description: parsed.data.description ?? null,
             status: parsed.data.status ?? 'planned',
+            blockedReason: parsed.data.blockedReason ?? null,
+            blockedSource: parsed.data.blockedSource ?? null,
+            blockedSessionId: parsed.data.blockedSessionId ?? null,
             priority: parsed.data.priority ?? null,
             sortKey: parsed.data.sortKey ?? Date.now(),
             workspaceId: parsed.data.workspaceId ?? null,
@@ -4008,6 +4049,9 @@ export function createTasksRoutes(options: {
             goalId: parsed.data.goalId,
             description: parsed.data.description,
             status: parsed.data.status,
+            blockedReason: parsed.data.blockedReason,
+            blockedSource: parsed.data.blockedSource,
+            blockedSessionId: parsed.data.blockedSessionId,
             source: parsed.data.source,
             priority: parsed.data.priority,
             workspaceId: parsed.data.workspaceId,
@@ -4851,7 +4895,7 @@ export function createTasksRoutes(options: {
                 const latestNote = mergeState.reason === 'already_merged'
                     ? 'Target branch already contains this task.'
                     : 'No committed changes are waiting to merge.'
-                const shouldFinishNoopReviewMerge = resolvedTask.status === 'in_review'
+                const shouldFinishNoopReviewMerge = shouldMarkFinishedAfterSuccessfulMerge(resolvedTask)
                     && !resolvedTask.worktreeMergedAt
                 const finishedTask = shouldFinishNoopReviewMerge
                     ? await persistSuccessfulTaskMerge({
@@ -4984,7 +5028,7 @@ export function createTasksRoutes(options: {
                         success: true,
                         commitHash: mergeAttempt.targetHead ?? undefined
                     },
-                    markFinishedOnMerge: runningTask.status === 'in_review',
+                    markFinishedOnMerge: shouldMarkFinishedAfterSuccessfulMerge(runningTask),
                     preferredLocale
                 }) ?? runningTask
 

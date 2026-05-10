@@ -41,6 +41,7 @@ export {
 export * from './socket'
 export * from './sessionSummary'
 export * from './task-session-start'
+export * from './taskTitle'
 export * from './tasks'
 export * from './toolDisplay'
 export * from './utils'

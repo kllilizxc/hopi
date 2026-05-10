@@ -88,7 +88,7 @@ function inferFallbackRole(task: Task, index: number, total: number): HopiTaskRo
             return 'generator'
         }
 
-        const taskReachedReview = task.status === 'in_review' || task.status === 'finished' || source === 'evaluator'
+        const taskReachedReview = task.status === 'in_review' || task.status === 'blocked' || task.status === 'finished' || source === 'evaluator'
         if (taskReachedReview && index === total - 1) {
             return 'evaluator'
         }
@@ -151,12 +151,12 @@ export function resolveTaskSessionSelection(
 }
 
 export function buildTaskReviewStage(task: Task, timeline: TaskSessionTimelineItem[]): TaskReviewStage | null {
-    if (task.status !== 'in_review') {
-        return null
+    if (task.mergeRuntime && (task.status === 'in_review' || task.status === 'blocked')) {
+        return buildMergeReviewStage(task.mergeRuntime)
     }
 
-    if (task.mergeRuntime) {
-        return buildMergeReviewStage(task.mergeRuntime)
+    if (task.status !== 'in_review') {
+        return null
     }
 
     if (task.worktreeMergedAt) {

@@ -92,11 +92,14 @@ describe('goal routes', () => {
 
         const docsRoot = join(workspacePath, '.hopi', 'docs')
         expect(existsSync(join(docsRoot, 'index.md'))).toBe(true)
-        expect(existsSync(join(docsRoot, 'todo.md'))).toBe(true)
         expect(existsSync(join(docsRoot, 'decisions.md'))).toBe(true)
         expect(existsSync(join(docsRoot, 'tech-debt.md'))).toBe(true)
 
-        const goalFile = join(docsRoot, 'goals', `${body.goal.goalKey}.md`)
+        const goalDir = join(docsRoot, 'goals', body.goal.goalKey)
+        expect(existsSync(join(goalDir, 'todo.yml'))).toBe(true)
+        expect(existsSync(join(goalDir, 'decisions.md'))).toBe(true)
+
+        const goalFile = join(goalDir, 'goal.md')
         expect(existsSync(goalFile)).toBe(true)
         const goalMarkdown = readFileSync(goalFile, 'utf8')
         expect(goalMarkdown).toContain('goalKey: ship-goal-autopilot')
@@ -112,14 +115,16 @@ describe('goal routes', () => {
             status: 'planned',
             source: 'planner',
             workflowProfile: 'default',
-            agentFlavor: 'codex',
-            model: 'gpt-5.5',
+            agentFlavor: null,
+            model: null,
             permissionMode: 'safe-yolo',
             modelMode: null
         })
         expect(tasks[0]?.contract).toContain('Use the brainstorming protocol to clarify this Goal')
-        expect(tasks[0]?.contract).toContain(`.hopi/docs/goals/${body.goal.goalKey}.md`)
+        expect(tasks[0]?.contract).toContain(`.hopi/docs/goals/${body.goal.goalKey}/goal.md`)
         expect(tasks[0]?.contract).toContain('HOPI_ACTIONS JSON packet')
+        expect(tasks[0]?.contract).toContain('Involved Files / Areas')
+        expect(tasks[0]?.contract).toContain('likely areas and unknowns')
         expect(tasks[0]?.contract).toContain('HOPI applies the final JSON packet')
         expect(tasks[0]?.contract).not.toContain('HOPI MCP')
         expect(events).toContainEqual(expect.objectContaining({
@@ -295,12 +300,12 @@ describe('goal routes', () => {
             title: 'Clarify goal and plan first iteration',
             status: 'planned',
             source: 'planner',
-            agentFlavor: 'codex',
-            model: 'gpt-5.5',
+            agentFlavor: null,
+            model: null,
             permissionMode: 'safe-yolo',
             modelMode: null
         })
-        expect(readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', `${goal.goalKey}.md`), 'utf8')).toContain(goal.title)
+        expect(readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'goal.md'), 'utf8')).toContain(goal.title)
         expect(events).toContainEqual(expect.objectContaining({
             type: 'task-added',
             projectId: project.id,
@@ -591,14 +596,14 @@ describe('goal routes', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({
             exists: false,
-            path: join(workspacePath, '.hopi', 'docs', 'todo.md'),
-            rawMarkdown: null,
+            path: join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'todo.yml'),
+            rawYaml: null,
             sections: [],
             updatedAt: null
         })
     })
 
-    it('parses the selected goal todo reservoir from markdown', async () => {
+    it('parses the selected goal todo reservoir from yaml', async () => {
         const store = new Store(':memory:')
         const app = createTestApp(store)
         const workspacePath = createTempWorkspace()
@@ -619,37 +624,38 @@ describe('goal routes', () => {
         })
         const docsRoot = join(workspacePath, '.hopi', 'docs')
         mkdirSync(docsRoot, { recursive: true })
-        writeFileSync(join(docsRoot, 'todo.md'), [
-            '# HOPI Todo',
-            '',
-            `## Goal \`${otherGoal.id}\` - Other Goal`,
-            '',
-            '### Ready candidates',
-            '',
-            '- [ready] Ignore other goal',
-            '',
-            `## Goal \`${goal.id}\` - Selected Goal`,
-            '',
-            '### Ready candidates',
-            '',
-            '#### 1. Implement first executable slice',
-            '',
-            '**Objective:** Ship the first slice.',
-            '',
-            '### Candidate reservoir',
-            '',
-            '- [candidate] Tune generated task contracts',
-            '  - Notes: Keep contracts lightweight.',
-            '',
-            '### Deferred',
-            '',
-            '- [deferred] Add manual todo editing',
-            '  - Reason: Planner should write first.',
-            '',
-            '### Done / promoted',
-            '',
-            '- [promoted] Implement expedition map -> task `task-promoted-1`',
-            '- [done] Clarify goal intent -> task `task-done-1`',
+        writeFileSync(join(docsRoot, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            `  - goalId: ${otherGoal.id}`,
+            '    title: Other Goal',
+            '    items:',
+            '      - ref: ignore-other-goal',
+            '        status: ready',
+            '        title: Ignore other goal',
+            `  - goalId: ${goal.id}`,
+            '    title: Selected Goal',
+            '    items:',
+            '      - ref: first-executable-slice',
+            '        status: ready',
+            '        title: Implement first executable slice',
+            '        body: "Objective: Ship the first slice."',
+            '      - ref: tune-generated-task-contracts',
+            '        status: candidate',
+            '        title: Tune generated task contracts',
+            '        body: "Notes: Keep contracts lightweight."',
+            '      - ref: add-manual-todo-editing',
+            '        status: deferred',
+            '        title: Add manual todo editing',
+            '        body: "Reason: Planner should write first."',
+            '      - ref: expedition-map',
+            '        status: promoted',
+            '        title: Implement expedition map',
+            '        taskId: task-promoted-1',
+            '      - ref: clarify-goal-intent',
+            '        status: done',
+            '        title: Clarify goal intent',
+            '        taskId: task-done-1',
             ''
         ].join('\n'), 'utf8')
 
@@ -658,12 +664,12 @@ describe('goal routes', () => {
         expect(response.status).toBe(200)
         const body = await response.json() as {
             exists: boolean
-            rawMarkdown: string | null
+            rawYaml: string | null
             updatedAt: number | null
             sections: Array<{ kind: string; title: string; body: string; taskId?: string | null }>
         }
         expect(body.exists).toBe(true)
-        expect(body.rawMarkdown).toContain(`Goal \`${goal.id}\``)
+        expect(body.rawYaml).toContain(`goalId: ${goal.id}`)
         expect(typeof body.updatedAt).toBe('number')
         expect(body.sections.map((section) => section.kind)).toEqual([
             'ready',
@@ -689,7 +695,7 @@ describe('goal routes', () => {
             title: 'Clarify goal intent',
             taskId: 'task-done-1'
         })
-        expect(body.rawMarkdown).not.toContain('Ignore other goal')
+        expect(body.rawYaml).not.toContain('Ignore other goal')
     })
 
     it('previews docs-backed goals missing from the local database', async () => {
@@ -698,8 +704,9 @@ describe('goal routes', () => {
         const workspacePath = createTempWorkspace()
         const project = await createProject(app, workspacePath)
         const docsRoot = join(workspacePath, '.hopi', 'docs')
-        mkdirSync(join(docsRoot, 'goals'), { recursive: true })
-        writeFileSync(join(docsRoot, 'goals', 'mobile-remote-control.md'), [
+        const goalDir = join(docsRoot, 'goals', 'mobile-remote-control')
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'goal.md'), [
             '---',
             'goalKey: mobile-remote-control',
             'title: Mobile remote control',
@@ -714,18 +721,18 @@ describe('goal routes', () => {
             '',
             'Control local agent sessions from mobile.'
         ].join('\n'))
-        writeFileSync(join(docsRoot, 'todo.md'), [
-            '# HOPI Todo',
-            '',
-            '## Goal mobile-remote-control',
-            '',
-            '### Ready',
-            '',
-            '- Add reconnect indicator',
-            '',
-            '### Candidate',
-            '',
-            '- Improve resume affordance'
+        writeFileSync(join(goalDir, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            '  - goalKey: mobile-remote-control',
+            '    items:',
+            '      - ref: reconnect-indicator',
+            '        status: ready',
+            '        title: Add reconnect indicator',
+            '      - ref: resume-affordance',
+            '        status: candidate',
+            '        title: Improve resume affordance',
+            ''
         ].join('\n'))
 
         const response = await app.request(`/api/projects/${project.id}/goal-docs/import-preview`)

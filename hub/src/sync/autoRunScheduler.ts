@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, DEFAULT_TASK_MODEL, normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from '@hopi/protocol'
+import { normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from '@hopi/protocol'
 import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
 import type { AutomationLane } from '@hopi/protocol/types'
@@ -10,6 +10,7 @@ import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
 import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
+import { getProjectDefaultTaskRuntimeSettings } from './projectTaskDefaults'
 
 type ProjectKey = `${string}:${string}`
 type TaskAutopilotPolicy = {
@@ -315,8 +316,8 @@ function buildPlannerLoopContract(options: {
         '',
         '## Acceptance',
         '',
-        `- Read and update .hopi/docs/goals/${options.goal.goalKey}.md when strategy or status changed.`,
-        '- Read and curate .hopi/docs/todo.md; promote only a small ready batch into kanban.',
+        `- Read and update .hopi/docs/goals/${options.goal.goalKey}/goal.md when strategy or status changed.`,
+        `- Read and curate .hopi/docs/goals/${options.goal.goalKey}/todo.yml; promote only a small ready batch into kanban.`,
         '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
         '- Create blocking DecisionTopics for unclear product direction, milestone review, or risky priority choices, one question at a time.',
         '- Create goal-scoped tasks with lightweight contracts using the final HOPI_ACTIONS packet.',
@@ -328,7 +329,7 @@ function buildPlannerLoopContract(options: {
         '## Suggested Checks',
         '',
         '- Confirm active kanban work is not overfilled beyond the fill target.',
-        '- Confirm todo items are candidate/ready/active/done/parked rather than an uncurated dump.',
+        '- Confirm todo.yml items use stable refs and status values candidate/ready/promoted/in_review/blocked/deferred/done rather than an uncurated dump.',
         '',
         '## Non-goals / Constraints',
         '',
@@ -346,10 +347,10 @@ function buildRadarContract(goal: StoredGoal): string {
         '',
         '## Acceptance',
         '',
-        '- Scan .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, .hopi/docs/tech-debt.md, and this Goal doc for drift.',
+        `- Scan .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/tech-debt.md, .hopi/docs/goals/${goal.goalKey}/goal.md, .hopi/docs/goals/${goal.goalKey}/todo.yml, and .hopi/docs/goals/${goal.goalKey}/decisions.md for drift.`,
         '- Scan recent code signals such as TODO/FIXME comments, stale docs references, repeated failures, and obvious technical debt.',
         '- Update .hopi/docs/tech-debt.md only with curated, durable debt worth tracking.',
-        '- Update .hopi/docs/todo.md with candidate work only when it is actionable and scoped.',
+        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml with candidate work only when it is actionable and scoped.`,
         '- Create goal-scoped tasks only for small, verifiable, high-confidence maintenance work.',
         '',
         '## Suggested Checks',
@@ -555,10 +556,7 @@ export class AutoRunScheduler {
             priority: 'high',
             sortKey: Date.now(),
             workspaceId: options.defaultWorkspace?.id ?? null,
-            agentFlavor: DEFAULT_AGENT_FLAVOR,
-            permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
-            model: DEFAULT_TASK_MODEL,
-            modelMode: null,
+            ...getProjectDefaultTaskRuntimeSettings(options.project, { autonomous: true }),
             workflowProfile: 'default',
             source: 'planner',
             contract: buildPlannerLoopContract({
@@ -607,10 +605,7 @@ export class AutoRunScheduler {
             priority: 'low',
             sortKey: Date.now(),
             workspaceId: options.defaultWorkspace?.id ?? null,
-            agentFlavor: DEFAULT_AGENT_FLAVOR,
-            permissionMode: DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
-            model: DEFAULT_TASK_MODEL,
-            modelMode: null,
+            ...getProjectDefaultTaskRuntimeSettings(options.project, { autonomous: true }),
             workflowProfile: 'default',
             source: 'radar',
             contract: buildRadarContract(options.goal)
@@ -731,7 +726,9 @@ export class AutoRunScheduler {
                 }
 
                 const blocked = this.store.tasks.updateTaskByNamespace(task.id, namespace, {
-                    status: 'blocked'
+                    status: 'blocked',
+                    blockedReason: result.error.message,
+                    blockedSource: 'scheduler'
                 })
                 if (blocked) {
                     this.engine.handleRealtimeEvent({

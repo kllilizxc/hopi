@@ -20,6 +20,10 @@ type DbTaskRow = {
     title: string
     description: string | null
     status: string
+    blocked_reason: string | null
+    blocked_at: number | null
+    blocked_source: string | null
+    blocked_session_id: string | null
     priority: string | null
     sort_key: number | null
     active_session_id: string | null
@@ -52,6 +56,73 @@ type DbTaskRow = {
 
 type TaskRuntimeWithSession = {
     sessionId?: string | null
+    status?: string
+    latestNote?: string | null
+    blockedReason?: string | null
+    failure?: { message?: string | null; blockedReason?: string | null } | null
+}
+
+function normalizeTaskBlockedText(value: string | null | undefined, maxLength = 512): string | null {
+    if (typeof value !== 'string') {
+        return null
+    }
+
+    const normalized = value.replace(/\s+/gu, ' ').trim()
+    if (!normalized) {
+        return null
+    }
+
+    return normalized.length > maxLength ? normalized.slice(0, maxLength).trim() : normalized
+}
+
+function getRuntimeBlockedReason(runtime: TaskRuntimeWithSession | null | undefined): string | null {
+    if (!runtime || runtime.status !== 'blocked') {
+        return null
+    }
+
+    return normalizeTaskBlockedText(runtime.blockedReason)
+        ?? normalizeTaskBlockedText(runtime.latestNote)
+        ?? normalizeTaskBlockedText(runtime.failure?.blockedReason)
+        ?? normalizeTaskBlockedText(runtime.failure?.message)
+}
+
+function getRuntimeBlockedSessionId(runtime: TaskRuntimeWithSession | null | undefined): string | null {
+    if (!runtime || runtime.status !== 'blocked') {
+        return null
+    }
+
+    return normalizeTaskBlockedText(runtime.sessionId, 128)
+}
+
+function resolveTaskBlockedSource(task: {
+    mergeRuntime?: TaskMergeRuntime | null
+    previewRuntime?: TaskPreviewRuntime | null
+    initRuntime?: TaskInitRuntime | null
+}): string | null {
+    if (task.mergeRuntime?.status === 'blocked') return 'merge'
+    if (task.previewRuntime?.status === 'blocked') return 'preview'
+    if (task.initRuntime?.status === 'blocked') return 'init'
+    return null
+}
+
+function resolveTaskBlockedReason(task: {
+    mergeRuntime?: TaskMergeRuntime | null
+    previewRuntime?: TaskPreviewRuntime | null
+    initRuntime?: TaskInitRuntime | null
+}): string | null {
+    return getRuntimeBlockedReason(task.mergeRuntime)
+        ?? getRuntimeBlockedReason(task.previewRuntime)
+        ?? getRuntimeBlockedReason(task.initRuntime)
+}
+
+function resolveTaskBlockedSessionId(task: {
+    mergeRuntime?: TaskMergeRuntime | null
+    previewRuntime?: TaskPreviewRuntime | null
+    initRuntime?: TaskInitRuntime | null
+}): string | null {
+    return getRuntimeBlockedSessionId(task.mergeRuntime)
+        ?? getRuntimeBlockedSessionId(task.previewRuntime)
+        ?? getRuntimeBlockedSessionId(task.initRuntime)
 }
 
 type TaskRuntimeNormalizer<Runtime extends TaskRuntimeWithSession> = (
@@ -101,6 +172,10 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         title: row.title,
         description: row.description,
         status: row.status,
+        blockedReason: row.blocked_reason,
+        blockedAt: row.blocked_at,
+        blockedSource: row.blocked_source,
+        blockedSessionId: row.blocked_session_id,
         priority: row.priority,
         sortKey: row.sort_key,
         activeSessionId: row.active_session_id,
@@ -252,6 +327,10 @@ export function createTask(
         title: string
         description?: string | null
         status: string
+        blockedReason?: string | null
+        blockedAt?: number | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         priority?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
@@ -282,15 +361,28 @@ export function createTask(
     const mergeRuntime = prepareTaskRuntime(task.mergeRuntime, task.activeSessionId, now, normalizeTaskMergeRuntime)
     const previewRuntime = prepareTaskRuntime(task.previewRuntime, task.activeSessionId, now, normalizeTaskPreviewRuntime)
     const initRuntime = prepareTaskRuntime(task.initRuntime, task.activeSessionId, now, normalizeTaskInitRuntime)
+    const isBlocked = task.status === 'blocked'
+    const blockedReason = isBlocked
+        ? normalizeTaskBlockedText(task.blockedReason) ?? resolveTaskBlockedReason({ mergeRuntime, previewRuntime, initRuntime })
+        : null
+    const blockedSource = isBlocked
+        ? normalizeTaskBlockedText(task.blockedSource, 64) ?? resolveTaskBlockedSource({ mergeRuntime, previewRuntime, initRuntime })
+        : null
+    const blockedSessionId = isBlocked
+        ? normalizeTaskBlockedText(task.blockedSessionId, 128) ?? resolveTaskBlockedSessionId({ mergeRuntime, previewRuntime, initRuntime })
+        : null
+    const blockedAt = isBlocked ? task.blockedAt ?? now : null
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, goal_id, goal_todo_ref, title, description, status, priority,
+            blocked_reason, blocked_at, blocked_source, blocked_session_id,
             sort_key, active_session_id, workspace_id, agent_flavor,
             attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
             permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime, contract, handoff, evidence,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @goal_id, @goal_todo_ref, @title, @description, @status, @priority,
+            @blocked_reason, @blocked_at, @blocked_source, @blocked_session_id,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
             @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
             @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime, @contract, @handoff, @evidence,
@@ -304,6 +396,10 @@ export function createTask(
         title: task.title,
         description: task.description ?? null,
         status: task.status,
+        blocked_reason: blockedReason,
+        blocked_at: blockedAt,
+        blocked_source: blockedSource,
+        blocked_session_id: blockedSessionId,
         priority: task.priority ?? null,
         sort_key: task.sortKey ?? null,
         active_session_id: task.activeSessionId ?? null,
@@ -348,6 +444,10 @@ export function updateTaskByNamespace(
         goalTodoRef?: string | null
         description?: string | null
         status?: string
+        blockedReason?: string | null
+        blockedAt?: number | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         priority?: string | null
         sortKey?: number | null
         activeSessionId?: string | null
@@ -445,6 +545,45 @@ export function updateTaskByNamespace(
         finishedAt: patch.finishedAt !== undefined ? patch.finishedAt : current.finishedAt,
         archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : current.archivedAt
     }
+    const runtimeBlockedReason = resolveTaskBlockedReason(next)
+    const runtimeBlockedSource = resolveTaskBlockedSource(next)
+    const runtimeBlockedSessionId = resolveTaskBlockedSessionId(next)
+    const explicitBlockedReason = patch.blockedReason !== undefined
+        ? normalizeTaskBlockedText(patch.blockedReason)
+        : undefined
+    const explicitBlockedSource = patch.blockedSource !== undefined
+        ? normalizeTaskBlockedText(patch.blockedSource, 64)
+        : undefined
+    const explicitBlockedSessionId = patch.blockedSessionId !== undefined
+        ? normalizeTaskBlockedText(patch.blockedSessionId, 128)
+        : undefined
+
+    if (next.status === 'blocked') {
+        next.blockedReason = explicitBlockedReason !== undefined
+            ? explicitBlockedReason
+            : runtimeBlockedReason ?? current.blockedReason
+        next.blockedSource = explicitBlockedSource !== undefined
+            ? explicitBlockedSource
+            : runtimeBlockedSource ?? current.blockedSource
+        next.blockedSessionId = explicitBlockedSessionId !== undefined
+            ? explicitBlockedSessionId
+            : runtimeBlockedSessionId ?? current.blockedSessionId
+
+        const blockerChanged = current.status !== 'blocked'
+            || next.blockedReason !== current.blockedReason
+            || next.blockedSource !== current.blockedSource
+            || next.blockedSessionId !== current.blockedSessionId
+        next.blockedAt = patch.blockedAt !== undefined
+            ? patch.blockedAt
+            : blockerChanged
+                ? now
+                : current.blockedAt
+    } else {
+        next.blockedReason = null
+        next.blockedAt = null
+        next.blockedSource = null
+        next.blockedSessionId = null
+    }
 
     db.prepare(`
         UPDATE tasks SET
@@ -453,6 +592,10 @@ export function updateTaskByNamespace(
             goal_todo_ref = @goal_todo_ref,
             description = @description,
             status = @status,
+            blocked_reason = @blocked_reason,
+            blocked_at = @blocked_at,
+            blocked_source = @blocked_source,
+            blocked_session_id = @blocked_session_id,
             priority = @priority,
             sort_key = @sort_key,
             active_session_id = @active_session_id,
@@ -488,6 +631,10 @@ export function updateTaskByNamespace(
         goal_todo_ref: next.goalTodoRef,
         description: next.description,
         status: next.status,
+        blocked_reason: next.blockedReason,
+        blocked_at: next.blockedAt,
+        blocked_source: next.blockedSource,
+        blocked_session_id: next.blockedSessionId,
         priority: next.priority,
         sort_key: next.sortKey,
         active_session_id: next.activeSessionId,

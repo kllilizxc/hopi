@@ -52,7 +52,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 26
+const SCHEMA_VERSION: number = 29
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -476,6 +476,10 @@ export class Store {
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL,
+                blocked_reason TEXT,
+                blocked_at INTEGER,
+                blocked_source TEXT,
+                blocked_session_id TEXT,
                 priority TEXT,
                 sort_key REAL,
                 active_session_id TEXT,
@@ -932,6 +936,15 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 26) {
             this.migrateFromV25ToV26()
+        }
+        if (SCHEMA_VERSION >= 27) {
+            this.migrateFromV26ToV27()
+        }
+        if (SCHEMA_VERSION >= 28) {
+            this.migrateFromV27ToV28()
+        }
+        if (SCHEMA_VERSION >= 29) {
+            this.migrateFromV28ToV29()
         }
     }
 
@@ -1503,6 +1516,238 @@ export class Store {
         }
         if (!projectColumns.has('automation_backstop_policy')) {
             this.db.exec('ALTER TABLE projects ADD COLUMN automation_backstop_policy TEXT')
+        }
+    }
+
+    private migrateFromV26ToV27(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v26 to v27 migration.')
+        }
+        if (
+            !taskColumns.has('agent_flavor')
+            || !taskColumns.has('model')
+            || !taskColumns.has('model_mode')
+            || !taskColumns.has('source')
+            || !taskColumns.has('source_task_id')
+        ) {
+            return
+        }
+
+        this.db.exec(`
+            UPDATE tasks
+            SET agent_flavor = NULL,
+                model = NULL,
+                model_mode = NULL
+            WHERE agent_flavor = 'codex'
+                AND model = 'gpt-5.5'
+                AND (
+                    source_task_id IS NOT NULL
+                    OR source IN ('project_init', 'planner', 'radar')
+                )
+        `)
+    }
+
+    private migrateFromV27ToV28(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v27 to v28 migration.')
+        }
+        if (!taskColumns.has('merge_runtime') || !taskColumns.has('status')) {
+            return
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, status, merge_runtime
+            FROM tasks
+            WHERE merge_runtime IS NOT NULL
+        `).all() as Array<{
+            id: string
+            status: string
+            merge_runtime: string | null
+        }>
+        const update = taskColumns.has('finished_at')
+            ? this.db.prepare("UPDATE tasks SET status = 'blocked', finished_at = NULL WHERE id = ? AND status NOT IN ('blocked', 'finished')")
+            : this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status NOT IN ('blocked', 'finished')")
+
+        for (const row of rows) {
+            let runtime: unknown
+            try {
+                runtime = row.merge_runtime ? JSON.parse(row.merge_runtime) : null
+            } catch {
+                continue
+            }
+            if (
+                runtime
+                && typeof runtime === 'object'
+                && (runtime as { status?: unknown }).status === 'blocked'
+                && row.status !== 'blocked'
+                && row.status !== 'finished'
+            ) {
+                update.run(row.id)
+            }
+        }
+    }
+
+    private migrateFromV28ToV29(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v28 to v29 migration.')
+        }
+
+        if (!taskColumns.has('blocked_reason')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT')
+        }
+        if (!taskColumns.has('blocked_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_at INTEGER')
+        }
+        if (!taskColumns.has('blocked_source')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_source TEXT')
+        }
+        if (!taskColumns.has('blocked_session_id')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_session_id TEXT')
+        }
+        if (!taskColumns.has('status')) {
+            return
+        }
+
+        const normalize = (value: unknown, maxLength = 512): string | null => {
+            if (typeof value !== 'string') return null
+            const normalized = value.replace(/\s+/gu, ' ').trim()
+            if (!normalized) return null
+            return normalized.length > maxLength ? normalized.slice(0, maxLength).trim() : normalized
+        }
+        const parseRuntime = (raw: string | null): Record<string, unknown> | null => {
+            if (!raw) return null
+            try {
+                const parsed: unknown = JSON.parse(raw)
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                    ? parsed as Record<string, unknown>
+                    : null
+            } catch {
+                return null
+            }
+        }
+        const readFailureText = (runtime: Record<string, unknown>, key: 'message' | 'blockedReason'): string | null => {
+            const failure = runtime.failure
+            if (!failure || typeof failure !== 'object' || Array.isArray(failure)) return null
+            return normalize((failure as Record<string, unknown>)[key])
+        }
+        const blockedRuntime = (runtime: Record<string, unknown> | null): Record<string, unknown> | null => {
+            return runtime?.status === 'blocked' ? runtime : null
+        }
+        const runtimeReason = (runtime: Record<string, unknown> | null): string | null => {
+            if (!runtime) return null
+            return normalize(runtime.blockedReason)
+                ?? normalize(runtime.latestNote)
+                ?? readFailureText(runtime, 'blockedReason')
+                ?? readFailureText(runtime, 'message')
+        }
+        const runtimeSessionId = (runtime: Record<string, unknown> | null): string | null => {
+            return runtime ? normalize(runtime.sessionId, 128) : null
+        }
+        const reasonSpecificity = (reason: string | null): number => {
+            const normalized = reason?.toLowerCase() ?? ''
+            if (!normalized) return 0
+            if (normalized.includes('usage limit') || normalized.includes('rate limit') || normalized.includes('quota')) return 4
+            if (normalized.includes('rpc handler not registered') || normalized.includes('missing ') || normalized.includes('invalid ')) return 3
+            if (normalized.includes('check logs') || normalized.includes('systemerror state') || normalized === 'agent session reported an error') return 1
+            return 2
+        }
+        const messageColumns = this.getColumnNames('messages')
+        const canScanMessages = messageColumns.has('session_id') && messageColumns.has('content') && messageColumns.has('seq')
+        const messageQuery = canScanMessages
+            ? this.db.prepare('SELECT content FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 80')
+            : null
+        const extractMessageBlockedReason = (content: string): string | null => {
+            const record = parseRuntime(content)
+            if (!record) return null
+            const role = record.role
+            if (role !== 'assistant' && role !== 'agent') return null
+            const messageContent = record.content
+            if (!messageContent || typeof messageContent !== 'object' || Array.isArray(messageContent)) return null
+            const payload = messageContent as Record<string, unknown>
+            const type = payload.type
+            if (type === 'event') {
+                const data = payload.data
+                if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+                const eventData = data as Record<string, unknown>
+                if (eventData.type === 'error') {
+                    return normalize(eventData.message)
+                }
+                if (eventData.type === 'message') {
+                    const text = normalize(eventData.message)
+                    return text?.toLowerCase().includes('process exited unexpectedly') ? text : null
+                }
+                return null
+            }
+            if (type === 'codex') {
+                const data = payload.data
+                if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+                const codexData = data as Record<string, unknown>
+                return codexData.type === 'error' ? normalize(codexData.message) : null
+            }
+            return null
+        }
+        const findMessageBlockedReason = (sessionId: string | null): string | null => {
+            if (!messageQuery || !sessionId) return null
+            const messages = messageQuery.all(sessionId) as Array<{ content: string }>
+            let best: string | null = null
+            for (const message of messages) {
+                const reason = extractMessageBlockedReason(message.content)
+                if (reasonSpecificity(reason) > reasonSpecificity(best)) {
+                    best = reason
+                }
+            }
+            return best
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, active_session_id, updated_at, blocked_reason, blocked_source, blocked_session_id, blocked_at,
+                   merge_runtime, preview_runtime, init_runtime
+            FROM tasks
+            WHERE status = 'blocked'
+        `).all() as Array<{
+            id: string
+            active_session_id: string | null
+            updated_at: number
+            blocked_reason: string | null
+            blocked_source: string | null
+            blocked_session_id: string | null
+            blocked_at: number | null
+            merge_runtime: string | null
+            preview_runtime: string | null
+            init_runtime: string | null
+        }>
+        const update = this.db.prepare(`
+            UPDATE tasks
+            SET blocked_reason = ?,
+                blocked_source = ?,
+                blocked_session_id = ?,
+                blocked_at = ?
+            WHERE id = ?
+        `)
+
+        for (const row of rows) {
+            const mergeRuntime = blockedRuntime(parseRuntime(row.merge_runtime))
+            const previewRuntime = blockedRuntime(parseRuntime(row.preview_runtime))
+            const initRuntime = blockedRuntime(parseRuntime(row.init_runtime))
+            const runtime = mergeRuntime ?? previewRuntime ?? initRuntime
+            const messageReason = findMessageBlockedReason(row.active_session_id)
+            const source = mergeRuntime
+                ? 'merge'
+                : previewRuntime
+                    ? 'preview'
+                    : initRuntime
+                        ? 'init'
+                        : null
+            update.run(
+                row.blocked_reason ?? runtimeReason(runtime) ?? messageReason,
+                row.blocked_source ?? source ?? (messageReason ? 'agent' : null),
+                row.blocked_session_id ?? runtimeSessionId(runtime) ?? (messageReason ? row.active_session_id : null),
+                row.blocked_at ?? row.updated_at,
+                row.id
+            )
         }
     }
 

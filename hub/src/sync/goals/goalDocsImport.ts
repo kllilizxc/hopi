@@ -4,7 +4,14 @@ import { basename, join } from 'node:path'
 import { buildUniqueGoalKey, normalizeGoalKey } from '@hopi/protocol'
 import YAML from 'yaml'
 import type { Store, StoredGoal, StoredProject, StoredWorkspace } from '../../store'
-import { parseGoalTodoMarkdown } from './goalTodo'
+import {
+    getDocsRoot,
+    getGoalTodoPath,
+    getGoalsRoot,
+    getLegacyTodoMarkdownPath,
+    getLegacyTodoYamlPath
+} from './goalDocPaths'
+import { parseGoalTodoMarkdown, parseGoalTodoYaml } from './goalTodo'
 
 export type ParsedGoalDoc = {
     goalKey: string
@@ -189,6 +196,57 @@ function reconcileLegacyGoalDocMatch(input: {
     })
 }
 
+function collectGoalDocPaths(goalsRoot: string): string[] {
+    const nestedGoalDocs: string[] = []
+    const flatGoalDocs: string[] = []
+
+    for (const entry of readdirSync(goalsRoot, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (entry.isDirectory()) {
+            const nestedPath = join(goalsRoot, entry.name, 'goal.md')
+            if (existsSync(nestedPath)) nestedGoalDocs.push(nestedPath)
+            continue
+        }
+        if (entry.isFile() && entry.name.endsWith('.md')) {
+            const nestedPath = join(goalsRoot, basename(entry.name, '.md'), 'goal.md')
+            if (!existsSync(nestedPath)) flatGoalDocs.push(join(goalsRoot, entry.name))
+        }
+    }
+
+    return [...nestedGoalDocs, ...flatGoalDocs]
+}
+
+function readGoalTodoForPreview(input: {
+    docsRoot: string
+    parsed: ParsedGoalDoc
+    existing: GoalDocExistingMatch | null
+}): ReturnType<typeof parseGoalTodoYaml> | Pick<ReturnType<typeof parseGoalTodoYaml>, 'sections'> {
+    const goalTodoPath = getGoalTodoPath(input.docsRoot, input.parsed.goalKey)
+    if (existsSync(goalTodoPath)) {
+        return parseGoalTodoYaml(readFileSync(goalTodoPath, 'utf8'), {
+            goalId: input.existing?.goal.id ?? input.parsed.goalKey,
+            goalKey: input.parsed.goalKey
+        })
+    }
+
+    const todoYamlPath = getLegacyTodoYamlPath(input.docsRoot)
+    if (existsSync(todoYamlPath)) {
+        return parseGoalTodoYaml(readFileSync(todoYamlPath, 'utf8'), {
+            goalId: input.existing?.goal.id ?? input.parsed.goalKey,
+            goalKey: input.parsed.goalKey
+        })
+    }
+
+    const todoMarkdownPath = getLegacyTodoMarkdownPath(input.docsRoot)
+    if (existsSync(todoMarkdownPath)) {
+        return parseGoalTodoMarkdown(readFileSync(todoMarkdownPath, 'utf8'), {
+            goalId: input.existing?.goal.id ?? input.parsed.goalKey,
+            goalKey: input.parsed.goalKey
+        })
+    }
+
+    return { sections: [] }
+}
+
 export function parseGoalDoc(path: string): ParsedGoalDoc {
     const markdown = readFileSync(path, 'utf8')
     const { frontmatter, body } = splitFrontmatter(markdown)
@@ -221,21 +279,18 @@ export function buildGoalDocsImportPreview(input: {
     namespace: string
     defaultWorkspace: StoredWorkspace | null
 }): { docsRoot: string | null; goals: GoalDocsImportPreviewItem[]; errors: Array<{ path: string; message: string }> } {
-    const docsRoot = input.defaultWorkspace?.path ? join(input.defaultWorkspace.path, '.hopi', 'docs') : null
-    const goalsRoot = docsRoot ? join(docsRoot, 'goals') : null
+    const docsRoot = getDocsRoot(input.defaultWorkspace)
+    const goalsRoot = docsRoot ? getGoalsRoot(docsRoot) : null
     if (!docsRoot || !goalsRoot || !existsSync(goalsRoot)) {
         return { docsRoot, goals: [], errors: [] }
     }
 
-    const todoPath = join(docsRoot, 'todo.md')
-    const todoMarkdown = existsSync(todoPath) ? readFileSync(todoPath, 'utf8') : ''
     const goals: GoalDocsImportPreviewItem[] = []
     const errors: Array<{ path: string; message: string }> = []
     const seen = new Set<string>()
 
     const parsedDocs: ParsedGoalDocWithPath[] = []
-    for (const entry of readdirSync(goalsRoot).filter((name) => name.endsWith('.md')).sort()) {
-        const path = join(goalsRoot, entry)
+    for (const path of collectGoalDocPaths(goalsRoot)) {
         try {
             const parsed = parseGoalDoc(path)
             if (seen.has(parsed.goalKey)) {
@@ -257,12 +312,7 @@ export function buildGoalDocsImportPreview(input: {
                 namespace: input.namespace,
                 goalKey: parsed.goalKey
             })
-            const todo = todoMarkdown
-                ? parseGoalTodoMarkdown(todoMarkdown, {
-                    goalId: existing?.goal.id ?? parsed.goalKey,
-                    goalKey: parsed.goalKey
-                })
-                : { sections: [], rawMarkdown: null }
+            const todo = readGoalTodoForPreview({ docsRoot, parsed, existing })
             goals.push({
                 goalKey: parsed.goalKey,
                 title: parsed.title,

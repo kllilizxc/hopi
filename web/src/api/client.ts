@@ -439,6 +439,9 @@ export class ApiClient {
         title: string
         description?: string
         status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         priority?: 'high' | 'medium' | 'low'
         workspaceId?: string
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
@@ -482,6 +485,9 @@ export class ApiClient {
         title?: string
         description?: string | null
         status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         source?: 'manual' | 'planner' | 'radar' | 'evaluator'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null

@@ -399,7 +399,7 @@ function buildInitCommandReportLines(options: {
 }
 
 function resolveWorkflowKickoff(options: {
-    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'contract' | 'handoff' | 'evidence'>
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>
     kickoff: StartSessionKickoffOptions
     agentOutputLocale?: string
 }): StartSessionKickoffOptions {
@@ -449,6 +449,7 @@ function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>)
     if (status === 'in_review') return 'Evaluator'
     if (source === 'planner') return 'Planner'
     if (source === 'radar') return 'Radar'
+    if (source === 'evaluator') return 'Evaluator'
     return 'Generator'
 }
 
@@ -463,7 +464,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
-            '- create_goal_task: create a small ready task for this Goal; include todoRef when promoting a .hopi/docs/todo.md item.',
+            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
@@ -483,8 +484,15 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
         '- If no HOPI state change is needed, omit the packet.',
+        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `ref`, `status`, `title`, optional `taskId`, and optional `body`.',
+        '- Todo item status values are ready, candidate, promoted, in_review, blocked, deferred, done. When creating a task from a todo item, keep its stable `ref` as todoRef.',
+        '- Task titles are user-visible text only. Do not prefix or include `ref`, `todoRef`, yaml keys, or ids in `title`.',
+        '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
         ...commonActions,
-        '- Finish with exactly one fenced JSON block in this shape:',
+        ...(role === 'Planner' || role === 'Radar'
+            ? ['- create_goal_task shape: { "type": "create_goal_task", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
+            : []),
+        '- Finish with one fenced JSON block in this shape; add create_goal_task actions before update_current_task when needed:',
         'HOPI_ACTIONS:',
         '```json',
         '{',
@@ -509,8 +517,18 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Role: Planner',
             '',
             'Context strategy:',
-            '- Read .hopi/docs/index.md, .hopi/docs/todo.md, .hopi/docs/decisions.md, the current Goal doc addressed by goalKey, and the current Goal kanban snapshot.',
+            '- Read .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.md, and the current Goal kanban snapshot.',
             '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
+            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: promoted` and set its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
+            '',
+            'Task creation quality bar:',
+            '- Create tasks that a Generator can execute without re-planning the whole Goal.',
+            '- Classify each task as bugfix, feature, refactor, test, content, infra, or performance.',
+            '- Use `description` for a concise human summary, not a copy of the title.',
+            '- Use `contract` for the execution brief with Type, Context, Involved Files / Areas, Scope, Acceptance, Suggested Checks, and Non-goals / Constraints.',
+            '- Include involved files for bugfix/refactor/test/content/infra tasks when verified; for feature tasks, include the scene/component/route/domain area at minimum.',
+            '- If exact files are not verified, write likely areas and unknowns instead of inventing paths.',
+            '- Keep contracts lightweight but specific: concrete behavior, boundaries, verification, and what not to change.',
             '',
             'Allowed transitions:',
             '- Create enough independent ready goal-scoped kanban tasks to fill available generator lane capacity, usually 2-3 when the lane is empty.',
@@ -532,7 +550,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
             '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
-            '- When accepting linked todo work, HOPI closes the matching .hopi/docs/todo.md item from the stored task link.',
+            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
             '',
             'Allowed transitions:',
             '- Record evidence and move accepted work to finished; HOPI will request the existing worktree merge flow before closing accepted work.',
@@ -553,7 +571,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             '- Keep findings curated; Radar is a maintenance signal, not a dumping ground.',
             '',
             'Allowed transitions:',
-            '- Update .hopi/docs/tech-debt.md and .hopi/docs/todo.md with durable findings.',
+            '- Update .hopi/docs/tech-debt.md and .hopi/docs/goals/<goalKey>/todo.yml with durable findings.',
             '- Create goal tasks only for small, verifiable, high-confidence maintenance tasks.',
             '- Record evidence and finish or block this Radar task.',
             buildGoalActionPacketSection(role)
@@ -567,7 +585,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
         '',
         'Context strategy:',
         '- Read the Task Contract, Goal doc, relevant decisions, linked files/search results, current git status, and latest Planner handoff.',
-        '- Update durable behavior or architecture docs when lasting product knowledge changes; do not mark linked todo work done before Evaluator acceptance.',
+        '- Update durable behavior or architecture docs when lasting product knowledge changes; keep linked todo work promoted and do not mark it done before Evaluator acceptance.',
         '',
         'Allowed transitions:',
         '- Record handoff/evidence and move complete work to in_review.',
@@ -578,12 +596,14 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
 }
 
 function buildTaskKickoffSummary(
-    task: Pick<StoredTask, 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'contract' | 'handoff' | 'evidence'>,
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>,
     options?: { agentOutputLocale?: string }
 ): string {
+    const taskId = (task.id ?? '').trim()
     const title = (task.title ?? '').trim()
     const description = (task.description ?? '').trim()
     const goalId = (task.goalId ?? '').trim()
+    const goalTodoRef = (task.goalTodoRef ?? '').trim()
     const contract = (task.contract ?? '').trim()
     const handoff = (task.handoff ?? '').trim()
     const evidence = (task.evidence ?? '').trim()
@@ -606,6 +626,13 @@ function buildTaskKickoffSummary(
     const goalSection = goalId
         ? `\n\nGoal ID: ${goalId}`
         : ''
+    const taskIdentitySection = [
+        taskId ? `Task ID: ${taskId}` : '',
+        goalTodoRef ? `Goal Todo Ref: ${goalTodoRef}` : ''
+    ].filter(Boolean).join('\n')
+    const taskMetadataSection = taskIdentitySection
+        ? `\n\n${taskIdentitySection}`
+        : ''
     const roleSection = buildGoalRoleSection(task)
     const role = getGoalTaskRole(task)
     const contractSection = contract
@@ -621,7 +648,7 @@ function buildTaskKickoffSummary(
         : role === 'Evaluator'
             ? '\n\nEvidence Packet:\n- None recorded yet.'
             : ''
-    const contextSections = `${goalSection}${roleSection}${contractSection}${handoffSection}${evidenceSection}`
+    const contextSections = `${taskMetadataSection}${goalSection}${roleSection}${contractSection}${handoffSection}${evidenceSection}`
 
     const languageSection = options?.agentOutputLocale
         ? buildAgentOutputLanguageSection(options.agentOutputLocale)
