@@ -3,6 +3,10 @@ import type {
     Goal,
     GoalDecisionTopic,
     Project,
+    ProjectAssistantInterventionKind,
+    ProjectAssistantInterventionStatus,
+    ProjectAssistantSessionKind,
+    ProjectAssistantSuggestedAction,
     Task,
     TaskWorkflowPhase,
     DecryptedMessage as ProtocolDecryptedMessage,
@@ -30,6 +34,10 @@ export type {
     ModelMode,
     PermissionMode,
     Project,
+    ProjectAssistantInterventionKind,
+    ProjectAssistantInterventionStatus,
+    ProjectAssistantSessionKind,
+    ProjectAssistantSuggestedAction,
     Session,
     SessionSummary,
     SessionSummaryMetadata,
@@ -109,6 +117,64 @@ export type ProjectAutomationVerificationResponse = {
         }>
     }
 }
+export type ProjectAssistantSessionSummary = {
+    id: string
+    projectId: string
+    goalId: string | null
+    taskId: string | null
+    kind: ProjectAssistantSessionKind
+    interventionKind: ProjectAssistantInterventionKind | null
+    interventionStatus: ProjectAssistantInterventionStatus | null
+    interventionKey: string | null
+    suggestedActions: ProjectAssistantSuggestedAction[]
+    createdAt: number
+    updatedAt: number
+    title: string | null
+    pending: boolean
+}
+export type ProjectAssistantSessionsResponse = {
+    sessions: ProjectAssistantSessionSummary[]
+    pendingCount: number
+}
+export type ProjectAssistantOperatorSource = {
+    sessionId: string
+    messageId: string
+    quote?: string
+}
+export type ProjectAssistantPlannerMailKind = 'idea' | 'request' | 'preference'
+export type ProjectAssistantPlannerMailStatus = 'unread' | 'included' | 'resolved' | 'dismissed'
+export type ProjectAssistantPlannerMail = {
+    id: string
+    kind: ProjectAssistantPlannerMailKind
+    body: string
+    source: ProjectAssistantOperatorSource
+    status: ProjectAssistantPlannerMailStatus
+    createdAt: number
+    includedAt: number | null
+    resolvedAt: number | null
+}
+export type ProjectAssistantPreferenceCategory =
+    | 'implementation_tradeoff'
+    | 'ui_product_choice'
+    | 'merge_repair'
+    | 'dependency_choice'
+    | 'test_scope'
+    | 'planning_priority'
+    | 'communication_style'
+export type ProjectAssistantPreferenceAutonomy = 'auto_decide' | 'auto_decide_and_report'
+export type ProjectAssistantGoalPreference = {
+    id: string
+    category: ProjectAssistantPreferenceCategory
+    autonomy: ProjectAssistantPreferenceAutonomy
+    instruction: string
+    source: ProjectAssistantOperatorSource
+    createdAt: number
+    archivedAt: number | null
+}
+export type ProjectAssistantSessionResponse = { session: ProjectAssistantSessionSummary }
+export type ProjectAssistantMailResponse = { mail: ProjectAssistantPlannerMail }
+export type ProjectAssistantPreferenceResponse = { preference: ProjectAssistantGoalPreference }
+export type ProjectAssistantResolveResponse = { session: Session }
 export type WorkspacesResponse = { workspaces: Workspace[] }
 export type WorkspaceResponse = { workspace: Workspace }
 export type GoalsResponse = { goals: Goal[] }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { stripLeadingTaskTitleRef } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
@@ -6,12 +6,15 @@ import type { DecryptedMessage } from '@hopi/protocol/types'
 import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import type { SyncEngine } from '../syncEngine'
 import { getProjectDefaultTaskRuntimeSettings } from '../projectTaskDefaults'
+import { updatePlannerMailStatus } from '../operator/operatorDocs'
+import { tryCreateProjectAssistantIntervention } from '../projectAssistant'
 import { readGoalTodo, updateGoalTodoTaskState, type GoalTodoUpdateKind } from './goalTodo'
 
 const taskStatusSchema = z.enum(['planned', 'in_progress', 'in_review', 'finished', 'blocked'])
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
 const taskSourceSchema = z.enum(['manual', 'planner', 'radar', 'evaluator'])
 const goalStatusSchema = z.enum(['planning', 'active', 'blocked', 'paused', 'done', 'archived'])
+const plannerMailStatusSchema = z.enum(['unread', 'included', 'resolved', 'dismissed'])
 
 const goalActionPacketSchema = z.object({
     actions: z.array(z.discriminatedUnion('type', [
@@ -50,6 +53,11 @@ const goalActionPacketSchema = z.object({
             title: z.string().trim().min(1).max(255),
             body: z.string().max(20_000),
             blocking: z.boolean().optional()
+        }),
+        z.object({
+            type: z.literal('update_planner_mail_status'),
+            mailId: z.string().trim().min(1).max(255),
+            status: plannerMailStatusSchema
         })
     ])).min(1).max(20)
 })
@@ -232,6 +240,12 @@ function normalizeActionPacketInput(raw: unknown): unknown {
                     ...item,
                     taskId: getAlias(item, 'taskId', 'task_id'),
                     body: buildDecisionTopicBody(item)
+                }
+            }
+            if (type === 'update_planner_mail_status') {
+                return {
+                    ...item,
+                    mailId: getAlias(item, 'mailId', 'mail_id')
                 }
             }
             return item
@@ -509,6 +523,21 @@ function emitProjectUpdated(options: {
     })
 }
 
+function emitAssistantSessionAdded(options: {
+    engine: SyncEngine
+    namespace: string
+    projectId: string
+    sessionId: string
+}): void {
+    options.engine.handleRealtimeEvent({
+        type: 'session-added',
+        sessionId: options.sessionId,
+        projectId: options.projectId,
+        namespace: options.namespace,
+        data: { sessionId: options.sessionId }
+    })
+}
+
 function getDefaultCreatedTaskSource(_current: StoredTask): string {
     return 'manual'
 }
@@ -610,6 +639,92 @@ function getUpdateCurrentTaskSourceForRole(
         return 'manual'
     }
     return undefined
+}
+
+function createTaskBlockedAssistantIntervention(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    project: StoredProject
+    goal: StoredGoal
+    task: StoredTask
+    body: string
+}): void {
+    const body = normalizeText(options.body) || options.task.blockedReason || 'Task is blocked and needs user direction.'
+    const digest = createHash('sha1').update(body).digest('hex').slice(0, 8)
+    const intervention = tryCreateProjectAssistantIntervention({
+        store: options.store,
+        namespace: options.namespace,
+        projectId: options.project.id,
+        goalId: options.goal.id,
+        taskId: options.task.id,
+        interventionKey: `task:${options.task.id}:blocked:${digest}`,
+        interventionKind: 'task_blocked',
+        title: `Blocked task: ${options.task.title}`,
+        body,
+        suggestedActions: [
+            {
+                id: 'let_agent_decide',
+                label: 'Let agent decide',
+                recommended: true
+            },
+            {
+                id: 'pause_goal',
+                label: 'Pause goal'
+            }
+        ]
+    })
+    if (intervention) {
+        emitAssistantSessionAdded({
+            engine: options.engine,
+            namespace: options.namespace,
+            projectId: options.project.id,
+            sessionId: intervention.session.id
+        })
+    }
+}
+
+function createDecisionAssistantIntervention(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    project: StoredProject
+    goal: StoredGoal
+    taskId: string | null
+    topicId: string
+    title: string
+    body: string
+}): void {
+    const intervention = tryCreateProjectAssistantIntervention({
+        store: options.store,
+        namespace: options.namespace,
+        projectId: options.project.id,
+        goalId: options.goal.id,
+        taskId: options.taskId,
+        interventionKey: `decision-topic:${options.topicId}`,
+        interventionKind: 'decision_needed',
+        title: options.title,
+        body: options.body,
+        suggestedActions: [
+            {
+                id: 'answer_in_chat',
+                label: 'Answer in chat',
+                recommended: true
+            },
+            {
+                id: 'let_agent_decide',
+                label: 'Let agent decide'
+            }
+        ]
+    })
+    if (intervention) {
+        emitAssistantSessionAdded({
+            engine: options.engine,
+            namespace: options.namespace,
+            projectId: options.project.id,
+            sessionId: intervention.session.id
+        })
+    }
 }
 
 export function applyGoalActionPacketFromSession(options: {
@@ -757,6 +872,33 @@ export function applyGoalActionPacketFromSession(options: {
                     namespace: options.namespace,
                     task: updated
                 })
+                if (status === 'blocked') {
+                    createTaskBlockedAssistantIntervention({
+                        store: options.store,
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        project,
+                        goal,
+                        task: updated,
+                        body: action.handoff ?? action.evidence ?? updated.blockedReason ?? 'Task is blocked.'
+                    })
+                }
+                touchedProject = true
+            }
+            continue
+        }
+
+        if (action.type === 'update_planner_mail_status') {
+            if (!defaultWorkspace) {
+                continue
+            }
+            const updated = updatePlannerMailStatus({
+                workspacePath: defaultWorkspace.path,
+                goalKey: goal.goalKey,
+                mailId: action.mailId,
+                status: action.status
+            })
+            if (updated) {
                 touchedProject = true
             }
             continue
@@ -794,6 +936,17 @@ export function applyGoalActionPacketFromSession(options: {
                 title: action.title,
                 body: action.body,
                 blocking: action.blocking ?? true
+            })
+            createDecisionAssistantIntervention({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                project,
+                goal,
+                taskId,
+                topicId: topic.id,
+                title: topic.title,
+                body: topic.body
             })
             touchedProject = true
 

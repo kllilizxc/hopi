@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import type { SyncEvent } from '@hopi/protocol/types'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Store } from '../store'
+import { appendPlannerMail, setGoalPreference } from './operator/operatorDocs'
 import { startSessionFromTask } from './taskSessionService'
 import type { SyncEngine } from './syncEngine'
 
@@ -302,6 +306,118 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('bugfix, feature, refactor, test, content, infra, or performance')
         expect(kickoffText).toContain('Do not mark the Goal paused, done, or archived')
         expect(kickoffText).not.toContain('Mark this Goal active, paused, blocked')
+    })
+
+    it('includes goal operator docs in goal task kickoff', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-operator-docs-kickoff'
+        const taskId = 'task-operator-docs-kickoff'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-operator-docs'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-operator-kickoff-'))
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: 'goal-operator-docs',
+            projectId,
+            namespace,
+            goalKey: 'ship-ui',
+            title: 'Ship UI'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId: 'goal-operator-docs',
+            title: 'Plan next UI tasks',
+            status: 'planned',
+            workspaceId,
+            source: 'planner'
+        })
+        setGoalPreference({
+            workspacePath,
+            goalKey: 'ship-ui',
+            category: 'test_scope',
+            autonomy: 'auto_decide_and_report',
+            instruction: 'Let the model choose focused regression tests.',
+            source: { sessionId: 'assistant-session', messageId: 'message-pref' },
+            now: 1778570000000
+        })
+        appendPlannerMail({
+            workspacePath,
+            goalKey: 'ship-ui',
+            kind: 'request',
+            body: 'Please schedule an accessibility pass.',
+            source: { sessionId: 'assistant-session', messageId: 'message-mail' },
+            now: 1778570001000
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-operator-docs-kickoff',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText).toContain('Goal Operator Docs')
+        expect(kickoffText).toContain('Goal Preferences')
+        expect(kickoffText).toContain('Let the model choose focused regression tests.')
+        expect(kickoffText).toContain('Planner Mail')
+        expect(kickoffText).toContain('Please schedule an accessibility pass.')
     })
 
     it('adds project agent output language guidance to goal task kickoff', async () => {

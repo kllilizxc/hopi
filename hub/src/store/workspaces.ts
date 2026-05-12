@@ -31,7 +31,7 @@ export function getWorkspace(db: Database, workspaceId: string): StoredWorkspace
 
 export function listWorkspacesByProject(db: Database, projectId: string): StoredWorkspace[] {
     const rows = db.prepare(
-        'SELECT * FROM workspaces WHERE project_id = ? ORDER BY COALESCE(sort, 0) ASC, updated_at DESC'
+        'SELECT * FROM workspaces WHERE project_id = ? ORDER BY (sort IS NULL) ASC, sort ASC, created_at ASC, id ASC'
     ).all(projectId) as DbWorkspaceRow[]
     return rows.map(toStoredWorkspace)
 }
@@ -114,4 +114,3 @@ export function deleteWorkspace(db: Database, workspaceId: string): boolean {
     const result = db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId)
     return result.changes > 0
 }
-

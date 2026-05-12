@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { SyncEvent } from '@hopi/protocol/types'
 import { Store } from '../store'
 import { AutoRunScheduler } from './autoRunScheduler'
+import { listProjectAssistantSessions } from './projectAssistant'
 import type { SyncEngine } from './syncEngine'
 
 function delay(ms: number): Promise<void> {
@@ -209,6 +210,80 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('opens an assistant intervention when scheduler blocks a goal task after start failure', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-scheduler-blocked-intervention'
+        const goalId = 'goal-scheduler-blocked-intervention'
+        const taskId = 'task-scheduler-blocked-intervention'
+        const workspaceId = 'workspace-scheduler-blocked-intervention'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            defaultWorkspaceId: workspaceId,
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/hopi-scheduler-blocked-intervention'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Run failing task',
+            status: 'planned',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+
+        const assistantSessions = listProjectAssistantSessions({
+            store,
+            namespace,
+            projectId
+        })
+        expect(assistantSessions.pendingCount).toBeGreaterThanOrEqual(1)
+        expect(assistantSessions.sessions).toContainEqual(expect.objectContaining({
+            goalId,
+            taskId,
+            interventionKind: 'task_blocked',
+            interventionStatus: 'pending',
+            pending: true
+        }))
+        expect(realtimeEvents.some((event) => event.type === 'session-added')).toBe(true)
     })
 
     it('auto-runs goal planner tasks when project auto-run is on even if goal autopilot is off', async () => {

@@ -338,10 +338,14 @@ export function useSSE(options: {
 
             if (event.type === 'message-received') {
                 enqueueIncomingMessage(event.sessionId, event.message)
+                void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistant })
             }
 
             if (event.type === 'session-added' || event.type === 'session-removed') {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                if ('projectId' in event && event.projectId) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistantRoot(event.projectId) })
+                }
                 if ('sessionId' in event) {
                     if (event.type === 'session-removed') {
                         queuedMessagesBySession.delete(event.sessionId)
@@ -355,6 +359,9 @@ export function useSSE(options: {
 
             if (event.type === 'session-updated') {
                 const patched = applySessionRealtimePatch(queryClient, event)
+                if ('projectId' in event && event.projectId) {
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistantRoot(event.projectId) })
+                }
                 if (!patched) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
@@ -370,6 +377,7 @@ export function useSSE(options: {
                 if ('projectId' in event) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.project(event.projectId) })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.goals(event.projectId) })
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistantRoot(event.projectId) })
                 }
                 void queryClient.invalidateQueries({ queryKey: queryKeys.goalTopicsRoot })
                 void queryClient.invalidateQueries({ queryKey: queryKeys.goalTodoRoot })

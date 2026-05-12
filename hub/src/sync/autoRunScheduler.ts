@@ -8,6 +8,7 @@ import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredT
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
+import { tryCreateProjectAssistantIntervention } from './projectAssistant'
 import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
 import { getProjectDefaultTaskRuntimeSettings } from './projectTaskDefaults'
@@ -501,6 +502,16 @@ export class AutoRunScheduler {
         })
     }
 
+    private emitSessionAdded(namespace: string, projectId: string, sessionId: string): void {
+        this.engine.handleRealtimeEvent({
+            type: 'session-added',
+            sessionId,
+            projectId,
+            namespace,
+            data: { sessionId }
+        })
+    }
+
     private ensurePlannerLoopTask(options: {
         project: StoredProject
         goal: StoredGoal
@@ -731,6 +742,39 @@ export class AutoRunScheduler {
                     blockedSource: 'scheduler'
                 })
                 if (blocked) {
+                    const intervention = tryCreateProjectAssistantIntervention({
+                        store: this.store,
+                        namespace,
+                        projectId: blocked.projectId,
+                        goalId: blocked.goalId,
+                        taskId: blocked.id,
+                        interventionKey: `task-blocked:scheduler:${blocked.id}`,
+                        interventionKind: 'task_blocked',
+                        title: `Task blocked: ${blocked.title}`,
+                        body: [
+                            'The scheduler tried to start or continue this task, but it failed and blocked the task.',
+                            '',
+                            result.error.message,
+                            '',
+                            `Task: ${blocked.id}`
+                        ].join('\n'),
+                        suggestedActions: [
+                            {
+                                id: 'inspect_task',
+                                label: 'Inspect task',
+                                description: 'Review the blocked task and decide whether to retry or change instructions.',
+                                recommended: true
+                            },
+                            {
+                                id: 'dismiss',
+                                label: 'Dismiss',
+                                description: 'Leave the blocked task unchanged and close this assistant intervention.'
+                            }
+                        ]
+                    })
+                    if (intervention) {
+                        this.emitSessionAdded(namespace, blocked.projectId, intervention.session.id)
+                    }
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
                         taskId: blocked.id,

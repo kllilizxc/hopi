@@ -14,6 +14,7 @@ import {
     resolveMergeConflictResolutionMode,
     runMergeVerifyChecks
 } from './mergeWorkflowRunner'
+import { tryCreateProjectAssistantIntervention } from './projectAssistant'
 import { relinkTaskToSession } from './sessionTaskLink'
 import { getWorkflowStrategy } from './workflowStrategy'
 import { updateGoalTodoTaskState } from './goals/goalTodo'
@@ -165,6 +166,21 @@ function emitTaskUpdated(options: {
     })
 }
 
+function emitSessionAdded(options: {
+    engine: SyncEngine
+    namespace: string
+    projectId: string
+    sessionId: string
+}): void {
+    options.engine.handleRealtimeEvent({
+        type: 'session-added',
+        sessionId: options.sessionId,
+        projectId: options.projectId,
+        namespace: options.namespace,
+        data: { sessionId: options.sessionId }
+    })
+}
+
 function isAutoMergeCandidate(task: StoredTask): boolean {
     const isAcceptedTask = task.status === 'finished'
     const isRecoverableMergeRuntime = task.status === 'in_review'
@@ -247,7 +263,7 @@ function blockMerge(options: {
     sessionId: string
     reason: string
 }): StoredTask | null {
-    return updateMergeRuntime({
+    const blocked = updateMergeRuntime({
         store: options.store,
         engine: options.engine,
         namespace: options.namespace,
@@ -259,6 +275,48 @@ function blockMerge(options: {
         completedAt: Date.now(),
         forceReviewStatus: true
     })
+    if (blocked) {
+        const intervention = tryCreateProjectAssistantIntervention({
+            store: options.store,
+            namespace: options.namespace,
+            projectId: blocked.projectId,
+            goalId: blocked.goalId,
+            taskId: blocked.id,
+            interventionKey: `merge-blocked:${blocked.id}`,
+            interventionKind: 'merge_blocked',
+            title: `Auto-merge blocked: ${blocked.title}`,
+            body: [
+                'Auto-merge could not complete and needs user attention.',
+                '',
+                options.reason,
+                '',
+                `Task: ${blocked.id}`,
+                `Linked session: ${options.sessionId}`
+            ].join('\n'),
+            suggestedActions: [
+                {
+                    id: 'inspect_merge',
+                    label: 'Inspect merge',
+                    description: 'Review the linked worktree/session before deciding how to proceed.',
+                    recommended: true
+                },
+                {
+                    id: 'dismiss',
+                    label: 'Dismiss',
+                    description: 'Leave the blocked task unchanged and close this assistant intervention.'
+                }
+            ]
+        })
+        if (intervention) {
+            emitSessionAdded({
+                engine: options.engine,
+                namespace: options.namespace,
+                projectId: blocked.projectId,
+                sessionId: intervention.session.id
+            })
+        }
+    }
+    return blocked
 }
 
 function mergeStateCanMerge(result: RpcGitMergeWorktreeStateResponse): boolean {

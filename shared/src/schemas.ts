@@ -82,6 +82,37 @@ export type WorktreeMetadata = z.infer<typeof WorktreeMetadataSchema>
 export const HopiTaskRoleSchema = z.enum(['planner', 'generator', 'evaluator', 'radar'])
 export type HopiTaskRole = z.infer<typeof HopiTaskRoleSchema>
 
+export const ProjectAssistantSessionKindSchema = z.enum(['normal', 'intervention'])
+export type ProjectAssistantSessionKind = z.infer<typeof ProjectAssistantSessionKindSchema>
+
+export const ProjectAssistantInterventionKindSchema = z.enum([
+    'decision_needed',
+    'task_blocked',
+    'merge_blocked',
+    'permission_required',
+    'milestone_review',
+    'clarification_needed'
+])
+export type ProjectAssistantInterventionKind = z.infer<typeof ProjectAssistantInterventionKindSchema>
+
+export const ProjectAssistantInterventionStatusSchema = z.enum(['pending', 'resolved', 'dismissed'])
+export type ProjectAssistantInterventionStatus = z.infer<typeof ProjectAssistantInterventionStatusSchema>
+
+export const ProjectAssistantSuggestedActionSchema = z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().optional(),
+    recommended: z.boolean().optional()
+})
+export type ProjectAssistantSuggestedAction = z.infer<typeof ProjectAssistantSuggestedActionSchema>
+
+export const ProjectAssistantInterventionResolutionSchema = z.object({
+    actionId: z.string().min(1).nullable(),
+    note: z.string().nullable(),
+    resolvedAt: z.number().int().nonnegative()
+})
+export type ProjectAssistantInterventionResolution = z.infer<typeof ProjectAssistantInterventionResolutionSchema>
+
 export const AutomationLaneSchema = HopiTaskRoleSchema
 export type AutomationLane = HopiTaskRole
 
@@ -150,8 +181,16 @@ export const MetadataSchema = z.object({
     summary: MetadataSummarySchema.optional(),
     machineId: z.string().optional(),
     projectId: z.string().optional(),
+    goalId: z.string().optional(),
     taskId: z.string().optional(),
     hopiTaskRole: HopiTaskRoleSchema.optional(),
+    hopiAssistant: z.boolean().optional(),
+    assistantKind: ProjectAssistantSessionKindSchema.optional(),
+    interventionKind: ProjectAssistantInterventionKindSchema.optional(),
+    interventionStatus: ProjectAssistantInterventionStatusSchema.optional(),
+    interventionKey: z.string().optional(),
+    suggestedActions: z.array(ProjectAssistantSuggestedActionSchema).optional(),
+    interventionResolution: ProjectAssistantInterventionResolutionSchema.optional(),
     claudeSessionId: z.string().optional(),
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),

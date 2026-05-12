@@ -21,6 +21,14 @@ import type {
     ModelMode,
     PermissionMode,
     ProjectAutomationVerificationResponse,
+    ProjectAssistantMailResponse,
+    ProjectAssistantPlannerMailKind,
+    ProjectAssistantPreferenceAutonomy,
+    ProjectAssistantPreferenceCategory,
+    ProjectAssistantPreferenceResponse,
+    ProjectAssistantResolveResponse,
+    ProjectAssistantSessionResponse,
+    ProjectAssistantSessionsResponse,
     ProjectResponse,
     ProjectsResponse,
     PushSubscriptionPayload,
@@ -324,6 +332,74 @@ export class ApiClient {
             method: 'POST',
             body: JSON.stringify({})
         })
+    }
+
+    async listProjectAssistantSessions(projectId: string, options?: { goalId?: string | null }): Promise<ProjectAssistantSessionsResponse> {
+        const params = new URLSearchParams()
+        if (options?.goalId) {
+            params.set('goalId', options.goalId)
+        }
+        const qs = params.toString()
+        return await this.request<ProjectAssistantSessionsResponse>(
+            `/api/projects/${encodeURIComponent(projectId)}/assistant-sessions${qs ? `?${qs}` : ''}`
+        )
+    }
+
+    async ensureProjectAssistantSession(projectId: string, payload: {
+        kind: 'normal'
+        goalId?: string | null
+    }): Promise<ProjectAssistantSessionResponse> {
+        return await this.request<ProjectAssistantSessionResponse>(`/api/projects/${encodeURIComponent(projectId)}/assistant-sessions`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async sendProjectAssistantPlannerMail(projectId: string, payload: {
+        goalId: string
+        kind: ProjectAssistantPlannerMailKind
+        body: string
+        source: {
+            sessionId: string
+            messageId: string
+            quote?: string
+        }
+    }): Promise<ProjectAssistantMailResponse> {
+        return await this.request<ProjectAssistantMailResponse>(`/api/projects/${encodeURIComponent(projectId)}/assistant-mail`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async setProjectAssistantPreference(projectId: string, payload: {
+        goalId: string
+        category: ProjectAssistantPreferenceCategory
+        autonomy: ProjectAssistantPreferenceAutonomy
+        instruction: string
+        source: {
+            sessionId: string
+            messageId: string
+            quote?: string
+        }
+    }): Promise<ProjectAssistantPreferenceResponse> {
+        return await this.request<ProjectAssistantPreferenceResponse>(`/api/projects/${encodeURIComponent(projectId)}/assistant-preferences`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async resolveProjectAssistantIntervention(projectId: string, sessionId: string, payload: {
+        status: 'resolved' | 'dismissed'
+        actionId?: string | null
+        note?: string | null
+    }): Promise<ProjectAssistantResolveResponse> {
+        return await this.request<ProjectAssistantResolveResponse>(
+            `/api/projects/${encodeURIComponent(projectId)}/assistant-interventions/${encodeURIComponent(sessionId)}/resolve`,
+            {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            }
+        )
     }
 
     async listProjectGoals(projectId: string): Promise<GoalsResponse> {

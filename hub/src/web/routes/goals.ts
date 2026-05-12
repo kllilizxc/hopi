@@ -8,6 +8,7 @@ import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHand
 import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
 import { buildGoalDocsImportPreview, importGoalDocs } from '../../sync/goals/goalDocsImport'
 import { readGoalTodo } from '../../sync/goals/goalTodo'
+import { tryCreateProjectAssistantIntervention } from '../../sync/projectAssistant'
 import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
@@ -81,6 +82,21 @@ function emitTaskUpdated(options: {
         projectId: options.projectId,
         namespace: options.namespace,
         data: { taskId: options.taskId }
+    })
+}
+
+function emitSessionAdded(options: {
+    engine: SyncEngine | null
+    projectId: string
+    namespace: string
+    sessionId: string
+}): void {
+    options.engine?.handleRealtimeEvent({
+        type: 'session-added',
+        sessionId: options.sessionId,
+        projectId: options.projectId,
+        namespace: options.namespace,
+        data: { sessionId: options.sessionId }
     })
 }
 
@@ -505,6 +521,46 @@ export function createGoalsRoutes(options: {
         })
 
         const engine = options.getSyncEngine()
+        if (topic.blocking) {
+            const intervention = tryCreateProjectAssistantIntervention({
+                store: options.store,
+                namespace,
+                projectId: goal.projectId,
+                goalId,
+                taskId: topic.taskId,
+                interventionKey: `decision-topic:${topic.id}`,
+                interventionKind: 'decision_needed',
+                title: topic.title,
+                body: [
+                    'A blocking goal decision topic needs user input.',
+                    '',
+                    topic.body,
+                    '',
+                    topic.taskId ? `Task: ${topic.taskId}` : `Goal: ${goal.title}`
+                ].join('\n'),
+                suggestedActions: [
+                    {
+                        id: 'answer_decision',
+                        label: 'Answer decision',
+                        description: 'Provide the decision so planning or execution can continue.',
+                        recommended: true
+                    },
+                    {
+                        id: 'dismiss',
+                        label: 'Dismiss',
+                        description: 'Leave the workflow state unchanged and close this assistant intervention.'
+                    }
+                ]
+            })
+            if (intervention) {
+                emitSessionAdded({
+                    engine,
+                    projectId: goal.projectId,
+                    namespace,
+                    sessionId: intervention.session.id
+                })
+            }
+        }
         if (topic.blocking && topic.taskId) {
             const task = options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
             if (task && task.status !== 'finished' && task.status !== 'blocked') {

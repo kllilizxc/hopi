@@ -7,6 +7,18 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
+import {
+    ensureProjectAssistantSession,
+    listProjectAssistantSessions,
+    resolveProjectAssistantIntervention,
+    sendProjectAssistantPlannerMail,
+    setProjectAssistantGoalPreference
+} from '../../sync/projectAssistant'
+import {
+    GoalPreferenceAutonomySchema,
+    GoalPreferenceCategorySchema,
+    PlannerMailKindSchema
+} from '../../sync/operator/operatorDocs'
 import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
 import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -63,6 +75,38 @@ const listQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional()
 })
 
+const assistantSessionBodySchema = z.object({
+    kind: z.literal('normal').optional().default('normal'),
+    goalId: z.string().min(1).nullable().optional()
+})
+
+const operatorSourceBodySchema = z.object({
+    sessionId: z.string().min(1),
+    messageId: z.string().min(1),
+    quote: z.string().optional()
+})
+
+const assistantMailBodySchema = z.object({
+    goalId: z.string().min(1),
+    kind: PlannerMailKindSchema,
+    body: z.string().trim().min(1).max(20_000),
+    source: operatorSourceBodySchema
+})
+
+const assistantPreferenceBodySchema = z.object({
+    goalId: z.string().min(1),
+    category: GoalPreferenceCategorySchema,
+    autonomy: GoalPreferenceAutonomySchema,
+    instruction: z.string().trim().min(1).max(20_000),
+    source: operatorSourceBodySchema
+})
+
+const resolveInterventionBodySchema = z.object({
+    status: z.enum(['resolved', 'dismissed']),
+    actionId: z.string().min(1).nullable().optional(),
+    note: z.string().max(20_000).nullable().optional()
+})
+
 function hasProjectHistory(store: Store, options: { projectId: string; namespace: string }): boolean {
     const tasks = store.tasks.listTasksByProjectAndNamespace(options.projectId, options.namespace, { includeArchived: true })
     const hasMeaningfulTaskHistory = tasks.some((task) => {
@@ -86,6 +130,10 @@ function hasProjectHistory(store: Store, options: { projectId: string; namespace
         }
         return (metadata as { projectId?: unknown }).projectId === options.projectId
     })
+}
+
+function projectExists(store: Store, projectId: string, namespace: string): boolean {
+    return Boolean(store.projects.getProjectByNamespace(projectId, namespace))
 }
 
 function buildProjectInitTaskDescription(options: {
@@ -214,12 +262,13 @@ export function createProjectsRoutes(options: {
 
         const createdWorkspaces: StoredWorkspace[] = []
         try {
-            for (const workspace of normalizedWorkspaces) {
+            for (const [index, workspace] of normalizedWorkspaces.entries()) {
                 createdWorkspaces.push(options.store.workspaces.createWorkspace({
                     id: randomUUID(),
                     projectId,
                     path: workspace.path,
-                    label: workspace.label
+                    label: workspace.label,
+                    sort: index
                 }))
             }
         } catch (error) {
@@ -293,6 +342,161 @@ export function createProjectsRoutes(options: {
                 worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
             }
         })
+    })
+
+    app.get('/projects/:projectId/assistant-sessions', (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        if (!projectExists(options.store, projectId, namespace)) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const goalId = c.req.query('goalId') ?? null
+        return c.json(listProjectAssistantSessions({
+            store: options.store,
+            namespace,
+            projectId,
+            goalId
+        }))
+    })
+
+    app.post('/projects/:projectId/assistant-sessions', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const body = await c.req.json().catch(() => null)
+        const parsed = assistantSessionBodySchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const result = ensureProjectAssistantSession({
+                store: options.store,
+                namespace,
+                projectId,
+                goalId: parsed.data.goalId ?? null,
+                kind: parsed.data.kind
+            })
+            const list = listProjectAssistantSessions({
+                store: options.store,
+                namespace,
+                projectId
+            })
+            const summary = list.sessions.find((session) => session.id === result.session.id)
+            const engine = options.getSyncEngine()
+            engine?.handleRealtimeEvent({
+                type: 'session-added',
+                sessionId: result.session.id,
+                projectId,
+                namespace,
+                data: summary ?? result.session
+            })
+            return c.json({ session: summary ?? result.session })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to create assistant session'
+            return c.json({ error: message }, message.includes('not found') ? 404 : 400)
+        }
+    })
+
+    app.post('/projects/:projectId/assistant-mail', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const body = await c.req.json().catch(() => null)
+        const parsed = assistantMailBodySchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const mail = sendProjectAssistantPlannerMail({
+                store: options.store,
+                namespace,
+                projectId,
+                goalId: parsed.data.goalId,
+                kind: parsed.data.kind,
+                body: parsed.data.body,
+                source: parsed.data.source
+            })
+            options.getSyncEngine()?.handleRealtimeEvent({
+                type: 'project-updated',
+                projectId,
+                namespace,
+                data: { assistantMail: mail.id, goalId: parsed.data.goalId }
+            })
+            return c.json({ mail })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to write planner mail'
+            return c.json({ error: message }, message.includes('not found') ? 404 : 400)
+        }
+    })
+
+    app.post('/projects/:projectId/assistant-preferences', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const body = await c.req.json().catch(() => null)
+        const parsed = assistantPreferenceBodySchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        try {
+            const preference = setProjectAssistantGoalPreference({
+                store: options.store,
+                namespace,
+                projectId,
+                goalId: parsed.data.goalId,
+                category: parsed.data.category,
+                autonomy: parsed.data.autonomy,
+                instruction: parsed.data.instruction,
+                source: parsed.data.source
+            })
+            options.getSyncEngine()?.handleRealtimeEvent({
+                type: 'project-updated',
+                projectId,
+                namespace,
+                data: { assistantPreference: preference.id, goalId: parsed.data.goalId }
+            })
+            return c.json({ preference })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to write goal preference'
+            return c.json({ error: message }, message.includes('not found') ? 404 : 400)
+        }
+    })
+
+    app.post('/projects/:projectId/assistant-interventions/:sessionId/resolve', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const sessionId = c.req.param('sessionId')
+        const body = await c.req.json().catch(() => null)
+        const parsed = resolveInterventionBodySchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        if (!projectExists(options.store, projectId, namespace)) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const session = resolveProjectAssistantIntervention({
+            store: options.store,
+            namespace,
+            sessionId,
+            projectId,
+            status: parsed.data.status,
+            actionId: parsed.data.actionId ?? null,
+            note: parsed.data.note ?? null
+        })
+        if (!session) {
+            return c.json({ error: 'Intervention session not found' }, 404)
+        }
+
+        options.getSyncEngine()?.handleRealtimeEvent({
+            type: 'session-updated',
+            sessionId,
+            projectId,
+            namespace,
+            data: session
+        })
+        return c.json({ session })
     })
 
     app.patch('/projects/:projectId', async (c) => {

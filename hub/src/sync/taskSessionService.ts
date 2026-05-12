@@ -6,7 +6,7 @@ import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { TaskSessionStartFailure, TaskSessionStartFailureCode, TaskSessionStartRetryAction } from '@hopi/protocol/task-session-start'
 import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 import { z } from 'zod'
-import type { Store, StoredMessage, StoredTask } from '../store'
+import type { Store, StoredMessage, StoredProject, StoredTask } from '../store'
 import {
     buildRepeatedTaskActionFailureNote,
     buildTaskActionCommandReportLines,
@@ -16,6 +16,7 @@ import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/tas
 import type { SyncEngine } from './syncEngine'
 import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
 import { buildAgentOutputLanguageSection, resolveAgentOutputLocale } from './agentOutputLanguage'
+import { readGoalOperatorDocs } from './operator/operatorDocs'
 import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type SessionRootPathLike } from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
@@ -402,6 +403,7 @@ function resolveWorkflowKickoff(options: {
     task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>
     kickoff: StartSessionKickoffOptions
     agentOutputLocale?: string
+    operatorDocsSection?: string
 }): StartSessionKickoffOptions {
     if (options.kickoff.kind === 'skip' || options.kickoff.kind === 'custom') {
         return options.kickoff
@@ -428,7 +430,10 @@ function resolveWorkflowKickoff(options: {
 
     return {
         kind: 'custom',
-        text: `${buildTaskKickoffSummary(options.task, { agentOutputLocale: options.agentOutputLocale })}
+        text: `${buildTaskKickoffSummary(options.task, {
+            agentOutputLocale: options.agentOutputLocale,
+            operatorDocsSection: options.operatorDocsSection
+        })}
 
 ${guidance}`,
         localId: `${AUTO_WORKFLOW_LOCAL_ID_PREFIX}${options.task.id}:${Date.now()}`,
@@ -465,6 +470,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
             '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref.',
+            '- update_planner_mail_status: mark goal operator/planner-mail.yml entries as included, resolved, or dismissed after you have incorporated or triaged them.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
@@ -595,9 +601,59 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
     ].join('\n')
 }
 
+function buildGoalOperatorDocsSection(options: {
+    store: Store
+    project: StoredProject
+    task: Pick<StoredTask, 'goalId' | 'source' | 'status'>
+}): string {
+    const goalId = (options.task.goalId ?? '').trim()
+    if (!goalId) {
+        return ''
+    }
+    const goal = options.store.goals.getGoalByNamespace(goalId, options.project.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return ''
+    }
+    const workspace = options.project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(options.project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(options.project.id)[0] ?? null
+    if (!workspace) {
+        return ''
+    }
+
+    const docs = readGoalOperatorDocs({
+        workspacePath: workspace.path,
+        goalKey: goal.goalKey
+    })
+    const activePolicies = docs.preferences.policies.filter((policy) => policy.archivedAt === null)
+    const role = getGoalTaskRole(options.task)
+    const plannerMail = role === 'Planner'
+        ? docs.mail.mail.filter((item) => item.status === 'unread' || item.status === 'included')
+        : []
+
+    if (activePolicies.length === 0 && plannerMail.length === 0) {
+        return ''
+    }
+
+    const lines = ['', '', 'Goal Operator Docs']
+    if (activePolicies.length > 0) {
+        lines.push('', 'Goal Preferences:')
+        for (const policy of activePolicies) {
+            lines.push(`- [${policy.category}; ${policy.autonomy}] ${policy.instruction}`)
+        }
+    }
+    if (plannerMail.length > 0) {
+        lines.push('', 'Planner Mail:')
+        for (const item of plannerMail) {
+            lines.push(`- [${item.status}; ${item.kind}; ${item.id}] ${item.body}`)
+        }
+    }
+    return lines.join('\n')
+}
+
 function buildTaskKickoffSummary(
     task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>,
-    options?: { agentOutputLocale?: string }
+    options?: { agentOutputLocale?: string; operatorDocsSection?: string }
 ): string {
     const taskId = (task.id ?? '').trim()
     const title = (task.title ?? '').trim()
@@ -648,7 +704,8 @@ function buildTaskKickoffSummary(
         : role === 'Evaluator'
             ? '\n\nEvidence Packet:\n- None recorded yet.'
             : ''
-    const contextSections = `${taskMetadataSection}${goalSection}${roleSection}${contractSection}${handoffSection}${evidenceSection}`
+    const operatorDocsSection = options?.operatorDocsSection ?? ''
+    const contextSections = `${taskMetadataSection}${goalSection}${roleSection}${operatorDocsSection}${contractSection}${handoffSection}${evidenceSection}`
 
     const languageSection = options?.agentOutputLocale
         ? buildAgentOutputLanguageSection(options.agentOutputLocale)
@@ -1323,10 +1380,16 @@ async function continueTaskInLinkedSessionInternal(options: {
         agentOutputLanguage: project.agentOutputLanguage,
         session: linkedSession
     })
+    const operatorDocsSection = buildGoalOperatorDocsSection({
+        store: options.store,
+        project,
+        task
+    })
     const kickoff = resolveWorkflowKickoff({
         task,
         kickoff: { kind: 'default' },
-        agentOutputLocale
+        agentOutputLocale,
+        operatorDocsSection
     })
     const kickoffText = (() => {
         if (kickoff.kind === 'skip') {
@@ -1335,7 +1398,7 @@ async function continueTaskInLinkedSessionInternal(options: {
         if (kickoff.kind === 'custom') {
             return normalizeText(kickoff.text)
         }
-        return buildTaskKickoffSummary(task, { agentOutputLocale })
+        return buildTaskKickoffSummary(task, { agentOutputLocale, operatorDocsSection })
     })()
 
     if (kickoffText) {
@@ -1682,7 +1745,17 @@ async function startSessionFromTaskInternal(options: {
         agentOutputLanguage: project.agentOutputLanguage,
         session: runtimeSession
     })
-    const kickoff = resolveWorkflowKickoff({ task, kickoff: requestedKickoff, agentOutputLocale })
+    const operatorDocsSection = buildGoalOperatorDocsSection({
+        store: options.store,
+        project,
+        task
+    })
+    const kickoff = resolveWorkflowKickoff({
+        task,
+        kickoff: requestedKickoff,
+        agentOutputLocale,
+        operatorDocsSection
+    })
     const initScriptCwdCandidates = resolveSessionRootPathCandidates({
         session: runtimeSession ?? {},
         workspacePath: workspace.path
@@ -2033,7 +2106,7 @@ async function startSessionFromTaskInternal(options: {
                 return `${baseKickoff}${historySection}`
             }
 
-            const baseKickoff = buildTaskKickoffSummary(updatedTask, { agentOutputLocale })
+            const baseKickoff = buildTaskKickoffSummary(updatedTask, { agentOutputLocale, operatorDocsSection })
 
             if (!previousSessionId || previousSessionId === spawn.sessionId || updatedTask.goalId) {
                 return baseKickoff

@@ -153,4 +153,22 @@ describe('ProjectKanbanBoard', () => {
         expect(subTaskPanel!).not.toHaveClass('app-shadow-border')
         expect(subTaskPanel!).toHaveClass('app-shadow-control')
     })
+
+    it('does not crash when persisted task data has a legacy status', () => {
+        mocks.tasks = [createTask({
+            id: 'task-legacy-ready',
+            status: 'ready' as unknown as Task['status'],
+            title: 'Legacy ready task'
+        })]
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('Legacy ready task')).toBeInTheDocument()
+    })
 })

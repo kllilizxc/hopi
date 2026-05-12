@@ -137,6 +137,22 @@ function isLikelyCodeFragment(value: string): boolean {
     )
 }
 
+function isLikelyTypeArgumentClose(source: string, index: number): boolean {
+    const lineStart = source.lastIndexOf('\n', index) + 1
+    const linePrefix = source.slice(lineStart, index)
+    const openIndex = linePrefix.lastIndexOf('<')
+    if (openIndex === -1) return false
+
+    const beforeOpen = linePrefix.slice(0, openIndex).trimEnd()
+    const owner = beforeOpen.match(/([A-Za-z_$][\w$]*)$/)?.[1] ?? ''
+    if (!owner) return false
+
+    return owner === 'Array'
+        || owner === 'ReadonlyArray'
+        || owner === 'Record'
+        || /^[A-Z]/.test(owner)
+}
+
 function shouldReportText(value: string): boolean {
     const normalized = value.trim()
     if (!normalized) return false
@@ -201,7 +217,9 @@ function findViolations(filePath: string): Violation[] {
     for (const match of source.matchAll(JSX_TEXT_PATTERN)) {
         const rawText = match[1] ?? ''
         if (!rawText) continue
-        addViolation(violations, source, starts, filePath, 'jsx-text', 'text', rawText, match.index ?? 0)
+        const index = match.index ?? 0
+        if (isLikelyTypeArgumentClose(source, index)) continue
+        addViolation(violations, source, starts, filePath, 'jsx-text', 'text', rawText, index)
     }
 
     const deduped = new Map<string, Violation>()

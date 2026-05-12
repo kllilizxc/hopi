@@ -946,6 +946,49 @@ export class Store {
         if (SCHEMA_VERSION >= 29) {
             this.migrateFromV28ToV29()
         }
+        this.normalizeTaskStatusValues()
+    }
+
+    private normalizeTaskStatusValues(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (!taskColumns.has('status')) {
+            return
+        }
+
+        this.db.exec(`
+            UPDATE tasks
+            SET status = 'planned'
+            WHERE status IN ('new', 'ready', 'candidate', 'promoted', 'deferred')
+        `)
+        this.db.exec(`
+            UPDATE tasks
+            SET status = 'finished'
+            WHERE status = 'done'
+        `)
+
+        const knownStatuses = "('planned', 'in_progress', 'in_review', 'blocked', 'finished')"
+        if (
+            taskColumns.has('blocked_reason')
+            && taskColumns.has('blocked_source')
+            && taskColumns.has('blocked_at')
+            && taskColumns.has('updated_at')
+        ) {
+            this.db.exec(`
+                UPDATE tasks
+                SET blocked_reason = COALESCE(blocked_reason, 'Task had an invalid persisted status and was moved to blocked.'),
+                    blocked_source = COALESCE(blocked_source, 'migration'),
+                    blocked_at = COALESCE(blocked_at, updated_at),
+                    status = 'blocked'
+                WHERE status NOT IN ${knownStatuses}
+            `)
+            return
+        }
+
+        this.db.exec(`
+            UPDATE tasks
+            SET status = 'blocked'
+            WHERE status NOT IN ${knownStatuses}
+        `)
     }
 
     private migrateFromV4ToV5(): void {

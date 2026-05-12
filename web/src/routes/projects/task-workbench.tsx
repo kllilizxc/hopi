@@ -1235,8 +1235,8 @@ function TaskDetailsPanel(props: {
         const base = props.workflowStrategies.length > 0
             ? props.workflowStrategies
             : [
-                { id: 'default', label: 'Default', defaultTaskPhase: null, phaseOptions: [] },
-                { id: 'gsd', label: 'GSD', defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
+                { id: 'default', label: t('projects.automation.workflowDefault'), defaultTaskPhase: null, phaseOptions: [] },
+                { id: 'gsd', label: t('projects.automation.workflowGsd'), defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
             ]
 
         const options = base.map((strategy) => ({
@@ -1866,14 +1866,14 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
             if (normalizedProfile === 'gsd') {
                 return {
                     id: 'gsd',
-                    label: 'GSD',
+                    label: t('projects.automation.workflowGsd'),
                     defaultTaskPhase: 'discuss',
                     phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done']
                 }
             }
             return {
                 id: 'default',
-                label: 'Default',
+                label: t('projects.automation.workflowDefault'),
                 defaultTaskPhase: null,
                 phaseOptions: []
             }
@@ -1881,7 +1881,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         return workflowStrategies.find((strategy) => strategy.id === normalizedProfile)
             ?? workflowStrategies.find((strategy) => strategy.id === 'default')
             ?? null
-    }, [task?.workflowProfile, workflowStrategies])
+    }, [t, task?.workflowProfile, workflowStrategies])
 
     if (taskLoading || (shouldResolveWorkbenchSessions && sessionsLoading) || (shouldLoadTaskDetails && (projectLoading || workspacesLoading))) {
         return (

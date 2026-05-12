@@ -206,8 +206,8 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
         const base = props.workflowStrategies.length > 0
             ? props.workflowStrategies
             : [
-                { id: 'default', label: 'Default', defaultTaskPhase: null, phaseOptions: [] },
-                { id: 'gsd', label: 'GSD', defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
+                { id: 'default', label: t('projects.automation.workflowDefault'), defaultTaskPhase: null, phaseOptions: [] },
+                { id: 'gsd', label: t('projects.automation.workflowGsd'), defaultTaskPhase: 'discuss', phaseOptions: ['discuss', 'plan', 'execute_ready', 'execute', 'verify', 'done'] }
             ]
 
         const options = base.map((strategy) => ({

@@ -126,8 +126,8 @@ function saveCollapsedColumnsToStorage(collapsedColumns: Record<TaskStatus, bool
     }
 }
 
-function asTaskStatus(value: string | undefined): TaskStatus | null {
-    if (!value) return null
+function asTaskStatus(value: unknown): TaskStatus | null {
+    if (typeof value !== 'string') return null
     if (TASK_STATUS_VALUES.includes(value as TaskStatus)) {
         return value as TaskStatus
     }
@@ -266,6 +266,10 @@ type KanbanDerivedState = {
     columns: KanbanColumnsByStatus
 }
 
+function getKanbanTaskStatus(task: Task): TaskStatus {
+    return asTaskStatus(task.status) ?? 'blocked'
+}
+
 function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
     const grouped: KanbanColumnsByStatus = {
         planned: [],
@@ -275,7 +279,7 @@ function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
         finished: []
     }
     for (const task of tasks) {
-        grouped[task.status].push(task)
+        grouped[getKanbanTaskStatus(task)].push(task)
     }
     return {
         planned: sortTasksInColumn(grouped.planned),
@@ -363,6 +367,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
 
     const isGeneratedPending = props.task.source === 'improvements_scan'
     const isCreatingTask = isOptimisticTaskId(props.task.id)
+    const taskStatus = getKanbanTaskStatus(props.task)
     const cardAgentFlavor: AgentType = (props.task.agentFlavor as AgentType | null) ?? props.defaultTaskAgent
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
@@ -400,7 +405,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         return
                     }
                     event.dataTransfer.setData('text/plain', props.task.id)
-                    props.onStartDrag(props.task.id, props.task.status, props.index)
+                    props.onStartDrag(props.task.id, taskStatus, props.index)
                 }}
                 onDragEnd={props.onEndDrag}
                 onDragOver={(event) => {
@@ -529,7 +534,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     </div>
                     <AdaptiveSelect
                         title={t('projects.tasks.moveTo')}
-                        value={props.task.status}
+                        value={taskStatus}
                         options={props.moveOptions}
                         onValueChange={(value) => {
                             if (isCreatingTask) return
@@ -706,7 +711,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
         const task = currentState.tasksById.get(taskId)
         if (!task) return
 
-        const fromStatus = task.status
+        const fromStatus = getKanbanTaskStatus(task)
         const fromList = currentState.columns[fromStatus]
         const toList = currentState.columns[toStatus]
         const fromIndex = fromList.findIndex((t) => t.id === taskId)
@@ -985,7 +990,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             if (!state) return
             if (state.touchId !== touchId) return
             state.dragStarted = true
-            beginTouchDrag(task.id, task.status, touchId, { status: columnStatus, index })
+            beginTouchDrag(task.id, getKanbanTaskStatus(task), touchId, { status: columnStatus, index })
         }, 180)
 
         touchDragRef.current = {
@@ -1172,7 +1177,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                                     isDragging={draggingTaskId === task.id}
                                                     isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
                                                     defaultTaskAgent={defaultTaskAgent}
-                                                    moveOptions={moveOptionsByStatus[task.status]}
+                                                    moveOptions={moveOptionsByStatus[getKanbanTaskStatus(task)]}
                                                     onStartDrag={handleTaskDragStart}
                                                     onEndDrag={handleTaskDragEnd}
                                                     onHoverDropTarget={handleTaskDropHover}

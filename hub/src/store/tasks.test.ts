@@ -1,7 +1,43 @@
 import { describe, expect, it } from 'bun:test'
+import { rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Store } from './index'
 
 describe('Task store worktree merge fields', () => {
+    it('normalizes legacy persisted task statuses during startup', () => {
+        const dbPath = join(tmpdir(), `hopi-legacy-task-status-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        const store = new Store(dbPath)
+        store.projects.createProject({
+            id: 'project-legacy-status',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.tasks.createTask({
+            id: 'task-legacy-ready-status',
+            projectId: 'project-legacy-status',
+            title: 'Legacy ready status',
+            status: 'planned',
+            workflowProfile: 'default'
+        })
+        ;(store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown }, close: () => void } })
+            .db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?")
+            .run('task-legacy-ready-status')
+        ;(store as unknown as { db: { close: () => void } }).db.close()
+
+        try {
+            const reopened = new Store(dbPath)
+            const task = reopened.tasks.getTaskByNamespace('task-legacy-ready-status', 'default')
+            expect(task?.status).toBe('planned')
+            ;(reopened as unknown as { db: { close: () => void } }).db.close()
+        } finally {
+            rmSync(dbPath, { force: true })
+            rmSync(`${dbPath}-wal`, { force: true })
+            rmSync(`${dbPath}-shm`, { force: true })
+        }
+    })
+
     it('clears merge markers when active session changes', () => {
         const store = new Store(':memory:')
         store.projects.createProject({

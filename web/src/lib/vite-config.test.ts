@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveHubUrl, resolveHopiDataDir } from '../../vite.config'
+import { resolveHubUrl, resolveHopiDataDir } from '../../vite.config.helpers'
 
 describe('vite dev hub proxy config', () => {
     it('uses the persisted hub listen port when no hub env override is set', () => {

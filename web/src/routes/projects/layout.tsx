@@ -25,6 +25,7 @@ import { useCreateTask } from '@/hooks/mutations/useCreateTask'
 import { useGoalAutomationControl } from '@/hooks/mutations/useGoalAutomationControl'
 import { useStartTaskSession } from '@/hooks/mutations/useStartTaskSession'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
+import { useProjectAssistantSessions } from '@/hooks/queries/useProjectAssistantSessions'
 import { useRecentProjects } from '@/hooks/useRecentProjects'
 import { useRecentProjectTabs } from '@/hooks/useRecentProjectTabs'
 import { ProjectKanbanBoard } from '@/routes/projects/kanban'
@@ -32,6 +33,7 @@ import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
 import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
+import { ProjectAssistantPage } from '@/routes/projects/project-assistant'
 import { useSelectedProjectGoal } from '@/routes/projects/selected-goal-storage'
 import type { AgentType } from '@/components/NewSession/types'
 
@@ -200,6 +202,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
     const { project } = useProject(api, props.projectId)
+    const { pendingCount: assistantPendingCount } = useProjectAssistantSessions(api, props.projectId)
     const { projects } = useProjects(api, { includeArchived: false })
     const {
         pauseGoalAutomation,
@@ -208,7 +211,9 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     } = useGoalAutomationControl(api)
     const { recentProjectIds, markProjectUsed } = useRecentProjects()
     const planningMatch = matchRoute({ to: '/projects/$projectId/planning' })
+    const assistantMatch = matchRoute({ to: '/projects/$projectId/assistant' })
     const isPlanningRoute = Boolean(planningMatch && planningMatch.projectId === props.projectId)
+    const isAssistantRoute = Boolean(assistantMatch && assistantMatch.projectId === props.projectId)
     const recentProjects = useRecentProjectTabs({
         projects,
         currentProjectId: props.projectId,
@@ -244,12 +249,23 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
             id: 'planning',
             label: t('projects.tabs.planning'),
             title: t('projects.tabs.planning')
+        },
+        {
+            id: 'assistant',
+            label: assistantPendingCount > 0
+                ? `${t('projects.tabs.assistant')} (${assistantPendingCount})`
+                : t('projects.tabs.assistant'),
+            title: t('projects.tabs.assistant')
         }
-    ], [t])
+    ], [assistantPendingCount, t])
 
     const handleProjectViewTab = useCallback((tabId: string) => {
         if (tabId === 'planning') {
             void navigate({ to: '/projects/$projectId/planning', params: { projectId: props.projectId } })
+            return
+        }
+        if (tabId === 'assistant') {
+            void navigate({ to: '/projects/$projectId/assistant', params: { projectId: props.projectId } })
             return
         }
 
@@ -335,7 +351,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 leading={(
                     <CompactTabs
                         items={projectViewTabs}
-                        selectedId={isPlanningRoute ? 'planning' : 'board'}
+                        selectedId={isAssistantRoute ? 'assistant' : isPlanningRoute ? 'planning' : 'board'}
                         onSelect={handleProjectViewTab}
                         ariaLabel={t('projects.tabs.label')}
                         distribution="equal"
@@ -344,7 +360,15 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 )}
             />
 
-            {isPlanningRoute ? (
+            {isAssistantRoute ? (
+                <div className="flex-1 min-h-0">
+                    <ProjectAssistantPage
+                        projectId={props.projectId}
+                        selectedGoalId={props.selectedGoalId}
+                        goals={props.goals}
+                    />
+                </div>
+            ) : isPlanningRoute ? (
                 <div className="flex-1 min-h-0">
                     <GoalPlanningPage
                         projectId={props.projectId}

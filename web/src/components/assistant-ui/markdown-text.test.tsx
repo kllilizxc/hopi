@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import type { ComponentPropsWithoutRef, ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { defaultComponents } from '@/components/assistant-ui/markdown-text'
+import { renderWithProviders } from '@/test/renderWithProviders'
 
 vi.mock('@assistant-ui/react-markdown', async importOriginal => {
     const actual = await importOriginal<typeof import('@assistant-ui/react-markdown')>()
@@ -19,7 +20,7 @@ describe('markdown text layout', () => {
         const Pre = defaultComponents.pre as ComponentType<ComponentPropsWithoutRef<'pre'>>
         const Code = defaultComponents.code as ComponentType<ComponentPropsWithoutRef<'code'>>
 
-        render(
+        renderWithProviders(
             <Pre>
                 <Code>
                     {'{"actions":[{"type":"update_current_task","status":"finished","evidence":"d252bb99-35c4-460e-b8ff-very-long-token"}]}'}
@@ -37,7 +38,7 @@ describe('markdown text layout', () => {
     it('renders ordinary list item content', () => {
         const ListItem = defaultComponents.li as ComponentType<ComponentPropsWithoutRef<'li'>>
 
-        render(
+        renderWithProviders(
             <ul>
                 <ListItem>Fill current kanban column target</ListItem>
             </ul>
@@ -52,7 +53,7 @@ describe('markdown text layout', () => {
     it('renders todo list items with compact checklist markers', () => {
         const ListItem = defaultComponents.li as ComponentType<ComponentPropsWithoutRef<'li'>>
 
-        render(
+        renderWithProviders(
             <ul>
                 <ListItem>
                     <input type="checkbox" checked />

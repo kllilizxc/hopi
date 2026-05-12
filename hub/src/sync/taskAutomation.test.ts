@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Store } from '../store'
+import { listProjectAssistantSessions } from './projectAssistant'
 import { TaskAutomation } from './taskAutomation'
 import type { SyncEngine } from './syncEngine'
 import { autoMergeAcceptedTask } from './taskAutoMerge'
@@ -1516,15 +1517,23 @@ describe('TaskAutomation', () => {
         const projectId = 'project-goal-evaluator-auto-merge-no-commits'
         const goalId = 'goal-evaluator-auto-merge-no-commits'
         const taskId = 'generator-task-auto-merge-no-commits'
+        const workspaceId = 'workspace-goal-evaluator-auto-merge-no-commits'
+        const workspacePath = createTempWorkspace()
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId: 'machine-1',
             name: 'Goal evaluator project',
+            defaultWorkspaceId: workspaceId,
             defaultSessionType: 'worktree',
             worktreeTargetBranch: 'main',
             worktreeCleanupAfterMerge: true
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -1642,6 +1651,19 @@ describe('TaskAutomation', () => {
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
         expect(accepted?.mergeRuntime?.blockedReason).toContain('No committed changes are waiting to merge')
+        const assistantSessions = listProjectAssistantSessions({
+            store,
+            namespace,
+            projectId
+        })
+        expect(assistantSessions.pendingCount).toBe(1)
+        expect(assistantSessions.sessions[0]).toMatchObject({
+            goalId,
+            taskId,
+            interventionKind: 'merge_blocked',
+            interventionStatus: 'pending',
+            pending: true
+        })
         expect(mergeCalls).toBe(0)
         expect(cleanupCalls).toBe(0)
         expect(archiveCalls).toBe(0)
