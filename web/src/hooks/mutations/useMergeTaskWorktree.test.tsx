@@ -15,7 +15,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         id: 'task-1',
         projectId: 'project-1',
         title: 'Merge runtime task',
-        status: 'in_review',
+        status: 'review',
         workflowProfile: 'default',
         activeSessionId: 'session-1',
         createdAt: 1,
@@ -85,7 +85,7 @@ describe('useMergeTaskWorktree', () => {
         })
 
         const cachedTask = queryClient.getQueryData<{ task: Task }>(queryKeys.task(task.id))?.task
-        expect(cachedTask?.status).toBe('in_review')
+        expect(cachedTask?.status).toBe('review')
         expect(cachedTask?.finishedAt).toBeUndefined()
         expect(cachedTask?.mergeRuntime?.status).toBe('running')
         expect(cachedTask?.mergeRuntime?.latestNote).toBe('Merge requested in the linked session.')
@@ -149,7 +149,7 @@ describe('useMergeTaskWorktree', () => {
         })
 
         const cachedTask = queryClient.getQueryData<{ task: Task }>(queryKeys.task(task.id))?.task
-        expect(cachedTask?.status).toBe('in_review')
+        expect(cachedTask?.status).toBe('review')
         expect(cachedTask?.finishedAt).toBeNull()
         expect(cachedTask?.mergeRuntime?.status).toBe('running')
         expect(cachedTask?.mergeRuntime?.blockedReason).toBeNull()

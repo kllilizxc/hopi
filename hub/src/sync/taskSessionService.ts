@@ -6,7 +6,7 @@ import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { TaskSessionStartFailure, TaskSessionStartFailureCode, TaskSessionStartRetryAction } from '@hopi/protocol/task-session-start'
 import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 import { z } from 'zod'
-import type { Store, StoredMessage, StoredTask } from '../store'
+import type { Store, StoredMessage, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import {
     buildRepeatedTaskActionFailureNote,
     buildTaskActionCommandReportLines,
@@ -20,6 +20,8 @@ import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
 import { getWorkflowStrategy } from './workflowStrategy'
+import { upsertGoalTodoTaskState, type GoalTodoStatus } from './goals/goalTodo'
+import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 
 function dataUrlToBase64(dataUrl: string): string {
     const comma = dataUrl.indexOf(',')
@@ -446,11 +448,55 @@ function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>)
 
     const source = (task.source ?? '').trim().toLowerCase()
     const status = (task.status ?? '').trim().toLowerCase()
-    if (status === 'in_review') return 'Evaluator'
+    if (status === 'review' || status === 'in_review') return 'Evaluator'
     if (source === 'planner') return 'Planner'
     if (source === 'radar') return 'Radar'
     if (source === 'evaluator') return 'Evaluator'
     return 'Generator'
+}
+
+function normalizeGoalTodoStatusForTask(status: string | null | undefined): GoalTodoStatus {
+    switch ((status ?? '').trim().toLowerCase()) {
+        case 'planning':
+        case 'planned':
+            return 'planning'
+        case 'running':
+        case 'in_progress':
+            return 'running'
+        case 'review':
+        case 'in_review':
+            return 'review'
+        case 'blocked':
+            return 'blocked'
+        case 'done':
+        case 'finished':
+            return 'done'
+        default:
+            return 'planning'
+    }
+}
+
+function defaultGoalTodoTagForStatus(status: GoalTodoStatus): string | null {
+    switch (status) {
+        case 'planning':
+            return 'ready'
+        case 'running':
+            return 'promoted'
+        case 'review':
+            return 'in_review'
+        case 'blocked':
+            return 'unknown'
+        case 'done':
+            return 'accepted'
+        case 'unknown':
+            return null
+    }
+}
+
+function getDefaultProjectWorkspace(store: Store, project: StoredProject): StoredWorkspace | null {
+    return project.defaultWorkspaceId
+        ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
 function toHopiTaskRole(role: GoalTaskRole | null): HopiTaskRole | undefined {
@@ -461,21 +507,21 @@ function toHopiTaskRole(role: GoalTaskRole | null): HopiTaskRole | undefined {
 }
 
 function buildGoalActionPacketSection(role: GoalTaskRole): string {
-    const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
+    const exampleStatus = role === 'Generator' ? 'review' : 'done'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
-            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref.',
+            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting an existing .hopi/docs/goals/<goalKey>/todo.yml item, set `id` to that item id.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
         ]
         : role === 'Evaluator'
             ? [
-                '- update_current_task: accept by moving to finished, or return to planned/blocked with concrete feedback.',
+                '- update_current_task: accept by moving to done, or return to planning/blocked with concrete feedback.',
                 '- create_decision_topic: ask for human approval or product clarification when needed.'
             ]
             : [
-                '- update_current_task: move completed work to in_review with handoff/evidence, or block with a concrete reason.',
+                '- update_current_task: move completed work to review with handoff/evidence, or block with a concrete reason.',
                 '- create_decision_topic: ask for human clarification when needed.'
             ]
 
@@ -484,13 +530,13 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
         '- If no HOPI state change is needed, omit the packet.',
-        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `ref`, `status`, `title`, optional `taskId`, and optional `body`.',
-        '- Todo item status values are ready, candidate, promoted, in_review, blocked, deferred, done. When creating a task from a todo item, keep its stable `ref` as todoRef.',
-        '- Task titles are user-visible text only. Do not prefix or include `ref`, `todoRef`, yaml keys, or ids in `title`.',
+        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `id`, `status`, `title`, optional `tag`, optional `body`, and optional `blocked.summary`.',
+        '- Todo item status values match Kanban: planning, running, review, blocked, done. Use tag for planning substate: ready, candidate, or deferred.',
+        '- Task titles are user-visible text only. Do not prefix or include ids or yaml keys in `title`.',
         '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
         ...commonActions,
         ...(role === 'Planner' || role === 'Radar'
-            ? ['- create_goal_task shape: { "type": "create_goal_task", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
+            ? ['- create_goal_task shape: { "type": "create_goal_task", "id": "existing-todo-id-optional", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
             : []),
         '- Finish with one fenced JSON block in this shape; add create_goal_task actions before update_current_task when needed:',
         'HOPI_ACTIONS:',
@@ -519,7 +565,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.md, and the current Goal kanban snapshot.',
             '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
-            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: promoted` and set its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
+            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: running`, keep its stable `id`, and set `tag: promoted`; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
             '',
             'Task creation quality bar:',
             '- Create tasks that a Generator can execute without re-planning the whole Goal.',
@@ -536,7 +582,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             '- Mark this Goal active or blocked, or update current focus when needed.',
             '- Do not mark the Goal paused, done, or archived; those are explicit human lifecycle actions.',
             '- Create one blocking human question when the Goal or task is unclear.',
-            '- Record handoff/evidence and move this planning task to blocked or finished.',
+            '- Record handoff/evidence and move this planning task to blocked or done.',
             buildGoalActionPacketSection(role)
         ].join('\n')
     }
@@ -550,11 +596,11 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
             '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
-            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
+            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its stable `id`; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
             '',
             'Allowed transitions:',
-            '- Record evidence and move accepted work to finished; HOPI will request the existing worktree merge flow before closing accepted work.',
-            '- Return incomplete work to planned or blocked with concrete feedback.',
+            '- Record evidence and move accepted work to done; HOPI will request the existing worktree merge flow before closing accepted work.',
+            '- Return incomplete work to planning or blocked with concrete feedback.',
             '- Create a DecisionTopic when human approval or product clarification is needed.',
             buildGoalActionPacketSection(role)
         ].join('\n')
@@ -573,7 +619,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Allowed transitions:',
             '- Update .hopi/docs/tech-debt.md and .hopi/docs/goals/<goalKey>/todo.yml with durable findings.',
             '- Create goal tasks only for small, verifiable, high-confidence maintenance tasks.',
-            '- Record evidence and finish or block this Radar task.',
+            '- Record evidence and mark this Radar task done or blocked.',
             buildGoalActionPacketSection(role)
         ].join('\n')
     }
@@ -588,7 +634,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
         '- Update durable behavior or architecture docs when lasting product knowledge changes; keep linked todo work promoted and do not mark it done before Evaluator acceptance.',
         '',
         'Allowed transitions:',
-        '- Record handoff/evidence and move complete work to in_review.',
+        '- Record handoff/evidence and move complete work to review.',
         '- Move unclear or impossible work to blocked.',
         '- Create a DecisionTopic when human clarification is required.',
         buildGoalActionPacketSection(role)
@@ -1287,7 +1333,7 @@ async function continueTaskInLinkedSessionInternal(options: {
         }
     }
 
-    if (task.status !== 'planned' || !task.goalId || !task.activeSessionId) {
+    if ((task.status !== 'planning' && task.status !== 'planned') || !task.goalId || !task.activeSessionId) {
         return null
     }
 
@@ -1349,10 +1395,10 @@ async function continueTaskInLinkedSessionInternal(options: {
     }
 
     const strategy = getWorkflowStrategy(task)
-    const workflowPatch = strategy.getTaskPatchForTransition('task_prompted', task) ?? { status: 'in_progress' }
+    const workflowPatch = strategy.getTaskPatchForTransition('task_prompted', task) ?? { status: 'running' }
     const updatedTask = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
         activeSessionId: linkedSession.id,
-        status: workflowPatch.status ?? 'in_progress',
+        status: workflowPatch.status ?? 'running',
         workflowPhase: workflowPatch.workflowPhase,
         initRuntime: buildTaskInitRuntime({
             task,
@@ -1370,6 +1416,27 @@ async function continueTaskInLinkedSessionInternal(options: {
                 code: 'task_not_found',
                 message: 'Task not found',
                 retryAvailable: false
+            })
+        }
+    }
+
+    if (updatedTask.goalId && updatedTask.goalTodoRef) {
+        const goal = options.store.goals.getGoalByNamespace(updatedTask.goalId, options.namespace)
+        if (goal && goal.projectId === project.id) {
+            const goalStatus = normalizeGoalTodoStatusForTask(updatedTask.status)
+            const defaultWorkspace = updatedTask.workspaceId
+                ? options.store.workspaces.getWorkspace(updatedTask.workspaceId)
+                : getDefaultProjectWorkspace(options.store, project)
+            upsertGoalTodoTaskState({
+                project,
+                goal,
+                defaultWorkspace,
+                taskId: updatedTask.goalTodoRef,
+                status: goalStatus,
+                tag: defaultGoalTodoTagForStatus(goalStatus),
+                title: updatedTask.title,
+                body: updatedTask.description,
+                blocked: null
             })
         }
     }
@@ -1500,7 +1567,7 @@ async function startSessionFromTaskInternal(options: {
     const isGsdWorkflow = workflowProfile === 'gsd'
     const isGsdNonExecutionPhase = isGsdWorkflow && (workflowPhase === '' || workflowPhase === 'discuss' || workflowPhase === 'plan' || workflowPhase === 'verify')
     const isGoalPlanningRole = Boolean(task.goalId) && (task.source === 'planner' || task.source === 'radar')
-    const isGoalReviewRole = Boolean(task.goalId) && task.status === 'in_review'
+    const isGoalReviewRole = Boolean(task.goalId) && (task.status === 'review' || task.status === 'in_review')
     const goalTaskRole = getGoalTaskRole(task)
     if (isGsdNonExecutionPhase || isGoalPlanningRole) {
         // Workflow phases that should not trigger execution:
@@ -1544,7 +1611,7 @@ async function startSessionFromTaskInternal(options: {
     const yolo = isGsdNonExecutionPhase ? false : overrides.yolo ?? inferredYolo
 
     const isGoalGeneratorContinuation = Boolean(task.goalId)
-        && task.status === 'planned'
+        && (task.status === 'planning' || task.status === 'planned')
         && task.source !== 'planner'
         && task.source !== 'radar'
         && Boolean(previousSessionId)
@@ -1690,8 +1757,8 @@ async function startSessionFromTaskInternal(options: {
 
     const workflowStrategy = getWorkflowStrategy(task)
     const workflowPatch = isGoalReviewRole
-        ? { status: 'in_review' as const }
-        : workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'in_progress' }
+        ? { status: 'review' as const }
+        : workflowStrategy.getTaskPatchForTransition('session_started', task) ?? { status: 'running' }
     let runtimeTask = task
 
     const emitStartedTaskUpdate = (updatedTask: StoredTask): void => {
@@ -1713,14 +1780,18 @@ async function startSessionFromTaskInternal(options: {
         status?: string
         workflowPhase?: string | null
         source?: string | null
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
         initRuntime?: StoredTask['initRuntime'] | null
     }): StoredTask | null => {
         const defaultActiveSessionId = isGoalReviewRole && previousSessionId
             ? previousSessionId
             : spawn.sessionId
+        const previousTask = runtimeTask
         const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
             activeSessionId: patch?.activeSessionId !== undefined ? patch.activeSessionId : defaultActiveSessionId,
-            status: patch?.status ?? workflowPatch.status ?? 'in_progress',
+            status: patch?.status ?? workflowPatch.status ?? 'running',
             workflowPhase: patch?.workflowPhase !== undefined ? patch.workflowPhase : workflowPatch.workflowPhase,
             source: patch?.source !== undefined
                 ? patch.source
@@ -1729,10 +1800,43 @@ async function startSessionFromTaskInternal(options: {
                     : task.source === 'improvements_scan'
                         ? 'manual'
                         : undefined,
+            blockedReason: patch?.blockedReason,
+            blockedSource: patch?.blockedSource,
+            blockedSessionId: patch?.blockedSessionId,
             initRuntime: patch?.initRuntime
         })
         if (updatedTask) {
             runtimeTask = updatedTask
+            if (updatedTask.goalId && updatedTask.goalTodoRef) {
+                const goal = options.store.goals.getGoalByNamespace(updatedTask.goalId, options.namespace)
+                if (goal && goal.projectId === project.id) {
+                    const goalStatus = normalizeGoalTodoStatusForTask(updatedTask.status)
+                    upsertGoalTodoTaskState({
+                        project,
+                        goal,
+                        defaultWorkspace: workspace,
+                        taskId: updatedTask.goalTodoRef,
+                        status: goalStatus,
+                        tag: defaultGoalTodoTagForStatus(goalStatus),
+                        title: updatedTask.title,
+                        body: updatedTask.description,
+                        blocked: goalStatus === 'blocked'
+                            ? {
+                                kind: updatedTask.blockedSource ?? 'task_session_start',
+                                summary: updatedTask.blockedReason,
+                                updatedAt: Date.now()
+                            }
+                            : null
+                    })
+                }
+            }
+            notifyProjectControllerTaskBlockedTransition({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                previousTask,
+                task: updatedTask
+            })
         }
         return updatedTask
     }

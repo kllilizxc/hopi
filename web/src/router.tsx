@@ -34,6 +34,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { BackIcon, PlusIcon, SettingsIcon } from '@/assets/icons'
 import ProjectsPage, {
     ProjectOverviewPage,
+    ProjectControllerPage,
     ProjectSettingsPage,
     ProjectsIndexPage,
     TaskWorkbenchRoute,
@@ -381,12 +382,6 @@ const projectDetailIndexRoute = createRoute({
     component: ProjectOverviewPage,
 })
 
-const projectPlanningRoute = createRoute({
-    getParentRoute: () => projectDetailRoute,
-    path: 'planning',
-    component: () => null,
-})
-
 const projectTaskRoute = createRoute({
     getParentRoute: () => projectDetailRoute,
     path: 'tasks/$taskId',
@@ -397,6 +392,17 @@ const projectSettingsRoute = createRoute({
     getParentRoute: () => projectDetailRoute,
     path: 'settings',
     component: ProjectSettingsPage,
+})
+
+const projectControllerRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'controller',
+    validateSearch: (search: Record<string, unknown>): { goalId?: string } => ({
+        goalId: typeof search.goalId === 'string' && search.goalId.trim().length > 0
+            ? search.goalId
+            : undefined
+    }),
+    component: ProjectControllerPage,
 })
 
 const projectTaskIndexRoute = createRoute({
@@ -529,7 +535,7 @@ export const routeTree = rootRoute.addChildren([
         projectsIndexRoute,
         projectDetailRoute.addChildren([
             projectDetailIndexRoute,
-            projectPlanningRoute,
+            projectControllerRoute,
             projectSettingsRoute,
             projectTaskRoute.addChildren([
                 projectTaskIndexRoute,

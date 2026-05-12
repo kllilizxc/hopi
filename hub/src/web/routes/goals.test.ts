@@ -112,7 +112,7 @@ describe('goal routes', () => {
             projectId: project.id,
             goalId: body.goal.id,
             title: 'Clarify goal and plan first iteration',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workflowProfile: 'default',
             agentFlavor: null,
@@ -298,7 +298,7 @@ describe('goal routes', () => {
         expect(tasks[0]).toMatchObject({
             goalId: goal.id,
             title: 'Clarify goal and plan first iteration',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             agentFlavor: null,
             model: null,
@@ -306,6 +306,10 @@ describe('goal routes', () => {
             modelMode: null
         })
         expect(readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'goal.md'), 'utf8')).toContain(goal.title)
+        const todo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'todo.yml'), 'utf8')
+        expect(todo).toContain(`id: ${tasks[0]?.id}`)
+        expect(todo).toContain('status: planning')
+        expect(todo).toContain('title: Clarify goal and plan first iteration')
         expect(events).toContainEqual(expect.objectContaining({
             type: 'task-added',
             projectId: project.id,
@@ -337,7 +341,7 @@ describe('goal routes', () => {
             projectId: project.id,
             goalId: goalBody.goal.id,
             title: 'Needs human input',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default'
         })
         events.length = 0
@@ -386,7 +390,7 @@ describe('goal routes', () => {
             projectId: project.id,
             goalId: goalBody.goal.id,
             title: 'Waiting for answer',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default'
         })
 
@@ -413,7 +417,7 @@ describe('goal routes', () => {
 
         expect(resolveResponse.status).toBe(200)
         const resumedTask = store.tasks.getTaskByNamespace(task.id, 'default')
-        expect(resumedTask?.status).toBe('planned')
+        expect(resumedTask?.status).toBe('planning')
         expect(resumedTask?.handoff).toContain('Resolved DecisionTopic: Clarify acceptance')
         expect(resumedTask?.handoff).toContain('Which acceptance criteria should apply?')
         expect(resumedTask?.handoff).toContain('Use the documented success criteria.')
@@ -499,7 +503,7 @@ describe('goal routes', () => {
             projectId: project.id,
             goalId: goalBody.goal.id,
             title: 'Plan after answer',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workflowProfile: 'default'
         })
@@ -558,7 +562,7 @@ describe('goal routes', () => {
             id: 'task-first-goal',
             projectId: project.id,
             title: 'Task in first goal',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default',
             goalId: firstGoalBody.goal.id
         })
@@ -681,7 +685,7 @@ describe('goal routes', () => {
         expect(body.sections[0]).toMatchObject({
             title: 'Implement first executable slice',
             body: expect.stringContaining('Ship the first slice.'),
-            taskId: null
+            taskId: 'first-executable-slice'
         })
         expect(body.sections[1]).toMatchObject({
             title: 'Tune generated task contracts',
@@ -689,11 +693,11 @@ describe('goal routes', () => {
         })
         expect(body.sections[3]).toMatchObject({
             title: 'Implement expedition map',
-            taskId: 'task-promoted-1'
+            taskId: 'expedition-map'
         })
         expect(body.sections[4]).toMatchObject({
             title: 'Clarify goal intent',
-            taskId: 'task-done-1'
+            taskId: 'clarify-goal-intent'
         })
         expect(body.rawYaml).not.toContain('Ignore other goal')
     })

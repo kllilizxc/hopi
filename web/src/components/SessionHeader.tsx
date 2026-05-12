@@ -10,6 +10,7 @@ import { IconButton } from '@/components/ui/icon-button'
 type SessionHeaderProps = {
     session: Session
     onBack: () => void
+    showBack?: boolean
     onViewFiles?: () => void
     onViewDiffs?: () => void
     onSessionDeleted?: () => void
@@ -45,9 +46,11 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
                     {/* Back button */}
-                    <IconButton type="button" onClick={props.onBack}>
-                        <BackIcon />
-                    </IconButton>
+                    {props.showBack !== false ? (
+                        <IconButton type="button" onClick={props.onBack}>
+                            <BackIcon />
+                        </IconButton>
+                    ) : null}
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
@@ -105,7 +108,7 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
 }
 
 function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeaderProps): boolean {
-    if (prev.onBack !== next.onBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted || prev.extra !== next.extra) {
+    if (prev.onBack !== next.onBack || prev.showBack !== next.showBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted || prev.extra !== next.extra) {
         return false
     }
 

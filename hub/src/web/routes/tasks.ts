@@ -49,6 +49,14 @@ import { relinkTaskToSession, resolveBestUsableTaskSession } from '../../sync/se
 import { cleanupMergedTaskWorktree } from '../../sync/taskAutoMerge'
 import { startSessionFromTask } from '../../sync/taskSessionService'
 import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflowStrategy'
+import {
+    createGoalTodoTaskId,
+    readGoalTodo,
+    upsertGoalTodoTaskState,
+    type GoalTodoStatus
+} from '../../sync/goals/goalTodo'
+import { syncTaskStateToGoalTodo } from '../../sync/goals/goalTodoTaskSync'
+import { notifyProjectControllerTaskBlockedTransition } from '../../sync/projectController'
 import type { WebAppEnv } from '../middleware/auth'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'
 
@@ -290,7 +298,7 @@ function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTas
 
     if (isActiveMergeRuntimeStatus(status)) {
         return {
-            status: 'in_review',
+            status: 'review',
             finishedAt: null
         }
     }
@@ -299,7 +307,8 @@ function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTas
 }
 
 function shouldMarkFinishedAfterSuccessfulMerge(task: Pick<StoredTask, 'status' | 'mergeRuntime'>): boolean {
-    return task.status === 'in_review'
+    return task.status === 'review'
+        || task.status === 'in_review'
         || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
 }
 
@@ -309,6 +318,35 @@ function isPendingPreviewRuntimeStatus(status: TaskPreviewRuntimeStatus | null |
         || status === 'approval_pending'
         || status === 'running'
         || status === 'retrying'
+}
+
+function buildTaskStatusPatchForPreviewRuntimeStatus(
+    status: TaskPreviewRuntimeStatus,
+    task: Pick<StoredTask, 'status' | 'finishedAt' | 'mergeRuntime' | 'previewRuntime' | 'initRuntime'>
+): {
+    status?: string
+    finishedAt?: number | null
+} {
+    if (status === 'blocked') {
+        return {
+            status: 'blocked',
+            finishedAt: null
+        }
+    }
+
+    const shouldRecoverPreviewBlock = task.status === 'blocked'
+        && task.previewRuntime?.status === 'blocked'
+        && task.mergeRuntime?.status !== 'blocked'
+        && task.initRuntime?.status !== 'blocked'
+        && (status === 'running' || status === 'retrying' || status === 'ready')
+    if (shouldRecoverPreviewBlock) {
+        return {
+            status: 'review',
+            finishedAt: null
+        }
+    }
+
+    return {}
 }
 
 function isPreviewRetryAttempt(task: Pick<StoredTask, 'previewRuntime'>): boolean {
@@ -377,6 +415,18 @@ function updateTaskMergeRuntime(options: {
         return null
     }
 
+    syncTaskStateToGoalTodo({
+        store: options.store,
+        namespace: options.namespace,
+        task: updatedTask
+    })
+    notifyProjectControllerTaskBlockedTransition({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        previousTask: options.task,
+        task: updatedTask
+    })
     emitTaskUpdatedEvent({
         engine: options.engine,
         namespace: options.namespace,
@@ -573,18 +623,37 @@ function updateTaskPreviewRuntime(options: {
         completedAt: options.completedAt
     })
 
-    if (!hasMeaningfulPreviewRuntimeChange(getTaskPreviewRuntime(options.task), nextPreviewRuntime)) {
+    const taskStatusPatch = buildTaskStatusPatchForPreviewRuntimeStatus(options.status, options.task)
+    const hasTaskStatusChange = (
+        (taskStatusPatch.status !== undefined && taskStatusPatch.status !== options.task.status)
+        || (taskStatusPatch.finishedAt !== undefined && taskStatusPatch.finishedAt !== options.task.finishedAt)
+    )
+
+    if (!hasMeaningfulPreviewRuntimeChange(getTaskPreviewRuntime(options.task), nextPreviewRuntime) && !hasTaskStatusChange) {
         const latestTask = options.store.tasks.getTaskByNamespace(options.task.id, options.namespace) ?? options.task
         return withTaskPreviewRuntime(latestTask, nextPreviewRuntime)
     }
 
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
+        ...taskStatusPatch,
         previewRuntime: nextPreviewRuntime
     })
 
     const nextTask = withTaskPreviewRuntime(updatedTask ?? options.task, nextPreviewRuntime)
 
     if (updatedTask && nextTask) {
+        syncTaskStateToGoalTodo({
+            store: options.store,
+            namespace: options.namespace,
+            task: updatedTask
+        })
+        notifyProjectControllerTaskBlockedTransition({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            previousTask: options.task,
+            task: updatedTask
+        })
         emitTaskUpdatedEvent({
             engine: options.engine,
             namespace: options.namespace,
@@ -592,6 +661,12 @@ function updateTaskPreviewRuntime(options: {
             projectId: nextTask.projectId,
             data: {
                 activeSessionId: nextTask.activeSessionId,
+                status: nextTask.status,
+                blockedReason: nextTask.blockedReason,
+                blockedAt: nextTask.blockedAt,
+                blockedSource: nextTask.blockedSource,
+                blockedSessionId: nextTask.blockedSessionId,
+                finishedAt: nextTask.finishedAt,
                 previewRuntime: nextTask.previewRuntime
             }
         })
@@ -2020,7 +2095,7 @@ async function persistSuccessfulTaskMerge(options: {
 }): Promise<StoredTask | null> {
     const mergedAt = Date.now()
     const shouldMarkFinished = options.markFinishedOnMerge ?? shouldMarkFinishedAfterSuccessfulMerge(options.task)
-    const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'finished'
+    const statusChangingToFinished = shouldMarkFinished && options.task.status !== 'done' && options.task.status !== 'finished'
     const strategy = getWorkflowStrategy(options.task)
     const finishedTransitionPatch = statusChangingToFinished
         ? strategy.getTaskPatchForTransition('task_finished', options.task)
@@ -2057,7 +2132,7 @@ async function persistSuccessfulTaskMerge(options: {
             startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
             completedAt: mergedAt
         }),
-        status: statusChangingToFinished ? 'finished' : undefined,
+        status: statusChangingToFinished ? 'done' : undefined,
         workflowPhase: finishedTransitionPatch?.workflowPhase,
         finishedAt: statusChangingToFinished ? mergedAt : undefined
     })
@@ -2065,6 +2140,11 @@ async function persistSuccessfulTaskMerge(options: {
         return null
     }
 
+    syncTaskStateToGoalTodo({
+        store: options.store,
+        namespace: options.namespace,
+        task: updatedTask
+    })
     emitTaskUpdatedEvent({
         engine: options.engine,
         namespace: options.namespace,
@@ -2113,6 +2193,7 @@ const createTaskSchema = z.object({
     description: z.string().max(200_000).optional(),
     goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
+    tag: z.string().min(1).max(64).nullable().optional(),
     blockedReason: z.string().min(1).max(512).nullable().optional(),
     blockedSource: z.string().min(1).max(64).nullable().optional(),
     blockedSessionId: z.string().min(1).max(128).nullable().optional(),
@@ -2138,6 +2219,7 @@ const updateTaskSchema = z.object({
     description: z.string().max(200_000).nullable().optional(),
     goalId: z.string().min(1).nullable().optional(),
     status: TaskStatusSchema.optional(),
+    tag: z.string().min(1).max(64).nullable().optional(),
     blockedReason: z.string().min(1).max(512).nullable().optional(),
     blockedSource: z.string().min(1).max(64).nullable().optional(),
     blockedSessionId: z.string().min(1).max(128).nullable().optional(),
@@ -2163,6 +2245,355 @@ const listTasksQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional(),
     goalId: z.string().min(1).optional()
 })
+
+function normalizeGoalTaskStatus(status: string | null | undefined): GoalTodoStatus {
+    switch (status) {
+        case 'planning':
+        case 'running':
+        case 'review':
+        case 'blocked':
+        case 'done':
+            return status
+        case 'planned':
+            return 'planning'
+        case 'in_progress':
+            return 'running'
+        case 'in_review':
+            return 'review'
+        case 'finished':
+            return 'done'
+        default:
+            return 'planning'
+    }
+}
+
+function defaultTagForGoalStatus(status: GoalTodoStatus): string | null {
+    switch (status) {
+        case 'planning':
+            return 'ready'
+        case 'running':
+            return 'promoted'
+        case 'review':
+            return 'in_review'
+        case 'blocked':
+            return 'unknown'
+        case 'done':
+            return 'accepted'
+        case 'unknown':
+            return null
+    }
+}
+
+function getDefaultWorkspaceForProject(store: Store, project: StoredProject): StoredWorkspace | null {
+    if (project.defaultWorkspaceId) {
+        const workspace = store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        if (workspace) return workspace
+    }
+    return store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function hasBlockedTaskActionRuntime(task: StoredTask): boolean {
+    return task.mergeRuntime?.status === 'blocked'
+        || task.previewRuntime?.status === 'blocked'
+        || task.initRuntime?.status === 'blocked'
+}
+
+function shouldRepairBlockedActionRuntimeTask(task: StoredTask): boolean {
+    const status = normalizeGoalTaskStatus(task.status)
+    return status !== 'blocked'
+        && status !== 'done'
+        && hasBlockedTaskActionRuntime(task)
+}
+
+function repairGoalTodoOverlayState(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    defaultWorkspace: StoredWorkspace | null
+    task: StoredTask
+    hasTodoSection: boolean
+    todoSectionStatus?: string | null
+}): { task: StoredTask; todoChanged: boolean } {
+    let task = options.task
+    let todoChanged = false
+
+    if (!task.goalTodoRef && !task.archivedAt) {
+        const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
+            goalTodoRef: task.id
+        })
+        if (updated) {
+            task = updated
+        }
+    }
+
+    if (shouldRepairBlockedActionRuntimeTask(task)) {
+        const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
+            status: 'blocked',
+            finishedAt: null
+        })
+        if (updated) {
+            task = updated
+        }
+    }
+
+    if (
+        task.goalTodoRef
+        && !task.archivedAt
+        && (
+            !options.hasTodoSection
+            || (
+                hasBlockedTaskActionRuntime(task)
+                &&
+                normalizeGoalTaskStatus(task.status) === 'blocked'
+                && options.todoSectionStatus !== 'blocked'
+            )
+        )
+    ) {
+        todoChanged = syncTaskStateToGoalTodo({
+            store: options.store,
+            namespace: options.namespace,
+            task,
+            project: options.project,
+            defaultWorkspace: options.defaultWorkspace
+        })
+    }
+
+    return { task, todoChanged }
+}
+
+function buildGoalTodoTaskProjection(options: {
+    store: Store
+    project: StoredProject
+    goalId: string
+    namespace: string
+    includeArchived: boolean
+}): StoredTask[] {
+    const goal = options.store.goals.getGoalByNamespace(options.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return []
+    }
+
+    const defaultWorkspace = getDefaultWorkspaceForProject(options.store, options.project)
+    let todo = readGoalTodo({
+        project: options.project,
+        goal,
+        defaultWorkspace
+    })
+    let overlays = options.store.tasks.listTasksByProjectAndNamespace(options.project.id, options.namespace, {
+        includeArchived: true,
+        goalId: goal.id
+    })
+    let todoChanged = false
+    const todoSectionIds = new Set(todo.sections.map((section) => section.id))
+    overlays = overlays.map((task) => {
+        const goalTodoRef = task.goalTodoRef ?? task.id
+        const repair = repairGoalTodoOverlayState({
+            store: options.store,
+            namespace: options.namespace,
+            project: options.project,
+            defaultWorkspace,
+            task,
+            hasTodoSection: todoSectionIds.has(goalTodoRef),
+            todoSectionStatus: todo.sections.find((section) => section.id === goalTodoRef)?.status
+        })
+        todoChanged = todoChanged || repair.todoChanged
+        return repair.task
+    })
+    if (todoChanged) {
+        todo = readGoalTodo({
+            project: options.project,
+            goal,
+            defaultWorkspace
+        })
+    }
+    const overlayByKey = new Map<string, StoredTask>()
+    for (const task of overlays) {
+        overlayByKey.set(task.id, task)
+        if (task.goalTodoRef) {
+            overlayByKey.set(task.goalTodoRef, task)
+        }
+    }
+
+    const baseTime = todo.updatedAt ?? Date.now()
+    const projected = todo.sections.flatMap((section, index) => {
+        const overlay = overlayByKey.get(section.id) ?? null
+        if (!options.includeArchived && overlay?.archivedAt) {
+            return []
+        }
+        const status = section.status === 'unknown' ? 'planning' : section.status
+        const blockedReason = status === 'blocked'
+            ? section.blocked?.summary ?? overlay?.blockedReason ?? null
+            : null
+        return [{
+            id: overlay?.id ?? section.id,
+            projectId: options.project.id,
+            goalId: goal.id,
+            goalTodoRef: section.id,
+            title: section.title,
+            description: section.body || overlay?.description || null,
+            status,
+            tag: section.tag,
+            blockedReason,
+            blockedAt: status === 'blocked' ? section.blocked?.updatedAt ?? overlay?.blockedAt ?? null : null,
+            blockedSource: status === 'blocked' ? section.blocked?.kind ?? overlay?.blockedSource ?? null : null,
+            blockedSessionId: status === 'blocked' ? overlay?.blockedSessionId ?? null : null,
+            priority: overlay?.priority ?? null,
+            sortKey: overlay?.sortKey ?? baseTime - index,
+            activeSessionId: overlay?.activeSessionId ?? null,
+            workspaceId: overlay?.workspaceId ?? defaultWorkspace?.id ?? null,
+            agentFlavor: overlay?.agentFlavor ?? options.project.defaultAgentFlavor,
+            permissionMode: overlay?.permissionMode ?? options.project.defaultPermissionMode,
+            model: overlay?.model ?? options.project.defaultModel,
+            modelMode: overlay?.modelMode ?? options.project.defaultModelMode,
+            attachments: overlay?.attachments ?? null,
+            source: overlay?.source ?? 'manual',
+            sourceTaskId: overlay?.sourceTaskId ?? null,
+            workflowProfile: overlay?.workflowProfile ?? 'default',
+            workflowPhase: overlay?.workflowPhase ?? null,
+            subTasks: overlay?.subTasks ?? null,
+            subTasksUpdatedAt: overlay?.subTasksUpdatedAt ?? null,
+            worktreeMergedAt: overlay?.worktreeMergedAt ?? null,
+            worktreeMergeCommit: overlay?.worktreeMergeCommit ?? null,
+            mergedDiffSnapshot: overlay?.mergedDiffSnapshot ?? null,
+            mergeRuntime: overlay?.mergeRuntime ?? null,
+            previewRuntime: overlay?.previewRuntime ?? null,
+            initRuntime: overlay?.initRuntime ?? null,
+            contract: overlay?.contract ?? null,
+            handoff: overlay?.handoff ?? null,
+            evidence: overlay?.evidence ?? null,
+            createdAt: overlay?.createdAt ?? baseTime,
+            updatedAt: Math.max(overlay?.updatedAt ?? 0, baseTime),
+            finishedAt: overlay?.finishedAt ?? null,
+            archivedAt: overlay?.archivedAt ?? null
+        } as StoredTask & { tag?: string | null }]
+    })
+    return projected
+}
+
+type GoalTodoProjectedTask = StoredTask & { tag?: string | null }
+
+function findGoalTodoTaskProjectionById(options: {
+    store: Store
+    namespace: string
+    taskId: string
+    includeArchived?: boolean
+}): GoalTodoProjectedTask | null {
+    const projects = options.store.projects.listProjectsByNamespace(options.namespace, {
+        includeArchived: Boolean(options.includeArchived)
+    })
+    for (const project of projects) {
+        const goals = options.store.goals.listGoalsByProjectAndNamespace(project.id, options.namespace, {
+            includeArchived: Boolean(options.includeArchived)
+        })
+        for (const goal of goals) {
+            const tasks = buildGoalTodoTaskProjection({
+                store: options.store,
+                project,
+                goalId: goal.id,
+                namespace: options.namespace,
+                includeArchived: Boolean(options.includeArchived)
+            }) as GoalTodoProjectedTask[]
+            const task = tasks.find((candidate) => (
+                candidate.id === options.taskId
+                || candidate.goalTodoRef === options.taskId
+            ))
+            if (task) return task
+        }
+    }
+    return null
+}
+
+function getTaskByNamespaceOrGoalTodoProjection(options: {
+    store: Store
+    namespace: string
+    taskId: string
+}): GoalTodoProjectedTask | StoredTask | null {
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (stored?.goalId) {
+        const project = options.store.projects.getProjectByNamespace(stored.projectId, options.namespace)
+        if (project) {
+            const projected = buildGoalTodoTaskProjection({
+                store: options.store,
+                project,
+                goalId: stored.goalId,
+                namespace: options.namespace,
+                includeArchived: true
+            }) as GoalTodoProjectedTask[]
+            return projected.find((candidate) => (
+                candidate.id === options.taskId
+                || candidate.goalTodoRef === options.taskId
+                || candidate.id === stored.id
+                || candidate.goalTodoRef === stored.goalTodoRef
+            )) ?? stored
+        }
+    }
+
+    return stored ?? findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId,
+        includeArchived: true
+    })
+}
+
+function materializeGoalTodoTaskOverlayForWrite(options: {
+    store: Store
+    namespace: string
+    taskId: string
+}): StoredTask | null {
+    const existing = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (existing) return existing
+
+    const projected = findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId,
+        includeArchived: true
+    })
+    if (!projected || !projected.goalId) {
+        return null
+    }
+
+    const latest = options.store.tasks.getTaskByNamespace(projected.id, options.namespace)
+    if (latest) return latest
+
+    return options.store.tasks.createTask({
+        id: projected.id,
+        projectId: projected.projectId,
+        goalId: projected.goalId,
+        goalTodoRef: projected.goalTodoRef ?? projected.id,
+        title: projected.title,
+        description: projected.description,
+        status: projected.status,
+        blockedReason: projected.blockedReason,
+        blockedAt: projected.blockedAt,
+        blockedSource: projected.blockedSource,
+        blockedSessionId: projected.blockedSessionId,
+        priority: projected.priority,
+        sortKey: projected.sortKey,
+        activeSessionId: projected.activeSessionId,
+        workspaceId: projected.workspaceId,
+        agentFlavor: projected.agentFlavor,
+        permissionMode: projected.permissionMode,
+        model: projected.model,
+        modelMode: projected.modelMode,
+        attachments: projected.attachments ?? undefined,
+        source: projected.source,
+        sourceTaskId: projected.sourceTaskId,
+        workflowProfile: projected.workflowProfile,
+        workflowPhase: projected.workflowPhase,
+        subTasks: projected.subTasks ?? undefined,
+        subTasksUpdatedAt: projected.subTasksUpdatedAt,
+        worktreeMergedAt: projected.worktreeMergedAt,
+        worktreeMergeCommit: projected.worktreeMergeCommit,
+        mergeRuntime: projected.mergeRuntime,
+        previewRuntime: projected.previewRuntime,
+        initRuntime: projected.initRuntime,
+        contract: projected.contract,
+        handoff: projected.handoff,
+        evidence: projected.evidence
+    })
+}
 
 const mergedDiffFileQuerySchema = z.object({
     path: z.string().min(1)
@@ -3926,6 +4357,16 @@ export function createTasksRoutes(options: {
         }
         const includeArchived = query.data.includeArchived === 'true'
         const goalId = query.data.goalId
+        if (goalId) {
+            const tasks = buildGoalTodoTaskProjection({
+                store: options.store,
+                project,
+                goalId,
+                namespace,
+                includeArchived
+            })
+            return c.json({ tasks })
+        }
         const tasks = options.store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { includeArchived, goalId })
         return c.json({ tasks })
     })
@@ -3943,8 +4384,10 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        const goal = parsed.data.goalId
+            ? options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
+            : null
         if (parsed.data.goalId) {
-            const goal = options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
             if (!goal || goal.projectId !== projectId) {
                 return c.json({ error: 'Goal not found' }, 404)
             }
@@ -3959,20 +4402,41 @@ export function createTasksRoutes(options: {
         const defaultWorkflowPhase = parsed.data.workflowPhase
             ?? getDefaultWorkflowPhase({ workflowProfile })
 
-        const taskId = randomUUID()
+        const defaultWorkspace = goal ? getDefaultWorkspaceForProject(options.store, project) : null
+        if (goal && !defaultWorkspace) {
+            return c.json({ error: 'Goal todo workspace not found' }, 400)
+        }
+        const taskId = goal
+            ? createGoalTodoTaskId({
+                project,
+                goal,
+                defaultWorkspace,
+                title: parsed.data.title
+            })
+            : randomUUID()
+        const normalizedStatus = goal
+            ? normalizeGoalTaskStatus(parsed.data.status ?? 'planning')
+            : parsed.data.status ?? 'planning'
+        const goalStatus = goal ? normalizeGoalTaskStatus(normalizedStatus) : null
+        const tag = parsed.data.tag !== undefined
+            ? parsed.data.tag
+            : goal
+                ? defaultTagForGoalStatus(goalStatus ?? 'planning')
+                : null
         const created = options.store.tasks.createTask({
             id: taskId,
             projectId,
             goalId: parsed.data.goalId ?? null,
+            goalTodoRef: goal ? taskId : null,
             title: parsed.data.title,
             description: parsed.data.description ?? null,
-            status: parsed.data.status ?? 'planned',
+            status: normalizedStatus,
             blockedReason: parsed.data.blockedReason ?? null,
             blockedSource: parsed.data.blockedSource ?? null,
             blockedSessionId: parsed.data.blockedSessionId ?? null,
             priority: parsed.data.priority ?? null,
             sortKey: parsed.data.sortKey ?? Date.now(),
-            workspaceId: parsed.data.workspaceId ?? null,
+            workspaceId: parsed.data.workspaceId ?? defaultWorkspace?.id ?? null,
             agentFlavor: parsed.data.agentFlavor ?? null,
             permissionMode: parsed.data.permissionMode ?? null,
             model: parsed.data.model ?? null,
@@ -3988,6 +4452,26 @@ export function createTasksRoutes(options: {
             source: parsed.data.source ?? 'manual'
         })
 
+        if (goal) {
+            upsertGoalTodoTaskState({
+                project,
+                goal,
+                defaultWorkspace,
+                taskId,
+                status: goalStatus ?? 'planning',
+                tag,
+                title: parsed.data.title,
+                body: parsed.data.description ?? null,
+                blocked: goalStatus === 'blocked'
+                    ? {
+                        kind: parsed.data.blockedSource ?? tag ?? 'unknown',
+                        summary: parsed.data.blockedReason ?? null,
+                        updatedAt: Date.now()
+                    }
+                    : null
+            })
+        }
+
         const engine = options.getSyncEngine()
         engine?.handleRealtimeEvent({ type: 'task-added', taskId, projectId, namespace, data: { taskId } })
 
@@ -3997,7 +4481,11 @@ export function createTasksRoutes(options: {
     app.get('/tasks/:taskId', (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const task = getTaskByNamespaceOrGoalTodoProjection({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -4012,7 +4500,11 @@ export function createTasksRoutes(options: {
             ?? c.req.header('accept-language')
             ?? undefined
         )
-        const existing = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const existing = materializeGoalTodoTaskOverlayForWrite({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!existing) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -4037,18 +4529,23 @@ export function createTasksRoutes(options: {
             }
         }
 
-        const statusChangingToFinished = parsed.data.status === 'finished' && existing.status !== 'finished'
+        const normalizedStatus = existing.goalId
+            ? normalizeGoalTaskStatus(parsed.data.status ?? existing.status)
+            : parsed.data.status
+        const statusChangingToFinished = (normalizedStatus === 'done' || parsed.data.status === 'finished')
+            && existing.status !== 'finished'
+            && existing.status !== 'done'
         const finishedAt = statusChangingToFinished ? Date.now() : undefined
         const strategy = getWorkflowStrategy(existing)
         const finishedTransitionPatch = statusChangingToFinished
             ? strategy.getTaskPatchForTransition('task_finished', existing)
             : null
 
-        const updated = options.store.tasks.updateTaskByNamespace(taskId, namespace, {
+        const updated = options.store.tasks.updateTaskByNamespace(existing.id, namespace, {
             title: parsed.data.title,
             goalId: parsed.data.goalId,
             description: parsed.data.description,
-            status: parsed.data.status,
+            status: normalizedStatus,
             blockedReason: parsed.data.blockedReason,
             blockedSource: parsed.data.blockedSource,
             blockedSessionId: parsed.data.blockedSessionId,
@@ -4078,23 +4575,55 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Task not found' }, 404)
         }
 
+        if (updated.goalId) {
+            const goal = options.store.goals.getGoalByNamespace(updated.goalId, namespace)
+            const project = options.store.projects.getProjectByNamespace(updated.projectId, namespace)
+            if (goal && project) {
+                const goalStatus = normalizeGoalTaskStatus(normalizedStatus ?? updated.status)
+                upsertGoalTodoTaskState({
+                    project,
+                    goal,
+                    defaultWorkspace: getDefaultWorkspaceForProject(options.store, project),
+                    taskId: updated.goalTodoRef ?? updated.id,
+                    status: goalStatus,
+                    tag: parsed.data.tag !== undefined ? parsed.data.tag : defaultTagForGoalStatus(goalStatus),
+                    title: parsed.data.title ?? updated.title,
+                    body: parsed.data.description !== undefined ? parsed.data.description : updated.description,
+                    blocked: goalStatus === 'blocked'
+                        ? {
+                            kind: parsed.data.blockedSource ?? updated.blockedSource ?? parsed.data.tag ?? 'unknown',
+                            summary: parsed.data.blockedReason ?? updated.blockedReason ?? null,
+                            updatedAt: Date.now()
+                        }
+                        : null
+                })
+            }
+        }
         const engine = options.getSyncEngine()
+        notifyProjectControllerTaskBlockedTransition({
+            store: options.store,
+            engine,
+            namespace,
+            previousTask: existing,
+            task: updated
+        })
+
         if (statusChangingToFinished && engine) {
             void handleTaskMovedToFinished({
                 store: options.store,
                 engine,
                 namespace,
-                taskId,
+                taskId: updated.id,
                 preferredLocale
             })
         }
 
         engine?.handleRealtimeEvent({
             type: 'task-updated',
-            taskId,
+            taskId: updated.id,
             projectId: updated.projectId,
             namespace,
-            data: { taskId }
+            data: { taskId: updated.id }
         })
 
         return c.json({ task: updated })
@@ -4103,18 +4632,28 @@ export function createTasksRoutes(options: {
     app.post('/tasks/:taskId/archive', (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
-        const existing = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const existing = materializeGoalTodoTaskOverlayForWrite({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!existing) {
             return c.json({ error: 'Task not found' }, 404)
         }
 
-        const ok = options.store.tasks.archiveTaskByNamespace(taskId, namespace)
+        const ok = options.store.tasks.archiveTaskByNamespace(existing.id, namespace)
         if (!ok) {
             return c.json({ error: 'Failed to archive task' }, 500)
         }
 
         const engine = options.getSyncEngine()
-        engine?.handleRealtimeEvent({ type: 'task-updated', taskId, projectId: existing.projectId, namespace, data: { taskId, archived: true } })
+        engine?.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: existing.id,
+            projectId: existing.projectId,
+            namespace,
+            data: { taskId: existing.id, archived: true }
+        })
 
         return c.json({ ok: true })
     })
@@ -4149,7 +4688,11 @@ export function createTasksRoutes(options: {
     app.post('/tasks/:taskId/attach-session', async (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const task = materializeGoalTodoTaskOverlayForWrite({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -4220,11 +4763,20 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Not connected' }, 503)
         }
 
+        const task = materializeGoalTodoTaskOverlayForWrite({
+            store: options.store,
+            namespace,
+            taskId
+        })
+        if (!task) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
         const result = await startSessionFromTask({
             store: options.store,
             engine,
             namespace,
-            taskId,
+            taskId: task.id,
             overrides: parsed.data
         })
 

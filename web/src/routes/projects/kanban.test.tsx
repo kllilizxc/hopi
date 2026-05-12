@@ -60,7 +60,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         goalId: overrides.goalId ?? 'goal-1',
         title: overrides.title ?? 'Inspect repository state',
         description: overrides.description ?? null,
-        status: overrides.status ?? 'finished',
+        status: overrides.status ?? 'done',
         priority: overrides.priority ?? null,
         sortKey: overrides.sortKey ?? 1,
         activeSessionId: overrides.activeSessionId ?? null,
@@ -111,7 +111,7 @@ describe('ProjectKanbanBoard', () => {
             />
         )
 
-        const column = document.querySelector('[data-kanban-column-status="finished"]') as HTMLElement | null
+        const column = document.querySelector('[data-kanban-column-status="done"]') as HTMLElement | null
         const columnStyle = column?.getAttribute('style') ?? ''
         expect(column).not.toBeNull()
         expect(column!).toHaveClass('kanban-column')

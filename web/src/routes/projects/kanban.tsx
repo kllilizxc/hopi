@@ -29,12 +29,12 @@ import { productStorageKey } from '@hopi/protocol/brand'
 
 const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
 const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = productStorageKey('kanban-collapsed-columns-v1')
-const DEFAULT_COLLAPSED_COLUMNS: Record<TaskStatus, boolean> = {
-    planned: false,
-    in_progress: false,
-    in_review: false,
+const DEFAULT_COLLAPSED_COLUMNS: Record<string, boolean> = {
+    planning: false,
+    running: false,
+    review: false,
     blocked: true,
-    finished: true
+    done: true
 }
 
 type TaskMergeRuntimeTag = {
@@ -82,17 +82,19 @@ function getTaskMergeRuntimeTag(t: ReturnType<typeof useTranslation>['t'], task:
     }
 }
 
-function getDefaultCollapsedColumns(): Record<TaskStatus, boolean> {
+type CollapsedColumns = Record<string, boolean>
+
+function getDefaultCollapsedColumns(): CollapsedColumns {
     const collapsed = { ...DEFAULT_COLLAPSED_COLUMNS }
     if (!isMobileViewport()) {
         collapsed.blocked = false
-        collapsed.finished = false
+        collapsed.done = false
     }
 
     return collapsed
 }
 
-function loadCollapsedColumnsFromStorage(): Record<TaskStatus, boolean> {
+function loadCollapsedColumnsFromStorage(): CollapsedColumns {
     const collapsed = getDefaultCollapsedColumns()
     if (typeof window === 'undefined') return collapsed
 
@@ -116,7 +118,7 @@ function loadCollapsedColumnsFromStorage(): Record<TaskStatus, boolean> {
     return collapsed
 }
 
-function saveCollapsedColumnsToStorage(collapsedColumns: Record<TaskStatus, boolean>): void {
+function saveCollapsedColumnsToStorage(collapsedColumns: CollapsedColumns): void {
     if (typeof window === 'undefined') return
 
     try {
@@ -134,6 +136,21 @@ function asTaskStatus(value: string | undefined): TaskStatus | null {
     return null
 }
 
+function normalizeKanbanStatus(status: TaskStatus): TaskStatus {
+    switch (status) {
+        case 'planned':
+            return 'planning' as TaskStatus
+        case 'in_progress':
+            return 'running' as TaskStatus
+        case 'in_review':
+            return 'review' as TaskStatus
+        case 'finished':
+            return 'done' as TaskStatus
+        default:
+            return status
+    }
+}
+
 function getTaskPriorityLabelKey(priority: TaskPriority): string {
     return `projects.task.priority.${priority}`
 }
@@ -144,18 +161,18 @@ type KanbanStatusTheme = {
 }
 
 function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
-    switch (status) {
-        case 'planned':
+    switch (normalizeKanbanStatus(status)) {
+        case 'planning':
             return {
                 accent1: 'var(--app-kanban-planned)',
                 accent2: 'var(--app-kanban-planned-2)'
             }
-        case 'in_progress':
+        case 'running':
             return {
                 accent1: 'var(--app-kanban-in-progress)',
                 accent2: 'var(--app-kanban-in-progress-2)'
             }
-        case 'in_review':
+        case 'review':
             return {
                 accent1: 'var(--app-kanban-in-review)',
                 accent2: 'var(--app-kanban-in-review-2)'
@@ -165,15 +182,16 @@ function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
                 accent1: 'var(--app-kanban-blocked)',
                 accent2: 'var(--app-kanban-blocked-2)'
             }
-        case 'finished':
+        case 'done':
             return {
                 accent1: 'var(--app-kanban-finished)',
                 accent2: 'var(--app-kanban-finished-2)'
             }
-        default: {
-            const _exhaustive: never = status
-            return _exhaustive
-        }
+        default:
+            return {
+                accent1: 'var(--app-kanban-planned)',
+                accent2: 'var(--app-kanban-planned-2)'
+            }
     }
 }
 
@@ -258,7 +276,7 @@ function sortTasksInColumn(tasks: Task[]): Task[] {
     })
 }
 
-type KanbanColumnsByStatus = Record<TaskStatus, Task[]>
+type KanbanColumnsByStatus = Record<string, Task[]>
 
 type KanbanDerivedState = {
     tasks: Task[]
@@ -267,23 +285,17 @@ type KanbanDerivedState = {
 }
 
 function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
-    const grouped: KanbanColumnsByStatus = {
-        planned: [],
-        in_progress: [],
-        in_review: [],
-        blocked: [],
-        finished: []
-    }
+    const grouped: KanbanColumnsByStatus = Object.fromEntries(
+        KANBAN_COLUMNS.map((col) => [col.status, [] as Task[]])
+    )
     for (const task of tasks) {
-        grouped[task.status].push(task)
+        const status = normalizeKanbanStatus(task.status)
+        if (!grouped[status]) grouped[status] = []
+        grouped[status].push(task)
     }
-    return {
-        planned: sortTasksInColumn(grouped.planned),
-        in_progress: sortTasksInColumn(grouped.in_progress),
-        in_review: sortTasksInColumn(grouped.in_review),
-        blocked: sortTasksInColumn(grouped.blocked),
-        finished: sortTasksInColumn(grouped.finished),
-    }
+    return Object.fromEntries(
+        Object.entries(grouped).map(([status, statusTasks]) => [status, sortTasksInColumn(statusTasks)])
+    )
 }
 
 function buildKanbanDerivedState(tasks: Task[]): KanbanDerivedState {
@@ -369,6 +381,9 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
     const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
     const blockedSummary = buildTaskBlockedStatusSummary(props.task)
+    const taskTag = typeof props.task.tag === 'string' && props.task.tag.trim()
+        ? props.task.tag.trim()
+        : null
     const canExpandSubTasks = subTasks.length > 0
     const cardStyle = {
         '--app-card-hover-bg': 'color-mix(in srgb, var(--app-bg) 90%, #000 10%)',
@@ -400,7 +415,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         return
                     }
                     event.dataTransfer.setData('text/plain', props.task.id)
-                    props.onStartDrag(props.task.id, props.task.status, props.index)
+                    props.onStartDrag(props.task.id, props.columnStatus, props.index)
                 }}
                 onDragEnd={props.onEndDrag}
                 onDragOver={(event) => {
@@ -461,6 +476,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                             {props.task.priority ? (
                                 <Tag size="xs" variant={props.task.priority === 'high' ? 'error' : props.task.priority === 'medium' ? 'warning' : 'default'}>
                                     {t(getTaskPriorityLabelKey(props.task.priority))}
+                                </Tag>
+                            ) : null}
+                            {taskTag ? (
+                                <Tag size="xs" variant={taskTag === 'ready' ? 'success' : taskTag === 'deferred' ? 'warning' : 'default'}>
+                                    {taskTag}
                                 </Tag>
                             ) : null}
                             {props.task.workflowPhase ? (
@@ -529,7 +549,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     </div>
                     <AdaptiveSelect
                         title={t('projects.tasks.moveTo')}
-                        value={props.task.status}
+                        value={props.columnStatus}
                         options={props.moveOptions}
                         onValueChange={(value) => {
                             if (isCreatingTask) return
@@ -627,7 +647,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
 
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
-    const [collapsedColumns, setCollapsedColumns] = useState<Record<TaskStatus, boolean>>(() => loadCollapsedColumnsFromStorage())
+    const [collapsedColumns, setCollapsedColumns] = useState<CollapsedColumns>(() => loadCollapsedColumnsFromStorage())
     const pendingGeneratedActionTaskIdRef = useRef<string | null>(null)
 
     const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
@@ -985,7 +1005,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             if (!state) return
             if (state.touchId !== touchId) return
             state.dragStarted = true
-            beginTouchDrag(task.id, task.status, touchId, { status: columnStatus, index })
+            beginTouchDrag(task.id, columnStatus, touchId, { status: columnStatus, index })
         }, 180)
 
         touchDragRef.current = {
@@ -1071,7 +1091,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             >
                 <div className="h-full w-max mx-auto flex gap-3 p-3">
                     {KANBAN_COLUMNS.map((col) => {
-                        const colTasks = columns[col.status]
+                        const colTasks = columns[col.status] ?? []
                         const isCollapsed = collapsedColumns[col.status]
                         const theme = getKanbanStatusTheme(col.status)
                         const columnStyle = {
@@ -1172,7 +1192,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                                     isDragging={draggingTaskId === task.id}
                                                     isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
                                                     defaultTaskAgent={defaultTaskAgent}
-                                                    moveOptions={moveOptionsByStatus[task.status]}
+                                                    moveOptions={moveOptionsByStatus[col.status]}
                                                     onStartDrag={handleTaskDragStart}
                                                     onEndDrag={handleTaskDragEnd}
                                                     onHoverDropTarget={handleTaskDropHover}

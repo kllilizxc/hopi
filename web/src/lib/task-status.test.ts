@@ -3,13 +3,13 @@ import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
 import { KANBAN_COLUMNS } from '@/lib/task-status'
 
 describe('task status ordering', () => {
-    it('keeps Finished before Blocked', () => {
+    it('keeps Blocked before Done', () => {
         const statuses = KANBAN_COLUMNS.map((c) => c.status)
 
         expect(statuses).toEqual([...TASK_STATUS_ORDER])
-        expect(statuses.indexOf('finished')).toBeGreaterThan(-1)
+        expect(statuses.indexOf('done')).toBeGreaterThan(-1)
         expect(statuses.indexOf('blocked')).toBeGreaterThan(-1)
-        expect(statuses.indexOf('finished')).toBeLessThan(statuses.indexOf('blocked'))
+        expect(statuses.indexOf('blocked')).toBeLessThan(statuses.indexOf('done'))
     })
 })
 

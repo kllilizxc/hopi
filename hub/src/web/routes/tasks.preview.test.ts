@@ -1457,6 +1457,9 @@ describe('tasks preview runtime route contract', () => {
         expect(startBody.previewRuntime?.status).toBe('blocked')
         expect(startBody.previewRuntime?.blockedReason).toBe('Preview process exited with code 1')
         expect(startBody.previewRuntime?.latestNote).toContain('retry preview')
+        const blockedTask = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(blockedTask?.status).toBe('blocked')
+        expect(blockedTask?.blockedReason).toBe('Preview process exited with code 1')
 
         const getResponse = await app.request(`/api/tasks/${taskId}/preview`)
         expect(getResponse.status).toBe(200)
@@ -1469,6 +1472,15 @@ describe('tasks preview runtime route contract', () => {
         expect(getBody.previewRuntime?.blockedReason).toBe('Preview process exited with code 1')
 
         expect(getLatestPreviewRuntimeFromEvent(realtimeEvents, taskId)?.status).toBe('blocked')
+        const latestTaskUpdatedEvent = [...realtimeEvents].reverse().find((entry) => (
+            entry.type === 'task-updated'
+            && entry.taskId === taskId
+            && typeof entry.data === 'object'
+            && entry.data
+        ))
+        const latestTaskUpdatedData = latestTaskUpdatedEvent?.data as Record<string, unknown> | undefined
+        expect(latestTaskUpdatedData?.status).toBe('blocked')
+        expect(latestTaskUpdatedData?.blockedReason).toBe('Preview process exited with code 1')
     })
 
     it('returns stopped previewRuntime on stop and keeps it on preview get', async () => {

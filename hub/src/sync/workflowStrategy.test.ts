@@ -21,38 +21,38 @@ describe('workflowStrategy', () => {
         expect(strategy.canAutoRunTask({ workflowPhase: 'execute_ready' })).toBe(true)
         expect(strategy.canAutoRunTask({ workflowPhase: 'discuss' })).toBe(false)
         expect(strategy.getTaskPatchForTransition('session_started', {
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'discuss'
         })).toEqual({
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'discuss'
         })
         expect(strategy.getTaskPatchForTransition('task_prompted', {
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'discuss'
         })).toEqual({
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'discuss'
         })
         expect(strategy.getTaskPatchForTransition('task_prompted', {
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'execute_ready'
         })).toEqual({
-            status: 'in_progress',
+            status: 'running',
             workflowPhase: 'execute'
         })
         expect(strategy.getTaskPatchForTransition('assistant_ready', {
-            status: 'in_progress',
+            status: 'running',
             workflowPhase: 'execute'
         })).toEqual({
-            status: 'in_review',
+            status: 'review',
             workflowPhase: 'verify'
         })
         expect(strategy.getTaskPatchForTransition('assistant_ready', {
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'plan'
         })).toEqual({
-            status: 'planned',
+            status: 'planning',
             workflowPhase: 'plan'
         })
     })
@@ -69,7 +69,7 @@ describe('workflowStrategy', () => {
             },
             getTaskPatchForTransition(transition) {
                 if (transition === 'task_prompted') {
-                    return { status: 'in_progress', workflowPhase: 'ship' }
+                    return { status: 'running', workflowPhase: 'ship' }
                 }
                 return null
             }

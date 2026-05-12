@@ -13,6 +13,7 @@ import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { CompactTabs } from '@/components/ui/CompactTabs'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Pressable } from '@/components/ui/pressable'
 import { useMachines } from '@/hooks/queries/useMachines'
@@ -31,7 +32,7 @@ import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
-import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
+import { ProjectControllerPanel } from '@/routes/projects/project-controller'
 import { useSelectedProjectGoal } from '@/routes/projects/selected-goal-storage'
 import type { AgentType } from '@/components/NewSession/types'
 
@@ -188,6 +189,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     goals: Goal[]
     selectedGoalId: string | null
     isGoalsLoading: boolean
+    detailPanel: React.ReactNode
     onBackToProjects: () => void
     onOpenSettings: () => void
     onSelectGoal: (goalId: string) => void
@@ -198,17 +200,17 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     const { t } = useTranslation()
     const { addToast } = useToast()
     const navigate = useNavigate()
-    const matchRoute = useMatchRoute()
     const { project } = useProject(api, props.projectId)
     const { projects } = useProjects(api, { includeArchived: false })
     const {
         pauseGoalAutomation,
         resumeGoalAutomation,
+        markGoalDone,
+        reopenGoal,
         isPending: isGoalAutomationTogglePending
     } = useGoalAutomationControl(api)
+    const [goalDoneConfirmId, setGoalDoneConfirmId] = useState<string | null>(null)
     const { recentProjectIds, markProjectUsed } = useRecentProjects()
-    const planningMatch = matchRoute({ to: '/projects/$projectId/planning' })
-    const isPlanningRoute = Boolean(planningMatch && planningMatch.projectId === props.projectId)
     const recentProjects = useRecentProjectTabs({
         projects,
         currentProjectId: props.projectId,
@@ -233,28 +235,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
             void navigate({ to: '/projects/$projectId', params: { projectId } })
         }
     }, [props.projectId, navigate])
-
-    const projectViewTabs = useMemo(() => [
-        {
-            id: 'board',
-            label: t('projects.tabs.board'),
-            title: t('projects.tabs.board')
-        },
-        {
-            id: 'planning',
-            label: t('projects.tabs.planning'),
-            title: t('projects.tabs.planning')
-        }
-    ], [t])
-
-    const handleProjectViewTab = useCallback((tabId: string) => {
-        if (tabId === 'planning') {
-            void navigate({ to: '/projects/$projectId/planning', params: { projectId: props.projectId } })
-            return
-        }
-
-        void navigate({ to: '/projects/$projectId', params: { projectId: props.projectId } })
-    }, [navigate, props.projectId])
 
     const handleToggleGoalAutomationPause = useCallback((goalId: string) => {
         if (isGoalAutomationTogglePending) return
@@ -288,6 +268,31 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
         resumeGoalAutomation,
         t
     ])
+    const goalToMarkDone = props.goals.find((goal) => goal.id === goalDoneConfirmId) ?? null
+    const handleConfirmMarkGoalDone = useCallback(async () => {
+        if (!goalToMarkDone) return
+        const updated = await markGoalDone(goalToMarkDone.id)
+        addToast({ title: t('projects.toast.goalDone'), body: updated.title, sessionId: '', url: '' })
+    }, [addToast, goalToMarkDone, markGoalDone, t])
+    const handleReopenGoal = useCallback((goalId: string) => {
+        if (isGoalAutomationTogglePending) return
+        const goal = props.goals.find((candidate) => candidate.id === goalId)
+        if (!goal) return
+
+        void (async () => {
+            try {
+                const updated = await reopenGoal(goal.id)
+                addToast({ title: t('projects.toast.goalReopened'), body: updated.title, sessionId: '', url: '' })
+            } catch (error) {
+                addToast({
+                    title: t('projects.toast.goalStatusUpdateFailed'),
+                    body: error instanceof Error ? error.message : 'Failed to update goal',
+                    sessionId: '',
+                    url: ''
+                })
+            }
+        })()
+    }, [addToast, isGoalAutomationTogglePending, props.goals, reopenGoal, t])
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -317,10 +322,12 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                     </>
                 }
                 right={
-                    <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
-                        <ProjectIcon className="h-4 w-4" />
-                        {t('projects.actions.projectSettings')}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Button type="button" variant="secondary" onClick={props.onOpenSettings} className="gap-2">
+                            <ProjectIcon className="h-4 w-4" />
+                            {t('projects.actions.projectSettings')}
+                        </Button>
+                    </div>
                 }
             />
 
@@ -330,39 +337,39 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 isLoading={props.isGoalsLoading}
                 onToggleGoalAutomationPause={handleToggleGoalAutomationPause}
                 isAutomationTogglePending={isGoalAutomationTogglePending}
+                onRequestMarkDone={setGoalDoneConfirmId}
+                onReopenGoal={handleReopenGoal}
+                isGoalCompletionPending={isGoalAutomationTogglePending}
                 onSelectGoal={props.onSelectGoal}
                 onCreateGoal={props.onOpenCreateGoal}
-                leading={(
-                    <CompactTabs
-                        items={projectViewTabs}
-                        selectedId={isPlanningRoute ? 'planning' : 'board'}
-                        onSelect={handleProjectViewTab}
-                        ariaLabel={t('projects.tabs.label')}
-                        distribution="equal"
-                        className="lg:w-56 xl:w-64"
-                    />
-                )}
+            />
+            <ConfirmDialog
+                isOpen={Boolean(goalToMarkDone)}
+                onClose={() => setGoalDoneConfirmId(null)}
+                title={t('projects.goals.done.title')}
+                description={goalToMarkDone
+                    ? t('projects.goals.done.description', { title: goalToMarkDone.title })
+                    : t('projects.goals.done.descriptionFallback')}
+                confirmLabel={t('projects.goals.done.confirm')}
+                confirmingLabel={t('projects.goals.done.confirming')}
+                onConfirm={handleConfirmMarkGoalDone}
+                isPending={isGoalAutomationTogglePending}
             />
 
-            {isPlanningRoute ? (
-                <div className="flex-1 min-h-0">
-                    <GoalPlanningPage
-                        projectId={props.projectId}
-                        goalId={props.selectedGoalId}
-                        isGoalsLoading={props.isGoalsLoading}
-                    />
-                </div>
-            ) : (
-                <>
-                    <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_minmax(18rem,0.85fr)] lg:grid-cols-[minmax(360px,520px)_minmax(0,1fr)] lg:grid-rows-1">
+                    <div className="relative z-10 min-h-0 overflow-hidden app-shadow-project-detail-pane">
+                        {props.detailPanel}
+                    </div>
+                    <div className="min-h-0 overflow-hidden">
                         <ProjectKanbanBoard
                             projectId={props.projectId}
                             goalId={props.selectedGoalId}
                             onOpenNewTask={props.onOpenNewTask}
                         />
                     </div>
-                </>
-            )}
+                </div>
+            </div>
         </div>
     )
 })
@@ -378,51 +385,16 @@ export default function ProjectsPage() {
     const projectMatch = matchRoute({ to: '/projects/$projectId', fuzzy: true })
     const taskMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
     const settingsMatch = matchRoute({ to: '/projects/$projectId/settings' })
+    const controllerMatch = matchRoute({ to: '/projects/$projectId/controller' })
 
     const selectedProjectId = projectMatch ? projectMatch.projectId : null
     const isTaskRoute = Boolean(taskMatch)
     const isProjectSettingsRoute = Boolean(settingsMatch)
+    const isProjectControllerRoute = Boolean(controllerMatch)
+    const shouldUseRoutePanel = isTaskRoute || isProjectSettingsRoute || isProjectControllerRoute
 
     const isProjectsIndex = pathname === '/projects' || pathname === '/projects/'
-    const shouldShowLeftOnMobile = isProjectsIndex || (!isTaskRoute && !isProjectSettingsRoute)
-    const shouldShowRightPanel = isTaskRoute || isProjectSettingsRoute
-    const [isRightPanelVisible, setIsRightPanelVisible] = useState(false)
-    const [shouldRenderRightPanelContent, setShouldRenderRightPanelContent] = useState(false)
-
-    useEffect(() => {
-        if (!shouldShowRightPanel) {
-            setIsRightPanelVisible(false)
-            setShouldRenderRightPanelContent(false)
-            return
-        }
-
-        setIsRightPanelVisible(false)
-        setShouldRenderRightPanelContent(false)
-        let secondFrameId = 0
-        let contentTimerId = 0
-        const frameId = window.requestAnimationFrame(() => {
-            secondFrameId = window.requestAnimationFrame(() => {
-                setIsRightPanelVisible(true)
-                contentTimerId = window.setTimeout(() => {
-                    setShouldRenderRightPanelContent(true)
-                }, 80)
-            })
-        })
-
-        return () => {
-            window.cancelAnimationFrame(frameId)
-            if (secondFrameId) {
-                window.cancelAnimationFrame(secondFrameId)
-            }
-            if (contentTimerId) {
-                window.clearTimeout(contentTimerId)
-            }
-        }
-    }, [shouldShowRightPanel])
-
-    const rightPanelStateClass = shouldShowRightPanel && isRightPanelVisible
-        ? 'translate-x-0 opacity-100 pointer-events-auto'
-        : 'translate-x-full opacity-0 pointer-events-none'
+    const shouldShowProjectShell = isProjectsIndex || Boolean(selectedProjectId)
 
     const { machines, isLoading: machinesLoading } = useMachines(api, true)
     const { createProject, isPending: isCreating, error: createError } = useCreateProject(api)
@@ -496,7 +468,7 @@ export default function ProjectsPage() {
                     title: data.title,
                     description: data.description,
                     priority: data.priority || undefined,
-                    status: 'planned',
+                    status: 'planning',
                     agentFlavor: data.agent,
                     permissionMode: data.permissionMode,
                     model: model ?? undefined,
@@ -611,7 +583,7 @@ export default function ProjectsPage() {
         <div className="relative flex h-full min-h-0 overflow-hidden">
             <div
                 className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out ${
-                    shouldShowLeftOnMobile
+                    shouldShowProjectShell
                         ? 'translate-x-0'
                         : '-translate-x-full pointer-events-none'
                 } lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:shadow-[1px_0_0_var(--app-divider)] lg:pointer-events-auto`}
@@ -622,6 +594,15 @@ export default function ProjectsPage() {
                         goals={goals}
                         selectedGoalId={selectedGoalId}
                         isGoalsLoading={isGoalsLoading}
+                        detailPanel={shouldUseRoutePanel ? (
+                            <Outlet />
+                        ) : (
+                            <ProjectControllerPanel
+                                projectId={selectedProjectId}
+                                goalId={selectedGoalId}
+                                showBack={false}
+                            />
+                        )}
                         onBackToProjects={handleBackToProjects}
                         onOpenSettings={handleOpenProjectSettings}
                         onSelectGoal={selectGoal}
@@ -636,20 +617,6 @@ export default function ProjectsPage() {
                         onGoToSettings={handleGoToSettings}
                     />
                 )}
-            </div>
-
-            <div
-                className={`absolute inset-0 z-20 min-w-0 flex flex-col bg-[var(--app-bg)] overflow-hidden transform-gpu transition-[transform,opacity] duration-300 ease-out will-change-transform ${rightPanelStateClass} lg:left-auto lg:w-[480px] lg:min-w-[480px] lg:shadow-[-1px_0_0_var(--app-divider)]`}
-            >
-                <div className="flex-1 min-h-0 w-full">
-                    {shouldRenderRightPanelContent ? (
-                        <Outlet />
-                    ) : (
-                        <div className="flex h-full items-center justify-center p-4">
-                            <LoadingState label={t('loading')} className="text-sm" />
-                        </div>
-                    )}
-                </div>
             </div>
 
             <CreateProjectDialog

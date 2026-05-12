@@ -694,7 +694,7 @@ export function countPendingImprovementsTasks(db: Database, projectId: string, n
         JOIN projects p ON p.id = t.project_id
         WHERE t.project_id = ?
             AND p.namespace = ?
-            AND t.status = 'planned'
+            AND t.status IN ('planned', 'planning')
             AND t.archived_at IS NULL
             AND t.source = 'improvements_scan'
     `).get(projectId, namespace) as { count: number } | undefined
@@ -717,7 +717,7 @@ export function listPlannedTasksByProjectAndNamespace(
         JOIN projects p ON p.id = t.project_id
         WHERE t.project_id = ?
             AND p.namespace = ?
-            AND t.status = 'planned'
+            AND t.status IN ('planned', 'planning')
             AND (t.source IS NULL OR t.source != 'improvements_scan')
             AND t.archived_at IS NULL
         ORDER BY

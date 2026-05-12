@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { Goal } from '@/types/api'
-import { PlusIcon, ChevronDownIcon, PauseIcon, PlayIcon, SpinnerIcon } from '@/assets/icons'
+import { PlusIcon, ChevronDownIcon, PauseIcon, PlayIcon, SpinnerIcon, CheckIcon } from '@/assets/icons'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Tag } from '@/components/ui/tag'
@@ -16,10 +16,16 @@ type GoalSwitcherProps = {
     onSelectGoal: (goalId: string) => void
     onToggleGoalAutomationPause?: (goalId: string) => void
     isAutomationTogglePending?: boolean
+    onRequestMarkDone?: (goalId: string) => void
+    onReopenGoal?: (goalId: string) => void
+    isGoalCompletionPending?: boolean
     onCreateGoal: () => void
 }
 
 function getGoalAutomationStatusKey(goal: Goal): string {
+    if (goal.status === 'done') {
+        return 'projects.goals.automationStatus.done'
+    }
     if (goal.automationPausedAt != null) {
         return 'projects.goals.automationStatus.paused'
     }
@@ -29,7 +35,10 @@ function getGoalAutomationStatusKey(goal: Goal): string {
     return 'projects.goals.automationStatus.running'
 }
 
-function getGoalAutomationStatusVariant(goal: Goal): 'warning' | 'success' | 'error' {
+function getGoalAutomationStatusVariant(goal: Goal): 'default' | 'warning' | 'success' | 'error' {
+    if (goal.status === 'done') {
+        return 'default'
+    }
     if (goal.automationPausedAt != null) {
         return 'warning'
     }
@@ -46,14 +55,25 @@ export function GoalSwitcher(props: GoalSwitcherProps) {
         ? t('loading')
         : selected?.title ?? t('projects.goals.empty')
     const automationPaused = Boolean(selected?.automationPausedAt)
+    const isDone = selected?.status === 'done'
     const automationToggleLabel = automationPaused
         ? t('projects.actions.resumeAutomation')
         : t('projects.actions.pauseAutomation')
+    const goalCompletionLabel = isDone
+        ? t('projects.actions.reopenGoal')
+        : t('projects.actions.markGoalDone')
     const canToggleAutomation = Boolean(
         selected
         && !props.isLoading
+        && !isDone
         && !props.isAutomationTogglePending
         && props.onToggleGoalAutomationPause
+    )
+    const canToggleGoalCompletion = Boolean(
+        selected
+        && !props.isLoading
+        && !props.isGoalCompletionPending
+        && (isDone ? props.onReopenGoal : props.onRequestMarkDone)
     )
     const renderAutomationStatusTag = (goal: Goal, className?: string) => (
         <Tag
@@ -66,7 +86,7 @@ export function GoalSwitcher(props: GoalSwitcherProps) {
     )
 
     return (
-        <div className="app-shadow-divider-b bg-[var(--app-bg)] px-3 py-2 sm:px-4 sm:py-3">
+        <div className="app-shadow-divider-A bg-[var(--app-bg)] px-3 py-2 sm:px-4 sm:py-3">
             <div
                 data-testid="goal-switcher-toolbar"
                 className="grid w-full min-w-0 gap-2 lg:grid-cols-[minmax(20rem,1fr)_auto_auto_auto] lg:items-center lg:gap-3"
@@ -123,30 +143,59 @@ export function GoalSwitcher(props: GoalSwitcherProps) {
                         {props.leading}
                     </div>
                 ) : null}
-                {props.onToggleGoalAutomationPause ? (
-                    <div data-testid="goal-switcher-automation" className="flex justify-end lg:justify-self-end">
-                        <IconButton
-                            type="button"
-                            variant={automationPaused ? 'accent' : 'ghost'}
-                            size="sm"
-                            onClick={() => {
-                                if (selected) {
-                                    props.onToggleGoalAutomationPause?.(selected.id)
-                                }
-                            }}
-                            disabled={!canToggleAutomation}
-                            aria-label={automationToggleLabel}
-                            title={automationToggleLabel}
-                            className="shrink-0 bg-[var(--app-secondary-bg)] shadow-sm"
-                        >
-                            {props.isAutomationTogglePending ? (
-                                <SpinnerIcon className="h-4 w-4 animate-spin" />
-                            ) : automationPaused ? (
-                                <PlayIcon className="h-4 w-4" />
-                            ) : (
-                                <PauseIcon className="h-4 w-4" />
-                            )}
-                        </IconButton>
+                {props.onToggleGoalAutomationPause || props.onRequestMarkDone || props.onReopenGoal ? (
+                    <div data-testid="goal-switcher-automation" className="flex justify-end gap-2 lg:justify-self-end">
+                        {props.onToggleGoalAutomationPause && !isDone ? (
+                            <IconButton
+                                type="button"
+                                variant={automationPaused ? 'accent' : 'ghost'}
+                                size="sm"
+                                onClick={() => {
+                                    if (selected) {
+                                        props.onToggleGoalAutomationPause?.(selected.id)
+                                    }
+                                }}
+                                disabled={!canToggleAutomation}
+                                aria-label={automationToggleLabel}
+                                title={automationToggleLabel}
+                                className="shrink-0 bg-[var(--app-secondary-bg)] shadow-sm"
+                            >
+                                {props.isAutomationTogglePending ? (
+                                    <SpinnerIcon className="h-4 w-4 animate-spin" />
+                                ) : automationPaused ? (
+                                    <PlayIcon className="h-4 w-4" />
+                                ) : (
+                                    <PauseIcon className="h-4 w-4" />
+                                )}
+                            </IconButton>
+                        ) : null}
+                        {props.onRequestMarkDone || props.onReopenGoal ? (
+                            <IconButton
+                                type="button"
+                                variant={isDone ? 'accent' : 'ghost'}
+                                size="sm"
+                                onClick={() => {
+                                    if (!selected) return
+                                    if (isDone) {
+                                        props.onReopenGoal?.(selected.id)
+                                        return
+                                    }
+                                    props.onRequestMarkDone?.(selected.id)
+                                }}
+                                disabled={!canToggleGoalCompletion}
+                                aria-label={goalCompletionLabel}
+                                title={goalCompletionLabel}
+                                className="shrink-0 bg-[var(--app-secondary-bg)] shadow-sm"
+                            >
+                                {props.isGoalCompletionPending ? (
+                                    <SpinnerIcon className="h-4 w-4 animate-spin" />
+                                ) : isDone ? (
+                                    <PlayIcon className="h-4 w-4" />
+                                ) : (
+                                    <CheckIcon className="h-4 w-4" />
+                                )}
+                            </IconButton>
+                        ) : null}
                     </div>
                 ) : null}
             </div>

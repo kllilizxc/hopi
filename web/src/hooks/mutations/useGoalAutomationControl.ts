@@ -6,6 +6,8 @@ import { queryKeys } from '@/lib/query-keys'
 export function useGoalAutomationControl(api: ApiClient | null): {
     pauseGoalAutomation: (goalId: string) => Promise<Goal>
     resumeGoalAutomation: (goalId: string) => Promise<Goal>
+    markGoalDone: (goalId: string) => Promise<Goal>
+    reopenGoal: (goalId: string) => Promise<Goal>
     isPending: boolean
     error: string | null
 } {
@@ -38,12 +40,38 @@ export function useGoalAutomationControl(api: ApiClient | null): {
         onSuccess: invalidateGoalAutomationCaches
     })
 
-    const error = pauseMutation.error ?? resumeMutation.error
+    const markDoneMutation = useMutation({
+        mutationFn: async (goalId: string) => {
+            if (!api) {
+                throw new Error('API unavailable')
+            }
+            await api.updateGoal(goalId, { status: 'done' })
+            const result = await api.pauseGoalAutomation(goalId)
+            return result.goal
+        },
+        onSuccess: invalidateGoalAutomationCaches
+    })
+
+    const reopenMutation = useMutation({
+        mutationFn: async (goalId: string) => {
+            if (!api) {
+                throw new Error('API unavailable')
+            }
+            await api.updateGoal(goalId, { status: 'active' })
+            const result = await api.resumeGoalAutomation(goalId)
+            return result.goal
+        },
+        onSuccess: invalidateGoalAutomationCaches
+    })
+
+    const error = pauseMutation.error ?? resumeMutation.error ?? markDoneMutation.error ?? reopenMutation.error
 
     return {
         pauseGoalAutomation: pauseMutation.mutateAsync,
         resumeGoalAutomation: resumeMutation.mutateAsync,
-        isPending: pauseMutation.isPending || resumeMutation.isPending,
+        markGoalDone: markDoneMutation.mutateAsync,
+        reopenGoal: reopenMutation.mutateAsync,
+        isPending: pauseMutation.isPending || resumeMutation.isPending || markDoneMutation.isPending || reopenMutation.isPending,
         error: error instanceof Error ? error.message : error ? 'Failed to update goal automation' : null
     }
 }

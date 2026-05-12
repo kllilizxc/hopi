@@ -90,7 +90,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -224,7 +224,7 @@ describe('startSessionFromTask', () => {
             goalId: 'goal-1',
             title: 'Clarify goal and plan first iteration',
             description: 'Clarify the goal before implementation.',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'planner',
             contract: [
@@ -337,7 +337,7 @@ describe('startSessionFromTask', () => {
             goalId: 'goal-language',
             title: 'Build language-aware planning',
             description: 'Make generated goal artifacts follow project language.',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'planner'
         })
@@ -425,7 +425,7 @@ describe('startSessionFromTask', () => {
             projectId,
             title: 'Plan language-aware workflow',
             description: 'Keep generated artifacts localized.',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             workflowProfile: 'gsd',
             workflowPhase: 'plan'
@@ -512,7 +512,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -643,7 +643,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -755,7 +755,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -875,7 +875,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -987,7 +987,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -1091,7 +1091,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'project_init'
         })
@@ -1215,7 +1215,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'project_init'
         })
@@ -1346,7 +1346,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'project_init'
         })
@@ -1486,7 +1486,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'project_init'
         })
@@ -1598,7 +1598,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             source: 'improvements_scan'
         })
@@ -1692,7 +1692,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             agentFlavor: 'codex'
         })
@@ -1766,7 +1766,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -1853,7 +1853,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Ready for evaluator',
-            status: 'in_review',
+            status: 'review',
             workspaceId,
             source: 'manual'
         })
@@ -1953,7 +1953,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Clarify goal',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workspaceId,
             contract: '## Objective\nClarify first.'
@@ -2021,7 +2021,7 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         expect(appliedPermissionMode).toBe('safe-yolo')
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('docs maintenance')
     })
@@ -2061,7 +2061,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Clarify goal',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workspaceId,
             contract: '## Objective\nClarify first.'
@@ -2179,7 +2179,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workspaceId,
             handoff: [
@@ -2284,7 +2284,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Radar: scan goal docs and technical debt',
-            status: 'planned',
+            status: 'planning',
             source: 'radar',
             workspaceId,
             contract: '## Objective\nScan docs.'
@@ -2402,7 +2402,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Implement first slice',
-            status: 'planned',
+            status: 'planning',
             source: 'manual',
             workspaceId,
             contract: '## Objective\nImplement first slice.'
@@ -2471,12 +2471,12 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(readSessionFileCalled).toBe(false)
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updated?.status).toBe('in_progress')
+        expect(updated?.status).toBe('running')
         expect(updated?.initRuntime?.status).toBe('succeeded')
         expect(updated?.initRuntime?.latestNote).toContain('Goal role skipped setup workflow')
         expect(kickoffText).toContain('Role: Generator')
         expect(kickoffText).toContain('Task Contract')
-        expect(kickoffText).toContain('{ "type": "update_current_task", "status": "in_review"')
+        expect(kickoffText).toContain('{ "type": "update_current_task", "status": "review"')
     })
 
     it('starts goal review tasks as evaluator handoffs and keeps them in review', async () => {
@@ -2523,7 +2523,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Review implementation',
-            status: 'in_review',
+            status: 'review',
             source: 'manual',
             activeSessionId: previousSession.id,
             workspaceId,
@@ -2576,7 +2576,7 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         const updatedReviewTask = store.tasks.getTaskByNamespace(taskId, namespace)
         const spawnedReviewSession = store.sessions.getSessionByNamespace(spawned.id, namespace)
-        expect(updatedReviewTask?.status).toBe('in_review')
+        expect(updatedReviewTask?.status).toBe('review')
         expect(updatedReviewTask?.activeSessionId).toBe(previousSession.id)
         expect((spawnedReviewSession?.metadata as { hopiTaskRole?: string } | null)?.hopiTaskRole).toBe('evaluator')
         expect(kickoffText).toContain('Role: Evaluator')
@@ -2640,7 +2640,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Review implementation',
-            status: 'in_review',
+            status: 'review',
             source: 'manual',
             activeSessionId: previousSession.id,
             workspaceId,
@@ -2768,7 +2768,7 @@ describe('startSessionFromTask', () => {
             projectId,
             goalId,
             title: 'Revise implementation',
-            status: 'planned',
+            status: 'planning',
             source: 'manual',
             activeSessionId: previousSession.id,
             workspaceId,
@@ -2876,7 +2876,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId: workspaceBId
         })
 
@@ -2993,7 +2993,7 @@ describe('startSessionFromTask', () => {
             projectId,
             title: 'Task',
             description: 'Make restart carry full history',
-            status: 'in_progress',
+            status: 'running',
             workspaceId,
             activeSessionId: previousSession.id
         })
@@ -3084,7 +3084,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'in_progress',
+            status: 'running',
             workspaceId,
             activeSessionId: previousSession.id
         })
@@ -3160,7 +3160,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             agentFlavor: 'claude',
             permissionMode: 'plan'
@@ -3236,7 +3236,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             agentFlavor: 'codex',
             permissionMode: 'plan'
@@ -3314,7 +3314,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             agentFlavor: 'claude',
             modelMode: 'opus'
@@ -3394,7 +3394,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId,
             agentFlavor: 'claude',
             model: 'claude-sonnet-4-5'
@@ -3473,7 +3473,7 @@ describe('startSessionFromTask', () => {
             projectId,
             title: 'Task',
             description: 'Default kickoff should be replaced',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 
@@ -3554,7 +3554,7 @@ describe('startSessionFromTask', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workspaceId
         })
 

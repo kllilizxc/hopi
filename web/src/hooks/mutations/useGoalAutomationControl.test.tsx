@@ -80,4 +80,47 @@ describe('useGoalAutomationControl', () => {
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.tasksRoot(resumed.projectId) })
         })
     })
+
+    it('marks a goal done by updating status then pausing automation', async () => {
+        const queryClient = createTestQueryClient()
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+        const done = createGoal({ status: 'done', automationPausedAt: 1_700_000_000_100 })
+        const api = {
+            updateGoal: vi.fn(async () => ({ goal: createGoal({ status: 'done' }) })),
+            pauseGoalAutomation: vi.fn(async () => ({ goal: done }))
+        } as unknown as ApiClient
+
+        const { result } = renderHook(() => useGoalAutomationControl(api), {
+            wrapper: createWrapper(queryClient)
+        })
+
+        await act(async () => {
+            await result.current.markGoalDone(done.id)
+        })
+
+        expect(api.updateGoal).toHaveBeenCalledWith(done.id, { status: 'done' })
+        expect(api.pauseGoalAutomation).toHaveBeenCalledWith(done.id)
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.goals(done.projectId) })
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.tasksRoot(done.projectId) })
+    })
+
+    it('reopens a done goal by updating status then resuming automation', async () => {
+        const queryClient = createTestQueryClient()
+        const active = createGoal({ status: 'active', automationPausedAt: null })
+        const api = {
+            updateGoal: vi.fn(async () => ({ goal: createGoal({ status: 'active' }) })),
+            resumeGoalAutomation: vi.fn(async () => ({ goal: active }))
+        } as unknown as ApiClient
+
+        const { result } = renderHook(() => useGoalAutomationControl(api), {
+            wrapper: createWrapper(queryClient)
+        })
+
+        await act(async () => {
+            await result.current.reopenGoal(active.id)
+        })
+
+        expect(api.updateGoal).toHaveBeenCalledWith(active.id, { status: 'active' })
+        expect(api.resumeGoalAutomation).toHaveBeenCalledWith(active.id)
+    })
 })

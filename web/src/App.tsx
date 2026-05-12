@@ -30,6 +30,7 @@ import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
 import { useToast } from '@/lib/toast-context'
+import { readSelectedProjectGoalId, SELECTED_GOAL_CHANGED_EVENT } from '@/routes/projects/selected-goal-storage'
 import type { SyncEvent } from '@/types/api'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
@@ -127,7 +128,55 @@ function AppInner() {
     const pushPromptedRef = useRef(false)
     const cachedTokenRef = useRef<string | null>(null)
     const cachedApiRef = useRef<ApiClient | null>(null)
+    const controllerBriefingCheckedAtRef = useRef<Map<string, number>>(new Map())
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
+
+    useEffect(() => {
+        if (!api || !selectedProjectId) {
+            return
+        }
+
+        const trigger = () => {
+            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+                return
+            }
+            const now = Date.now()
+            const goalId = readSelectedProjectGoalId(selectedProjectId)
+            const briefingKey = `${selectedProjectId}:${goalId ?? 'default'}`
+            const lastCheckedAt = controllerBriefingCheckedAtRef.current.get(briefingKey) ?? 0
+            if (now - lastCheckedAt < 10 * 60 * 1000) {
+                return
+            }
+            controllerBriefingCheckedAtRef.current.set(briefingKey, now)
+            void api.maybeRefreshProjectControllerBriefing(selectedProjectId, { goalId }).catch(() => {})
+        }
+
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                trigger()
+            }
+        }
+
+        const onSelectedGoalChanged = (event: Event) => {
+            if (!(event instanceof CustomEvent)) return
+            if (event.detail?.projectId === selectedProjectId) {
+                trigger()
+            }
+        }
+
+        trigger()
+        window.addEventListener('click', trigger, { passive: true })
+        window.addEventListener('keyup', trigger)
+        window.addEventListener(SELECTED_GOAL_CHANGED_EVENT, onSelectedGoalChanged)
+        document.addEventListener('visibilitychange', onVisibilityChange)
+
+        return () => {
+            window.removeEventListener('click', trigger)
+            window.removeEventListener('keyup', trigger)
+            window.removeEventListener(SELECTED_GOAL_CHANGED_EVENT, onSelectedGoalChanged)
+            document.removeEventListener('visibilitychange', onVisibilityChange)
+        }
+    }, [api, selectedProjectId])
 
     useEffect(() => {
         if (baseUrlRef.current === baseUrl) {

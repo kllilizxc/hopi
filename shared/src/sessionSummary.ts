@@ -6,8 +6,10 @@ export type SessionSummaryMetadata = {
     path: string
     machineId?: string
     projectId?: string
+    goalId?: string
     taskId?: string
     hopiTaskRole?: HopiTaskRole
+    hopiController?: boolean
     summary?: { text: string }
     flavor?: string | null
     worktree?: WorktreeMetadata
@@ -34,8 +36,10 @@ export function toSessionSummary(session: Session): SessionSummary {
         path: session.metadata.path,
         machineId: session.metadata.machineId ?? undefined,
         projectId: session.metadata.projectId ?? undefined,
+        goalId: session.metadata.goalId ?? undefined,
         taskId: session.metadata.taskId ?? undefined,
         hopiTaskRole: session.metadata.hopiTaskRole,
+        hopiController: session.metadata.hopiController,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
         worktree: session.metadata.worktree

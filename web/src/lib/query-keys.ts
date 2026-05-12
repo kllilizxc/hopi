@@ -7,6 +7,7 @@ export const queryKeys = {
     projects: ['projects'] as const,
     workflowStrategies: ['workflow-strategies'] as const,
     project: (projectId: string) => ['project', projectId] as const,
+    projectController: (projectId: string, goalId: string) => ['project-controller', projectId, goalId] as const,
     workspaces: (projectId: string) => ['workspaces', projectId] as const,
     goals: (projectId: string) => ['goals', projectId] as const,
     goalTodoRoot: ['goal-todo'] as const,

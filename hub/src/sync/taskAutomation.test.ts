@@ -212,7 +212,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Clarify goal and plan first iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'planner'
         })
@@ -255,7 +255,7 @@ describe('TaskAutomation', () => {
                             },
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Created first executable task.',
                                 evidence: 'Goal docs and todo were reviewed.'
                             }
@@ -276,7 +276,7 @@ describe('TaskAutomation', () => {
         const tasks = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
         const created = tasks.find((task) => task.id !== taskId)
         expect(created?.title).toBe('Implement JSON action packet parser')
-        expect(created?.status).toBe('planned')
+        expect(created?.status).toBe('planning')
         expect(created?.goalId).toBe(goalId)
         expect(created?.source).toBe('manual')
         expect(created?.agentFlavor).toBeNull()
@@ -284,7 +284,7 @@ describe('TaskAutomation', () => {
         expect(created?.permissionMode).toBe('safe-yolo')
 
         const planner = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(planner?.status).toBe('finished')
+        expect(planner?.status).toBe('done')
         expect(planner?.handoff).toBe('Created first executable task.')
         expect(planner?.evidence).toBe('Goal docs and todo were reviewed.')
 
@@ -328,7 +328,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'planner'
         })
@@ -366,7 +366,7 @@ describe('TaskAutomation', () => {
                                 },
                                 {
                                     type: 'update_current_task',
-                                    status: 'finished',
+                                    status: 'done',
                                     handoff: 'Stopped for milestone review.',
                                     evidence: 'Remaining work needs human priority review.'
                                 }
@@ -390,7 +390,7 @@ describe('TaskAutomation', () => {
         expect(topics[0]?.taskId).toBeNull()
         expect(topics[0]?.blocking).toBe(true)
         expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('finished')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('done')
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
 
@@ -427,7 +427,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'planner'
         })
@@ -436,7 +436,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Restore archive docs through storage adapter',
-            status: 'finished',
+            status: 'done',
             source: 'manual'
         })
 
@@ -476,7 +476,7 @@ describe('TaskAutomation', () => {
                             },
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Promoted only new work.',
                                 evidence: 'Skipped already completed work.'
                             }
@@ -556,7 +556,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             workspaceId: 'workspace-1',
             source: 'planner'
@@ -598,7 +598,7 @@ describe('TaskAutomation', () => {
                             },
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Promoted linked work.',
                                 evidence: 'Todo entry was promoted.'
                             }
@@ -621,8 +621,9 @@ describe('TaskAutomation', () => {
         expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
             .filter((task) => task.goalTodoRef === 'Restore archive docs through storage adapter')).toHaveLength(1)
         const promotedTodo = readFileSync(join(docsRoot, 'goals', 'todo-ref-goal', 'todo.yml'), 'utf8')
-        expect(promotedTodo).toContain('status: promoted')
-        expect(promotedTodo).toContain(`taskId: ${created?.id}`)
+        expect(promotedTodo).toContain('status: planning')
+        expect(promotedTodo).toContain('tag: ready')
+        expect(promotedTodo).not.toContain('taskId:')
 
         const evaluatorSession = createLinkedSession(store, {
             namespace,
@@ -640,7 +641,7 @@ describe('TaskAutomation', () => {
         } as unknown as SyncEngine
         const evaluatorAutomation = new TaskAutomation(store, evaluator)
         store.tasks.updateTaskByNamespace(created?.id ?? 'missing-created-task', namespace, {
-            status: 'in_review',
+            status: 'review',
             activeSessionId: evaluatorSession.sessionId
         })
         evaluatorAutomation.handleEvent({ type: 'session-added', sessionId: evaluatorSession.sessionId })
@@ -657,7 +658,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted linked task.',
                                 evidence: 'Validated implementation.'
                             }
@@ -676,7 +677,7 @@ describe('TaskAutomation', () => {
 
         const doneTodo = readFileSync(join(docsRoot, 'goals', 'todo-ref-goal', 'todo.yml'), 'utf8')
         expect(doneTodo).toContain('status: done')
-        expect(doneTodo).toContain(`taskId: ${created?.id}`)
+        expect(doneTodo).not.toContain('taskId:')
     })
 
     it('moves generator finished action packets to review instead of finished', () => {
@@ -712,7 +713,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'manual'
         })
@@ -741,7 +742,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Implemented map traversal.',
                                 evidence: 'bun test passed.'
                             }
@@ -760,7 +761,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const generator = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(generator?.status).toBe('in_review')
+        expect(generator?.status).toBe('review')
         expect(generator?.finishedAt).toBeNull()
         expect(generator?.handoff).toBe('Implemented map traversal.')
         expect(generator?.evidence).toBe('bun test passed.')
@@ -821,7 +822,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Review sync task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: reviewSession.sessionId,
             workspaceId: 'workspace-1',
             source: 'manual',
@@ -853,7 +854,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Review me.',
                                 evidence: 'Focused checks passed.'
                             }
@@ -871,9 +872,146 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(reviewSession.sessionId, reviewReady))
 
         const todo = readFileSync(join(docsRoot, 'goals', 'runtime-status-goal', 'todo.yml'), 'utf8')
-        expect(todo).toContain('ref: review-ref')
-        expect(todo).toContain('status: in_review')
-        expect(todo).toContain(`taskId: ${reviewTaskId}`)
+        expect(todo).toContain('id: review-ref')
+        expect(todo).toContain('status: review')
+        expect(todo).toContain('tag: in_review')
+        expect(todo).not.toContain('taskId:')
+    })
+
+    it('syncs linked goal todo status when an automation transition blocks a task', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-todo-block-sync'
+        const goalId = 'goal-todo-block-sync'
+        const taskId = 'generator-task-block-sync'
+        const workspacePath = createTempWorkspace()
+        const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', 'block-sync-goal')
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'todo.yml'), [
+            'version: 1',
+            'goals:',
+            '  - goalKey: block-sync-goal',
+            `    goalId: ${goalId}`,
+            '    title: Block sync goal',
+            '    items:',
+            '      - id: block-ref',
+            '        status: running',
+            '        tag: promoted',
+            '        title: Block sync task',
+            ''
+        ].join('\n'), 'utf8')
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal todo block sync project',
+            defaultWorkspaceId: 'workspace-1'
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            label: 'Workspace',
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Block sync goal',
+            goalKey: 'block-sync-goal',
+            status: 'active'
+        })
+
+        const linkedSession = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Block sync task',
+            status: 'running',
+            activeSessionId: linkedSession.sessionId,
+            workspaceId: 'workspace-1',
+            source: 'manual',
+            goalTodoRef: 'block-ref'
+        })
+        const controllerMetadata = {
+            path: workspacePath,
+            host: 'test',
+            projectId,
+            goalId,
+            hopiController: true
+        }
+        const controllerStored = store.sessions.getOrCreateSession(
+            'controller-session-block-sync',
+            controllerMetadata,
+            null,
+            namespace
+        )
+        const now = Date.now()
+        const controllerSession: Session = {
+            id: controllerStored.id,
+            namespace,
+            seq: 0,
+            createdAt: now,
+            updatedAt: now,
+            active: true,
+            activeAt: now,
+            metadata: controllerMetadata,
+            metadataVersion: controllerStored.metadataVersion,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: now
+        }
+        const controllerMessages: Array<{ sessionId: string; text: string }> = []
+
+        const engine = {
+            getSession(id: string) {
+                if (id === linkedSession.sessionId) return linkedSession.session
+                return undefined
+            },
+            getSessionByNamespace(id: string, requestedNamespace: string) {
+                if (requestedNamespace === namespace && id === controllerSession.id) return controllerSession
+                return undefined
+            },
+            async sendMessage(sessionId: string, message: { text: string }) {
+                controllerMessages.push({ sessionId, text: message.text })
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId: linkedSession.sessionId })
+
+        const errorMsg = store.messages.addMessage(linkedSession.sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'error',
+                    message: 'Agent session exited unexpectedly'
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(linkedSession.sessionId, errorMsg))
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('blocked')
+        const todo = readFileSync(join(goalDir, 'todo.yml'), 'utf8')
+        expect(todo).toContain('id: block-ref')
+        expect(todo).toContain('status: blocked')
+        expect(todo).toContain('tag: unknown')
+        expect(todo).toContain('summary: Agent session exited unexpectedly')
+        expect(controllerMessages).toHaveLength(1)
+        expect(controllerMessages[0]?.sessionId).toBe(controllerSession.id)
+        expect(controllerMessages[0]?.text).toContain('Controller event: work is blocked - Block sync task')
+        expect(controllerMessages[0]?.text).toContain('Reason: Agent session exited unexpectedly')
     })
 
     it('applies fenced goal action packet JSON from manual goal tasks on ready', () => {
@@ -909,7 +1047,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Localize visible copy',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'manual'
         })
@@ -937,7 +1075,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'in_review',
+                                status: 'review',
                                 handoff: 'Localized runtime copy.',
                                 evidence: 'bun test and npm run build-nolog passed.'
                             }
@@ -956,7 +1094,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.handoff).toBe('Localized runtime copy.')
         expect(task?.evidence).toBe('bun test and npm run build-nolog passed.')
     })
@@ -994,7 +1132,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Localize visible copy',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'manual'
         })
@@ -1023,7 +1161,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'in_review',
+                                status: 'review',
                                 handoff: 'Localized runtime copy.',
                                 evidence: 'bun test and npm run build-nolog passed.'
                             }
@@ -1042,7 +1180,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.handoff).toBe('Localized runtime copy.')
         expect(task?.evidence).toBe('bun test and npm run build-nolog passed.')
     })
@@ -1080,7 +1218,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Localize visible copy',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'manual'
         })
@@ -1109,7 +1247,7 @@ describe('TaskAutomation', () => {
                             actions: [
                                 {
                                     type: 'update_current_task',
-                                    status: 'in_review',
+                                    status: 'review',
                                     handoff: 'Localized runtime copy.',
                                     evidence: 'bun test and npm run build-nolog passed.'
                                 }
@@ -1144,7 +1282,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.handoff).toBe('Localized runtime copy.')
         expect(task?.evidence).toBe('bun test and npm run build-nolog passed.')
     })
@@ -1182,7 +1320,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'manual'
         })
@@ -1214,7 +1352,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const generator = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(generator?.status).toBe('in_progress')
+        expect(generator?.status).toBe('running')
         expect(generator?.handoff).toBeNull()
         expect(generator?.evidence).toBeNull()
     })
@@ -1252,7 +1390,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: 'generator-session-1',
             source: 'evaluator'
         })
@@ -1281,7 +1419,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -1300,7 +1438,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.finishedAt).toBeNumber()
         expect(accepted?.handoff).toBe('Accepted map traversal.')
         expect(accepted?.evidence).toBe('Tests and diff reviewed.')
@@ -1367,7 +1505,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             workspaceId: 'workspace-1',
             goalTodoRef: 'map-traversal',
@@ -1457,7 +1595,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -1483,7 +1621,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergedAt).toBeNumber()
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(accepted?.mergedDiffSnapshot).toMatchObject({
@@ -1505,9 +1643,9 @@ describe('TaskAutomation', () => {
         expect(cleanupCalls).toBe(1)
         expect(archiveCalls).toBe(1)
         const doneTodo = readFileSync(join(docsRoot, 'goals', 'auto-merge-goal', 'todo.yml'), 'utf8')
-        expect(doneTodo).toContain('ref: map-traversal')
+        expect(doneTodo).toContain('id: map-traversal')
         expect(doneTodo).toContain('status: done')
-        expect(doneTodo).toContain('taskId: generator-task-auto-merge')
+        expect(doneTodo).not.toContain('taskId:')
     })
 
     it('blocks accepted auto-merge when the source branch has no committed changes', async () => {
@@ -1547,7 +1685,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -1611,7 +1749,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -1721,7 +1859,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: oldGeneratorStored.id,
             source: 'evaluator'
         })
@@ -1810,7 +1948,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -1839,7 +1977,7 @@ describe('TaskAutomation', () => {
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(mergeStateSessionId).toBe(evaluatorSessionId)
         expect(accepted?.mergeRuntime?.sessionId).toBe(evaluatorSessionId)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.mergeRuntime?.status).toBe('succeeded')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
     })
@@ -1909,7 +2047,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: storedSession.id,
             source: 'evaluator'
         })
@@ -1940,7 +2078,7 @@ describe('TaskAutomation', () => {
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(result).toBe('not_applicable')
         expect(readCalls).toBe(0)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.mergeRuntime).toBeNull()
     })
 
@@ -1981,7 +2119,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -2089,7 +2227,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -2115,7 +2253,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(2)
         expect(sendMessageCalls).toBe(1)
@@ -2160,7 +2298,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator',
             mergeRuntime: {
@@ -2256,7 +2394,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'in_review',
+                                status: 'review',
                                 handoff: 'Resolved merge conflicts and staged the combined result.',
                                 evidence: 'Tests passed after conflict resolution.'
                             }
@@ -2290,7 +2428,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(1)
         expect(archiveCalls).toBe(1)
@@ -2333,7 +2471,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator',
             mergeRuntime: {
@@ -2445,7 +2583,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(1)
     })
@@ -2486,7 +2624,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Translate game UI copy',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -2577,7 +2715,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted UI localization.',
                                 evidence: 'Tests and build passed.'
                             }
@@ -2603,7 +2741,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('finished')
+        expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(observedTargetBranch).toBe('main')
         expect(observedMergeStrategy).toBe('squash')
@@ -2648,7 +2786,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -2721,7 +2859,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Accepted map traversal.',
                                 evidence: 'Tests and diff reviewed.'
                             }
@@ -2789,7 +2927,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Review localized copy',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: 'generator-session-1',
             source: 'evaluator'
         })
@@ -2813,7 +2951,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, kickoffMsg))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.source).toBe('evaluator')
     })
 
@@ -2851,7 +2989,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Review localized copy',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: 'generator-session-1',
             source: 'evaluator',
             initRuntime: {
@@ -2890,7 +3028,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('in_review')
+        expect(task?.status).toBe('review')
         expect(task?.source).toBe('manual')
         expect(task?.initRuntime?.status).toBe('retrying')
         expect(task?.initRuntime?.sessionId).toBe(sessionId)
@@ -2933,7 +3071,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Review localized copy',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: 'generator-session-1',
             source: 'evaluator',
             initRuntime: {
@@ -3016,7 +3154,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Implement map traversal',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -3045,7 +3183,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'planned',
+                                status: 'planning',
                                 handoff: 'Traversal helper is missing.',
                                 evidence: 'Expected file was not present.'
                             }
@@ -3064,7 +3202,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const rejected = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(rejected?.status).toBe('planned')
+        expect(rejected?.status).toBe('planning')
         expect(rejected?.source).toBe('manual')
         expect(rejected?.handoff).toBe('Traversal helper is missing.')
         expect(rejected?.evidence).toBe('Expected file was not present.')
@@ -3103,7 +3241,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Review map traversal',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'evaluator'
         })
@@ -3134,7 +3272,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'update_current_task',
-                                status: 'in_review',
+                                status: 'review',
                                 handoff: 'Requeue this review with updated evidence.',
                                 evidence: 'The evaluator did not accept or reject.'
                             }
@@ -3153,7 +3291,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const requeued = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(requeued?.status).toBe('in_review')
+        expect(requeued?.status).toBe('review')
         expect(requeued?.source).toBe('manual')
         expect(requeued?.handoff).toBe('Requeue this review with updated evidence.')
         expect(requeued?.evidence).toBe('The evaluator did not accept or reject.')
@@ -3193,7 +3331,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Clarify goal and plan first iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'planner'
         })
@@ -3247,7 +3385,7 @@ describe('TaskAutomation', () => {
                             },
                             {
                                 type: 'update_current_task',
-                                status: 'finished',
+                                status: 'done',
                                 handoff: 'Created first execution batch.',
                                 evidence: 'Reviewed repo docs and current implementation.'
                             }
@@ -3268,7 +3406,7 @@ describe('TaskAutomation', () => {
         const created = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
             .find((task) => task.id !== taskId)
         expect(created?.title).toBe('Implement map traversal')
-        expect(created?.status).toBe('planned')
+        expect(created?.status).toBe('planning')
         expect(created?.source).toBe('manual')
         expect(created?.contract).toContain('## Acceptance')
         expect(created?.contract).toContain('- Reachable nodes can be selected.')
@@ -3281,7 +3419,7 @@ describe('TaskAutomation', () => {
         expect(goal?.successCriteria).toContain('- Map traversal works.')
 
         const planner = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(planner?.status).toBe('finished')
+        expect(planner?.status).toBe('done')
         expect(realtimeEvents.some((event) => event.type === 'task-added')).toBe(true)
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
@@ -3319,7 +3457,7 @@ describe('TaskAutomation', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'planner'
         })
@@ -3364,7 +3502,7 @@ describe('TaskAutomation', () => {
                                 },
                                 {
                                     type: 'update_current_task',
-                                    status: 'finished',
+                                    status: 'done',
                                     handoff: 'No new implementation tasks promoted.',
                                     evidence: 'Verified current goal state.'
                                 }
@@ -3395,7 +3533,7 @@ describe('TaskAutomation', () => {
         expect(goal?.currentFocus).toBe('Awaiting human confirmation.')
 
         const planner = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(planner?.status).toBe('finished')
+        expect(planner?.status).toBe('done')
         expect(planner?.handoff).toBe('No new implementation tasks promoted.')
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
@@ -3424,7 +3562,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -3454,7 +3592,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
@@ -3482,7 +3620,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -3540,7 +3678,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -3595,7 +3733,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -3675,7 +3813,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             source: 'project_init',
             initRuntime: {
@@ -3753,7 +3891,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             workspaceId,
             source: 'project_init',
@@ -3812,7 +3950,7 @@ describe('TaskAutomation', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
 
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updated?.status).toBe('in_progress')
+        expect(updated?.status).toBe('running')
         expect(updated?.initRuntime?.status).toBe('retrying')
         expect(updated?.initRuntime?.retryCount).toBe(1)
         expect(sentMessages).toHaveLength(1)
@@ -3850,7 +3988,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             workspaceId,
             source: 'project_init',
@@ -3943,7 +4081,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             workspaceId,
             source: 'project_init',
@@ -4030,7 +4168,7 @@ describe('TaskAutomation', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
 
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updated?.status).toBe('in_review')
+        expect(updated?.status).toBe('review')
         expect(updated?.previewRuntime?.status).toBe('ready')
         expect(updated?.initRuntime?.latestNote).toContain('preview readiness')
     })
@@ -4065,7 +4203,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Initialize project scripts',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId,
             workspaceId,
             source: 'project_init',
@@ -4158,7 +4296,7 @@ describe('TaskAutomation', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
 
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updated?.status).toBe('in_progress')
+        expect(updated?.status).toBe('running')
         expect(updated?.previewRuntime?.status).toBe('retrying')
         expect(updated?.previewRuntime?.retryCount).toBe(1)
         expect(updated?.initRuntime?.status).toBe('retrying')
@@ -4191,7 +4329,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -4234,7 +4372,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
     })
 
     it('keeps task running when ready explicitly has no assistant reply', () => {
@@ -4261,7 +4399,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -4287,7 +4425,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
     })
 
     it('flips to in_review even if ready arrives before thinking=false session update', () => {
@@ -4314,7 +4452,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -4341,7 +4479,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
     })
 
     it('flips task to in_review when session is linked only via activeSessionId', () => {
@@ -4366,7 +4504,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -4393,7 +4531,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
     })
 
     it('treats permission pending as in_review (session-updated)', () => {
@@ -4420,7 +4558,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
 
@@ -4448,7 +4586,7 @@ describe('TaskAutomation', () => {
         }
         automation.handleEvent({ type: 'session-updated', sessionId })
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
@@ -4476,7 +4614,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId
         })
 
@@ -4493,7 +4631,7 @@ describe('TaskAutomation', () => {
         session.thinking = true
         automation.handleEvent({ type: 'session-updated', sessionId })
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
     })
 
     it('does not miss in_review -> in_progress when thinking=true arrives before agentState clears pending requests', () => {
@@ -4520,7 +4658,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_review',
+            status: 'review',
             activeSessionId: sessionId
         })
 
@@ -4548,7 +4686,7 @@ describe('TaskAutomation', () => {
         session.thinking = true
         automation.handleEvent({ type: 'session-updated', sessionId })
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
     })
 
     it('ignores merge-conflict auto-resolution prompts for task progress state', () => {
@@ -4576,7 +4714,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'finished',
+            status: 'done',
             activeSessionId: sessionId,
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
@@ -4610,7 +4748,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.status).toBe('done')
         expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
         expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
 
@@ -4621,7 +4759,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.status).toBe('done')
         expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
         expect(afterReady?.worktreeMergeCommit).toBe('abc123')
     })
@@ -4651,7 +4789,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'finished',
+            status: 'done',
             activeSessionId: sessionId,
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
@@ -4685,7 +4823,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.status).toBe('done')
         expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
         expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
 
@@ -4696,7 +4834,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.status).toBe('done')
         expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
         expect(afterReady?.worktreeMergeCommit).toBe('abc123')
     })
@@ -4726,7 +4864,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'finished',
+            status: 'done',
             activeSessionId: sessionId,
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
@@ -4753,7 +4891,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.status).toBe('done')
         expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
         expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
 
@@ -4764,7 +4902,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterReady?.status).toBe('finished')
+        expect(afterReady?.status).toBe('done')
         expect(afterReady?.worktreeMergedAt).toBe(mergedAt)
         expect(afterReady?.worktreeMergeCommit).toBe('abc123')
     })
@@ -4794,7 +4932,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'finished',
+            status: 'done',
             activeSessionId: sessionId,
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
@@ -4822,7 +4960,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('in_progress')
+        expect(afterPrompt?.status).toBe('running')
         expect(afterPrompt?.worktreeMergedAt).toBeNull()
         expect(afterPrompt?.worktreeMergeCommit).toBeNull()
         expect(afterPrompt?.mergedDiffSnapshot).toBeNull()
@@ -4834,7 +4972,7 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('review')
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
 
@@ -4862,7 +5000,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'in_progress',
+            status: 'running',
             activeSessionId: sessionId
         })
         store.tasks.updateTaskByNamespace(taskId, namespace, {
@@ -4894,7 +5032,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const updated = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updated?.status).toBe('in_progress')
+        expect(updated?.status).toBe('running')
         expect(updated?.mergedDiffSnapshot).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })
@@ -4923,7 +5061,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'GSD task',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'gsd',
             workflowPhase: 'discuss',
             activeSessionId: sessionId
@@ -4947,7 +5085,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('planned')
+        expect(afterPrompt?.status).toBe('planning')
         expect(afterPrompt?.workflowPhase).toBe('discuss')
     })
 
@@ -4975,7 +5113,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'GSD task',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'gsd',
             workflowPhase: 'execute_ready',
             activeSessionId: sessionId
@@ -4999,7 +5137,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('in_progress')
+        expect(afterPrompt?.status).toBe('running')
         expect(afterPrompt?.workflowPhase).toBe('execute')
 
         const readyMsg = store.messages.addMessage(sessionId, {
@@ -5009,7 +5147,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterReady?.status).toBe('in_review')
+        expect(afterReady?.status).toBe('review')
         expect(afterReady?.workflowPhase).toBe('verify')
     })
 
@@ -5037,7 +5175,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'GSD discuss task',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'gsd',
             workflowPhase: 'discuss',
             activeSessionId: sessionId
@@ -5061,7 +5199,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('planned')
+        expect(afterPrompt?.status).toBe('planning')
         expect(afterPrompt?.workflowPhase).toBe('discuss')
 
         const readyMsg = store.messages.addMessage(sessionId, {
@@ -5071,7 +5209,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
         const afterReady = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterReady?.status).toBe('planned')
+        expect(afterReady?.status).toBe('planning')
         expect(afterReady?.workflowPhase).toBe('discuss')
     })
 
@@ -5100,7 +5238,7 @@ describe('TaskAutomation', () => {
             id: taskId,
             projectId,
             title: 'Test task',
-            status: 'finished',
+            status: 'done',
             activeSessionId: sessionId,
             worktreeMergedAt: mergedAt,
             worktreeMergeCommit: 'abc123'
@@ -5127,7 +5265,7 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(sessionId, userMsg))
 
         const afterPrompt = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(afterPrompt?.status).toBe('finished')
+        expect(afterPrompt?.status).toBe('done')
         expect(afterPrompt?.worktreeMergedAt).toBe(mergedAt)
         expect(afterPrompt?.worktreeMergeCommit).toBe('abc123')
     })

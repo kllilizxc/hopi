@@ -47,10 +47,10 @@ const defaultStrategy: WorkflowStrategy = {
             return null
         }
         if (transition === 'assistant_ready') {
-            return { status: 'in_review' }
+            return { status: 'review' }
         }
         if (transition === 'session_started' || transition === 'task_prompted' || transition === 'thinking_resumed') {
-            return { status: 'in_progress' }
+            return { status: 'running' }
         }
         return null
     }
@@ -66,7 +66,7 @@ function preserveGsdTaskPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>
 function getGsdPromptPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): WorkflowTaskPatch {
     if (task.workflowPhase === 'execute_ready' || task.workflowPhase === 'execute' || task.workflowPhase === 'verify') {
         return {
-            status: 'in_progress',
+            status: 'running',
             workflowPhase: 'execute'
         }
     }
@@ -76,7 +76,7 @@ function getGsdPromptPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): 
 function getGsdReadyPatch(task: Pick<StoredTask, 'status' | 'workflowPhase'>): WorkflowTaskPatch {
     if (task.workflowPhase === 'execute') {
         return {
-            status: 'in_review',
+            status: 'review',
             workflowPhase: 'verify'
         }
     }

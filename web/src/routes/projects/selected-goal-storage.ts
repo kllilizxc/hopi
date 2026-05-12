@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { productStorageKey } from '@hopi/protocol/brand'
 
 export const SELECTED_GOAL_STORAGE_KEY = productStorageKey('selected-goals-by-project-v1')
+export const SELECTED_GOAL_CHANGED_EVENT = productStorageKey('selected-goal-changed')
 
 type GoalLike = {
     id: string
@@ -40,6 +41,11 @@ function writeStoredSelection(selection: SelectedGoalByProject): void {
     }
 }
 
+export function readSelectedProjectGoalId(projectId: string | null): string | null {
+    if (!projectId) return null
+    return readStoredSelection()[projectId] ?? null
+}
+
 export function useSelectedProjectGoal<TGoal extends GoalLike>(
     projectId: string | null,
     goals: readonly TGoal[]
@@ -69,6 +75,11 @@ export function useSelectedProjectGoal<TGoal extends GoalLike>(
                 [projectId]: goalId
             }
             writeStoredSelection(next)
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent(SELECTED_GOAL_CHANGED_EVENT, {
+                    detail: { projectId, goalId }
+                }))
+            }
             return next
         })
     }, [projectId])

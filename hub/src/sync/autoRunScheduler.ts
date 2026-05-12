@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from '@hopi/protocol'
 import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
@@ -8,6 +7,9 @@ import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredT
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
+import { createGoalTodoTaskId, readGoalTodo } from './goals/goalTodo'
+import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
+import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
 import { getProjectDefaultTaskRuntimeSettings } from './projectTaskDefaults'
@@ -27,7 +29,7 @@ type PlannerBackstopSignal = {
 
 const GOAL_RADAR_INTERVAL_MS = 24 * 60 * 60 * 1000
 const ACTIVE_GOAL_STATUSES = new Set(['planning', 'active'])
-const OPEN_GOAL_TASK_STATUSES = new Set(['planned', 'in_progress', 'in_review', 'blocked'])
+const OPEN_GOAL_TASK_STATUSES = new Set(['planning', 'running', 'review', 'blocked', 'planned', 'in_progress', 'in_review'])
 const AUTOMATION_LANE_PRIORITY: Record<AutomationLane, number> = {
     evaluator: 0,
     planner: 1,
@@ -55,7 +57,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function getTaskAutomationLane(task: Pick<StoredTask, 'status' | 'source'>): AutomationLane {
-    if (task.status === 'in_review') {
+    if (task.status === 'review' || task.status === 'in_review') {
         return 'evaluator'
     }
     if (task.source === 'planner') {
@@ -121,11 +123,13 @@ function sortAutomationCandidates(tasks: StoredTask[]): StoredTask[] {
 }
 
 function isTaskAutoRunnable(task: {
+    id: string
     status: string
     archivedAt: number | null
     activeSessionId: string | null
     source: string | null
     goalId: string | null
+    goalTodoRef: string | null
     workflowPhase: string | null
     workflowProfile: string
 }, options: {
@@ -134,13 +138,14 @@ function isTaskAutoRunnable(task: {
     store: Store
     engine: Pick<SyncEngine, 'getSessionByNamespace'>
 }): boolean {
-    const isReviewTask = task.status === 'in_review'
-    if (task.status !== 'planned' && !isReviewTask) return false
+    const isPlanningTask = task.status === 'planning' || task.status === 'planned'
+    const isReviewTask = task.status === 'review' || task.status === 'in_review'
+    if (!isPlanningTask && !isReviewTask) return false
     if (task.archivedAt) return false
     if (task.activeSessionId) {
         const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
         if (
-            task.status === 'planned'
+            isPlanningTask
             && linkedSession?.active
             && (!task.goalId || linkedSession.thinking || sessionHasPendingRequests(linkedSession))
         ) {
@@ -153,6 +158,7 @@ function isTaskAutoRunnable(task: {
     if (task.source === 'improvements_scan') return false
     if (isReviewTask && task.source === 'evaluator') return false
     if (!getTaskAutopilotPolicy({ task, ...options }).enabled) return false
+    if (isPlanningTask && !isPlanningTaskReadyForAutomation(task, options)) return false
     const strategy = getWorkflowStrategy(task)
     return strategy.canAutoRunTask(task)
 }
@@ -206,8 +212,71 @@ function getTaskAutopilotPolicy(options: {
     }
 }
 
+function getDefaultWorkspaceForProject(store: Store, project: StoredProject): StoredWorkspace | null {
+    return project.defaultWorkspaceId
+        ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function buildGoalTodoTagIndex(options: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+}): Map<string, string | null> {
+    const tags = new Map<string, string | null>()
+    const todo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    for (const section of todo.sections) {
+        tags.set(section.id, section.tag)
+        if (section.todoRef) tags.set(section.todoRef, section.tag)
+        if (section.taskId) tags.set(section.taskId, section.tag)
+    }
+    return tags
+}
+
+function getTaskGoalTodoTag(
+    task: Pick<StoredTask, 'id' | 'goalTodoRef'>,
+    tagsByTaskKey: Map<string, string | null>
+): string | null | undefined {
+    if (task.goalTodoRef && tagsByTaskKey.has(task.goalTodoRef)) {
+        return tagsByTaskKey.get(task.goalTodoRef) ?? null
+    }
+    if (tagsByTaskKey.has(task.id)) {
+        return tagsByTaskKey.get(task.id) ?? null
+    }
+    return undefined
+}
+
+function isReadyPlanningTag(tag: string | null | undefined): boolean {
+    // undefined means a legacy DB-only task with no todo.yml row; keep it runnable.
+    return tag === undefined || tag === 'ready'
+}
+
+function isPlanningTaskReadyForAutomation(task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source'>, options: {
+    namespace: string
+    project: StoredProject
+    store: Store
+}): boolean {
+    if (!task.goalId || task.source === 'planner' || task.source === 'radar') {
+        return true
+    }
+    const goal = options.store.goals.getGoalByNamespace(task.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return false
+    }
+    const tag = getTaskGoalTodoTag(task, buildGoalTodoTagIndex({
+        project: options.project,
+        goal,
+        defaultWorkspace: getDefaultWorkspaceForProject(options.store, options.project)
+    }))
+    return isReadyPlanningTag(tag)
+}
+
 function getTaskCompletedAt(task: StoredTask): number | null {
-    if (task.status !== 'finished') {
+    if (task.status !== 'finished' && task.status !== 'done') {
         return null
     }
     return task.finishedAt ?? task.updatedAt
@@ -329,7 +398,7 @@ function buildPlannerLoopContract(options: {
         '## Suggested Checks',
         '',
         '- Confirm active kanban work is not overfilled beyond the fill target.',
-        '- Confirm todo.yml items use stable refs and status values candidate/ready/promoted/in_review/blocked/deferred/done rather than an uncurated dump.',
+        '- Confirm todo.yml items use stable ids, Kanban status values planning/running/review/blocked/done, and planning tags ready/candidate/deferred rather than an uncurated dump.',
         '',
         '## Non-goals / Constraints',
         '',
@@ -486,9 +555,7 @@ export class AutoRunScheduler {
     }
 
     private getDefaultWorkspace(project: StoredProject): StoredWorkspace | null {
-        return project.defaultWorkspaceId
-            ? this.store.workspaces.getWorkspace(project.defaultWorkspaceId)
-            : this.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+        return getDefaultWorkspaceForProject(this.store, project)
     }
 
     private emitTaskAdded(namespace: string, task: StoredTask): void {
@@ -511,6 +578,7 @@ export class AutoRunScheduler {
             task.source === 'planner'
             && !task.archivedAt
             && task.status !== 'finished'
+            && task.status !== 'done'
         ))
         if (openPlanner) {
             return null
@@ -520,18 +588,32 @@ export class AutoRunScheduler {
             task.source !== 'planner'
             && task.source !== 'radar'
             && !task.archivedAt
-            && (task.status === 'in_progress' || task.status === 'in_review')
+            && (task.status === 'running' || task.status === 'review' || task.status === 'in_progress' || task.status === 'in_review')
         ))
         if (activeGoalWork) {
             return null
         }
 
         const targetOpenGeneratorTasks = normalizeAutomationLaneLimits(options.project.automationLaneLimits).generator
+        const todoTagsByTaskKey = buildGoalTodoTagIndex({
+            project: options.project,
+            goal: options.goal,
+            defaultWorkspace: options.defaultWorkspace
+        })
         const activeWorkCount = options.tasks.filter((task) => (
             task.source !== 'planner'
             && task.source !== 'radar'
             && !task.archivedAt
-            && (task.status === 'planned' || task.status === 'in_progress' || task.status === 'in_review')
+            && (
+                task.status === 'running'
+                || task.status === 'review'
+                || task.status === 'in_progress'
+                || task.status === 'in_review'
+                || (
+                    (task.status === 'planning' || task.status === 'planned')
+                    && isReadyPlanningTag(getTaskGoalTodoTag(task, todoTagsByTaskKey))
+                )
+            )
         )).length
         if (activeWorkCount >= targetOpenGeneratorTasks) {
             return null
@@ -546,13 +628,21 @@ export class AutoRunScheduler {
             project: options.project
         })
 
-        return this.store.tasks.createTask({
-            id: randomUUID(),
+        const taskTitle = 'Plan next goal iteration'
+        const taskId = createGoalTodoTaskId({
+            project: options.project,
+            goal: options.goal,
+            defaultWorkspace: options.defaultWorkspace,
+            title: taskTitle
+        })
+        const task = this.store.tasks.createTask({
+            id: taskId,
             projectId: options.project.id,
             goalId: options.goal.id,
-            title: 'Plan next goal iteration',
+            goalTodoRef: taskId,
+            title: taskTitle,
             description: 'Refresh Goal strategy, curate repo memory, and promote the next small batch of work.',
-            status: 'planned',
+            status: 'planning',
             priority: 'high',
             sortKey: Date.now(),
             workspaceId: options.defaultWorkspace?.id ?? null,
@@ -567,6 +657,14 @@ export class AutoRunScheduler {
             }),
             handoff
         })
+        syncTaskStateToGoalTodo({
+            store: this.store,
+            namespace: options.project.namespace,
+            task,
+            project: options.project,
+            defaultWorkspace: options.defaultWorkspace
+        })
+        return task
     }
 
     private ensureRadarTask(options: {
@@ -583,6 +681,7 @@ export class AutoRunScheduler {
             task.source === 'radar'
             && !task.archivedAt
             && task.status !== 'finished'
+            && task.status !== 'done'
         ))
         if (openRadar) {
             return null
@@ -595,13 +694,21 @@ export class AutoRunScheduler {
             return null
         }
 
-        return this.store.tasks.createTask({
-            id: randomUUID(),
+        const taskTitle = 'Radar: scan goal docs and technical debt'
+        const taskId = createGoalTodoTaskId({
+            project: options.project,
+            goal: options.goal,
+            defaultWorkspace: options.defaultWorkspace,
+            title: taskTitle
+        })
+        const task = this.store.tasks.createTask({
+            id: taskId,
             projectId: options.project.id,
             goalId: options.goal.id,
-            title: 'Radar: scan goal docs and technical debt',
+            goalTodoRef: taskId,
+            title: taskTitle,
             description: 'Run the periodic background radar pass for docs drift, technical debt, and stale planning state.',
-            status: 'planned',
+            status: 'planning',
             priority: 'low',
             sortKey: Date.now(),
             workspaceId: options.defaultWorkspace?.id ?? null,
@@ -610,6 +717,14 @@ export class AutoRunScheduler {
             source: 'radar',
             contract: buildRadarContract(options.goal)
         })
+        syncTaskStateToGoalTodo({
+            store: this.store,
+            namespace: options.project.namespace,
+            task,
+            project: options.project,
+            defaultWorkspace: options.defaultWorkspace
+        })
+        return task
     }
 
     private ensureGoalAutopilotTasks(namespace: string, project: StoredProject): StoredGoal[] {
@@ -677,7 +792,7 @@ export class AutoRunScheduler {
             const startedByLane = createLaneCounts()
             const projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
             const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: 200 })
-            const review = projectTasks.filter((task) => task.status === 'in_review')
+            const review = projectTasks.filter((task) => task.status === 'review' || task.status === 'in_review')
             const candidates = sortAutomationCandidates([...review, ...planned])
             if (candidates.length === 0) {
                 return
@@ -731,6 +846,19 @@ export class AutoRunScheduler {
                     blockedSource: 'scheduler'
                 })
                 if (blocked) {
+                    syncTaskStateToGoalTodo({
+                        store: this.store,
+                        namespace,
+                        task: blocked,
+                        project
+                    })
+                    notifyProjectControllerTaskBlockedTransition({
+                        store: this.store,
+                        engine: this.engine,
+                        namespace,
+                        previousTask: task,
+                        task: blocked
+                    })
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
                         taskId: blocked.id,

@@ -58,8 +58,9 @@ describe('goal todo yaml', () => {
             title: 'Fix battle legacy types',
             kind: 'promoted'
         })
-        expect(promoted).toContain('status: promoted')
-        expect(promoted).toContain('taskId: task-battle')
+        expect(promoted).toContain('status: running')
+        expect(promoted).toContain('tag: promoted')
+        expect(promoted).not.toContain('taskId:')
 
         const done = updateGoalTodoYaml(promoted, {
             goalId: 'goal-ts',
@@ -72,8 +73,10 @@ describe('goal todo yaml', () => {
         const parsed = parseGoalTodoYaml(done, { goalId: 'goal-ts', goalKey: 'ts' })
         expect(parsed.sections[0]).toMatchObject({
             kind: 'done',
+            status: 'done',
+            tag: 'accepted',
             title: 'Fix battle legacy types',
-            taskId: 'task-battle',
+            taskId: 'ts-ready-1',
             todoRef: 'ts-ready-1'
         })
     })
@@ -92,8 +95,10 @@ describe('goal todo yaml', () => {
         const parsed = parseGoalTodoYaml(updated, { goalId: 'goal-ts', goalKey: 'ts' })
         expect(parsed.sections[0]).toMatchObject({
             kind: 'promoted',
+            status: 'running',
+            tag: 'promoted',
             title: 'Fix battle type contract',
-            taskId: 'task-battle',
+            taskId: 'ts-ready-7',
             todoRef: 'ts-ready-7'
         })
     })
@@ -124,14 +129,14 @@ describe('goal todo yaml', () => {
         expect(parsed.sections.map((section) => section.kind)).toEqual(['promoted', 'ready', 'done'])
         expect(parsed.sections[0]).toMatchObject({
             todoRef: 'ts-ready-1',
-            taskId: 'task-battle'
+            taskId: 'ts-ready-1'
         })
         expect(parsed.sections[1]).toMatchObject({
             todoRef: 'ts-ready-2',
             body: '- Scope: test fixtures'
         })
         expect(parsed.sections[2]).toMatchObject({
-            todoRef: 'Clarify goal intent',
+            todoRef: 'task-plan',
             taskId: 'task-plan'
         })
     })
@@ -216,6 +221,10 @@ describe('goal todo yaml', () => {
         const todoPath = join(workspacePath, '.hopi', 'docs', 'goals', 'legacy-goal', 'todo.yml')
         expect(updated).toBe(true)
         expect(existsSync(todoPath)).toBe(true)
-        expect(readFileSync(todoPath, 'utf8')).toContain('taskId: task-restore')
+        const todo = readFileSync(todoPath, 'utf8')
+        expect(todo).toContain('id: restore-docs')
+        expect(todo).toContain('status: running')
+        expect(todo).toContain('tag: promoted')
+        expect(todo).not.toContain('taskId:')
     })
 })

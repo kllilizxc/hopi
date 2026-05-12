@@ -17,6 +17,8 @@ import {
 import { relinkTaskToSession } from './sessionTaskLink'
 import { getWorkflowStrategy } from './workflowStrategy'
 import { updateGoalTodoTaskState } from './goals/goalTodo'
+import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
+import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from './syncEngine'
 
 const inFlightAutoMergeKeys = new Set<string>()
@@ -166,8 +168,8 @@ function emitTaskUpdated(options: {
 }
 
 function isAutoMergeCandidate(task: StoredTask): boolean {
-    const isAcceptedTask = task.status === 'finished'
-    const isRecoverableMergeRuntime = task.status === 'in_review'
+    const isAcceptedTask = task.status === 'done' || task.status === 'finished'
+    const isRecoverableMergeRuntime = (task.status === 'review' || task.status === 'in_review')
         && isActiveAutoMergeRuntimeStatus(task.mergeRuntime?.status)
 
     return !task.archivedAt
@@ -204,7 +206,7 @@ function updateMergeRuntime(options: {
     const taskStatus = options.status === 'blocked'
         ? 'blocked'
         : options.forceReviewStatus
-            ? 'in_review'
+            ? 'review'
             : undefined
     const finishedAt = options.status === 'blocked' || options.forceReviewStatus
         ? null
@@ -225,6 +227,18 @@ function updateMergeRuntime(options: {
         })
     })
     if (updated) {
+        syncTaskStateToGoalTodo({
+            store: options.store,
+            namespace: options.namespace,
+            task: updated
+        })
+        notifyProjectControllerTaskBlockedTransition({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            previousTask: options.task,
+            task: updated
+        })
         emitTaskUpdated({
             engine: options.engine,
             namespace: options.namespace,
@@ -660,7 +674,7 @@ async function persistSuccessfulAutoMerge(options: {
     })
 
     const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
-        status: 'finished',
+        status: 'done',
         workflowPhase: finishedTransitionPatch?.workflowPhase,
         finishedAt: mergedAt,
         worktreeMergedAt: mergedAt,

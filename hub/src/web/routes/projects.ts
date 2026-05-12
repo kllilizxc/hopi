@@ -7,6 +7,11 @@ import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
+import {
+    ensureProjectControllerSession,
+    getProjectControllerSession,
+    maybeRefreshProjectControllerBriefing
+} from '../../sync/projectController'
 import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
 import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -61,6 +66,14 @@ const updateProjectSchema = z.object({
 
 const listQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional()
+})
+
+const controllerBriefingSchema = z.object({
+    goalId: z.string().min(1).nullable().optional()
+})
+
+const controllerSessionQuerySchema = z.object({
+    goalId: z.string().min(1).optional()
 })
 
 function hasProjectHistory(store: Store, options: { projectId: string; namespace: string }): boolean {
@@ -293,6 +306,87 @@ export function createProjectsRoutes(options: {
                 worktreeLocked: hasProjectHistory(options.store, { projectId, namespace })
             }
         })
+    })
+
+    app.get('/projects/:projectId/controller-session', (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const parsed = controllerSessionQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query' }, 400)
+        }
+        const project = options.store.projects.getProjectByNamespace(projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const controller = getProjectControllerSession({
+            store: options.store,
+            engine: options.getSyncEngine(),
+            namespace,
+            projectId,
+            goalId: parsed.data.goalId ?? null
+        })
+        return c.json({
+            sessionId: controller?.sessionId ?? null,
+            session: controller?.session ?? null
+        })
+    })
+
+    app.post('/projects/:projectId/controller-session', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const json = await c.req.json().catch(() => ({}))
+        const parsed = controllerBriefingSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const result = await ensureProjectControllerSession({
+            store: options.store,
+            engine,
+            namespace,
+            projectId,
+            goalId: parsed.data.goalId ?? null
+        })
+        if (!result.ok) {
+            return c.json({ error: result.error }, result.status)
+        }
+        return c.json({
+            sessionId: result.sessionId,
+            session: result.session,
+            created: result.created
+        })
+    })
+
+    app.post('/projects/:projectId/controller-briefing', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const json = await c.req.json().catch(() => ({}))
+        const parsed = controllerBriefingSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const result = await maybeRefreshProjectControllerBriefing({
+            store: options.store,
+            engine,
+            namespace,
+            projectId,
+            goalId: parsed.data.goalId ?? null
+        })
+        if (!result.ok) {
+            return c.json({ error: result.error }, result.status)
+        }
+        return c.json(result)
     })
 
     app.patch('/projects/:projectId', async (c) => {

@@ -37,7 +37,8 @@ function areMergeRuntimesEqual(left: Task['mergeRuntime'] | null | undefined, ri
 }
 
 function shouldMarkFinishedAfterMerge(task: Task): boolean {
-    return task.status === 'in_review'
+    return task.status === 'review'
+        || task.status === 'in_review'
         || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
 }
 
@@ -117,9 +118,9 @@ function applyMergeResultToTask(task: Task, result: TaskWorktreeMergeResponse): 
         && task.mergeRuntime?.status === 'blocked'
         && isActiveMergeSkippedReason(result.skippedReason)
     const nextStatus = shouldMarkFinished
-        ? 'finished'
+        ? 'done'
         : shouldReturnToReview
-            ? 'in_review'
+            ? 'review'
             : task.status
     const nextFinishedAt = shouldMarkFinished
         ? (result.mergedAt ?? task.finishedAt ?? Date.now())

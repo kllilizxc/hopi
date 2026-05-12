@@ -14,7 +14,7 @@ export async function handleTaskMovedToFinished(options: {
     preferredLocale?: string
 }): Promise<void> {
     const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (!task || task.status !== 'finished' || task.archivedAt) {
+    if (!task || (task.status !== 'done' && task.status !== 'finished') || task.archivedAt) {
         return
     }
 
@@ -135,7 +135,7 @@ export async function handleTaskMovedToFinished(options: {
     }
 
     const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (!latestTask || latestTask.archivedAt || latestTask.status !== 'finished') {
+    if (!latestTask || latestTask.archivedAt || (latestTask.status !== 'done' && latestTask.status !== 'finished')) {
         return
     }
 

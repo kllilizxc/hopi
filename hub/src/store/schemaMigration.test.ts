@@ -1002,6 +1002,24 @@ describe('Store schema migration safety', () => {
                 blockedReason: null
             }
         })
+        seedStore.tasks.createTask({
+            id: 'task-preview-blocked',
+            projectId: project.id,
+            title: 'Preview blocked task',
+            status: 'running',
+            previewRuntime: {
+                status: 'blocked',
+                sessionId: 'session-preview',
+                updatedAt: 30,
+                requestedAt: 10,
+                startedAt: 20,
+                completedAt: 30,
+                retryCount: 1,
+                failureFingerprint: 'preview-crash',
+                latestNote: 'Preview blocked.',
+                blockedReason: 'preview crashed'
+            }
+        })
         const quotaSession = seedStore.sessions.getOrCreateSession('quota-session', {
             path: '/tmp/quota',
             host: 'test',
@@ -1052,6 +1070,14 @@ describe('Store schema migration safety', () => {
 
         const review = migratedStore.tasks.getTaskByNamespace('task-review', 'default')
         expect(review?.status).toBe('in_review')
+
+        const previewBlocked = migratedStore.tasks.getTaskByNamespace('task-preview-blocked', 'default')
+        expect(previewBlocked?.status).toBe('blocked')
+        expect(previewBlocked?.finishedAt).toBeNull()
+        expect(previewBlocked?.blockedReason).toBe('preview crashed')
+        expect(previewBlocked?.blockedSource).toBe('preview')
+        expect(previewBlocked?.blockedSessionId).toBe('session-preview')
+        expect(previewBlocked?.blockedAt).toBeTypeOf('number')
 
         const quotaBlocked = migratedStore.tasks.getTaskByNamespace('task-quota-blocked', 'default')
         expect(quotaBlocked?.blockedReason).toBe('Task failed: Codex usage limit reached. Switch model or retry later.')

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { MODEL_MODES, PERMISSION_MODES } from './modes'
 import { TaskSessionStartFailureSchema } from './task-session-start'
-import { TASK_STATUS_ORDER } from './tasks'
+import { TASK_STATUS_VALUES } from './tasks'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
 export const ModelModeSchema = z.enum(MODEL_MODES)
@@ -150,8 +150,14 @@ export const MetadataSchema = z.object({
     summary: MetadataSummarySchema.optional(),
     machineId: z.string().optional(),
     projectId: z.string().optional(),
+    goalId: z.string().optional(),
     taskId: z.string().optional(),
     hopiTaskRole: HopiTaskRoleSchema.optional(),
+    hopiController: z.boolean().optional(),
+    controllerBriefingLastAt: z.number().optional(),
+    controllerBriefingLastGoalId: z.string().optional(),
+    controllerBriefingInFlightAt: z.number().optional(),
+    controllerBriefingInFlightGoalId: z.string().optional(),
     claudeSessionId: z.string().optional(),
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),
@@ -421,7 +427,7 @@ export const TaskAttachmentSchema = z.object({
 
 export type TaskAttachment = z.infer<typeof TaskAttachmentSchema>
 
-export const TaskStatusSchema = z.enum(TASK_STATUS_ORDER)
+export const TaskStatusSchema = z.enum(TASK_STATUS_VALUES)
 export type TaskStatus = z.infer<typeof TaskStatusSchema>
 
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
@@ -544,6 +550,7 @@ export const TaskSchema = z.object({
     title: z.string(),
     description: z.string().nullable().optional(),
     status: TaskStatusSchema,
+    tag: z.string().trim().min(1).max(64).nullable().optional(),
     blockedReason: z.string().trim().min(1).max(512).nullable().optional(),
     blockedAt: z.number().nullable().optional(),
     blockedSource: z.string().trim().min(1).max(64).nullable().optional(),

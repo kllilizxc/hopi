@@ -92,6 +92,16 @@ export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type ProjectsResponse = { projects: Array<Project & { workspaceCount: number }> }
 export type ProjectResponse = { project: Project & { workspaceCount: number } }
+export type ProjectControllerSessionResponse = {
+    sessionId: string | null
+    session: Session | null
+    created?: boolean
+}
+export type ProjectControllerBriefingResponse = {
+    queued: boolean
+    reason: 'queued' | 'cooldown' | 'busy' | 'in_flight' | 'controller_unavailable' | 'empty_goal'
+    sessionId: string | null
+}
 export type ProjectAutomationVerificationResponse = {
     project: Project & { workspaceCount: number }
     verification: {
@@ -116,12 +126,21 @@ export type GoalResponse = { goal: Goal }
 export type GoalDecisionTopicsResponse = { topics: GoalDecisionTopic[] }
 export type GoalDecisionTopicResponse = { topic: GoalDecisionTopic }
 export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
+export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
 export type GoalTodoSection = {
+    id: string
+    status: GoalTodoStatus
+    tag: string | null
     kind: GoalTodoSectionKind
     title: string
     body: string
     taskId: string | null
     todoRef: string | null
+    blocked: {
+        kind: string | null
+        summary: string | null
+        updatedAt: number | null
+    } | null
 }
 export type GoalTodoResponse = {
     exists: boolean

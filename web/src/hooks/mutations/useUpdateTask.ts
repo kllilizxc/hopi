@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { ModelMode, PermissionMode, Task } from '@/types/api'
+import type { ModelMode, PermissionMode, Task, TaskStatus } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type TaskAttachmentInput = {
@@ -24,7 +24,8 @@ type UpdateTaskInput = {
     patch: {
         title?: string
         description?: string | null
-        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: TaskStatus
+        tag?: string | null
         blockedReason?: string | null
         blockedSource?: string | null
         blockedSessionId?: string | null

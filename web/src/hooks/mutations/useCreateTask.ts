@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { ModelMode, PermissionMode, Task, TasksResponse } from '@/types/api'
+import type { ModelMode, PermissionMode, Task, TaskStatus, TasksResponse } from '@/types/api'
 import { createOptimisticTaskId } from '@/lib/optimistic-task'
 import { queryKeys } from '@/lib/query-keys'
 
@@ -28,7 +28,8 @@ type CreateTaskInput = {
     contract?: string | null
     handoff?: string | null
     evidence?: string | null
-    status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+    status?: TaskStatus
+    tag?: string | null
     priority?: 'high' | 'medium' | 'low'
     workspaceId?: string
     agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
@@ -75,7 +76,8 @@ function buildOptimisticTask(input: CreateTaskInput, temporaryTaskId: string): T
         projectId: input.projectId,
         title: input.title,
         description: input.description ?? null,
-        status: input.status ?? 'planned',
+        status: input.status ?? 'planning',
+        tag: input.tag ?? null,
         priority: input.priority ?? null,
         sortKey: input.sortKey ?? now,
         activeSessionId: null,
@@ -103,7 +105,7 @@ function buildOptimisticTask(input: CreateTaskInput, temporaryTaskId: string): T
         initRuntime: null,
         createdAt: now,
         updatedAt: now,
-        finishedAt: input.status === 'finished' ? now : null,
+        finishedAt: input.status === 'finished' || input.status === 'done' ? now : null,
         archivedAt: null,
     }
 }
@@ -124,6 +126,7 @@ export function useCreateTask(api: ApiClient | null): {
                 title: input.title,
                 description: input.description,
                 status: input.status,
+                tag: input.tag,
                 priority: input.priority,
                 workspaceId: input.workspaceId,
                 agentFlavor: input.agentFlavor,

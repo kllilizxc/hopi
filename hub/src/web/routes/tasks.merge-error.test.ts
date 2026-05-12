@@ -80,7 +80,7 @@ function seedMergeTask(store: Store, options: {
     projectId: string
     taskId: string
     sessionId?: string | null
-    status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
+    status?: 'planning' | 'running' | 'review' | 'done' | 'blocked'
 }): void {
     seedProject(store, {
         namespace: options.namespace,
@@ -91,7 +91,7 @@ function seedMergeTask(store: Store, options: {
         id: options.taskId,
         projectId: options.projectId,
         title: 'Merge Task',
-        status: options.status ?? 'in_review',
+        status: options.status ?? 'review',
         workflowProfile: 'default',
         activeSessionId: options.sessionId ?? null
     })
@@ -441,7 +441,7 @@ describe('tasks merge route runtime behavior', () => {
             projectId,
             taskId,
             sessionId: session.id,
-            status: 'in_review'
+            status: 'review'
         })
 
         const engine = withValidContract({
@@ -526,7 +526,7 @@ describe('tasks merge route runtime behavior', () => {
         expect(body.mergedAt).toBeNumber()
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(updatedTask?.status).toBe('finished')
+        expect(updatedTask?.status).toBe('done')
         expect(updatedTask?.finishedAt).toBeNumber()
         expect(updatedTask?.mergeRuntime?.status).toBe('succeeded')
         expect(updatedTask?.worktreeMergedAt).toBeNumber()

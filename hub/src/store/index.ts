@@ -1553,37 +1553,48 @@ export class Store {
         if (taskColumns.size === 0) {
             throw new Error('SQLite schema missing tasks table for v27 to v28 migration.')
         }
-        if (!taskColumns.has('merge_runtime') || !taskColumns.has('status')) {
+        if (!taskColumns.has('status')) {
+            return
+        }
+
+        const runtimeColumns = ['merge_runtime', 'preview_runtime', 'init_runtime'].filter((column) => taskColumns.has(column))
+        if (runtimeColumns.length === 0) {
             return
         }
 
         const rows = this.db.prepare(`
-            SELECT id, status, merge_runtime
+            SELECT id, status, ${runtimeColumns.join(', ')}
             FROM tasks
-            WHERE merge_runtime IS NOT NULL
+            WHERE ${runtimeColumns.map((column) => `${column} IS NOT NULL`).join(' OR ')}
         `).all() as Array<{
             id: string
             status: string
-            merge_runtime: string | null
+            merge_runtime?: string | null
+            preview_runtime?: string | null
+            init_runtime?: string | null
         }>
         const update = taskColumns.has('finished_at')
-            ? this.db.prepare("UPDATE tasks SET status = 'blocked', finished_at = NULL WHERE id = ? AND status NOT IN ('blocked', 'finished')")
-            : this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status NOT IN ('blocked', 'finished')")
+            ? this.db.prepare("UPDATE tasks SET status = 'blocked', finished_at = NULL WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
+            : this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
 
         for (const row of rows) {
-            let runtime: unknown
-            try {
-                runtime = row.merge_runtime ? JSON.parse(row.merge_runtime) : null
-            } catch {
-                continue
-            }
-            if (
-                runtime
-                && typeof runtime === 'object'
-                && (runtime as { status?: unknown }).status === 'blocked'
-                && row.status !== 'blocked'
-                && row.status !== 'finished'
-            ) {
+            const hasBlockedRuntime = runtimeColumns.some((column) => {
+                const raw = row[column as keyof typeof row]
+                if (typeof raw !== 'string') {
+                    return false
+                }
+                try {
+                    const runtime: unknown = JSON.parse(raw)
+                    return Boolean(
+                        runtime
+                        && typeof runtime === 'object'
+                        && (runtime as { status?: unknown }).status === 'blocked'
+                    )
+                } catch {
+                    return false
+                }
+            })
+            if (hasBlockedRuntime && row.status !== 'blocked' && row.status !== 'done' && row.status !== 'finished') {
                 update.run(row.id)
             }
         }

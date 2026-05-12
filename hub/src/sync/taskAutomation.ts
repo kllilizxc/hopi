@@ -5,6 +5,8 @@ import type { Store } from '../store'
 import { buildTaskInitRuntime, buildTaskPreviewRuntime } from '../utils/taskActionRuntime'
 import { loadProjectActionContractFromSession } from './actionContract'
 import { applyGoalActionPacketFromSession } from './goals/goalActionPacket'
+import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
+import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 import { requestAutoMergeAcceptedTask } from './taskAutoMerge'
 import {
     resolveSessionPreferredRootPath,
@@ -386,6 +388,18 @@ type LinkedTask = {
     taskId: string
 }
 
+function isRunningTaskStatus(status: string | null | undefined): boolean {
+    return status === 'running' || status === 'in_progress'
+}
+
+function isReviewTaskStatus(status: string | null | undefined): boolean {
+    return status === 'review' || status === 'in_review'
+}
+
+function isDoneTaskStatus(status: string | null | undefined): boolean {
+    return status === 'done' || status === 'finished'
+}
+
 function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: string): LinkedTask | null {
     const session = engine.getSession(sessionId)
     const namespace = session?.namespace
@@ -417,7 +431,7 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
         }
     }
 
-    const inProgress = candidates.filter((task) => task.status === 'in_progress')
+    const inProgress = candidates.filter((task) => isRunningTaskStatus(task.status))
     if (inProgress.length === 1) {
         return { namespace, projectId: inProgress[0].projectId, taskId: inProgress[0].id }
     }
@@ -438,6 +452,26 @@ export class TaskAutomation {
         private readonly store: Store,
         private readonly engine: SyncEngine
     ) {
+    }
+
+    private syncGoalTodo(
+        updatedTask: ReturnType<Store['tasks']['getTaskByNamespace']>,
+        namespace: string,
+        previousTask?: Pick<NonNullable<ReturnType<Store['tasks']['getTaskByNamespace']>>, 'status'> | null
+    ): void {
+        if (!updatedTask) return
+        syncTaskStateToGoalTodo({
+            store: this.store,
+            namespace,
+            task: updatedTask
+        })
+        notifyProjectControllerTaskBlockedTransition({
+            store: this.store,
+            engine: this.engine,
+            namespace,
+            previousTask,
+            task: updatedTask
+        })
     }
 
     handleEvent(event: SyncEvent): void {
@@ -500,10 +534,10 @@ export class TaskAutomation {
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
-            if (current.goalId && current.status === 'in_review' && isTaskKickoffLocalId(message.localId)) return
+            if (current.goalId && isReviewTaskStatus(current.status) && isTaskKickoffLocalId(message.localId)) return
 
             const strategy = getWorkflowStrategy(current)
-            const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'in_progress' }
+            const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'running' }
             const shouldApplyTransition = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
                 || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
             const shouldResetMergeState = current.worktreeMergedAt !== null
@@ -513,7 +547,7 @@ export class TaskAutomation {
 
             if (shouldApplyTransition || shouldResetMergeState) {
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                    status: transitionPatch.status ?? 'in_progress',
+                    status: transitionPatch.status ?? 'running',
                     workflowPhase: transitionPatch.workflowPhase,
                     worktreeMergedAt: null,
                     worktreeMergeCommit: null,
@@ -521,6 +555,7 @@ export class TaskAutomation {
                     finishedAt: null
                 })
                 if (updated) {
+                    this.syncGoalTodo(updated, linked.namespace, current)
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
                         taskId: updated.id,
@@ -574,7 +609,7 @@ export class TaskAutomation {
         if (!current || current.archivedAt || !current.goalId) {
             return 'not_goal_task'
         }
-        if (current.status !== 'in_progress' && current.status !== 'in_review') {
+        if (!isRunningTaskStatus(current.status) && !isReviewTaskStatus(current.status)) {
             return 'goal_task'
         }
 
@@ -594,7 +629,7 @@ export class TaskAutomation {
 
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current || current.archivedAt || !current.goalId) return false
-        if (current.status !== 'in_review' || current.source !== 'evaluator') return false
+        if (!isReviewTaskStatus(current.status) || current.source !== 'evaluator') return false
 
         const session = this.engine.getSession(sessionId)
         const metadata = toRecord(session?.metadata)
@@ -605,7 +640,7 @@ export class TaskAutomation {
         const shouldBlock = currentRetryCount >= EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: shouldBlock ? 'blocked' : 'in_review',
+            status: shouldBlock ? 'blocked' : 'review',
             source: 'manual',
             blockedReason: shouldBlock ? blockedReason : null,
             blockedSource: shouldBlock ? 'evaluator' : null,
@@ -624,6 +659,7 @@ export class TaskAutomation {
         })
         if (!updated) return false
 
+        this.syncGoalTodo(updated, linked.namespace, current)
         this.engine.handleRealtimeEvent({
             type: 'task-updated',
             taskId: updated.id,
@@ -665,7 +701,7 @@ export class TaskAutomation {
         const task = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!task) return
         if (task.archivedAt) return
-        if (task.status === 'finished') return
+        if (isDoneTaskStatus(task.status)) return
 
         const project = this.store.projects.getProjectByNamespace(linked.projectId, linked.namespace)
         if (!project) return
@@ -741,7 +777,7 @@ export class TaskAutomation {
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current) return
         if (current.archivedAt) return
-        if (current.status !== 'in_progress') return
+        if (!isRunningTaskStatus(current.status)) return
 
         if (current.source === 'project_init') {
             void this.tryMoveProjectInitTaskToReviewFromReady(sessionId, readyMessage, linked)
@@ -768,16 +804,17 @@ export class TaskAutomation {
         }
 
         const strategy = getWorkflowStrategy(current)
-        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
+        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'review' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
         if (!shouldApply) return
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: transitionPatch.status ?? 'in_review',
+            status: transitionPatch.status ?? 'review',
             workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
+            this.syncGoalTodo(updated, linked.namespace, current)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: updated.id,
@@ -796,7 +833,7 @@ export class TaskAutomation {
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current) return
         if (current.archivedAt) return
-        if (current.status !== 'in_progress') return
+        if (!isRunningTaskStatus(current.status)) return
         if (current.source !== 'project_init') return
 
         const session = this.engine.getSession(sessionId)
@@ -818,7 +855,7 @@ export class TaskAutomation {
         const refreshed = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!refreshed) return
         if (refreshed.archivedAt) return
-        if (refreshed.status !== 'in_progress') return
+        if (!isRunningTaskStatus(refreshed.status)) return
         if (refreshed.source !== 'project_init') return
 
         if (contractLoad.kind !== 'valid') {
@@ -831,7 +868,7 @@ export class TaskAutomation {
             if (contractLoad.kind === 'invalid' && nextRetryCount <= BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS) {
                 const latestNote = `Bootstrap contract still invalid after ready; asked the agent to continue repairing it (${nextRetryCount}/${BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS}).`
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                    status: 'in_progress',
+                    status: 'running',
                     initRuntime: buildTaskInitRuntime({
                         current: refreshed.initRuntime,
                         activeSessionId: refreshed.activeSessionId,
@@ -845,6 +882,7 @@ export class TaskAutomation {
                     return
                 }
 
+                this.syncGoalTodo(updated, linked.namespace, refreshed)
                 this.engine.handleRealtimeEvent({
                     type: 'task-updated',
                     taskId: updated.id,
@@ -877,6 +915,7 @@ export class TaskAutomation {
                     if (!blocked) {
                         return
                     }
+                    this.syncGoalTodo(blocked, linked.namespace, updated)
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
                         taskId: blocked.id,
@@ -920,6 +959,7 @@ export class TaskAutomation {
                 return
             }
 
+            this.syncGoalTodo(updated, linked.namespace, refreshed)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: updated.id,
@@ -972,7 +1012,7 @@ export class TaskAutomation {
                 preview: RpcPreviewStatus
             }): Promise<void> => {
                 const latestTask = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
-                if (!latestTask || latestTask.archivedAt || latestTask.status !== 'in_progress' || latestTask.source !== 'project_init') {
+                if (!latestTask || latestTask.archivedAt || !isRunningTaskStatus(latestTask.status) || latestTask.source !== 'project_init') {
                     return
                 }
 
@@ -986,7 +1026,7 @@ export class TaskAutomation {
 
                 if (nextRetryCount <= BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS) {
                     const updated = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
-                        status: 'in_progress',
+                        status: 'running',
                         initRuntime: buildTaskInitRuntime({
                             current: latestTask.initRuntime,
                             activeSessionId: latestTask.activeSessionId,
@@ -1009,6 +1049,7 @@ export class TaskAutomation {
                         return
                     }
 
+                    this.syncGoalTodo(updated, options.linked.namespace, latestTask)
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
                         taskId: updated.id,
@@ -1055,6 +1096,7 @@ export class TaskAutomation {
                         if (!blocked) {
                             return
                         }
+                        this.syncGoalTodo(blocked, options.linked.namespace, updated)
                         this.engine.handleRealtimeEvent({
                             type: 'task-updated',
                             taskId: blocked.id,
@@ -1091,6 +1133,7 @@ export class TaskAutomation {
                     return
                 }
 
+                this.syncGoalTodo(blocked, options.linked.namespace, latestTask)
                 this.engine.handleRealtimeEvent({
                     type: 'task-updated',
                     taskId: blocked.id,
@@ -1125,7 +1168,7 @@ export class TaskAutomation {
             }
 
             const runningTask = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
-                status: 'in_progress',
+                status: 'running',
                 initRuntime: buildTaskInitRuntime({
                     current: options.task.initRuntime,
                     activeSessionId: options.task.activeSessionId,
@@ -1145,6 +1188,7 @@ export class TaskAutomation {
                 return
             }
 
+            this.syncGoalTodo(runningTask, options.linked.namespace, options.task)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: runningTask.id,
@@ -1212,14 +1256,14 @@ export class TaskAutomation {
             }
 
             const latestTask = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
-            if (!latestTask || latestTask.archivedAt || latestTask.status !== 'in_progress' || latestTask.source !== 'project_init') {
+            if (!latestTask || latestTask.archivedAt || !isRunningTaskStatus(latestTask.status) || latestTask.source !== 'project_init') {
                 return
             }
 
             const strategy = getWorkflowStrategy(latestTask)
-            const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', latestTask) ?? { status: 'in_review' }
+            const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', latestTask) ?? { status: 'review' }
             const updated = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
-                status: transitionPatch.status ?? 'in_review',
+                status: transitionPatch.status ?? 'review',
                 workflowPhase: transitionPatch.workflowPhase,
                 initRuntime: buildTaskInitRuntime({
                     current: latestTask.initRuntime,
@@ -1247,6 +1291,7 @@ export class TaskAutomation {
                 return
             }
 
+            this.syncGoalTodo(updated, options.linked.namespace, latestTask)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: updated.id,
@@ -1266,19 +1311,20 @@ export class TaskAutomation {
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current) return
         if (current.archivedAt) return
-        if (current.status !== 'in_progress') return
+        if (!isRunningTaskStatus(current.status)) return
 
         const strategy = getWorkflowStrategy(current)
-        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'in_review' }
+        const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'review' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
         if (!shouldApply) return
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: transitionPatch.status ?? 'in_review',
+            status: transitionPatch.status ?? 'review',
             workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
+            this.syncGoalTodo(updated, linked.namespace, current)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: updated.id,
@@ -1296,20 +1342,21 @@ export class TaskAutomation {
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current) return
         if (current.archivedAt) return
-        if (current.status !== 'in_review') return
+        if (!isReviewTaskStatus(current.status)) return
         if (current.goalId) return
 
         const strategy = getWorkflowStrategy(current)
-        const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'in_progress' }
+        const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'running' }
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
         if (!shouldApply) return
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: transitionPatch.status ?? 'in_progress',
+            status: transitionPatch.status ?? 'running',
             workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
+            this.syncGoalTodo(updated, linked.namespace, current)
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
                 taskId: updated.id,
@@ -1327,7 +1374,7 @@ export class TaskAutomation {
         const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
         if (!current) return
         if (current.archivedAt) return
-        if (current.status === 'finished') return
+        if (isDoneTaskStatus(current.status)) return
 
         const details = getTaskInterruptionDetails(errorMessage)
         if (!details) return
@@ -1366,6 +1413,7 @@ export class TaskAutomation {
             return
         }
 
+        this.syncGoalTodo(updated, linked.namespace, current)
         this.engine.handleRealtimeEvent({
             type: 'task-updated',
             taskId: updated.id,

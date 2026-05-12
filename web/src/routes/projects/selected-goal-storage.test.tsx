@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { SELECTED_GOAL_STORAGE_KEY, useSelectedProjectGoal } from './selected-goal-storage'
+import { readSelectedProjectGoalId, SELECTED_GOAL_STORAGE_KEY, useSelectedProjectGoal } from './selected-goal-storage'
 
 type TestGoal = {
     id: string
@@ -44,5 +44,15 @@ describe('useSelectedProjectGoal', () => {
         const { result } = renderHook(() => useSelectedProjectGoal('project-1', goals(['goal-1', 'goal-2'])))
 
         expect(result.current.selectedGoalId).toBe('goal-1')
+    })
+
+    it('reads the raw selected goal id for background controller briefing', () => {
+        localStorage.setItem(SELECTED_GOAL_STORAGE_KEY, JSON.stringify({
+            'project-1': 'goal-2'
+        }))
+
+        expect(readSelectedProjectGoalId('project-1')).toBe('goal-2')
+        expect(readSelectedProjectGoalId('project-2')).toBeNull()
+        expect(readSelectedProjectGoalId(null)).toBeNull()
     })
 })

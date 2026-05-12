@@ -2,12 +2,12 @@ import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
 import type { TaskStatus } from '@/types/api'
 
 export const TASK_STATUS_TITLE_KEY_BY_STATUS = {
-    planned: 'projects.columns.planned',
-    in_progress: 'projects.columns.inProgress',
-    in_review: 'projects.columns.inReview',
-    finished: 'projects.columns.finished',
+    planning: 'projects.columns.planning',
+    running: 'projects.columns.running',
+    review: 'projects.columns.review',
     blocked: 'projects.columns.blocked',
-} as const satisfies Record<TaskStatus, string>
+    done: 'projects.columns.done',
+} as const satisfies Partial<Record<TaskStatus, string>>
 
 export type KanbanColumnDef = {
     status: TaskStatus
@@ -16,5 +16,5 @@ export type KanbanColumnDef = {
 
 export const KANBAN_COLUMNS: KanbanColumnDef[] = TASK_STATUS_ORDER.map((status) => ({
     status,
-    titleKey: TASK_STATUS_TITLE_KEY_BY_STATUS[status],
+    titleKey: TASK_STATUS_TITLE_KEY_BY_STATUS[status] ?? `projects.columns.${status}`,
 }))

@@ -177,6 +177,28 @@ function applySessionRealtimePatch(queryClient: QueryClient, event: SessionUpdat
     return true
 }
 
+function getControllerProjectId(queryClient: QueryClient, sessionId: string): string | null {
+    const cachedSession = queryClient.getQueryData<SessionResponse>(queryKeys.session(sessionId))?.session
+    if (cachedSession?.metadata?.hopiController === true && cachedSession.metadata.projectId) {
+        return cachedSession.metadata.projectId
+    }
+
+    const cachedSummary = queryClient.getQueryData<SessionsResponse>(queryKeys.sessions)
+        ?.sessions.find((session) => session.id === sessionId)
+    if (cachedSummary?.metadata?.hopiController === true && cachedSummary.metadata.projectId) {
+        return cachedSummary.metadata.projectId
+    }
+
+    return null
+}
+
+function invalidateControllerProjectState(queryClient: QueryClient, projectId: string): void {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.goals(projectId) })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.tasksRoot(projectId) })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.goalTodoRoot })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.goalTopicsRoot })
+}
+
 function getVisibilityState(): VisibilityState {
     if (typeof document === 'undefined') {
         return 'hidden'
@@ -338,6 +360,10 @@ export function useSSE(options: {
 
             if (event.type === 'message-received') {
                 enqueueIncomingMessage(event.sessionId, event.message)
+                const controllerProjectId = getControllerProjectId(queryClient, event.sessionId)
+                if (controllerProjectId) {
+                    invalidateControllerProjectState(queryClient, controllerProjectId)
+                }
             }
 
             if (event.type === 'session-added' || event.type === 'session-removed') {

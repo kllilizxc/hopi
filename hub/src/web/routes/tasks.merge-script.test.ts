@@ -72,7 +72,7 @@ function seedMergeTask(store: Store, options: {
     projectId: string
     taskId: string
     sessionId: string
-    status?: 'planned' | 'in_progress' | 'in_review' | 'finished' | 'blocked'
+    status?: 'planning' | 'running' | 'review' | 'done' | 'blocked'
 }) {
     store.projects.createProject({
         id: options.projectId,
@@ -87,7 +87,7 @@ function seedMergeTask(store: Store, options: {
         id: options.taskId,
         projectId: options.projectId,
         title: 'Merge Task',
-        status: options.status ?? 'in_review',
+        status: options.status ?? 'review',
         workflowProfile: 'default',
         activeSessionId: options.sessionId
     })
@@ -504,7 +504,7 @@ describe('tasks merge route contract workflow', () => {
         })
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.status).toBe('finished')
+        expect(updatedTask?.status).toBe('done')
         expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(1)
     })

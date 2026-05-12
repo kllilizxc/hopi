@@ -20,6 +20,8 @@ import type {
     MessagesResponse,
     ModelMode,
     PermissionMode,
+    ProjectControllerSessionResponse,
+    ProjectControllerBriefingResponse,
     ProjectAutomationVerificationResponse,
     ProjectResponse,
     ProjectsResponse,
@@ -30,6 +32,7 @@ import type {
     SkillsResponse,
     SpawnResponse,
     TaskResponse,
+    TaskStatus,
     TaskPreviewResponse,
     TaskStartSessionResponse,
     TaskWorktreeMergeCancelResponse,
@@ -256,6 +259,44 @@ export class ApiClient {
         return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`)
     }
 
+    async getProjectControllerSession(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerSessionResponse> {
+        const params = new URLSearchParams()
+        if (payload.goalId) {
+            params.set('goalId', payload.goalId)
+        }
+        const qs = params.toString()
+        return await this.request<ProjectControllerSessionResponse>(
+            `/api/projects/${encodeURIComponent(projectId)}/controller-session${qs ? `?${qs}` : ''}`
+        )
+    }
+
+    async ensureProjectControllerSession(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerSessionResponse> {
+        return await this.request<ProjectControllerSessionResponse>(`/api/projects/${encodeURIComponent(projectId)}/controller-session`, {
+            method: 'POST',
+            body: JSON.stringify({
+                goalId: payload.goalId ?? null
+            })
+        })
+    }
+
+    async maybeRefreshProjectControllerBriefing(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerBriefingResponse> {
+        return await this.request<ProjectControllerBriefingResponse>(`/api/projects/${encodeURIComponent(projectId)}/controller-briefing`, {
+            method: 'POST',
+            body: JSON.stringify({
+                goalId: payload.goalId ?? null
+            })
+        })
+    }
+
     async listWorkflowStrategies(): Promise<WorkflowStrategiesResponse> {
         return await this.request<WorkflowStrategiesResponse>('/api/workflow-strategies')
     }
@@ -438,7 +479,8 @@ export class ApiClient {
     async createProjectTask(projectId: string, payload: {
         title: string
         description?: string
-        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: TaskStatus
+        tag?: string | null
         blockedReason?: string | null
         blockedSource?: string | null
         blockedSessionId?: string | null
@@ -484,7 +526,8 @@ export class ApiClient {
     async updateTask(taskId: string, patch: {
         title?: string
         description?: string | null
-        status?: 'planned' | 'in_progress' | 'in_review' | 'blocked' | 'finished'
+        status?: TaskStatus
+        tag?: string | null
         blockedReason?: string | null
         blockedSource?: string | null
         blockedSessionId?: string | null

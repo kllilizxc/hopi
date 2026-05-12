@@ -108,6 +108,44 @@ describe('GoalSwitcher', () => {
         expect(screen.getByRole('button', { name: 'Pause automation' })).toBeInTheDocument()
     })
 
+    it('shows done status and reopens a completed goal', () => {
+        const onReopenGoal = vi.fn()
+        renderWithProviders(
+            <GoalSwitcher
+                goals={[{ ...baseGoal, status: 'done' as const, automationPausedAt: 1_700_000_000_000 }]}
+                selectedGoalId="goal-1"
+                onSelectGoal={vi.fn()}
+                onToggleGoalAutomationPause={vi.fn()}
+                onReopenGoal={onReopenGoal}
+                onCreateGoal={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('Done')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Resume automation' })).not.toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Reopen goal' }))
+
+        expect(onReopenGoal).toHaveBeenCalledWith('goal-1')
+    })
+
+    it('requests confirmation before marking an active goal done', () => {
+        const onRequestMarkDone = vi.fn()
+        renderWithProviders(
+            <GoalSwitcher
+                goals={[baseGoal]}
+                selectedGoalId="goal-1"
+                onSelectGoal={vi.fn()}
+                onRequestMarkDone={onRequestMarkDone}
+                onCreateGoal={vi.fn()}
+            />
+        )
+
+        fireEvent.click(screen.getByRole('button', { name: 'Mark goal done' }))
+
+        expect(onRequestMarkDone).toHaveBeenCalledWith('goal-1')
+    })
+
     it('shows automation status for each goal in the dropdown menu', async () => {
         renderWithProviders(
             <GoalSwitcher

@@ -168,6 +168,8 @@ export function SessionChat(props: {
     onFlushPending: () => void
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
+    showHeader?: boolean
+    showBack?: boolean
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     onViewFiles?: () => void
     onViewDiffs?: () => void
@@ -764,14 +766,17 @@ export function SessionChat(props: {
 
     return (
         <div className="flex h-full flex-col">
-            <SessionHeader
-                session={props.session}
-                onBack={props.onBack}
-                onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
-                onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
-                onSessionDeleted={props.onBack}
-                extra={props.headerExtra}
-            />
+            {props.showHeader !== false ? (
+                <SessionHeader
+                    session={props.session}
+                    onBack={props.onBack}
+                    showBack={props.showBack}
+                    onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
+                    onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
+                    onSessionDeleted={props.onBack}
+                    extra={props.headerExtra}
+                />
+            ) : null}
 
             {sessionInactive ? (
                 <div className="px-3 pt-3">

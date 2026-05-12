@@ -10,14 +10,26 @@ import {
     getLegacyTodoYamlPath
 } from './goalDocPaths'
 
+export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
+export type GoalTodoTag = string | null
 export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
 
+export type GoalTodoBlocked = {
+    kind: string | null
+    summary: string | null
+    updatedAt: number | null
+}
+
 export type GoalTodoSection = {
+    id: string
+    status: GoalTodoStatus
+    tag: GoalTodoTag
     kind: GoalTodoSectionKind
     title: string
     body: string
     taskId: string | null
     todoRef: string | null
+    blocked: GoalTodoBlocked | null
 }
 
 export type GoalTodoResponse = {
@@ -33,14 +45,17 @@ type GoalTodoScope = {
     goalKey?: string | null
 }
 
-export type GoalTodoUpdateKind = 'promoted' | 'in_review' | 'blocked' | 'done'
+export type GoalTodoUpdateKind = 'promoted' | 'in_review' | 'blocked' | 'done' | 'planning' | 'running' | 'review'
 
 type GoalTodoYamlItem = {
-    ref: string
-    status: GoalTodoSectionKind
+    id: string
+    ref?: string | null
+    status: GoalTodoStatus
+    tag?: string | null
     title: string
     taskId?: string | null
     body?: string | null
+    blocked?: GoalTodoBlocked | null
     [key: string]: unknown
 }
 
@@ -57,13 +72,22 @@ type GoalTodoYamlDocument = {
     goals: GoalTodoYamlGoal[]
 }
 
-const yamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review', 'blocked', 'deferred', 'done'])
+const yamlItemStatusSchema = z.enum(['planning', 'running', 'review', 'blocked', 'done'])
+const legacyYamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review', 'deferred'])
+const yamlBlockedSchema = z.object({
+    kind: z.string().trim().min(1).nullable().optional(),
+    summary: z.string().trim().min(1).nullable().optional(),
+    updatedAt: z.number().nullable().optional()
+}).passthrough()
 const yamlItemSchema = z.object({
-    ref: z.string().trim().min(1),
+    id: z.string().trim().min(1).optional(),
+    ref: z.string().trim().min(1).nullable().optional(),
     status: z.string().trim().min(1).optional(),
+    tag: z.string().trim().min(1).nullable().optional(),
     title: z.string().trim().min(1).optional(),
     taskId: z.string().trim().min(1).nullable().optional(),
     body: z.string().nullable().optional(),
+    blocked: yamlBlockedSchema.nullable().optional(),
     notes: z.string().nullable().optional(),
     description: z.string().nullable().optional()
 }).passthrough()
@@ -86,14 +110,99 @@ function normalizeKey(value: string | null | undefined): string {
     return (value ?? '').trim().toLowerCase()
 }
 
+function normalizeStatusAndTag(value: unknown, rawTag: unknown): { status: GoalTodoStatus; tag: string | null; kind: GoalTodoSectionKind } {
+    const normalizedTag = cleanNullableString(rawTag)
+    if (typeof value !== 'string') {
+        return { status: 'planning', tag: normalizedTag ?? 'candidate', kind: 'candidate' }
+    }
+    const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+    const statusParsed = yamlItemStatusSchema.safeParse(normalized)
+    if (statusParsed.success) {
+        return {
+            status: statusParsed.data,
+            tag: normalizedTag ?? defaultTagForStatus(statusParsed.data),
+            kind: kindFromStatusTag(statusParsed.data, normalizedTag)
+        }
+    }
+
+    const legacyNormalized = normalized === 'active'
+        ? 'promoted'
+        : normalized === 'review' || normalized === 'inreview'
+            ? 'in_review'
+            : normalized === 'completed' || normalized === 'complete'
+                ? 'done'
+                : normalized
+    const legacyParsed = legacyYamlItemStatusSchema.safeParse(legacyNormalized)
+    if (legacyParsed.success) {
+        const mapped = mapLegacyKindToStatusTag(legacyParsed.data)
+        return { ...mapped, tag: normalizedTag ?? mapped.tag, kind: legacyParsed.data }
+    }
+    if (legacyNormalized === 'done') {
+        return { status: 'done', tag: normalizedTag ?? 'accepted', kind: 'done' }
+    }
+    return { status: 'planning', tag: normalizedTag ?? 'candidate', kind: 'unknown' }
+}
+
+function defaultTagForStatus(status: GoalTodoStatus): string | null {
+    switch (status) {
+        case 'planning':
+            return 'candidate'
+        case 'running':
+            return 'promoted'
+        case 'review':
+            return 'in_review'
+        case 'blocked':
+            return 'unknown'
+        case 'done':
+            return 'accepted'
+        case 'unknown':
+            return null
+    }
+}
+
+function kindFromStatusTag(status: GoalTodoStatus, tag: string | null | undefined): GoalTodoSectionKind {
+    if (status === 'planning') {
+        if (tag === 'ready' || tag === 'deferred') return tag
+        return 'candidate'
+    }
+    if (status === 'running') return 'promoted'
+    if (status === 'review') return 'in_review'
+    if (status === 'blocked') return 'blocked'
+    if (status === 'done') return 'done'
+    return 'unknown'
+}
+
+function mapLegacyKindToStatusTag(kind: Exclude<GoalTodoSectionKind, 'blocked' | 'done' | 'unknown'>): {
+    status: GoalTodoStatus
+    tag: string
+} {
+    switch (kind) {
+        case 'ready':
+        case 'candidate':
+        case 'deferred':
+            return { status: 'planning', tag: kind }
+        case 'promoted':
+            return { status: 'running', tag: 'promoted' }
+        case 'in_review':
+            return { status: 'review', tag: 'in_review' }
+    }
+}
+
 function normalizeStatus(value: unknown): GoalTodoSectionKind {
     if (typeof value !== 'string') return 'unknown'
     const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === 'planning') return 'candidate'
+    if (normalized === 'running') return 'promoted'
+    if (normalized === 'review') return 'in_review'
     if (normalized === 'active') return 'promoted'
-    if (normalized === 'review' || normalized === 'inreview') return 'in_review'
+    if (normalized === 'inreview') return 'in_review'
     if (normalized === 'completed' || normalized === 'complete') return 'done'
     const parsed = yamlItemStatusSchema.safeParse(normalized)
-    return parsed.success ? parsed.data : 'unknown'
+    if (parsed.success) return kindFromStatusTag(parsed.data, null)
+    if (normalized === 'done') return 'done'
+    if (normalized === 'blocked') return 'blocked'
+    const legacyParsed = legacyYamlItemStatusSchema.safeParse(normalized)
+    return legacyParsed.success ? legacyParsed.data : 'unknown'
 }
 
 function cleanNullableString(value: unknown): string | null {
@@ -133,14 +242,26 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
                 goalKey: cleanNullableString(goal.goalKey),
                 goalId: cleanNullableString(goal.goalId),
                 title: cleanNullableString(goal.title),
-                items: (goal.items ?? []).map((item) => ({
-                    ...item,
-                    ref: item.ref.trim(),
-                    status: normalizeStatus(item.status ?? 'candidate'),
-                    title: cleanNullableString(item.title) ?? item.ref.trim(),
-                    taskId: cleanNullableString(item.taskId),
-                    body: cleanNullableString(item.body ?? item.notes ?? item.description)
-                }))
+                items: (goal.items ?? []).map((item) => {
+                    const rawId = cleanNullableString(item.id)
+                        ?? cleanNullableString(item.ref)
+                        ?? cleanNullableString(item.taskId)
+                        ?? cleanNullableString(item.title)
+                        ?? 'todo'
+                    const statusAndTag = normalizeStatusAndTag(item.status ?? 'planning', item.tag)
+                    const blocked = normalizeBlocked(item.blocked)
+                    return {
+                        ...item,
+                        id: rawId,
+                        ref: cleanNullableString(item.ref),
+                        status: statusAndTag.status,
+                        tag: statusAndTag.tag,
+                        title: cleanNullableString(item.title) ?? rawId,
+                        taskId: cleanNullableString(item.taskId),
+                        body: cleanNullableString(item.body ?? item.notes ?? item.description),
+                        blocked
+                    }
+                })
             }))
         }
     } catch {
@@ -148,16 +269,33 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
     }
 }
 
+function normalizeBlocked(value: unknown): GoalTodoBlocked | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null
+    }
+    const record = value as Record<string, unknown>
+    const kind = cleanNullableString(record.kind)
+    const summary = cleanNullableString(record.summary)
+    const updatedAt = typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
+        ? record.updatedAt
+        : null
+    if (!kind && !summary && updatedAt === null) {
+        return null
+    }
+    return { kind, summary, updatedAt }
+}
+
 function cleanYamlItem(item: GoalTodoYamlItem): Record<string, unknown> {
     const next: Record<string, unknown> = {
-        ref: item.ref,
+        id: item.id,
         status: item.status,
         title: item.title
     }
-    if (item.taskId) next.taskId = item.taskId
+    if (item.tag) next.tag = item.tag
     if (item.body) next.body = item.body
+    if (item.blocked) next.blocked = item.blocked
     for (const [key, value] of Object.entries(item)) {
-        if (['ref', 'status', 'title', 'taskId', 'body', 'notes', 'description'].includes(key)) continue
+        if (['id', 'ref', 'status', 'tag', 'title', 'taskId', 'body', 'blocked', 'notes', 'description'].includes(key)) continue
         if (value !== undefined && value !== null) next[key] = value
     }
     return next
@@ -179,15 +317,19 @@ function stringifyYamlDocument(document: GoalTodoYamlDocument): string {
 }
 
 function sectionFromYamlItem(item: GoalTodoYamlItem): GoalTodoSection | null {
-    const ref = item.ref.trim()
+    const id = item.id.trim()
     const title = item.title.trim()
-    if (!ref || !title) return null
+    if (!id || !title) return null
     return {
-        kind: item.status,
+        id,
+        status: item.status,
+        tag: item.tag?.trim() || null,
+        kind: kindFromStatusTag(item.status, item.tag),
         title,
         body: item.body?.trim() ?? '',
-        taskId: item.taskId?.trim() || null,
-        todoRef: ref
+        taskId: item.taskId?.trim() || id,
+        todoRef: id,
+        blocked: item.blocked ?? null
     }
 }
 
@@ -246,9 +388,27 @@ function findOrCreateYamlGoal(document: GoalTodoYamlDocument, input: GoalTodoSco
 function findYamlItem(goal: GoalTodoYamlGoal, todoRef: string, taskId: string): GoalTodoYamlItem | null {
     const normalizedRef = normalizeKey(todoRef)
     return goal.items.find((item) => (
-        normalizeKey(item.ref) === normalizedRef
+        normalizeKey(item.id) === normalizedRef
+        || normalizeKey(item.ref) === normalizedRef
         || Boolean(item.taskId && item.taskId === taskId)
     )) ?? null
+}
+
+function statusTagFromUpdateKind(kind: GoalTodoUpdateKind): { status: GoalTodoStatus; tag: string | null } {
+    switch (kind) {
+        case 'promoted':
+        case 'running':
+            return { status: 'running', tag: 'promoted' }
+        case 'in_review':
+        case 'review':
+            return { status: 'review', tag: 'in_review' }
+        case 'blocked':
+            return { status: 'blocked', tag: 'unknown' }
+        case 'done':
+            return { status: 'done', tag: 'accepted' }
+        case 'planning':
+            return { status: 'planning', tag: 'ready' }
+    }
 }
 
 export function updateGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
@@ -262,19 +422,24 @@ export function updateGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
     const goal = findOrCreateYamlGoal(document, input)
     const todoRef = input.todoRef.trim()
     const taskTitle = input.title?.trim() || todoRef
+    const statusTag = statusTagFromUpdateKind(input.kind)
     let item = findYamlItem(goal, todoRef, input.taskId)
     if (!item) {
         item = {
-            ref: todoRef,
-            status: input.kind,
+            id: todoRef,
+            status: statusTag.status,
+            tag: statusTag.tag,
             title: taskTitle
         }
         goal.items.push(item)
     }
-    item.ref = item.ref?.trim() || todoRef
-    item.status = input.kind
-    item.taskId = input.taskId
-    if (!item.title?.trim() || item.title.trim() === item.ref || input.title?.trim()) {
+    item.id = item.id?.trim() || todoRef
+    item.status = statusTag.status
+    item.tag = statusTag.tag ?? item.tag ?? null
+    if (item.status !== 'blocked') {
+        item.blocked = null
+    }
+    if (!item.title?.trim() || item.title.trim() === item.id || input.title?.trim()) {
         item.title = taskTitle
     }
     return stringifyYamlDocument(document)
@@ -302,6 +467,34 @@ function parseLegacyTodoRefToken(token: string): string | null {
     const match = /^(?:todoRef|todo-ref|todo_ref)\s*:\s*(.+)$/iu.exec(token.trim())
     const todoRef = match?.[1]?.trim()
     return todoRef || null
+}
+
+function sectionFromLegacyTodo(input: {
+    kind: GoalTodoSectionKind
+    title: string
+    body: string
+    taskId: string | null
+    todoRef: string | null
+}): GoalTodoSection {
+    const mapped = input.kind === 'unknown'
+        ? { status: 'planning' as const, tag: 'candidate' }
+        : input.kind === 'blocked'
+            ? { status: 'blocked' as const, tag: 'unknown' }
+            : input.kind === 'done'
+                ? { status: 'done' as const, tag: 'accepted' }
+                : mapLegacyKindToStatusTag(input.kind)
+    const id = input.todoRef ?? input.taskId ?? input.title
+    return {
+        id,
+        status: mapped.status,
+        tag: mapped.tag,
+        kind: input.kind,
+        title: input.title,
+        body: input.body,
+        taskId: input.taskId ?? id,
+        todoRef: id,
+        blocked: null
+    }
 }
 
 function parseLeadingLegacyTodoMetadata(text: string): LegacyTodoLineMetadata {
@@ -432,13 +625,13 @@ export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): P
             if (title) {
                 const metadata = parseLeadingLegacyTodoMetadata(headingText)
                 const joined = `${headingText}\n${collected.body}`
-                sections.push({
+                sections.push(sectionFromLegacyTodo({
                     kind,
                     title,
                     body: collected.body,
                     taskId: extractLegacyTaskId(joined),
                     todoRef: metadata.todoRef
-                })
+                }))
             }
             index = collected.nextIndex
             continue
@@ -459,13 +652,13 @@ export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): P
             const title = cleanLegacyTitle(text)
             if (title) {
                 const joined = `${text}\n${collected.body}`
-                sections.push({
+                sections.push(sectionFromLegacyTodo({
                     kind,
                     title,
                     body: collected.body,
                     taskId: extractLegacyTaskId(joined),
                     todoRef: metadata.todoRef
-                })
+                }))
             }
             index = collected.nextIndex
             continue
@@ -533,10 +726,17 @@ export function convertGoalTodoMarkdownToYaml(markdown: string): string {
         const usedRefs = new Set<string>()
         const items: GoalTodoYamlItem[] = parsed.sections.map((section) => {
             const ref = uniqueRef(section.todoRef ?? section.title, usedRefs)
-            const status = section.kind === 'unknown' ? 'candidate' : section.kind
+            const mapped = section.kind === 'unknown'
+                ? { status: 'planning' as const, tag: 'candidate' }
+                : section.kind === 'blocked'
+                    ? { status: 'blocked' as const, tag: 'unknown' }
+                    : section.kind === 'done'
+                        ? { status: 'done' as const, tag: 'accepted' }
+                        : mapLegacyKindToStatusTag(section.kind)
             return {
-                ref,
-                status,
+                id: ref,
+                status: mapped.status,
+                tag: mapped.tag,
                 title: section.title,
                 taskId: section.taskId,
                 body: section.body || null
@@ -606,6 +806,113 @@ function readWritableGoalTodoYaml(input: {
     }
 }
 
+function slugifyTodoId(value: string): string {
+    const slug = value
+        .normalize('NFKD')
+        .toLowerCase()
+        .replace(/['"]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48)
+    return slug || 'task'
+}
+
+function createShortIdSuffix(value: string): string {
+    let hash = 2166136261
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index)
+        hash = Math.imul(hash, 16777619)
+    }
+    return (hash >>> 0).toString(36).slice(0, 4).padStart(4, '0')
+}
+
+export function createGoalTodoTaskId(input: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    title: string
+}): string {
+    const scope = {
+        goalId: input.goal.id,
+        goalKey: input.goal.goalKey
+    }
+    const writable = readWritableGoalTodoYaml({
+        defaultWorkspace: input.defaultWorkspace,
+        scope,
+        goalTitle: input.goal.title
+    })
+    const document = writable ? parseYamlDocument(writable.rawYaml) : { version: 1 as const, goals: [] }
+    const goal = document.goals.find((candidate) => goalMatchesScope(candidate, scope))
+    const used = new Set((goal?.items ?? []).map((item) => normalizeKey(item.id)))
+    const base = slugifyTodoId(input.title)
+    let candidate = `${base}-${createShortIdSuffix(`${input.goal.id}:${input.title}:${Date.now()}`)}`
+    while (used.has(normalizeKey(candidate))) {
+        candidate = `${base}-${createShortIdSuffix(`${candidate}:${used.size}:${Date.now()}`)}`
+    }
+    return candidate
+}
+
+export function upsertGoalTodoTaskState(input: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    taskId: string
+    status: GoalTodoStatus
+    tag?: string | null
+    title?: string | null
+    body?: string | null
+    blocked?: GoalTodoBlocked | null
+}): boolean {
+    const taskId = input.taskId.trim()
+    if (!taskId) return false
+
+    const scope = {
+        goalId: input.goal.id,
+        goalKey: input.goal.goalKey
+    }
+    const writable = readWritableGoalTodoYaml({
+        defaultWorkspace: input.defaultWorkspace,
+        scope,
+        goalTitle: input.goal.title
+    })
+    if (!writable) return false
+
+    const document = parseYamlDocument(writable.rawYaml)
+    const goal = findOrCreateYamlGoal(document, {
+        ...scope,
+        goalTitle: input.goal.title
+    })
+    let item = findYamlItem(goal, taskId, taskId)
+    if (!item) {
+        item = {
+            id: taskId,
+            status: input.status,
+            tag: input.tag ?? defaultTagForStatus(input.status),
+            title: input.title?.trim() || taskId
+        }
+        goal.items.push(item)
+    }
+    item.id = taskId
+    item.status = input.status
+    item.tag = input.tag !== undefined ? input.tag : item.tag ?? defaultTagForStatus(input.status)
+    if (input.title !== undefined && input.title !== null && input.title.trim()) {
+        item.title = input.title.trim()
+    }
+    if (input.body !== undefined) {
+        item.body = input.body?.trim() || null
+    }
+    item.blocked = input.status === 'blocked'
+        ? input.blocked ?? item.blocked ?? null
+        : null
+
+    const docsRoot = getDocsRoot(input.defaultWorkspace)
+    if (docsRoot) mkdirSync(getGoalDocsDir(docsRoot, input.goal.goalKey), { recursive: true })
+    const next = stringifyYamlDocument(document)
+    if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) return false
+    writeFileSync(writable.path, next, 'utf8')
+    return true
+}
+
 export function updateGoalTodoTaskState(input: {
     project: StoredProject
     goal: StoredGoal
@@ -639,7 +946,7 @@ export function updateGoalTodoTaskState(input: {
         kind: input.kind,
         title: input.title
     })
-    if (next === normalizeNewlines(writable.rawYaml)) return false
+    if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) return false
     writeFileSync(writable.path, next, 'utf8')
     return true
 }

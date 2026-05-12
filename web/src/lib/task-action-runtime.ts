@@ -121,7 +121,7 @@ export function shouldShowMergeActionButton(options: {
 
     return Boolean(
         task
-        && (task.status === 'in_review' || canRetryBlockedMerge)
+        && (task.status === 'review' || task.status === 'in_review' || canRetryBlockedMerge)
         && !task.archivedAt
         && !task.finishedAt
         && (hasActiveMergeRuntime || isRetryableMergeRuntimeStatus(mergeRuntimeStatus) || canStartMerge)

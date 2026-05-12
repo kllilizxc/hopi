@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { SyncEvent } from '@hopi/protocol/types'
 import { Store } from '../store'
 import { AutoRunScheduler } from './autoRunScheduler'
+import { upsertGoalTodoTaskState } from './goals/goalTodo'
 import type { SyncEngine } from './syncEngine'
 
 function delay(ms: number): Promise<void> {
@@ -48,7 +52,7 @@ function createProjectWithTask(store: Store, options: {
         projectId: options.projectId,
         goalId: options.goalId ?? null,
         title: 'Task',
-        status: 'planned',
+        status: 'planning',
         source: options.source ?? 'manual',
         workflowProfile: options.workflowProfile,
         workflowPhase: options.workflowPhase,
@@ -86,7 +90,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             source: 'manual',
             workflowProfile: 'default',
             workflowPhase: null
@@ -109,7 +113,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             tickProject(namespace: string, projectId: string): Promise<void>
         }).tickProject(namespace, projectId)
 
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents).toEqual([])
     })
 
@@ -185,7 +189,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workflowProfile: 'default',
             workflowPhase: null
@@ -238,7 +242,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Clarify goal',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             workflowProfile: 'default',
             workflowPhase: null
@@ -323,6 +327,82 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
     })
 
+    it('ignores candidate planning tasks when deciding whether to refill with a planner tick', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-candidate-backlog'
+        const goalId = 'goal-candidate-backlog'
+        const taskId = 'candidate-task'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        const workspace = store.workspaces.createWorkspace({
+            id: 'workspace-candidate-backlog',
+            projectId,
+            path: mkdtempSync(join(tmpdir(), 'hopi-candidate-backlog-'))
+        })
+        store.projects.updateProject(projectId, namespace, { defaultWorkspaceId: workspace.id })
+        const goal = store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep candidates in backlog',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: taskId,
+            title: 'Candidate backlog item',
+            status: 'planning',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        upsertGoalTodoTaskState({
+            project: store.projects.getProjectByNamespace(projectId, namespace)!,
+            goal,
+            defaultWorkspace: workspace,
+            taskId,
+            status: 'planning',
+            tag: 'candidate',
+            title: 'Candidate backlog item'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .some((task) => task.source === 'planner' && task.title.includes('Plan next')))
+
+        const planner = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.source === 'planner' && task.title.includes('Plan next'))
+        expect(planner?.contract).toContain('Current open generator tasks: 0')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
+        expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+    })
+
     it('carries recent resolved decision answers into generated planner loop tasks', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -350,7 +430,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Previous planner question',
-            status: 'finished',
+            status: 'done',
             source: 'planner',
             workflowProfile: 'default',
             workflowPhase: null
@@ -426,7 +506,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Completed generator work',
-            status: 'finished',
+            status: 'done',
             source: 'manual'
         })
 
@@ -487,7 +567,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Plan next goal iteration',
-            status: 'planned',
+            status: 'planning',
             source: 'planner',
             activeSessionId: sessionId,
             workflowProfile: 'default',
@@ -564,7 +644,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('Resolved DecisionTopic: Choose next slice')
         expect(kickoffText).toContain('Use MainMenu as the player-facing entry.')
-        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
         expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === taskId)).toBe(true)
     })
 
@@ -597,7 +677,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Finished implementation task',
-            status: 'finished',
+            status: 'done',
             source: 'manual',
             workflowProfile: 'default',
             workflowPhase: null
@@ -663,7 +743,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Active review work',
-            status: 'in_review',
+            status: 'review',
             source: 'evaluator',
             workflowProfile: 'default',
             workflowPhase: null
@@ -820,7 +900,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await delay(120)
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planned')
+        expect(task?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(false)
     })
 
@@ -893,7 +973,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await delay(120)
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planned')
+        expect(task?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(false)
     })
 
@@ -926,7 +1006,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Implement first slice',
-            status: 'planned',
+            status: 'planning',
             source: 'manual',
             workflowProfile: 'default',
             workflowPhase: null
@@ -990,7 +1070,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Still running',
-            status: 'in_progress',
+            status: 'running',
             source: 'manual',
             activeSessionId: 'session-still-running',
             workflowProfile: 'default',
@@ -1001,7 +1081,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Ready for review',
-            status: 'in_review',
+            status: 'review',
             source: 'manual',
             activeSessionId: previousSessionId,
             workflowProfile: 'default',
@@ -1129,7 +1209,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                 projectId,
                 goalId,
                 title: `Generator task ${index}`,
-                status: 'planned',
+                status: 'planning',
                 source: 'manual',
                 workflowProfile: 'default',
                 workflowPhase: null
@@ -1193,9 +1273,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         expect(spawnCount).toBe(3)
         const started = store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
-            .filter((task) => task.status === 'in_progress')
+            .filter((task) => task.status === 'running')
         expect(started).toHaveLength(3)
-        expect(store.tasks.getTaskByNamespace('task-generator-4', namespace)?.status).toBe('planned')
+        expect(store.tasks.getTaskByNamespace('task-generator-4', namespace)?.status).toBe('planning')
     })
 
     it('uses a custom evaluator lane limit to pause review starts', async () => {
@@ -1236,7 +1316,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             goalId,
             title: 'Review should wait',
-            status: 'in_review',
+            status: 'review',
             source: 'manual',
             activeSessionId: previousSessionId,
             workflowProfile: 'default',
@@ -1309,7 +1389,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await delay(150)
 
         expect(spawnCount).toBe(0)
-        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.status).toBe('in_review')
+        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.status).toBe('review')
         expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.source).toBe('manual')
     })
 
@@ -1377,7 +1457,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             title: 'Task',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default'
         })
 
@@ -1560,7 +1640,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: 'task-1',
             projectId,
             title: 'Task 1',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default'
         })
 
@@ -1652,7 +1732,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: 'task-2',
             projectId,
             title: 'Task 2',
-            status: 'planned',
+            status: 'planning',
             workflowProfile: 'default'
         })
         scheduler.handleEvent({
@@ -1671,7 +1751,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         await waitFor(() => spawnCount === 2)
 
         const task2 = store.tasks.getTaskByNamespace('task-2', namespace)
-        expect(task2?.status).toBe('in_progress')
+        expect(task2?.status).toBe('running')
         expect(task2?.activeSessionId).toBe(spawned2.id)
         expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
     })

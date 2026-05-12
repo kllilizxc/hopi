@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Hono } from 'hono'
 import { Store } from '../../store'
 import { createGoalsRoutes } from './goals'
 import { createTasksRoutes } from './tasks'
+
+const tempDirs: string[] = []
+
+function createTempWorkspace(): string {
+    const path = mkdtempSync(join(tmpdir(), 'hopi-tasks-goal-'))
+    tempDirs.push(path)
+    return path
+}
 
 function createTestApp(store: Store): Hono {
     const app = new Hono()
@@ -26,18 +37,69 @@ function seedProject(store: Store, id: string, namespace = 'default'): void {
     })
 }
 
+function seedWorkspace(store: Store, projectId: string): string {
+    const workspacePath = createTempWorkspace()
+    store.workspaces.createWorkspace({
+        id: `${projectId}-workspace`,
+        projectId,
+        path: workspacePath
+    })
+    return workspacePath
+}
+
 function seedGoal(store: Store, options: {
     id: string
     projectId: string
     namespace?: string
+    goalKey?: string
     title?: string
 }): void {
     store.goals.createGoal({
         id: options.id,
         projectId: options.projectId,
         namespace: options.namespace ?? 'default',
+        goalKey: options.goalKey,
         title: options.title ?? options.id
     })
+}
+
+function seedGoalTodoTask(store: Store, options: {
+    projectId: string
+    goalId: string
+    goalKey: string
+    taskId: string
+    status?: string
+    tag?: string
+}): { workspacePath: string } {
+    const workspacePath = createTempWorkspace()
+    seedProject(store, options.projectId)
+    store.workspaces.createWorkspace({
+        id: `${options.projectId}-workspace`,
+        projectId: options.projectId,
+        path: workspacePath
+    })
+    seedGoal(store, {
+        id: options.goalId,
+        projectId: options.projectId,
+        goalKey: options.goalKey,
+        title: 'YAML Goal'
+    })
+    const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', options.goalKey)
+    mkdirSync(goalDir, { recursive: true })
+    writeFileSync(join(goalDir, 'todo.yml'), [
+        'version: 1',
+        'goals:',
+        `  - goalKey: ${options.goalKey}`,
+        `    goalId: ${options.goalId}`,
+        '    title: YAML Goal',
+        '    items:',
+        `      - id: ${options.taskId}`,
+        `        status: ${options.status ?? 'planning'}`,
+        `        tag: ${options.tag ?? 'ready'}`,
+        '        title: YAML only task',
+        '        body: Build this from the goal todo file.'
+    ].join('\n'), 'utf8')
+    return { workspacePath }
 }
 
 async function createTask(app: Hono, projectId: string, body: Record<string, unknown>): Promise<Response> {
@@ -52,12 +114,19 @@ async function createTask(app: Hono, projectId: string, body: Record<string, unk
     })
 }
 
+afterEach(() => {
+    for (const path of tempDirs.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+    }
+})
+
 describe('goal-scoped task routes', () => {
     it('creates, filters, and updates tasks scoped to project goals', async () => {
         const store = new Store(':memory:')
         const projectId = 'project-goal-tasks'
         const otherProjectId = 'project-other'
         seedProject(store, projectId)
+        seedWorkspace(store, projectId)
         seedProject(store, otherProjectId)
         seedProject(store, 'project-other-namespace', 'other')
         seedGoal(store, { id: 'goal-a', projectId, title: 'Goal A' })
@@ -156,6 +225,7 @@ describe('goal-scoped task routes', () => {
         const store = new Store(':memory:')
         const projectId = 'project-goal-task-source'
         seedProject(store, projectId)
+        seedWorkspace(store, projectId)
         seedGoal(store, { id: 'goal-source', projectId })
 
         const app = createTestApp(store)
@@ -199,6 +269,7 @@ describe('goal-scoped task routes', () => {
         const store = new Store(':memory:')
         const projectId = 'project-invalid-include-archived'
         seedProject(store, projectId)
+        seedWorkspace(store, projectId)
         seedGoal(store, { id: 'goal-valid', projectId })
 
         const app = createTestApp(store)
@@ -214,5 +285,280 @@ describe('goal-scoped task routes', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({ error: 'Invalid query' })
+    })
+
+    it('returns goal todo projected task details without materializing a DB task', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-task-read'
+        const goalId = 'goal-yaml-task-read'
+        const taskId = 'yaml-only-task-a1b2c3'
+        seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-task-read',
+            taskId,
+            tag: 'candidate'
+        })
+
+        const app = createTestApp(store)
+        const response = await app.request(`/api/tasks/${taskId}`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            task: { id: string; projectId: string; goalId: string | null; title: string; tag?: string | null }
+        }
+        expect(body.task).toMatchObject({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'YAML only task',
+            tag: 'candidate'
+        })
+        expect(store.tasks.getTaskByNamespace(taskId, 'default')).toBeNull()
+    })
+
+    it('materializes a goal todo projected task when updating task state', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-task-write'
+        const goalId = 'goal-yaml-task-write'
+        const taskId = 'yaml-only-task-d4e5f6'
+        const { workspacePath } = seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-task-write',
+            taskId
+        })
+
+        const app = createTestApp(store)
+        const response = await app.request(`/api/tasks/${taskId}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                status: 'blocked',
+                tag: 'deferred',
+                blockedReason: 'Needs product decision'
+            })
+        })
+
+        expect(response.status).toBe(200)
+        const stored = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(stored).toMatchObject({
+            id: taskId,
+            projectId,
+            goalId,
+            status: 'blocked',
+            blockedReason: 'Needs product decision'
+        })
+
+        const todo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', 'yaml-task-write', 'todo.yml'), 'utf8')
+        expect(todo).toContain(`id: ${taskId}`)
+        expect(todo).toContain('status: blocked')
+        expect(todo).toContain('tag: deferred')
+        expect(todo).toContain('summary: Needs product decision')
+    })
+
+    it('uses the existing DB task id for a linked goal todo item', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-task-overlay'
+        const goalId = 'goal-yaml-task-overlay'
+        const todoRef = 'linked-yaml-task-g7h8i9'
+        const dbTaskId = 'stored-task-for-linked-yaml'
+        const { workspacePath } = seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-task-overlay',
+            taskId: todoRef
+        })
+        store.tasks.createTask({
+            id: dbTaskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stored linked task',
+            status: 'running'
+        })
+
+        const app = createTestApp(store)
+        const listResponse = await app.request(`/api/projects/${projectId}/tasks?goalId=${goalId}`)
+
+        expect(listResponse.status).toBe(200)
+        const listBody = await listResponse.json() as { tasks: Array<{ id: string; goalTodoRef: string | null }> }
+        expect(listBody.tasks).toHaveLength(1)
+        expect(listBody.tasks[0]).toMatchObject({
+            id: dbTaskId,
+            goalTodoRef: todoRef
+        })
+
+        const updateResponse = await app.request(`/api/tasks/${todoRef}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ status: 'done' })
+        })
+
+        expect(updateResponse.status).toBe(200)
+        const stored = store.tasks.getTaskByNamespace(dbTaskId, 'default')
+        expect(stored?.status).toBe('done')
+        expect(store.tasks.getTaskByNamespace(todoRef, 'default')).toBeNull()
+        expect(store.tasks
+            .listTasksByProjectAndNamespace(projectId, 'default', { goalId })
+            .filter((task) => task.goalTodoRef === todoRef)).toHaveLength(1)
+
+        const todo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', 'yaml-task-overlay', 'todo.yml'), 'utf8')
+        expect(todo).toContain(`id: ${todoRef}`)
+        expect(todo).toContain('status: done')
+    })
+
+    it('repairs linked goal todo state when an old preview runtime is blocked', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-preview-blocked'
+        const goalId = 'goal-yaml-preview-blocked'
+        const todoRef = 'preview-blocked-yaml-task'
+        const dbTaskId = 'stored-preview-blocked-task'
+        const { workspacePath } = seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-preview-blocked',
+            taskId: todoRef,
+            status: 'running',
+            tag: 'promoted'
+        })
+        store.tasks.createTask({
+            id: dbTaskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Preview blocked task',
+            status: 'running',
+            previewRuntime: {
+                status: 'blocked',
+                sessionId: 'session-preview-blocked',
+                updatedAt: 30,
+                requestedAt: 10,
+                startedAt: 20,
+                completedAt: 30,
+                retryCount: 1,
+                failureFingerprint: 'preview-blocked',
+                latestNote: 'Preview blocked.',
+                blockedReason: 'Preview process exited with code 1'
+            }
+        })
+
+        const app = createTestApp(store)
+        const listResponse = await app.request(`/api/projects/${projectId}/tasks?goalId=${goalId}`)
+
+        expect(listResponse.status).toBe(200)
+        const listBody = await listResponse.json() as {
+            tasks: Array<{ id: string; goalTodoRef: string | null; status: string; blockedReason: string | null }>
+        }
+        expect(listBody.tasks).toHaveLength(1)
+        expect(listBody.tasks[0]).toMatchObject({
+            id: dbTaskId,
+            goalTodoRef: todoRef,
+            status: 'blocked',
+            blockedReason: 'Preview process exited with code 1'
+        })
+        const stored = store.tasks.getTaskByNamespace(dbTaskId, 'default')
+        expect(stored?.status).toBe('blocked')
+        expect(stored?.blockedReason).toBe('Preview process exited with code 1')
+
+        const todo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', 'yaml-preview-blocked', 'todo.yml'), 'utf8')
+        expect(todo).toContain(`id: ${todoRef}`)
+        expect(todo).toContain('status: blocked')
+        expect(todo).toContain('summary: Preview process exited with code 1')
+    })
+
+    it('uses goal todo status over stale DB task status for list and detail', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-authority'
+        const goalId = 'goal-yaml-authority'
+        const todoRef = 'todo-authority-task'
+        seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-authority',
+            taskId: todoRef,
+            status: 'running',
+            tag: 'promoted'
+        })
+        store.tasks.createTask({
+            id: 'stale-db-task',
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stale DB task',
+            status: 'blocked',
+            blockedReason: 'Stale DB blocker'
+        })
+
+        const app = createTestApp(store)
+        const listResponse = await app.request(`/api/projects/${projectId}/tasks?goalId=${goalId}`)
+        expect(listResponse.status).toBe(200)
+        const listBody = await listResponse.json() as {
+            tasks: Array<{ id: string; status: string; blockedReason: string | null }>
+        }
+        expect(listBody.tasks).toHaveLength(1)
+        expect(listBody.tasks[0]).toMatchObject({
+            id: 'stale-db-task',
+            status: 'running',
+            blockedReason: null
+        })
+
+        const detailResponse = await app.request('/api/tasks/stale-db-task')
+        expect(detailResponse.status).toBe(200)
+        const detailBody = await detailResponse.json() as {
+            task: { id: string; status: string; blockedReason: string | null }
+        }
+        expect(detailBody.task).toMatchObject({
+            id: 'stale-db-task',
+            status: 'running',
+            blockedReason: null
+        })
+    })
+
+    it('backfills a legacy DB-only goal task into todo before projecting the board', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-backfill'
+        const goalId = 'goal-yaml-backfill'
+        const workspacePath = createTempWorkspace()
+        seedProject(store, projectId)
+        store.workspaces.createWorkspace({
+            id: `${projectId}-workspace`,
+            projectId,
+            path: workspacePath
+        })
+        seedGoal(store, {
+            id: goalId,
+            projectId,
+            goalKey: 'yaml-backfill',
+            title: 'Backfill Goal'
+        })
+        store.tasks.createTask({
+            id: 'legacy-db-only-task',
+            projectId,
+            goalId,
+            title: 'Legacy DB task',
+            description: 'Created before todo.yml became canonical.',
+            status: 'planning'
+        })
+
+        const app = createTestApp(store)
+        const listResponse = await app.request(`/api/projects/${projectId}/tasks?goalId=${goalId}`)
+        expect(listResponse.status).toBe(200)
+        const listBody = await listResponse.json() as {
+            tasks: Array<{ id: string; goalTodoRef: string | null; status: string }>
+        }
+        expect(listBody.tasks).toHaveLength(1)
+        expect(listBody.tasks[0]).toMatchObject({
+            id: 'legacy-db-only-task',
+            goalTodoRef: 'legacy-db-only-task',
+            status: 'planning'
+        })
+        const stored = store.tasks.getTaskByNamespace('legacy-db-only-task', 'default')
+        expect(stored?.goalTodoRef).toBe('legacy-db-only-task')
+
+        const todo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', 'yaml-backfill', 'todo.yml'), 'utf8')
+        expect(todo).toContain('id: legacy-db-only-task')
+        expect(todo).toContain('status: planning')
+        expect(todo).toContain('title: Legacy DB task')
     })
 })

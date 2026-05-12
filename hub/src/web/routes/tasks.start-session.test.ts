@@ -81,7 +81,7 @@ function seedStartTask(store: Store, options: {
         projectId: options.projectId,
         title: 'Init Task',
         description: 'Repair init then continue task work.',
-        status: 'planned',
+        status: 'planning',
         workflowProfile: 'default',
         workspaceId: options.workspaceId,
         subTasks: [
@@ -314,7 +314,7 @@ describe('tasks start-session route', () => {
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
         expect(updatedTask?.activeSessionId).toBe(spawned.id)
-        expect(updatedTask?.status).toBe('in_progress')
+        expect(updatedTask?.status).toBe('running')
         expect(updatedTask?.initRuntime).toMatchObject({
             status: 'blocked',
             sessionId: spawned.id,
@@ -376,7 +376,7 @@ describe('tasks start-session route', () => {
         })
 
         const task = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(task?.status).toBe('planned')
+        expect(task?.status).toBe('planning')
         expect(task?.activeSessionId ?? null).toBeNull()
     })
 })
