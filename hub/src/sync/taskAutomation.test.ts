@@ -1010,8 +1010,11 @@ describe('TaskAutomation', () => {
         expect(todo).toContain('summary: Agent session exited unexpectedly')
         expect(controllerMessages).toHaveLength(1)
         expect(controllerMessages[0]?.sessionId).toBe(controllerSession.id)
-        expect(controllerMessages[0]?.text).toContain('Controller event: work is blocked - Block sync task')
-        expect(controllerMessages[0]?.text).toContain('Reason: Agent session exited unexpectedly')
+        expect(controllerMessages[0]?.text).toContain('任务「Block sync task」被阻塞了。')
+        expect(controllerMessages[0]?.text).not.toContain('Controller event:')
+        expect(controllerMessages[0]?.text).toContain('被阻塞任务：Block sync task')
+        expect(controllerMessages[0]?.text).toContain('用户可读原因：执行中的 agent 异常退出了，当前任务没有自然完成。')
+        expect(controllerMessages[0]?.text).toContain('原始阻塞原因：Agent session exited unexpectedly')
     })
 
     it('applies fenced goal action packet JSON from manual goal tasks on ready', () => {

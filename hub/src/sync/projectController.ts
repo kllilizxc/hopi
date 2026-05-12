@@ -5,6 +5,7 @@ import {
     isModelModeAllowedForFlavor,
     isPermissionModeAllowedForFlavor
 } from '@hopi/protocol'
+import { createHash } from 'node:crypto'
 import type { AgentFlavor, ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store, StoredGoal, StoredProject, StoredSession, StoredTask, StoredWorkspace } from '../store'
 import { readGoalTodo } from './goals/goalTodo'
@@ -51,6 +52,109 @@ function getNumber(value: unknown): number | null {
 
 function getString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function compactControllerEventPart(value: string | null | undefined): string {
+    return value?.trim().replace(/\s+/g, ' ') || 'none'
+}
+
+function buildControllerEventLocalId(options: {
+    projectId: string
+    goalId?: string | null
+    taskId?: string | null
+    kind: 'decision' | 'blocked'
+    title: string
+    body: string
+}): string {
+    const input = [
+        options.kind,
+        options.projectId,
+        options.goalId ?? 'none',
+        options.taskId ?? 'none',
+        compactControllerEventPart(options.title),
+        compactControllerEventPart(options.body)
+    ].join('\n')
+    const digest = createHash('sha1').update(input).digest('hex').slice(0, 16)
+    return `${CONTROLLER_EVENT_LOCAL_ID_PREFIX}${options.kind}:${options.projectId}:${options.goalId ?? 'none'}:${options.taskId ?? 'none'}:${digest}`
+}
+
+function buildUserFacingBlockedReason(reason: string, source?: string | null): string {
+    const normalized = reason.trim()
+    const lower = normalized.toLowerCase()
+    if (lower.includes('context window') || lower.includes('ran out of room')) {
+        return '模型上下文窗口用完了，这个线程已经不能继续，需要开一个新线程接着做。'
+    }
+    if (lower.includes('systemerror') || lower.includes('system error')) {
+        return '执行线程进入了系统错误状态，这次运行已经中断。'
+    }
+    if (lower.includes('quota') || lower.includes('rate limit') || lower.includes('usage limit')) {
+        return '模型额度或限流挡住了这次运行，需要稍后重试或切换配置。'
+    }
+    if (lower.includes('exited unexpectedly') || lower.includes('crashed')) {
+        return '执行中的 agent 异常退出了，当前任务没有自然完成。'
+    }
+    if (source === 'decision_topic') {
+        return '这个任务在等用户做一个决定，决定后才能继续推进。'
+    }
+    return normalized || '任务被标记为 blocked，但没有记录具体原因。'
+}
+
+function buildBlockedNextAction(reason: string, source?: string | null): string {
+    const lower = reason.toLowerCase()
+    if (source === 'decision_topic') {
+        return '向用户说明需要决定什么，并等待用户选择。'
+    }
+    if (lower.includes('context window') || lower.includes('ran out of room')) {
+        return '建议新开一次任务线程，并把原线程里已经完成的关键进展带过去。'
+    }
+    if (lower.includes('systemerror') || lower.includes('system error') || lower.includes('exited unexpectedly') || lower.includes('crashed')) {
+        return '建议重新运行这个任务；如果反复出现，再让用户查看原 session 的报错细节。'
+    }
+    if (lower.includes('quota') || lower.includes('rate limit') || lower.includes('usage limit')) {
+        return '建议稍后重试，或者让用户调整模型/权限配置。'
+    }
+    return '先用一句话告诉用户阻塞原因，再建议是否重试、拆分或让用户补充信息。'
+}
+
+function buildControllerEventText(options: {
+    kind: 'decision' | 'blocked'
+    title: string
+    body: string
+    taskId?: string | null
+    goalId?: string | null
+}): string {
+    const internalLines = [
+        `- goalId: ${options.goalId ?? 'none'}`,
+        `- taskId: ${options.taskId ?? 'none'}`
+    ]
+
+    if (options.kind === 'decision') {
+        return [
+            '这里有一个需要我决定的问题。',
+            '',
+            '请用个人助理的口吻，简短说明需要我决定什么、这个决定会影响什么，然后直接问我该怎么选。',
+            '',
+            `决策主题：${options.title}`,
+            '',
+            '背景信息：',
+            options.body.trim() || '没有记录更多信息。',
+            '',
+            '内部定位信息只供你使用，不要主动展示给我：',
+            ...internalLines
+        ].join('\n')
+    }
+
+    return [
+        `任务「${options.title}」被阻塞了。`,
+        '',
+        '请用个人助理的口吻，告诉我发生了什么、会影响当前目标吗、下一步应该怎么处理。不要直接复制原始报错，先翻译成人话。',
+        '',
+        '已整理的信息：',
+        options.body.trim() || '没有记录更多信息。',
+        '',
+        '内部定位信息只供你使用，不要主动展示给我：',
+        ...internalLines
+    ].join('\n')
 }
 
 function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorkspace | null {
@@ -592,20 +696,12 @@ export function notifyProjectController(options: {
     })
     if (!controller?.session?.active) return
 
-    const lines = [
-        options.kind === 'decision'
-            ? `Controller event: a human decision is waiting - ${options.title}`
-            : `Controller event: work is blocked - ${options.title}`,
-        '',
-        options.body
-    ]
-    if (options.goalId || options.taskId) {
-        lines.push('', `Context: goalId=${options.goalId ?? 'none'} taskId=${options.taskId ?? 'none'}`)
-    }
+    const localId = buildControllerEventLocalId(options)
+    if (options.store.messages.getMessageByLocalId(controller.sessionId, localId)) return
 
     void options.engine.sendMessage(controller.sessionId, {
-        text: lines.join('\n'),
-        localId: `${CONTROLLER_EVENT_LOCAL_ID_PREFIX}${options.kind}:${options.projectId}:${options.goalId ?? 'none'}:${Date.now()}`,
+        text: buildControllerEventText(options),
+        localId,
         sentFrom: 'webapp'
     }).catch(() => {})
 }
@@ -637,15 +733,21 @@ export function notifyProjectControllerTaskBlockedTransition(options: {
     if (isBlockedTaskStatus(options.previousTask?.status)) return
 
     const reason = options.task.blockedReason?.trim() || 'No blocked reason recorded.'
+    const userFacingReason = buildUserFacingBlockedReason(reason, options.task.blockedSource)
+    const nextAction = buildBlockedNextAction(reason, options.task.blockedSource)
     const lines = [
-        `Task: ${options.task.title}`,
-        `Reason: ${reason}`
+        `- 被阻塞任务：${options.task.title}`,
+        `- 用户可读原因：${userFacingReason}`,
+        `- 建议下一步：${nextAction}`,
+        '',
+        '仅供定位的技术细节：',
+        `- 原始阻塞原因：${reason}`
     ]
     if (options.task.blockedSource) {
-        lines.push(`Source: ${options.task.blockedSource}`)
+        lines.push(`- 来源：${options.task.blockedSource}`)
     }
     if (options.task.blockedSessionId) {
-        lines.push(`Session: ${options.task.blockedSessionId}`)
+        lines.push(`- sessionId: ${options.task.blockedSessionId}`)
     }
 
     notifyProjectController({
