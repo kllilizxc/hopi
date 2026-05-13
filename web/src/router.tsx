@@ -381,12 +381,6 @@ const projectDetailIndexRoute = createRoute({
     component: ProjectOverviewPage,
 })
 
-const projectPlanningRoute = createRoute({
-    getParentRoute: () => projectDetailRoute,
-    path: 'planning',
-    component: () => null,
-})
-
 const projectAssistantRoute = createRoute({
     getParentRoute: () => projectDetailRoute,
     path: 'assistant',
@@ -535,7 +529,6 @@ export const routeTree = rootRoute.addChildren([
         projectsIndexRoute,
         projectDetailRoute.addChildren([
             projectDetailIndexRoute,
-            projectPlanningRoute,
             projectAssistantRoute,
             projectSettingsRoute,
             projectTaskRoute.addChildren([

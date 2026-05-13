@@ -435,6 +435,60 @@ function extractFirstJsonObjectPayload(text: string): string | null {
     return null
 }
 
+function findNextNonWhitespace(text: string, start: number): string | null {
+    for (let index = start; index < text.length; index += 1) {
+        const char = text[index]!
+        if (!/\s/.test(char)) return char
+    }
+    return null
+}
+
+function repairLikelyUnescapedStringQuotes(payload: string): string | null {
+    let repaired = ''
+    let inString = false
+    let escaped = false
+    let changed = false
+
+    for (let index = 0; index < payload.length; index += 1) {
+        const char = payload[index]!
+        if (!inString) {
+            if (char === '"') {
+                inString = true
+            }
+            repaired += char
+            continue
+        }
+
+        if (escaped) {
+            escaped = false
+            repaired += char
+            continue
+        }
+
+        if (char === '\\') {
+            escaped = true
+            repaired += char
+            continue
+        }
+
+        if (char === '"') {
+            const next = findNextNonWhitespace(payload, index + 1)
+            if (next === null || next === ':' || next === ',' || next === '}' || next === ']') {
+                inString = false
+                repaired += char
+            } else {
+                repaired += '\\"'
+                changed = true
+            }
+            continue
+        }
+
+        repaired += char
+    }
+
+    return changed ? repaired : null
+}
+
 function looksLikeGoalActionPacketPayload(payload: string): boolean {
     try {
         const parsed = JSON.parse(payload)
@@ -479,6 +533,21 @@ function extractBareJsonPayload(text: string): string | null {
     return null
 }
 
+function parseGoalActionPacketPayload(payload: string): GoalActionPacket | null {
+    const candidates = [payload, repairLikelyUnescapedStringQuotes(payload)]
+        .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+
+    for (const candidate of candidates) {
+        try {
+            const raw = normalizeActionPacketInput(JSON.parse(candidate))
+            return goalActionPacketSchema.parse(raw)
+        } catch {
+        }
+    }
+
+    return null
+}
+
 function findLatestGoalActionPacket(messages: DecryptedMessage[]): GoalActionPacket | null {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const text = extractAssistantText(messages[index]!)
@@ -486,12 +555,7 @@ function findLatestGoalActionPacket(messages: DecryptedMessage[]): GoalActionPac
         const payload = extractJsonPayload(text) ?? extractBareJsonPayload(text)
         if (!payload) continue
 
-        try {
-            const raw = normalizeActionPacketInput(JSON.parse(payload))
-            return goalActionPacketSchema.parse(raw)
-        } catch {
-            return null
-        }
+        return parseGoalActionPacketPayload(payload)
     }
     return null
 }

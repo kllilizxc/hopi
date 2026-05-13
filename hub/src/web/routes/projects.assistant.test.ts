@@ -3,21 +3,99 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
-import { Store } from '../../store'
+import type { Session } from '@hopi/protocol/types'
+import { Store, type StoredSession } from '../../store'
 import { createProjectAssistantIntervention } from '../../sync/projectAssistant'
+import type { SyncEngine } from '../../sync/syncEngine'
 import { createGoalsRoutes } from './goals'
 import { createProjectsRoutes } from './projects'
 
+function runtimeSession(stored: StoredSession): Session {
+    return {
+        id: stored.id,
+        namespace: stored.namespace,
+        seq: stored.seq,
+        createdAt: stored.createdAt,
+        updatedAt: stored.updatedAt,
+        active: true,
+        activeAt: stored.activeAt ?? stored.createdAt,
+        metadata: stored.metadata as Session['metadata'],
+        metadataVersion: stored.metadataVersion,
+        agentState: null,
+        agentStateVersion: stored.agentStateVersion,
+        thinking: false,
+        thinkingAt: 0
+    }
+}
+
+function engineFor(store: Store): SyncEngine {
+    const sessions = new Map<string, Session>()
+    return {
+        async spawnSession(
+            machineId: string,
+            directory: string,
+            agent?: string,
+            model?: string,
+            _yolo?: boolean,
+            _sessionType?: string,
+            _worktreeName?: string,
+            _resumeSessionId?: string,
+            _worktreeWorkspacePaths?: string[],
+            _worktreeTargetBranch?: string,
+            sessionTag?: string
+        ) {
+            const stored = store.sessions.getOrCreateSession(
+                sessionTag ?? `assistant-route-${sessions.size + 1}`,
+                {
+                    path: directory,
+                    host: 'localhost',
+                    machineId,
+                    flavor: agent,
+                    model,
+                    startedFromRunner: true
+                },
+                null,
+                'default'
+            )
+            sessions.set(stored.id, runtimeSession(stored))
+            return { type: 'success' as const, sessionId: stored.id }
+        },
+        async waitForSessionActive() {
+            return true
+        },
+        async sendMessage(sessionId: string, payload: { text: string; localId?: string | null }) {
+            store.messages.addMessage(sessionId, {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: payload.text
+                }
+            }, payload.localId ?? undefined)
+        },
+        getSessionByNamespace(sessionId: string) {
+            return sessions.get(sessionId) ?? null
+        },
+        handleRealtimeEvent(event: { sessionId?: string; namespace?: string }) {
+            if (!event.sessionId) return
+            const stored = store.sessions.getSessionByNamespace(event.sessionId, event.namespace ?? 'default')
+            if (stored) {
+                sessions.set(stored.id, runtimeSession(stored))
+            }
+        }
+    } as unknown as SyncEngine
+}
+
 function createTestApp(store: Store): Hono {
     const app = new Hono()
+    const engine = engineFor(store)
     app.use('*', async (c, next) => {
         const setContext = c.set as unknown as (key: string, value: unknown) => void
         setContext('userId', 1)
         setContext('namespace', 'default')
         await next()
     })
-    app.route('/api', createProjectsRoutes({ store, getSyncEngine: () => null }))
-    app.route('/api', createGoalsRoutes({ store, getSyncEngine: () => null }))
+    app.route('/api', createProjectsRoutes({ store, getSyncEngine: () => engine }))
+    app.route('/api', createGoalsRoutes({ store, getSyncEngine: () => engine }))
     return app
 }
 
@@ -149,6 +227,35 @@ describe('project assistant routes', () => {
         const listBody = await listResponse.json() as { sessions: Array<{ interventionStatus: string }>; pendingCount: number }
         expect(listBody.pendingCount).toBe(0)
         expect(listBody.sessions[0]?.interventionStatus).toBe('resolved')
+    })
+
+    it('activates a pending intervention without creating a different conversation', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const { projectId, goalId } = await createProjectAndGoal(app, mkdtempSync(join(tmpdir(), 'hopi-assistant-routes-')))
+        const intervention = createProjectAssistantIntervention({
+            store,
+            namespace: 'default',
+            projectId,
+            goalId,
+            interventionKey: 'goal:ship-ui:activate',
+            interventionKind: 'decision_needed',
+            title: 'Choose scope',
+            body: 'Need a decision on scope.',
+            suggestedActions: [{ id: 'answer', label: 'Answer', recommended: true }]
+        })
+
+        const response = await app.request(`/api/projects/${projectId}/assistant-sessions/${intervention.session.id}/activate`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { session: { id: string } }
+        expect(body.session.id).toBe(intervention.session.id)
+        const messages = store.messages.getMessages(intervention.session.id, 10)
+        expect(messages.some((message) => message.localId?.startsWith('auto:assistant:activation:'))).toBe(true)
     })
 
     it('does not resolve an intervention through another project route', async () => {

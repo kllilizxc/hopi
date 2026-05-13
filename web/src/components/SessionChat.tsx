@@ -173,6 +173,15 @@ export function SessionChat(props: {
     onViewDiffs?: () => void
     onViewTerminal?: () => void
     headerExtra?: ReactNode
+    hideHeader?: boolean
+    hideInactiveNotice?: boolean
+    rootClassName?: string
+    surfaceClassName?: string
+    threadContentClassName?: string
+    composerOuterClassName?: string
+    composerContentClassName?: string
+    composerStatusBarVisible?: boolean
+    showTerminalControl?: boolean
 }) {
     const { token, baseUrl } = useAppContext()
     const { haptic } = usePlatform()
@@ -763,17 +772,25 @@ export function SessionChat(props: {
     })
 
     return (
-        <div className="flex h-full flex-col">
-            <SessionHeader
-                session={props.session}
-                onBack={props.onBack}
-                onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
-                onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
-                onSessionDeleted={props.onBack}
-                extra={props.headerExtra}
-            />
+        <div className={props.rootClassName ?? 'flex h-full flex-col'}>
+            {props.hideHeader ? (
+                props.headerExtra ? (
+                    <div className="px-3 pt-3">
+                        {props.headerExtra}
+                    </div>
+                ) : null
+            ) : (
+                <SessionHeader
+                    session={props.session}
+                    onBack={props.onBack}
+                    onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
+                    onViewDiffs={props.onViewDiffs ? handleViewDiffs : undefined}
+                    onSessionDeleted={props.onBack}
+                    extra={props.headerExtra}
+                />
+            )}
 
-            {sessionInactive ? (
+            {sessionInactive && !props.hideInactiveNotice ? (
                 <div className="px-3 pt-3">
                     <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
                         Session is inactive. Sending will resume it automatically.
@@ -782,7 +799,7 @@ export function SessionChat(props: {
             ) : null}
 
             <AssistantRuntimeProvider runtime={runtime}>
-                <div className={SESSION_CHAT_SURFACE_CLASS_NAME}>
+                <div className={props.surfaceClassName ?? SESSION_CHAT_SURFACE_CLASS_NAME}>
                     <HappyThread
                         key={props.session.id}
                         api={props.api}
@@ -820,6 +837,7 @@ export function SessionChat(props: {
                         showPreviewLogs={showPreviewLogs}
                         previewLogTail={previewState?.logTail ?? []}
                         previewCommand={previewState?.command ?? null}
+                        contentClassName={props.threadContentClassName}
                     />
 
                     <HappyComposer
@@ -837,12 +855,15 @@ export function SessionChat(props: {
                         onPermissionModeChange={handlePermissionModeChange}
                         onModelModeChange={handleModelModeChange}
                         onSwitchToRemote={handleSwitchToRemote}
-                        onTerminal={props.session.active ? handleViewTerminal : undefined}
+                        onTerminal={props.showTerminalControl === false ? undefined : props.session.active ? handleViewTerminal : undefined}
                         autocompleteSuggestions={props.autocompleteSuggestions}
                         voiceStatus={voice?.status}
                         voiceMicMuted={voice?.micMuted}
                         onVoiceToggle={voice ? handleVoiceToggle : undefined}
                         onVoiceMicToggle={voice ? handleVoiceMicToggle : undefined}
+                        outerClassName={props.composerOuterClassName}
+                        contentClassName={props.composerContentClassName}
+                        statusBarVisible={props.composerStatusBarVisible}
                     />
                 </div>
             </AssistantRuntimeProvider>

@@ -202,7 +202,8 @@ export class RpcGateway {
         worktreeName?: string,
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
-        worktreeTargetBranch?: string
+        worktreeTargetBranch?: string,
+        sessionTag?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
@@ -218,7 +219,8 @@ export class RpcGateway {
                     sessionType,
                     worktreeName,
                     resumeSessionId,
-                    worktreeTargetBranch
+                    worktreeTargetBranch,
+                    sessionTag
                 }
             )
             if (result && typeof result === 'object') {

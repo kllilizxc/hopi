@@ -147,7 +147,8 @@ async function reportSessionStarted(sessionId: string, metadata: Metadata): Prom
 export async function bootstrapSession(options: SessionBootstrapOptions): Promise<SessionBootstrapResult> {
     const workingDirectory = options.workingDirectory ?? resolveCliWorkingDirectory()
     const startedBy = options.startedBy ?? 'terminal'
-    const sessionTag = options.tag ?? randomUUID()
+    const envSessionTag = process.env[PRODUCT_ENV.SESSION_TAG]?.trim()
+    const sessionTag = options.tag ?? (envSessionTag || randomUUID())
     const agentState = options.agentState === undefined ? {} : options.agentState
 
     const api = await ApiClient.create()

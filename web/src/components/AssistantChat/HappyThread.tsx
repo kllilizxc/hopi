@@ -146,6 +146,7 @@ export function HappyThread(props: {
     showPreviewLogs?: boolean
     previewLogTail?: string[]
     previewCommand?: string | null
+    contentClassName?: string
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -436,7 +437,7 @@ export function HappyThread(props: {
                         viewportClassName="h-full overflow-y-auto overflow-x-hidden"
                         viewportStyle={{ WebkitOverflowScrolling: 'touch' }}
                     >
-                        <div className={MESSAGE_VIEWPORT_CONTENT_CLASS_NAME}>
+                        <div className={props.contentClassName ?? MESSAGE_VIEWPORT_CONTENT_CLASS_NAME}>
                             <div ref={topSentinelRef} className="h-px w-full" aria-hidden="true" />
                             {showSkeleton ? (
                                 <MessageSkeleton />
@@ -485,6 +486,19 @@ export function HappyThread(props: {
                             <div className={MESSAGE_STREAM_CLASS_NAME}>
                                 <ThreadPrimitive.Messages components={THREAD_MESSAGE_COMPONENTS} />
                             </div>
+                            {!showSkeleton && props.normalizedMessagesCount === 0 ? (
+                                <div className="flex h-full min-h-[50vh] flex-col items-center justify-center p-6 text-center opacity-60">
+                                    <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-4 text-[var(--app-hint)]">
+                                        <rect width="120" height="120" rx="30" fill="currentColor" fillOpacity="0.1" />
+                                        <path d="M40 55C40 46.7157 46.7157 40 55 40H65C73.2843 40 80 46.7157 80 55V65C80 73.2843 73.2843 80 65 80H55C46.7157 80 40 73.2843 40 65V55Z" fill="currentColor" fillOpacity="0.2"/>
+                                        <path d="M50 55C50 52.2386 52.2386 50 55 50H65C67.7614 50 70 52.2386 70 55V65C70 67.7614 67.7614 70 65 70H55C52.2386 70 50 67.7614 50 65V55Z" fill="var(--app-bg)" />
+                                        <circle cx="56" cy="60" r="3" fill="currentColor" />
+                                        <circle cx="64" cy="60" r="3" fill="currentColor" />
+                                    </svg>
+                                    <div className="text-sm font-medium text-[var(--app-text)]">{t('projects.assistant.emptySession')}</div>
+                                    <div className="mt-1 text-xs text-[var(--app-hint)]">{t('projects.assistant.emptySessionHint')}</div>
+                                </div>
+                            ) : null}
                             {showActionRow ? (
                                 <div className="py-2">
                                     <div className="mx-auto flex w-fit max-w-[92%] items-center gap-2">

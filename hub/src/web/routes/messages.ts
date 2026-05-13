@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { AttachmentMetadataSchema } from '@hopi/protocol/schemas'
 import { z } from 'zod'
+import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
@@ -16,11 +17,14 @@ const sendMessageBodySchema = z.object({
     attachments: z.array(AttachmentMetadataSchema).optional()
 })
 
-export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
+export function createMessagesRoutes(options: {
+    getSyncEngine: () => SyncEngine | null
+    store: Store
+}): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.get('/sessions/:id/messages', async (c) => {
-        const engine = requireSyncEngine(c, getSyncEngine)
+        const engine = requireSyncEngine(c, options.getSyncEngine)
         if (engine instanceof Response) {
             return engine
         }
@@ -38,14 +42,17 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Ho
     })
 
     app.post('/sessions/:id/messages', async (c) => {
-        const engine = requireSyncEngine(c, getSyncEngine)
+        const engine = requireSyncEngine(c, options.getSyncEngine)
         if (engine instanceof Response) {
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = requireSessionFromParam(c, engine)
         if (sessionResult instanceof Response) {
             return sessionResult
+        }
+        if (!sessionResult.session.active) {
+            return c.json({ error: 'Session is inactive' }, 409)
         }
         const sessionId = sessionResult.sessionId
 

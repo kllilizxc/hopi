@@ -70,9 +70,19 @@ export class MessageService {
             localId?: string | null
             attachments?: AttachmentMetadata[]
             sentFrom?: 'telegram-bot' | 'webapp'
+            appendSystemPrompt?: string | null
+            allowedTools?: string[] | null
+            disallowedTools?: string[] | null
         }
     ): Promise<void> {
         const sentFrom = payload.sentFrom ?? 'webapp'
+
+        const meta = {
+            sentFrom,
+            ...(payload.appendSystemPrompt !== undefined ? { appendSystemPrompt: payload.appendSystemPrompt } : {}),
+            ...(payload.allowedTools !== undefined ? { allowedTools: payload.allowedTools } : {}),
+            ...(payload.disallowedTools !== undefined ? { disallowedTools: payload.disallowedTools } : {})
+        }
 
         const content = {
             role: 'user',
@@ -84,9 +94,7 @@ export class MessageService {
             // Correlation id for downstream clients (CLI) to map "ready" events back to the prompt.
             // Mirrors the message localId stored in the DB.
             localKey: payload.localId ?? undefined,
-            meta: {
-                sentFrom
-            }
+            meta
         }
 
         this.injectMessage(sessionId, {

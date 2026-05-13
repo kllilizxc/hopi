@@ -489,11 +489,14 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         '',
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
-        '- If no HOPI state change is needed, omit the packet.',
+        '- If no HOPI state change is needed, omit the packet. For goal-role tasks, finishing or blocking the current task is a HOPI state change, so include update_current_task before stopping.',
+        '- Emit the packet as visible assistant text. Hidden thinking, tool inputs, plan files, and ExitPlanMode plans are not parsed by HOPI.',
+        '- Do not call EnterPlanMode or ExitPlanMode as a substitute for this packet; this task is already the planning/review/execution turn.',
         '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `ref`, `status`, `title`, optional `taskId`, and optional `body`.',
         '- Todo item status values are ready, candidate, promoted, in_review, blocked, deferred, done. When creating a task from a todo item, keep its stable `ref` as todoRef.',
         '- Task titles are user-visible text only. Do not prefix or include `ref`, `todoRef`, yaml keys, or ids in `title`.',
         '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
+        '- The fenced block must be strict JSON accepted by JSON.parse. Do not put raw `"` characters inside string values; use single quotes in prose or escape them as `\\"`.',
         ...commonActions,
         ...(role === 'Planner' || role === 'Radar'
             ? ['- create_goal_task shape: { "type": "create_goal_task", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
@@ -1565,9 +1568,7 @@ async function startSessionFromTaskInternal(options: {
     const isGoalPlanningRole = Boolean(task.goalId) && (task.source === 'planner' || task.source === 'radar')
     const isGoalReviewRole = Boolean(task.goalId) && task.status === 'in_review'
     const goalTaskRole = getGoalTaskRole(task)
-    if (isGsdNonExecutionPhase || isGoalPlanningRole) {
-        // Workflow phases that should not trigger execution:
-        // force session into an explicit planning / read-only posture regardless of stored task settings.
+    if ((isGsdNonExecutionPhase || isGoalPlanningRole) && !permissionMode) {
         permissionMode = agent === 'claude'
             ? 'plan'
             : agent === 'codex'

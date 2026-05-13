@@ -109,6 +109,8 @@ export default {
   'projects.assistant.error.resolveFailed': '处理待办事项失败',
   'projects.assistant.toast.sessionFailed': 'Assistant 会话创建失败',
   'projects.assistant.toast.resolveFailed': '处理失败',
+  'projects.assistant.emptySession': '暂无消息',
+  'projects.assistant.emptySessionHint': '发送消息以开始对话',
 
   'projects.planning.title': 'Planning',
   'projects.planning.subtitle': '当前目标的 backlog 和 planning 文档详情。',

@@ -93,7 +93,7 @@ function WorkspaceRow(props: {
     const { t } = useTranslation()
 
     return (
-        <div className="rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+        <div className="rounded-xl bg-[var(--app-bg)] p-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
                     <div className="flex items-center gap-2">
@@ -399,7 +399,7 @@ export function ProjectSettingsPage() {
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 disabled={isPending}
-                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                className="min-h-24 w-full resize-none rounded-lg bg-[var(--app-bg)] p-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
                         </div>
 
@@ -410,7 +410,7 @@ export function ProjectSettingsPage() {
                                 onChange={(e) => setDescription(e.target.value)}
                                 disabled={isPending}
                                 rows={4}
-                                className="w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                className="w-full resize-none rounded-lg bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             />
                         </div>
 
@@ -468,7 +468,7 @@ export function ProjectSettingsPage() {
 
                         <div className="space-y-2">
                             <div className="text-sm font-semibold">{t('projects.automation.title')}</div>
-                            <div className="rounded-lg app-shadow-border bg-[var(--app-bg)] p-3 space-y-3">
+                            <div className="rounded-xl bg-[var(--app-bg)] p-3 space-y-3">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="space-y-1">
                                         <div className="text-xs font-medium text-[var(--app-hint)]">{t('projects.automation.readiness')}</div>
@@ -516,7 +516,7 @@ export function ProjectSettingsPage() {
                                                 value={automationLaneLimits[lane]}
                                                 onChange={(e) => setAutomationLaneLimit(lane, Number(e.target.value))}
                                                 disabled={isPending}
-                                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                                className="w-full rounded-lg bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                             />
                                         </div>
                                     ))}
@@ -539,7 +539,7 @@ export function ProjectSettingsPage() {
                                                 value={automationBackstopPolicy[field.key]}
                                                 onChange={(e) => setAutomationBackstopLimit(field.key, Number(e.target.value))}
                                                 disabled={isPending}
-                                                className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                                className="w-full rounded-lg bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                             />
                                         </div>
                                     ))}
@@ -561,7 +561,7 @@ export function ProjectSettingsPage() {
                                         value={improvementsMaxPendingTasks}
                                         onChange={(e) => setImprovementsMaxPendingTasks(Number(e.target.value))}
                                         disabled={isPending}
-                                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                        className="w-full rounded-lg bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                     />
                                 </div>
                             </div>
@@ -593,7 +593,7 @@ export function ProjectSettingsPage() {
                                         onChange={(e) => setWorktreeTargetBranch(e.target.value)}
                                         disabled={isPending || defaultSessionType !== 'worktree' || isWorktreeLocked}
                                         placeholder={t('projects.worktree.targetBranchPlaceholder')}
-                                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                                        className="w-full rounded-lg bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                                     />
                                     <div className="text-xs text-[var(--app-hint)]">{t('projects.worktree.targetBranchHint')}</div>
                                 </div>

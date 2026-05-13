@@ -396,6 +396,13 @@ export async function startRunner(): Promise<void> {
             };
           }
         }
+        const sessionTag = options.sessionTag?.trim();
+        if (sessionTag) {
+          extraEnv = {
+            ...extraEnv,
+            [PRODUCT_ENV.SESSION_TAG]: sessionTag
+          };
+        }
 
         if (primaryWorktreeInfo) {
           extraEnv = {

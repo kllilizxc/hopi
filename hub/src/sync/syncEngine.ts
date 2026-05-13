@@ -40,6 +40,7 @@ import { OmcExecutionAutomation } from './omc/executionAutomation'
 import { OmcLoopAutomation } from './omc/loopAutomation'
 import { OmcPlanningAutomation } from './omc/planningAutomation'
 import { OmcTopicAutomation } from './omc/topicAutomation'
+import { applyProjectAssistantActionPacketFromReady } from './projectAssistant'
 
 export type { Session, SyncEvent } from '@hopi/protocol/types'
 export type { Machine } from './machineCache'
@@ -290,6 +291,13 @@ export class SyncEngine {
             if (!this.getSession(event.sessionId)) {
                 this.sessionCache.refreshSession(event.sessionId)
             }
+            applyProjectAssistantActionPacketFromReady({
+                store: this.store,
+                engine: this,
+                namespace: event.namespace ?? this.getSession(event.sessionId)?.namespace ?? 'default',
+                sessionId: event.sessionId,
+                readyMessage: event.message
+            })
         }
 
         this.eventPublisher.emit(event)
@@ -347,6 +355,9 @@ export class SyncEngine {
                 previewUrl?: string
             }>
             sentFrom?: 'telegram-bot' | 'webapp'
+            appendSystemPrompt?: string | null
+            allowedTools?: string[] | null
+            disallowedTools?: string[] | null
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
@@ -459,7 +470,8 @@ export class SyncEngine {
         worktreeName?: string,
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
-        worktreeTargetBranch?: string
+        worktreeTargetBranch?: string,
+        sessionTag?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -471,7 +483,8 @@ export class SyncEngine {
             worktreeName,
             resumeSessionId,
             worktreeWorkspacePaths,
-            worktreeTargetBranch
+            worktreeTargetBranch,
+            sessionTag
         )
     }
 

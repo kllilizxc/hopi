@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback } from 'react'
+import { memo, type ReactNode, useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import { SessionChat } from '@/components/SessionChat'
@@ -11,6 +11,22 @@ import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { queryKeys } from '@/lib/query-keys'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+
+function isProjectAssistantIntroMessage(message: { localId?: string | null }): boolean {
+    return message.localId === 'auto:assistant:normal:intro'
+        || message.localId?.startsWith('auto:assistant:kickoff:') === true
+        || message.localId?.startsWith('auto:assistant:activation:') === true
+}
+
+function hasAgentResumeMetadata(metadata: Record<string, unknown> | null | undefined): boolean {
+    if (!metadata) return false
+    return typeof metadata.claudeSessionId === 'string'
+        || typeof metadata.codexSessionId === 'string'
+        || typeof metadata.geminiSessionId === 'string'
+        || typeof metadata.opencodeSessionId === 'string'
+        || metadata.startedFromRunner === true
+        || (typeof metadata.host === 'string' && metadata.host !== 'hopi')
+}
 
 export const ProjectAssistantSessionChat = memo(function ProjectAssistantSessionChat(props: {
     api: ApiClient | null
@@ -51,6 +67,10 @@ export const ProjectAssistantSessionChat = memo(function ProjectAssistantSession
         resolveSessionId: async (currentSessionId) => {
             if (!props.api || !session || session.active) {
                 return currentSessionId
+            }
+            if (session.metadata?.hopiAssistant === true && !hasAgentResumeMetadata(session.metadata)) {
+                const response = await props.api.activateProjectAssistantSession(props.projectId, currentSessionId)
+                return response.session.id
             }
             try {
                 return await props.api.resumeSession(currentSessionId)
@@ -117,6 +137,11 @@ export const ProjectAssistantSessionChat = memo(function ProjectAssistantSession
         void refetchMessages()
     }, [refetchMessages, refetchSession])
 
+    const visibleMessages = useMemo(
+        () => messages.filter((message) => !isProjectAssistantIntroMessage(message)),
+        [messages]
+    )
+
     if (!session || !props.api) {
         return (
             <div className="flex-1 flex items-center justify-center p-4">
@@ -131,7 +156,7 @@ export const ProjectAssistantSessionChat = memo(function ProjectAssistantSession
         <SessionChat
             api={props.api}
             session={session}
-            messages={messages}
+            messages={visibleMessages}
             messagesWarning={messagesWarning}
             hasMoreMessages={messagesHasMore}
             isLoadingMessages={messagesLoading}
@@ -148,6 +173,15 @@ export const ProjectAssistantSessionChat = memo(function ProjectAssistantSession
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
             headerExtra={props.headerExtra}
+            hideHeader
+            hideInactiveNotice
+            rootClassName="flex h-full min-h-0 flex-col"
+            surfaceClassName="relative z-10 flex min-h-0 flex-1 flex-col bg-transparent"
+            threadContentClassName="mx-auto w-full max-w-4xl min-w-0 px-4 pb-4 pt-6 sm:px-6 lg:px-8 xl:px-10"
+            composerOuterClassName="bg-transparent px-4 pb-4 pt-2 sm:px-6 lg:px-8 xl:px-10"
+            composerContentClassName="mx-auto w-full max-w-4xl"
+            composerStatusBarVisible={false}
+            showTerminalControl={false}
         />
     )
 })

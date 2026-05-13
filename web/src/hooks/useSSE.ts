@@ -36,6 +36,23 @@ type SessionRealtimePatch = {
 
 const SESSION_REALTIME_KEYS = new Set(['active', 'thinking', 'activeAt', 'permissionMode', 'modelMode'])
 
+function isProjectAssistantSessionData(data: unknown): boolean {
+    if (!isObject(data)) {
+        return false
+    }
+
+    if (data.hopiAssistant === true) {
+        return true
+    }
+
+    const metadata = data.metadata
+    if (!isObject(metadata)) {
+        return false
+    }
+
+    return metadata.hopiAssistant === true
+}
+
 function sortSessionSummaries(sessions: SessionsResponse['sessions']): SessionsResponse['sessions'] {
     return [...sessions].sort((a, b) => {
         if (a.active !== b.active) {
@@ -359,7 +376,7 @@ export function useSSE(options: {
 
             if (event.type === 'session-updated') {
                 const patched = applySessionRealtimePatch(queryClient, event)
-                if ('projectId' in event && event.projectId) {
+                if ('projectId' in event && event.projectId && isProjectAssistantSessionData(event.data)) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistantRoot(event.projectId) })
                 }
                 if (!patched) {
@@ -377,7 +394,6 @@ export function useSSE(options: {
                 if ('projectId' in event) {
                     void queryClient.invalidateQueries({ queryKey: queryKeys.project(event.projectId) })
                     void queryClient.invalidateQueries({ queryKey: queryKeys.goals(event.projectId) })
-                    void queryClient.invalidateQueries({ queryKey: queryKeys.projectAssistantRoot(event.projectId) })
                 }
                 void queryClient.invalidateQueries({ queryKey: queryKeys.goalTopicsRoot })
                 void queryClient.invalidateQueries({ queryKey: queryKeys.goalTodoRoot })

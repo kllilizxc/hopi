@@ -3,6 +3,7 @@ export interface SpawnSessionOptions {
     directory: string
     worktreeWorkspacePaths?: string[]
     sessionId?: string
+    sessionTag?: string
     resumeSessionId?: string
     approvedNewDirectoryCreation?: boolean
     agent?: 'claude' | 'codex' | 'gemini' | 'opencode'

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { Store, StoredWorkspace } from '../../store'
 import {
+    activateProjectAssistantSession,
     ensureProjectAssistantSession,
     listProjectAssistantSessions,
     resolveProjectAssistantIntervention,
@@ -370,8 +371,13 @@ export function createProjectsRoutes(options: {
         }
 
         try {
-            const result = ensureProjectAssistantSession({
+            const engine = options.getSyncEngine()
+            if (!engine) {
+                return c.json({ error: 'Runner is not connected' }, 503)
+            }
+            const result = await ensureProjectAssistantSession({
                 store: options.store,
+                engine,
                 namespace,
                 projectId,
                 goalId: parsed.data.goalId ?? null,
@@ -383,7 +389,6 @@ export function createProjectsRoutes(options: {
                 projectId
             })
             const summary = list.sessions.find((session) => session.id === result.session.id)
-            const engine = options.getSyncEngine()
             engine?.handleRealtimeEvent({
                 type: 'session-added',
                 sessionId: result.session.id,
@@ -394,6 +399,43 @@ export function createProjectsRoutes(options: {
             return c.json({ session: summary ?? result.session })
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to create assistant session'
+            return c.json({ error: message }, message.includes('not found') ? 404 : 400)
+        }
+    })
+
+    app.post('/projects/:projectId/assistant-sessions/:sessionId/activate', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const sessionId = c.req.param('sessionId')
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Runner is not connected' }, 503)
+        }
+
+        try {
+            const result = await activateProjectAssistantSession({
+                store: options.store,
+                engine,
+                namespace,
+                projectId,
+                sessionId
+            })
+            const list = listProjectAssistantSessions({
+                store: options.store,
+                namespace,
+                projectId
+            })
+            const summary = list.sessions.find((session) => session.id === result.session.id)
+            engine.handleRealtimeEvent({
+                type: 'session-updated',
+                sessionId: result.session.id,
+                projectId,
+                namespace,
+                data: summary ?? result.session
+            })
+            return c.json({ session: summary ?? result.session })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to activate assistant session'
             return c.json({ error: message }, message.includes('not found') ? 404 : 400)
         }
     })

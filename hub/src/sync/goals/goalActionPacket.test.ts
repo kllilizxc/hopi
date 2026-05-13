@@ -199,4 +199,82 @@ describe('goal action packet', () => {
             'task_blocked'
         ])
     })
+
+    it('repairs unescaped double quotes inside HOPI_ACTIONS string values', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-quote-repair'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-quote-repair-'))
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Quote Repair Project',
+            defaultWorkspaceId: 'workspace-1'
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: 'goal-1',
+            projectId,
+            namespace,
+            goalKey: 'ship-ui',
+            title: 'Ship UI'
+        })
+        store.tasks.createTask({
+            id: 'task-1',
+            projectId,
+            goalId: 'goal-1',
+            title: 'Plan next tasks',
+            status: 'in_progress',
+            source: 'planner'
+        })
+        const session = store.sessions.getOrCreateSession(
+            'planner-session',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.messages.addMessage(session.id, {
+            role: 'assistant',
+            content: {
+                type: 'text',
+                text: [
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    '{',
+                    '  "actions": [',
+                    '    { "type": "create_goal_task", "title": "Build filters", "description": "Add filters.", "priority": "high" },',
+                    '    { "type": "update_current_task", "status": "finished", "handoff": "Human confirmed "ship it".", "evidence": "Created next task." }',
+                    '  ]',
+                    '}',
+                    '```'
+                ].join('\n')
+            }
+        })
+
+        const applied = applyGoalActionPacketFromSession({
+            store,
+            engine: {
+                handleRealtimeEvent() {
+                }
+            } as unknown as SyncEngine,
+            namespace,
+            projectId,
+            taskId: 'task-1',
+            sessionId: session.id
+        })
+
+        expect(applied).toBe(true)
+        const tasks = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId: 'goal-1' })
+        expect(tasks.map((task) => task.title)).toContain('Build filters')
+        expect(store.tasks.getTaskByNamespace('task-1', namespace)).toMatchObject({
+            status: 'finished',
+            handoff: 'Human confirmed "ship it".'
+        })
+    })
 })

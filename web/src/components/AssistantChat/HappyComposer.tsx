@@ -70,6 +70,9 @@ export const HappyComposer = memo(function HappyComposer(props: {
     voiceMicMuted?: boolean
     onVoiceToggle?: () => void
     onVoiceMicToggle?: () => void
+    outerClassName?: string
+    contentClassName?: string
+    statusBarVisible?: boolean
 }) {
     const { t } = useTranslation()
     const {
@@ -93,7 +96,10 @@ export const HappyComposer = memo(function HappyComposer(props: {
         voiceStatus = 'disconnected',
         voiceMicMuted = false,
         onVoiceToggle,
-        onVoiceMicToggle
+        onVoiceMicToggle,
+        outerClassName,
+        contentClassName,
+        statusBarVisible = true
     } = props
 
     // Use ?? so missing values fall back to default (destructuring defaults only handle undefined)
@@ -587,21 +593,23 @@ export const HappyComposer = memo(function HappyComposer(props: {
     ])
 
     return (
-        <div className={`px-3 ${bottomPaddingClass} pt-2 bg-[var(--app-bg)]`}>
-            <div className="mx-auto w-full max-w-content">
+        <div className={outerClassName ?? `px-3 ${bottomPaddingClass} pt-2 bg-[var(--app-bg)]`}>
+            <div className={contentClassName ?? 'mx-auto w-full max-w-content'}>
                 <ComposerPrimitive.Root className="relative" onSubmit={handleSubmit}>
                     {overlays}
 
-                    <StatusBar
-                        active={active}
-                        thinking={thinking}
-                        agentState={agentState}
-                        contextSize={contextSize}
-                        modelMode={modelMode}
-                        permissionMode={permissionMode}
-                        agentFlavor={agentFlavor}
-                        voiceStatus={voiceStatus}
-                    />
+                    {statusBarVisible ? (
+                        <StatusBar
+                            active={active}
+                            thinking={thinking}
+                            agentState={agentState}
+                            contextSize={contextSize}
+                            modelMode={modelMode}
+                            permissionMode={permissionMode}
+                            agentFlavor={agentFlavor}
+                            voiceStatus={voiceStatus}
+                        />
+                    ) : null}
 
                     <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] app-shadow-border transition-shadow focus-within:ring-2 focus-within:ring-[var(--app-link)]">
                         {attachments.length > 0 ? (

@@ -4,7 +4,7 @@ import type {
     ProjectAssistantInterventionKind,
     ProjectAssistantSessionSummary
 } from '@/types/api'
-import { CheckIcon, CloseIcon, PlusIcon } from '@/assets/icons'
+import { PlusIcon, SessionIcon } from '@/assets/icons'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Pressable } from '@/components/ui/pressable'
@@ -40,6 +40,10 @@ function getSessionTitle(session: ProjectAssistantSessionSummary, t: TFunction):
     return t('projects.assistant.defaultTitle.normal')
 }
 
+function getCompactSessionTitle(session: ProjectAssistantSessionSummary, t: TFunction): string {
+    return getSessionTitle(session, t).replace(/^Project Assistant:\s*/i, '').trim()
+}
+
 function getSessionKindLabel(session: ProjectAssistantSessionSummary, t: TFunction): string {
     if (session.interventionKind) return t(INTERVENTION_KIND_LABEL_KEY[session.interventionKind])
     return t(SESSION_KIND_LABEL_KEY[session.kind])
@@ -58,68 +62,74 @@ function SessionRow(props: {
 }) {
     const { t } = useTranslation()
     const goalTitle = getGoalTitle(props.goals, props.session.goalId)
+    const title = getCompactSessionTitle(props.session, t)
+    const kindLabel = props.session.kind === 'normal' ? null : getSessionKindLabel(props.session, t)
+    const subtitleGoal = goalTitle && goalTitle !== title ? goalTitle : null
     return (
         <Pressable
             onClick={() => props.onSelect(props.session.id)}
-            className={`w-full rounded-lg px-3 py-2 text-left transition-colors cursor-pointer ${
+            className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all cursor-pointer ${
                 props.selected
-                    ? 'bg-[var(--app-secondary-bg)] app-shadow-border'
-                    : 'hover:bg-[var(--app-subtle-bg)]'
+                    ? 'bg-[var(--app-subtle-bg)] text-[var(--app-text)] shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+                    : 'text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)]/50 hover:text-[var(--app-text)]'
             }`}
         >
-            <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{getSessionTitle(props.session, t)}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--app-hint)]">
-                        <span>{getSessionKindLabel(props.session, t)}</span>
-                        {goalTitle ? <span>{goalTitle}</span> : null}
+            <div
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+                    props.selected
+                        ? 'bg-[var(--app-bg)] text-[var(--app-text)] shadow-sm'
+                        : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] group-hover:bg-[var(--app-bg)] group-hover:text-[var(--app-text)] group-hover:shadow-sm'
+                }`}
+                aria-hidden="true"
+            >
+                <SessionIcon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className={`truncate text-sm ${props.selected ? 'font-semibold' : 'font-medium'}`}>{title}</div>
+                {kindLabel || subtitleGoal ? (
+                    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-[var(--app-hint)]">
+                        {kindLabel ? <span className="shrink-0">{kindLabel}</span> : null}
+                        {subtitleGoal ? <span className="truncate">{subtitleGoal}</span> : null}
                     </div>
-                </div>
+                ) : null}
                 {props.session.pending ? (
-                    <Tag variant="warning" size="xs" shape="rounded">
+                    <Tag variant="warning" size="xs" shape="pill" className="mt-1.5">
                         {t('projects.assistant.status.pending')}
                     </Tag>
                 ) : null}
             </div>
+            {props.selected ? (
+                <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-text)] opacity-80" aria-hidden="true" />
+            ) : null}
         </Pressable>
     )
 }
 
-function InterventionActions(props: {
-    session: ProjectAssistantSessionSummary
+function AssistantEmptyState(props: {
+    label: string
+    onCreate: () => void
     disabled: boolean
-    onResolve: (actionId: string | null, status: 'resolved' | 'dismissed') => void
 }) {
     const { t } = useTranslation()
-    if (!props.session.pending) return null
     return (
-        <div className="flex flex-wrap gap-2 rounded-md bg-[var(--app-subtle-bg)] p-2">
-            {props.session.suggestedActions.map((action) => (
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
+            <div className="flex max-w-sm flex-col items-center text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--app-secondary-bg)] text-[var(--app-hint)] app-shadow-border">
+                    <SessionIcon className="h-6 w-6" />
+                </div>
+                <div className="mt-3 text-sm font-medium">{props.label}</div>
                 <Button
-                    key={action.id}
                     type="button"
                     size="sm"
-                    variant={action.recommended ? 'default' : 'secondary'}
-                    onClick={() => props.onResolve(action.id, action.id === 'dismiss' ? 'dismissed' : 'resolved')}
+                    variant="secondary"
+                    onClick={props.onCreate}
                     disabled={props.disabled}
-                    title={action.description}
-                    className="gap-2"
+                    className="mt-4 gap-2"
                 >
-                    <CheckIcon className="h-4 w-4" />
-                    {action.label}
+                    <PlusIcon className="h-4 w-4" />
+                    {t('projects.assistant.newConversation')}
                 </Button>
-            ))}
-            <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => props.onResolve(null, 'dismissed')}
-                disabled={props.disabled}
-                className="gap-2"
-            >
-                <CloseIcon className="h-4 w-4" />
-                {t('projects.assistant.actions.dismiss')}
-            </Button>
+            </div>
         </div>
     )
 }
@@ -170,62 +180,42 @@ export function ProjectAssistantPage(props: {
         })
     }, [actions, addToast, props.selectedGoalId, t])
 
-    const resolveIntervention = useCallback((actionId: string | null, status: 'resolved' | 'dismissed') => {
-        if (!selectedSession) return
-        void actions.resolveIntervention({
-            sessionId: selectedSession.id,
-            status,
-            actionId,
-            note: actionId ? `Selected ${actionId}` : null
-        }).catch((err) => {
-            addToast({
-                title: t('projects.assistant.toast.resolveFailed'),
-                body: err instanceof Error ? err.message : t('projects.assistant.error.resolveFailed'),
-                sessionId: selectedSession.id,
-                url: ''
-            })
-        })
-    }, [actions, addToast, selectedSession, t])
-
-    const headerExtra = selectedSession ? (
-        <InterventionActions
-            session={selectedSession}
-            disabled={actions.isPending}
-            onResolve={resolveIntervention}
-        />
-    ) : null
-
     return (
-        <div className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
-            <div className="app-shadow-divider-b px-3 py-2">
-                <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                        <div className="text-sm font-semibold">{t('projects.assistant.title')}</div>
-                        <div className="mt-0.5 text-xs text-[var(--app-hint)]">
-                            {t('projects.assistant.pendingCount', { n: pendingCount })}
-                        </div>
-                    </div>
-                    <IconButton
-                        type="button"
-                        size="xs"
-                        variant="subtle"
-                        onClick={createSession}
-                        disabled={actions.isPending}
-                        title={t('projects.assistant.newConversation')}
-                        aria-label={t('projects.assistant.newConversation')}
-                    >
-                        <PlusIcon className="h-4 w-4" />
-                    </IconButton>
-                </div>
-                {error || actions.error ? (
-                    <div className="mt-2 text-xs text-red-600">{error ?? actions.error}</div>
-                ) : null}
-            </div>
-
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[20rem_minmax(0,1fr)]">
-                <aside className="min-h-0 border-b border-[var(--app-divider)] lg:border-b-0 lg:border-r">
+        <div className="flex h-full min-h-0 flex-col lg:flex-row bg-[var(--app-bg)]">
+            <div className="flex shrink-0 w-full lg:w-[20rem] xl:w-[22rem] lg:p-3 lg:pr-0">
+                <aside className="flex-1 min-h-0 max-h-56 bg-[var(--app-subtle-bg)] lg:max-h-none lg:rounded-2xl lg:shadow-[0_2px_12px_rgba(0,0,0,0.04)] dark:lg:shadow-[0_2px_12px_rgba(0,0,0,0.2)] overflow-hidden">
                     <div className="flex h-full min-h-0 flex-col">
-                        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                        <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3.5">
+                            <div className="min-w-0">
+                                <div className="truncate text-[15px] font-semibold tracking-tight">{t('projects.tabs.assistant')}</div>
+                                {pendingCount > 0 ? (
+                                    <div className="mt-1">
+                                        <Tag variant="warning" size="xs" shape="pill">
+                                            {t('projects.assistant.pendingCount', { n: pendingCount })}
+                                        </Tag>
+                                    </div>
+                                ) : null}
+                            </div>
+                            <IconButton
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={createSession}
+                                disabled={actions.isPending}
+                                title={t('projects.assistant.newConversation')}
+                                aria-label={t('projects.assistant.newConversation')}
+                                className="shrink-0 bg-[var(--app-bg)] shadow-sm"
+                            >
+                                <PlusIcon className="h-4 w-4" />
+                            </IconButton>
+                        </div>
+                        {error || actions.error ? (
+                            <div className="mx-4 mt-3 rounded-md bg-[var(--app-badge-error-bg)] px-2.5 py-2 text-xs text-[var(--app-badge-error-text)]">
+                                {error ?? actions.error}
+                            </div>
+                        ) : null}
+
+                        <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
                             {isLoading ? (
                                 <div className="p-4">
                                     <LoadingState label={t('loading')} className="text-sm" />
@@ -250,24 +240,25 @@ export function ProjectAssistantPage(props: {
                         </div>
                     </div>
                 </aside>
-
-                <main className="flex min-h-0 flex-col">
-                    {selectedSession ? (
-                        <ProjectAssistantSessionChat
-                            api={api}
-                            projectId={props.projectId}
-                            sessionId={selectedSession.id}
-                            onBack={() => undefined}
-                            onSessionResolved={setSelectedSessionId}
-                            headerExtra={headerExtra}
-                        />
-                    ) : (
-                        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-sm text-[var(--app-hint)]">
-                            {t('projects.assistant.empty')}
-                        </div>
-                    )}
-                </main>
             </div>
+
+            <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--app-bg)]">
+                {selectedSession ? (
+                    <ProjectAssistantSessionChat
+                        api={api}
+                        projectId={props.projectId}
+                        sessionId={selectedSession.id}
+                        onBack={() => undefined}
+                        onSessionResolved={setSelectedSessionId}
+                    />
+                ) : (
+                    <AssistantEmptyState
+                        label={t('projects.assistant.empty')}
+                        onCreate={createSession}
+                        disabled={actions.isPending}
+                    />
+                )}
+            </main>
         </div>
     )
 }

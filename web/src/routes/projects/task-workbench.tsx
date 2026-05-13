@@ -583,7 +583,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
     const { t } = useTranslation()
 
     return (
-        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-2xl bg-[var(--app-secondary-bg)] p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                     <input
@@ -591,7 +591,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                         value={props.title}
                         onChange={(e) => props.onTitleChange(e.target.value)}
                         onBlur={props.onTitleBlur}
-                        className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                        className="w-full rounded-xl bg-[var(--app-subtle-bg)] p-3 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                         disabled={props.isUpdatingTask}
                     />
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--app-hint)]">
@@ -632,7 +632,7 @@ const TaskOverviewSection = memo(function TaskOverviewSection(props: {
                     onBlur={props.onDescriptionBlur}
                     rows={8}
                     disabled={props.isUpdatingTask}
-                    className="w-full resize-none rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    className="w-full resize-none rounded-xl bg-[var(--app-subtle-bg)] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 />
             </div>
         </section>
@@ -661,7 +661,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
     ]), [t])
 
     return (
-        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-2xl bg-[var(--app-secondary-bg)] p-4 shadow-sm">
             <div>
                 <div className="text-sm font-semibold">{t('projects.task.subtasks.title')}</div>
                 <div className="text-xs text-[var(--app-hint)]">{t('projects.task.subtasks.hint')}</div>
@@ -674,7 +674,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
             ) : (
                 <div className="flex flex-col gap-2">
                     {props.subTasks.map((subTask) => (
-                        <div key={subTask.id} className="space-y-2 rounded-md app-shadow-border bg-[var(--app-bg)] p-2">
+                        <div key={subTask.id} className="space-y-3 rounded-xl bg-[var(--app-subtle-bg)] p-3">
                             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                                 <label className="min-w-0 flex items-center gap-2 cursor-pointer select-none">
                                     <Checkbox
@@ -728,14 +728,14 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                                     props.onSubTaskContentBlur(subTask.id)
                                 }}
                                 disabled={props.isUpdatingTask}
-                                className={`w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
+                                className={`w-full rounded-lg bg-[var(--app-bg)] p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 shadow-sm ${subTask.status === 'completed' ? 'text-[var(--app-hint)] line-through' : ''}`}
                             />
                         </div>
                     ))}
                 </div>
             )}
 
-            <div className="space-y-2 rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-2">
+            <div className="space-y-3 rounded-xl bg-[var(--app-subtle-bg)] p-3">
                 <input
                     type="text"
                     value={props.newSubTaskContent}
@@ -748,7 +748,7 @@ const TaskSubTasksSection = memo(function TaskSubTasksSection(props: {
                     }}
                     disabled={props.isUpdatingTask}
                     placeholder={t('projects.task.subtasks.placeholder')}
-                    className="w-full rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    className="w-full rounded-lg bg-[var(--app-bg)] p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50 shadow-sm"
                 />
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <AdaptiveSelectField
@@ -789,7 +789,7 @@ const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
     const fileInputRef = useRef<HTMLInputElement | null>(null)
 
     return (
-        <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+        <section className="space-y-3 rounded-2xl bg-[var(--app-secondary-bg)] p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <div className="text-sm font-semibold">{t('projects.task.attachments.title')}</div>
@@ -833,7 +833,7 @@ const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
             ) : (
                 <div className="flex flex-col gap-2">
                     {props.attachments.map((att) => (
-                        <div key={att.id} className="flex items-center justify-between gap-3 rounded-md app-shadow-border bg-[var(--app-bg)] p-2">
+                        <div key={att.id} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--app-subtle-bg)] p-3">
                             <div className="min-w-0">
                                 <div className="text-sm font-medium truncate">{att.filename}</div>
                                 <div className="text-xs text-[var(--app-hint)]">
@@ -893,7 +893,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
 
     return (
         <div className="space-y-4">
-            <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+            <section className="space-y-3 rounded-2xl bg-[var(--app-secondary-bg)] p-4 shadow-sm">
                 <div className="text-sm font-semibold">{t('projects.tasks.details')}</div>
 
                 <div className="space-y-1.5">
@@ -998,7 +998,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                 ) : null}
             </section>
 
-            <section className="space-y-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
+            <section className="space-y-3 rounded-2xl bg-[var(--app-secondary-bg)] p-4 shadow-sm">
                 <div className="text-sm font-semibold">{t('projects.sessions.title')}</div>
 
                 <TaskBlockedStatusCard summary={props.blockedStatus} />
@@ -1030,7 +1030,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                                 return (
                                     <div
                                         key={item.session.id}
-                                        className="rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-2"
+                                        className="rounded-xl bg-[var(--app-subtle-bg)] p-3"
                                     >
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0">
@@ -1114,7 +1114,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
                 ) : null}
             </section>
 
-            <section className="space-y-2 rounded-lg app-shadow-border-error bg-rose-50/20 p-3">
+            <section className="space-y-2 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 p-4">
                 <div className="text-sm font-semibold">{t('projects.task.archive.title')}</div>
                 <div className="text-xs text-[var(--app-hint)]">{t('projects.task.archive.hint')}</div>
                 <Button type="button" variant="destructive" onClick={props.onOpenArchive} disabled={props.isUpdatingTask || props.isArchiving}>

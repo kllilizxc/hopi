@@ -355,6 +355,16 @@ export class ApiClient {
         })
     }
 
+    async activateProjectAssistantSession(projectId: string, sessionId: string): Promise<ProjectAssistantSessionResponse> {
+        return await this.request<ProjectAssistantSessionResponse>(
+            `/api/projects/${encodeURIComponent(projectId)}/assistant-sessions/${encodeURIComponent(sessionId)}/activate`,
+            {
+                method: 'POST',
+                body: JSON.stringify({})
+            }
+        )
+    }
+
     async sendProjectAssistantPlannerMail(projectId: string, payload: {
         goalId: string
         kind: ProjectAssistantPlannerMailKind

@@ -32,7 +32,6 @@ import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
-import { GoalPlanningPage } from '@/routes/projects/goal-planning-page'
 import { ProjectAssistantPage } from '@/routes/projects/project-assistant'
 import { useSelectedProjectGoal } from '@/routes/projects/selected-goal-storage'
 import type { AgentType } from '@/components/NewSession/types'
@@ -152,7 +151,7 @@ function ProjectsListPanel(props: {
                                 <Pressable
                                     key={project.id}
                                     onClick={() => props.onSelectProject(project.id)}
-                                    className="app-interactive-card w-full rounded-lg app-shadow-border bg-[var(--app-bg)] p-3 text-left"
+                                    className="app-interactive-card w-full rounded-lg bg-[var(--app-bg)] p-3 text-left"
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
@@ -210,9 +209,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
         isPending: isGoalAutomationTogglePending
     } = useGoalAutomationControl(api)
     const { recentProjectIds, markProjectUsed } = useRecentProjects()
-    const planningMatch = matchRoute({ to: '/projects/$projectId/planning' })
     const assistantMatch = matchRoute({ to: '/projects/$projectId/assistant' })
-    const isPlanningRoute = Boolean(planningMatch && planningMatch.projectId === props.projectId)
     const isAssistantRoute = Boolean(assistantMatch && assistantMatch.projectId === props.projectId)
     const recentProjects = useRecentProjectTabs({
         projects,
@@ -246,11 +243,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
             title: t('projects.tabs.board')
         },
         {
-            id: 'planning',
-            label: t('projects.tabs.planning'),
-            title: t('projects.tabs.planning')
-        },
-        {
             id: 'assistant',
             label: assistantPendingCount > 0
                 ? `${t('projects.tabs.assistant')} (${assistantPendingCount})`
@@ -260,10 +252,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
     ], [assistantPendingCount, t])
 
     const handleProjectViewTab = useCallback((tabId: string) => {
-        if (tabId === 'planning') {
-            void navigate({ to: '/projects/$projectId/planning', params: { projectId: props.projectId } })
-            return
-        }
         if (tabId === 'assistant') {
             void navigate({ to: '/projects/$projectId/assistant', params: { projectId: props.projectId } })
             return
@@ -351,7 +339,7 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                 leading={(
                     <CompactTabs
                         items={projectViewTabs}
-                        selectedId={isAssistantRoute ? 'assistant' : isPlanningRoute ? 'planning' : 'board'}
+                        selectedId={isAssistantRoute ? 'assistant' : 'board'}
                         onSelect={handleProjectViewTab}
                         ariaLabel={t('projects.tabs.label')}
                         distribution="equal"
@@ -366,14 +354,6 @@ const ProjectBoardPanel = memo(function ProjectBoardPanel(props: {
                         projectId={props.projectId}
                         selectedGoalId={props.selectedGoalId}
                         goals={props.goals}
-                    />
-                </div>
-            ) : isPlanningRoute ? (
-                <div className="flex-1 min-h-0">
-                    <GoalPlanningPage
-                        projectId={props.projectId}
-                        goalId={props.selectedGoalId}
-                        isGoalsLoading={props.isGoalsLoading}
                     />
                 </div>
             ) : (

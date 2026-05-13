@@ -2,8 +2,12 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Store } from '../store'
+import type { Session } from '@hopi/protocol/types'
+import { Store, type StoredSession } from '../store'
+import type { SyncEngine } from './syncEngine'
 import {
+    activateProjectAssistantSession,
+    applyProjectAssistantActionPacketFromReady,
     createProjectAssistantIntervention,
     ensureProjectAssistantSession,
     listProjectAssistantSessions,
@@ -43,21 +47,102 @@ function seedProject(store: Store, root: string) {
     return { project, workspace, goal }
 }
 
+function runtimeSession(stored: StoredSession): Session {
+    return {
+        id: stored.id,
+        namespace: stored.namespace,
+        seq: stored.seq,
+        createdAt: stored.createdAt,
+        updatedAt: stored.updatedAt,
+        active: true,
+        activeAt: stored.activeAt ?? stored.createdAt,
+        metadata: stored.metadata as Session['metadata'],
+        metadataVersion: stored.metadataVersion,
+        agentState: null,
+        agentStateVersion: stored.agentStateVersion,
+        thinking: false,
+        thinkingAt: 0
+    }
+}
+
+function engineFor(store: Store): { engine: SyncEngine; sent: Array<{ sessionId: string; text: string }> } {
+    const sessions = new Map<string, Session>()
+    const sent: Array<{ sessionId: string; text: string }> = []
+    const engine = {
+        async spawnSession(
+            machineId: string,
+            directory: string,
+            agent?: string,
+            model?: string,
+            _yolo?: boolean,
+            _sessionType?: string,
+            _worktreeName?: string,
+            _resumeSessionId?: string,
+            _worktreeWorkspacePaths?: string[],
+            _worktreeTargetBranch?: string,
+            sessionTag?: string
+        ) {
+            const stored = store.sessions.getOrCreateSession(
+                sessionTag ?? `assistant-${sessions.size + 1}`,
+                {
+                    path: directory,
+                    host: 'localhost',
+                    machineId,
+                    flavor: agent,
+                    model,
+                    startedFromRunner: true
+                },
+                null,
+                'default'
+            )
+            sessions.set(stored.id, runtimeSession(stored))
+            return { type: 'success' as const, sessionId: stored.id }
+        },
+        async waitForSessionActive() {
+            return true
+        },
+        getSessionByNamespace(sessionId: string) {
+            return sessions.get(sessionId) ?? null
+        },
+        async sendMessage(sessionId: string, payload: { text: string; localId?: string | null }) {
+            sent.push({ sessionId, text: payload.text })
+            store.messages.addMessage(sessionId, {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: payload.text
+                }
+            }, payload.localId ?? undefined)
+        },
+        handleRealtimeEvent(event: { sessionId?: string; namespace?: string }) {
+            if (!event.sessionId) return
+            const stored = store.sessions.getSessionByNamespace(event.sessionId, event.namespace ?? 'default')
+            if (stored) {
+                sessions.set(stored.id, runtimeSession(stored))
+            }
+        }
+    } as unknown as SyncEngine
+    return { engine, sent }
+}
+
 describe('project assistant', () => {
-    it('creates an idempotent normal assistant session with project metadata', () => {
+    it('creates an idempotent normal assistant session with project metadata', async () => {
         const store = new Store(':memory:')
         const seeded = seedProject(store, workspace())
         const { project, workspace: projectWorkspace, goal } = seeded
+        const { engine, sent } = engineFor(store)
 
-        const first = ensureProjectAssistantSession({
+        const first = await ensureProjectAssistantSession({
             store,
+            engine,
             namespace: 'default',
             projectId: project.id,
             goalId: goal.id,
             kind: 'normal'
         })
-        const second = ensureProjectAssistantSession({
+        const second = await ensureProjectAssistantSession({
             store,
+            engine,
             namespace: 'default',
             projectId: project.id,
             goalId: goal.id,
@@ -67,15 +152,14 @@ describe('project assistant', () => {
         expect(second.session.id).toBe(first.session.id)
         expect(first.session.metadata).toMatchObject({
             path: projectWorkspace.path,
-            host: 'hopi',
+            host: 'localhost',
             projectId: project.id,
             goalId: goal.id,
             hopiAssistant: true,
             assistantKind: 'normal'
         })
-        const messages = store.messages.getMessages(first.session.id)
-        expect(messages).toHaveLength(1)
-        expect(JSON.stringify(messages[0]?.content)).toContain('Project Assistant')
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.text).toContain('Current kanban tasks')
     })
 
     it('creates pending intervention sessions and resolves them without mutating tasks', () => {
@@ -140,6 +224,127 @@ describe('project assistant', () => {
             }
         })
         expect(store.tasks.getTaskByNamespace(task.id, 'default')?.status).toBe('blocked')
+    })
+
+    it('activates a synthetic intervention in the same session', async () => {
+        const store = new Store(':memory:')
+        const { project, goal } = seedProject(store, workspace())
+        const created = createProjectAssistantIntervention({
+            store,
+            namespace: 'default',
+            projectId: project.id,
+            goalId: goal.id,
+            interventionKey: 'decision-topic:topic-1',
+            interventionKind: 'decision_needed',
+            title: 'Choose scope',
+            body: 'Pick the smaller release scope.',
+            suggestedActions: [{ id: 'answer_decision', label: 'Answer decision' }]
+        })
+        const { engine, sent } = engineFor(store)
+
+        const activated = await activateProjectAssistantSession({
+            store,
+            engine,
+            namespace: 'default',
+            projectId: project.id,
+            sessionId: created.session.id
+        })
+
+        expect(activated.session.id).toBe(created.session.id)
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.sessionId).toBe(created.session.id)
+        expect(sent[0]?.text).toContain('Activate this existing Project Assistant conversation')
+        expect(sent[0]?.text).toContain('Pick the smaller release scope.')
+    })
+
+    it('applies visible assistant action packets to resolve decisions', async () => {
+        const store = new Store(':memory:')
+        const { project, goal } = seedProject(store, workspace())
+        store.goals.updateGoalByNamespace(goal.id, 'default', { status: 'blocked' })
+        const topic = store.goalDecisionTopics.create({
+            id: 'topic-1',
+            projectId: project.id,
+            goalId: goal.id,
+            namespace: 'default',
+            title: 'Choose scope',
+            body: 'Which scope should ship first?',
+            blocking: true
+        })
+        const intervention = createProjectAssistantIntervention({
+            store,
+            namespace: 'default',
+            projectId: project.id,
+            goalId: goal.id,
+            interventionKey: `decision-topic:${topic.id}`,
+            interventionKind: 'decision_needed',
+            title: topic.title,
+            body: topic.body,
+            suggestedActions: [{ id: 'answer_decision', label: 'Answer decision' }]
+        })
+        const { engine } = engineFor(store)
+        const assistant = await ensureProjectAssistantSession({
+            store,
+            engine,
+            namespace: 'default',
+            projectId: project.id,
+            goalId: goal.id,
+            kind: 'normal'
+        })
+        store.messages.addMessage(assistant.session.id, {
+            role: 'assistant',
+            content: {
+                type: 'text',
+                text: [
+                    'Use the smaller first-release scope.',
+                    '',
+                    'HOPI_ASSISTANT_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'resolve_decision',
+                                topicId: topic.id,
+                                resolution: 'Use the smaller first-release scope.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        const ready = store.messages.addMessage(assistant.session.id, {
+            role: 'assistant',
+            content: {
+                type: 'event',
+                data: { type: 'ready' }
+            }
+        })
+
+        const applied = applyProjectAssistantActionPacketFromReady({
+            store,
+            engine,
+            namespace: 'default',
+            sessionId: assistant.session.id,
+            readyMessage: {
+                id: ready.id,
+                seq: ready.seq,
+                localId: ready.localId,
+                content: ready.content,
+                createdAt: ready.createdAt
+            }
+        })
+
+        expect(applied).toBe(true)
+        expect(store.goalDecisionTopics.getByNamespace(topic.id, 'default')?.status).toBe('resolved')
+        expect(store.goalDecisionTopics.getByNamespace(topic.id, 'default')?.resolution).toBe('Use the smaller first-release scope.')
+        expect(store.goals.getGoalByNamespace(goal.id, 'default')?.status).toBe('active')
+        expect(store.sessions.getSessionByNamespace(intervention.session.id, 'default')?.metadata).toMatchObject({
+            interventionStatus: 'resolved',
+            interventionResolution: {
+                actionId: 'assistant_resolve_decision',
+                note: 'Use the smaller first-release scope.'
+            }
+        })
     })
 
     it('skips optional intervention creation when a project has no workspace', () => {

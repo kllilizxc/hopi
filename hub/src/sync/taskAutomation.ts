@@ -542,6 +542,7 @@ export class TaskAutomation {
             if (goalActionResult === 'applied') {
                 this.maybeRequestAutoMergeAcceptedTask(sessionId)
                 this.maybeAutoCommitWorktreeFromReady(sessionId, message)
+                this.tryMoveToInReviewFromReady(sessionId, message)
                 return
             }
             if (goalActionResult === 'goal_task') {

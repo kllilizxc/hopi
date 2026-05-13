@@ -109,6 +109,8 @@ export default {
   'projects.assistant.error.resolveFailed': 'Failed to resolve intervention',
   'projects.assistant.toast.sessionFailed': 'Assistant session failed',
   'projects.assistant.toast.resolveFailed': 'Resolve failed',
+  'projects.assistant.emptySession': 'No messages yet',
+  'projects.assistant.emptySessionHint': 'Send a message to start the conversation',
 
   'projects.planning.title': 'Planning',
   'projects.planning.subtitle': 'Backlog and planning document details for the selected goal.',
