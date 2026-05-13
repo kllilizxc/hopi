@@ -108,6 +108,7 @@ export type {
     ProjectAssistantInterventionStatus,
     ProjectAssistantSessionKind,
     ProjectAssistantSuggestedAction,
+    SessionCapabilityProfile,
     Session,
     SyncEvent,
     Task,

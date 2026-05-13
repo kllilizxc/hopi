@@ -23,15 +23,32 @@ function toRouteSession(session: StoredSession) {
     }
 }
 
-function createTestApp(store: Store): { app: Hono; sent: string[] } {
-    const sent: string[] = []
+function createTestApp(store: Store, options?: { activeSessionIds?: Set<string> }): {
+    app: Hono
+    sent: Array<{
+        sessionId: string
+        text: string
+        allowedTools?: string[] | null
+        disallowedTools?: string[] | null
+    }>
+} {
+    const sent: Array<{
+        sessionId: string
+        text: string
+        allowedTools?: string[] | null
+        disallowedTools?: string[] | null
+    }> = []
     const engine = {
         resolveSessionAccess(sessionId: string, namespace: string) {
             const session = store.sessions.getSessionByNamespace(sessionId, namespace)
             if (!session) {
                 return { ok: false as const, reason: 'not-found' as const }
             }
-            return { ok: true as const, sessionId, session: toRouteSession(session) }
+            const routeSession = toRouteSession(session)
+            if (options?.activeSessionIds?.has(sessionId)) {
+                routeSession.active = true
+            }
+            return { ok: true as const, sessionId, session: routeSession }
         },
         getMessagesPage(sessionId: string, options: { limit: number; beforeSeq: number | null }) {
             const messages = store.messages.getMessages(sessionId, options.limit, options.beforeSeq ?? undefined)
@@ -51,8 +68,18 @@ function createTestApp(store: Store): { app: Hono; sent: string[] } {
                 }
             }
         },
-        async sendMessage(sessionId: string, payload: { text: string; localId?: string | null }) {
-            sent.push(payload.text)
+        async sendMessage(sessionId: string, payload: {
+            text: string
+            localId?: string | null
+            allowedTools?: string[] | null
+            disallowedTools?: string[] | null
+        }) {
+            sent.push({
+                sessionId,
+                text: payload.text,
+                allowedTools: payload.allowedTools,
+                disallowedTools: payload.disallowedTools
+            })
             store.messages.addMessage(sessionId, {
                 role: 'user',
                 content: {
@@ -126,6 +153,46 @@ describe('messages routes', () => {
 
         expect(response.status).toBe(409)
         expect(sent).toEqual([])
+    })
+
+    it('sends operator console assistant messages with restricted tool metadata', async () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession(
+            'assistant-session',
+            {
+                path: '/tmp/workspace',
+                host: 'hopi',
+                projectId: 'project-1',
+                name: 'Project Assistant',
+                hopiAssistant: true,
+                assistantKind: 'normal',
+                capabilityProfile: 'operator_console',
+                flavor: 'claude'
+            },
+            null,
+            'default'
+        )
+        const { app, sent } = createTestApp(store, {
+            activeSessionIds: new Set([session.id])
+        })
+
+        const response = await app.request(`/api/sessions/${session.id}/messages`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: 'Record that preference.', localId: 'local-1' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(sent).toHaveLength(1)
+        expect(sent[0]).toMatchObject({
+            sessionId: session.id,
+            text: 'Record that preference.'
+        })
+        expect(sent[0]?.disallowedTools).toContain('Bash')
+        expect(sent[0]?.disallowedTools).toContain('Write')
+        expect(sent[0]?.disallowedTools).toContain('Edit')
+        expect(sent[0]?.disallowedTools).toContain('MultiEdit')
+        expect(sent[0]?.disallowedTools).toContain('Task')
     })
 
     it('does not treat inactive synthetic intervention replies as hidden decision resolution', async () => {

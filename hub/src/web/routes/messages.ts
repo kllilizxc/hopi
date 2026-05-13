@@ -3,6 +3,7 @@ import { AttachmentMetadataSchema } from '@hopi/protocol/schemas'
 import { z } from 'zod'
 import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
+import { buildOperatorConsoleMessageRestrictions, isOperatorConsoleMetadata } from '../../sync/operatorConsole'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
@@ -71,7 +72,10 @@ export function createMessagesRoutes(options: {
             text: parsed.data.text,
             localId: parsed.data.localId,
             attachments: parsed.data.attachments,
-            sentFrom: 'webapp'
+            sentFrom: 'webapp',
+            ...(isOperatorConsoleMetadata(sessionResult.session.metadata)
+                ? buildOperatorConsoleMessageRestrictions()
+                : {})
         })
         return c.json({ ok: true })
     })

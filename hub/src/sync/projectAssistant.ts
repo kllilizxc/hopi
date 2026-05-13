@@ -3,7 +3,8 @@ import type {
     ProjectAssistantInterventionKind,
     ProjectAssistantInterventionStatus,
     ProjectAssistantSessionKind,
-    ProjectAssistantSuggestedAction
+    ProjectAssistantSuggestedAction,
+    SessionCapabilityProfile
 } from '@hopi/protocol/types'
 import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
@@ -14,12 +15,18 @@ import {
     PlannerMailKindSchema,
     readGlobalPreferenceMarkdown,
     readGoalOperatorDocs,
+    writeGlobalPreferenceMarkdown,
     type OperatorSource,
     type PlannerMailItem,
     type PlannerMailKind
 } from './operator/operatorDocs'
 import type { SyncEngine } from './syncEngine'
 import { prependTaskHandoffDecisionContext } from './goals/decisionHandoff'
+import {
+    buildOperatorConsoleMessageRestrictions,
+    getOperatorConsolePermissionMode,
+    OPERATOR_CONSOLE_CAPABILITY_PROFILE
+} from './operatorConsole'
 
 export type ProjectAssistantSessionSummary = {
     id: string
@@ -51,6 +58,7 @@ type AssistantMetadata = {
     taskId?: string
     name: string
     flavor?: string | null
+    capabilityProfile: SessionCapabilityProfile
     hopiAssistant: true
     assistantKind: ProjectAssistantSessionKind
     interventionKind?: ProjectAssistantInterventionKind
@@ -85,6 +93,10 @@ const assistantActionPacketSchema = z.object({
             goalId: z.string().trim().min(1),
             kind: PlannerMailKindSchema,
             body: z.string().trim().min(1).max(20_000)
+        }),
+        z.object({
+            type: z.literal('update_global_preference'),
+            markdown: z.string().trim().min(1).max(20_000)
         })
     ])).min(1).max(10)
 })
@@ -258,6 +270,7 @@ function buildAssistantMetadata(options: {
         taskId: options.taskId ?? undefined,
         name: options.name,
         flavor: options.project.defaultAgentFlavor ?? undefined,
+        capabilityProfile: OPERATOR_CONSOLE_CAPABILITY_PROFILE,
         hopiAssistant: true,
         assistantKind: options.kind,
         interventionKind: options.interventionKind,
@@ -356,6 +369,18 @@ function getAssistantAgent(project: StoredProject): AssistantAgentFlavor {
     return DEFAULT_AGENT_FLAVOR
 }
 
+async function applyOperatorConsoleSessionConfig(options: {
+    engine: SyncEngine
+    sessionId: string
+    agent: AssistantAgentFlavor
+}): Promise<void> {
+    const permissionMode = getOperatorConsolePermissionMode(options.agent)
+    if (!permissionMode) {
+        return
+    }
+    await options.engine.applySessionConfig(options.sessionId, { permissionMode })
+}
+
 function hasAgentResumeMetadata(metadata: AssistantMetadata): boolean {
     const record = metadata as unknown as Record<string, unknown>
     return typeof record.claudeSessionId === 'string'
@@ -406,6 +431,7 @@ function mergeAssistantSessionMetadata(options: {
         taskId: options.taskId ?? undefined,
         name: options.name,
         flavor: baseFlavor,
+        capabilityProfile: OPERATOR_CONSOLE_CAPABILITY_PROFILE,
         hopiAssistant: true,
         assistantKind: options.kind,
         interventionKind: options.interventionKind,
@@ -509,12 +535,13 @@ function formatDecisionTopics(topics: StoredGoalDecisionTopic[]): string {
 
 function buildProjectAssistantSystemPrompt(): string {
     return [
-        'You are HOPI Project Assistant inside a normal HOPI agent session.',
+        'You are HOPI Project Assistant inside an operator_console agent session.',
         'You help the user inspect project/goal workflow state and decide what operator guidance to provide.',
         'Workflow ownership stays with Planner, Generator, Evaluator, merge, and scheduler services.',
+        'You are not a coding agent in this session: do not edit source files, run shell commands, spawn subagents, or repair implementation bugs yourself.',
         'Do not directly claim that you changed kanban/task state unless HOPI exposes and confirms a typed action result.',
-        'When you need HOPI to apply a narrow operator action, include a visible HOPI_ASSISTANT_ACTIONS JSON block with actions: resolve_decision or send_planner_mail.',
-        'When the user expresses a durable project-wide preference, maintain .hopi/preference.md directly with normal file read/write ability. Do not emit a HOPI_ASSISTANT_ACTIONS action for preferences.',
+        'When you need HOPI to apply a narrow operator action, include a visible HOPI_ASSISTANT_ACTIONS JSON block with actions: resolve_decision, send_planner_mail, or update_global_preference.',
+        'When the user expresses a durable project-wide preference, decide whether it belongs in .hopi/preference.md. If yes, emit update_global_preference with the full replacement markdown for that file.',
         'When the user gives a decision, restate the exact decision and the goal/task it applies to before suggesting the narrow operator action.',
         'Keep replies concise and practical.'
     ].join('\n')
@@ -594,6 +621,7 @@ export async function ensureProjectAssistantSession(options: {
     const goal = options.goalId
         ? getGoal(options.store, options.goalId, options.namespace, project.id)
         : null
+    const agent = getAssistantAgent(project)
     const existing = findExistingProjectAssistantSession({
         store: options.store,
         namespace: options.namespace,
@@ -602,10 +630,30 @@ export async function ensureProjectAssistantSession(options: {
         kind: options.kind
     })
     if (existing) {
-        return { session: existing }
+        const upgraded = updateAssistantSessionMetadata({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            sessionId: existing.id,
+            projectId: project.id,
+            build: (current) => mergeAssistantSessionMetadata({
+                current,
+                project,
+                workspace,
+                goal,
+                kind: options.kind,
+                name: goal ? `Project Assistant: ${goal.title}` : 'Project Assistant',
+                agent
+            })
+        })
+        await applyOperatorConsoleSessionConfig({
+            engine: options.engine,
+            sessionId: upgraded.id,
+            agent
+        })
+        return { session: upgraded }
     }
 
-    const agent = getAssistantAgent(project)
     const model = project.defaultModel ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
     const spawn = await options.engine.spawnSession(
         project.machineId,
@@ -640,6 +688,11 @@ export async function ensureProjectAssistantSession(options: {
             agent
         })
     })
+    await applyOperatorConsoleSessionConfig({
+        engine: options.engine,
+        sessionId: session.id,
+        agent
+    })
 
     const existingMessages = options.store.messages.getMessages(session.id, 1)
     if (existingMessages.length === 0) {
@@ -652,7 +705,8 @@ export async function ensureProjectAssistantSession(options: {
             }),
             localId: `${ASSISTANT_KICKOFF_LOCAL_ID_PREFIX}${project.id}:${goal?.id ?? 'project'}:${Date.now()}`,
             sentFrom: 'webapp',
-            appendSystemPrompt: buildProjectAssistantSystemPrompt()
+            appendSystemPrompt: buildProjectAssistantSystemPrompt(),
+            ...buildOperatorConsoleMessageRestrictions()
         })
     }
 
@@ -759,6 +813,11 @@ export async function activateProjectAssistantSession(options: {
     if (!active) {
         throw new Error('Assistant session did not become active')
     }
+    await applyOperatorConsoleSessionConfig({
+        engine: options.engine,
+        sessionId: session.id,
+        agent
+    })
 
     const refreshed = options.store.sessions.getSessionByNamespace(session.id, options.namespace) ?? session
     const alreadyActivated = options.store.messages
@@ -774,7 +833,8 @@ export async function activateProjectAssistantSession(options: {
             }),
             localId: `${ASSISTANT_ACTIVATION_LOCAL_ID_PREFIX}${session.id}:${Date.now()}`,
             sentFrom: 'webapp',
-            appendSystemPrompt: buildProjectAssistantSystemPrompt()
+            appendSystemPrompt: buildProjectAssistantSystemPrompt(),
+            ...buildOperatorConsoleMessageRestrictions()
         })
     }
 
@@ -1082,6 +1142,18 @@ function resolveAssistantDecisionAction(options: {
     return true
 }
 
+function updateAssistantGlobalPreferenceAction(options: {
+    store: Store
+    namespace: string
+    projectId: string
+    action: Extract<AssistantActionPacket['actions'][number], { type: 'update_global_preference' }>
+}): boolean {
+    const project = getProject(options.store, options.projectId, options.namespace)
+    const workspace = getProjectWorkspace(options.store, project)
+    writeGlobalPreferenceMarkdown(workspace.path, options.action.markdown)
+    return true
+}
+
 export function applyProjectAssistantActionPacketFromReady(options: {
     store: Store
     engine: SyncEngine
@@ -1146,6 +1218,23 @@ export function applyProjectAssistantActionPacketFromReady(options: {
                     projectId: metadata.projectId
                 })
                 applied = true
+            } catch {
+            }
+            continue
+        }
+        if (action.type === 'update_global_preference') {
+            try {
+                applied = updateAssistantGlobalPreferenceAction({
+                    store: options.store,
+                    namespace: options.namespace,
+                    projectId: metadata.projectId,
+                    action
+                }) || applied
+                emitProjectUpdated({
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    projectId: metadata.projectId
+                })
             } catch {
             }
             continue

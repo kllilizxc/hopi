@@ -6,6 +6,7 @@ function createInactiveSession(overrides?: {
     permissionMode?: Session['permissionMode']
     modelMode?: Session['modelMode']
     flavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+    capabilityProfile?: 'operator_console'
 }): Session {
     const now = Date.now()
     const flavor = overrides?.flavor ?? 'codex'
@@ -23,6 +24,9 @@ function createInactiveSession(overrides?: {
         metadata.opencodeSessionId = 'resume-token'
     } else {
         metadata.claudeSessionId = 'resume-token'
+    }
+    if (overrides?.capabilityProfile) {
+        ;(metadata as Record<string, unknown>).capabilityProfile = overrides.capabilityProfile
     }
 
     return {
@@ -168,5 +172,31 @@ describe('SyncEngine.resumeSession', () => {
         expect(spawnCalls[0]?.[4]).toBeUndefined()
         expect(applyCalls).toHaveLength(1)
         expect(applyCalls[0]?.patch.permissionMode).toBe('safe-yolo')
+    })
+
+    it('forces operator console codex sessions back to read-only on resume', async () => {
+        const session = createInactiveSession({
+            permissionMode: 'yolo',
+            capabilityProfile: 'operator_console'
+        })
+        const { engine, spawnCalls, applyCalls } = createResumeHarness({
+            session,
+            spawnedSessionId: 'session-new',
+            linkedTasks: [{ permissionMode: 'yolo' }]
+        })
+
+        const result = await (SyncEngine.prototype.resumeSession as any).call(engine, session.id, session.namespace)
+
+        expect(result).toEqual({ type: 'success', sessionId: 'session-new' })
+        expect(spawnCalls).toHaveLength(1)
+        expect(spawnCalls[0]?.[4]).toBeUndefined()
+        expect(applyCalls).toHaveLength(1)
+        expect(applyCalls[0]).toEqual({
+            sessionId: 'session-new',
+            patch: {
+                permissionMode: 'read-only',
+                modelMode: undefined
+            }
+        })
     })
 })

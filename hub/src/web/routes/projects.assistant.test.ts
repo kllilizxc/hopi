@@ -63,6 +63,17 @@ function engineFor(store: Store): SyncEngine {
         async waitForSessionActive() {
             return true
         },
+        async applySessionConfig(sessionId: string, patch: { permissionMode?: string; modelMode?: string }) {
+            const existing = sessions.get(sessionId)
+            if (!existing) {
+                return
+            }
+            sessions.set(sessionId, {
+                ...existing,
+                permissionMode: patch.permissionMode ?? existing.permissionMode,
+                modelMode: patch.modelMode ?? existing.modelMode
+            } as Session)
+        },
         async sendMessage(sessionId: string, payload: { text: string; localId?: string | null }) {
             store.messages.addMessage(sessionId, {
                 role: 'user',

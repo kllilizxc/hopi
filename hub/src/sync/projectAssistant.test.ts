@@ -65,9 +65,26 @@ function runtimeSession(stored: StoredSession): Session {
     }
 }
 
-function engineFor(store: Store): { engine: SyncEngine; sent: Array<{ sessionId: string; text: string }> } {
+function engineFor(store: Store): {
+    engine: SyncEngine
+    sent: Array<{
+        sessionId: string
+        text: string
+        appendSystemPrompt?: string | null
+        allowedTools?: string[] | null
+        disallowedTools?: string[] | null
+    }>
+    appliedConfigs: Array<{ sessionId: string; permissionMode?: string; modelMode?: string }>
+} {
     const sessions = new Map<string, Session>()
-    const sent: Array<{ sessionId: string; text: string }> = []
+    const sent: Array<{
+        sessionId: string
+        text: string
+        appendSystemPrompt?: string | null
+        allowedTools?: string[] | null
+        disallowedTools?: string[] | null
+    }> = []
+    const appliedConfigs: Array<{ sessionId: string; permissionMode?: string; modelMode?: string }> = []
     const engine = {
         async spawnSession(
             machineId: string,
@@ -104,8 +121,32 @@ function engineFor(store: Store): { engine: SyncEngine; sent: Array<{ sessionId:
         getSessionByNamespace(sessionId: string) {
             return sessions.get(sessionId) ?? null
         },
-        async sendMessage(sessionId: string, payload: { text: string; localId?: string | null }) {
-            sent.push({ sessionId, text: payload.text })
+        async applySessionConfig(sessionId: string, patch: { permissionMode?: string; modelMode?: string }) {
+            appliedConfigs.push({ sessionId, ...patch })
+            const existing = sessions.get(sessionId)
+            if (existing) {
+                const next = {
+                    ...existing,
+                    permissionMode: patch.permissionMode ?? existing.permissionMode,
+                    modelMode: patch.modelMode ?? existing.modelMode
+                } as Session
+                sessions.set(sessionId, next)
+            }
+        },
+        async sendMessage(sessionId: string, payload: {
+            text: string
+            localId?: string | null
+            appendSystemPrompt?: string | null
+            allowedTools?: string[] | null
+            disallowedTools?: string[] | null
+        }) {
+            sent.push({
+                sessionId,
+                text: payload.text,
+                appendSystemPrompt: payload.appendSystemPrompt,
+                allowedTools: payload.allowedTools,
+                disallowedTools: payload.disallowedTools
+            })
             store.messages.addMessage(sessionId, {
                 role: 'user',
                 content: {
@@ -122,7 +163,7 @@ function engineFor(store: Store): { engine: SyncEngine; sent: Array<{ sessionId:
             }
         }
     } as unknown as SyncEngine
-    return { engine, sent }
+    return { engine, sent, appliedConfigs }
 }
 
 describe('project assistant', () => {
@@ -130,7 +171,7 @@ describe('project assistant', () => {
         const store = new Store(':memory:')
         const seeded = seedProject(store, workspace())
         const { project, workspace: projectWorkspace, goal } = seeded
-        const { engine, sent } = engineFor(store)
+        const { engine, sent, appliedConfigs } = engineFor(store)
 
         const first = await ensureProjectAssistantSession({
             store,
@@ -156,10 +197,63 @@ describe('project assistant', () => {
             projectId: project.id,
             goalId: goal.id,
             hopiAssistant: true,
-            assistantKind: 'normal'
+            assistantKind: 'normal',
+            capabilityProfile: 'operator_console'
         })
         expect(sent).toHaveLength(1)
         expect(sent[0]?.text).toContain('Current kanban tasks')
+        expect(sent[0]?.appendSystemPrompt).toContain('Project Assistant')
+        expect(sent[0]?.disallowedTools).toContain('Bash')
+        expect(sent[0]?.disallowedTools).toContain('Write')
+        expect(sent[0]?.disallowedTools).toContain('Edit')
+        expect(sent[0]?.disallowedTools).toContain('MultiEdit')
+        expect(sent[0]?.disallowedTools).toContain('Task')
+        expect(appliedConfigs).toContainEqual({
+            sessionId: first.session.id,
+            permissionMode: 'read-only'
+        })
+    })
+
+    it('upgrades existing assistant sessions to the operator console boundary', async () => {
+        const store = new Store(':memory:')
+        const { project, workspace: projectWorkspace, goal } = seedProject(store, workspace())
+        const legacy = store.sessions.getOrCreateSession(
+            'legacy-assistant',
+            {
+                path: projectWorkspace.path,
+                host: 'localhost',
+                machineId: project.machineId,
+                projectId: project.id,
+                goalId: goal.id,
+                name: 'Project Assistant: Ship UI',
+                flavor: 'codex',
+                hopiAssistant: true,
+                assistantKind: 'normal',
+                startedFromRunner: true
+            },
+            null,
+            'default'
+        )
+        const { engine, sent, appliedConfigs } = engineFor(store)
+
+        const result = await ensureProjectAssistantSession({
+            store,
+            engine,
+            namespace: 'default',
+            projectId: project.id,
+            goalId: goal.id,
+            kind: 'normal'
+        })
+
+        expect(result.session.id).toBe(legacy.id)
+        expect(result.session.metadata).toMatchObject({
+            capabilityProfile: 'operator_console'
+        })
+        expect(sent).toHaveLength(0)
+        expect(appliedConfigs).toContainEqual({
+            sessionId: legacy.id,
+            permissionMode: 'read-only'
+        })
     })
 
     it('creates pending intervention sessions and resolves them without mutating tasks', () => {
@@ -255,6 +349,7 @@ describe('project assistant', () => {
         expect(sent[0]?.sessionId).toBe(created.session.id)
         expect(sent[0]?.text).toContain('Activate this existing Project Assistant conversation')
         expect(sent[0]?.text).toContain('Pick the smaller release scope.')
+        expect(sent[0]?.disallowedTools).toContain('Bash')
     })
 
     it('applies visible assistant action packets to resolve decisions', async () => {
@@ -394,6 +489,66 @@ describe('project assistant', () => {
 
         expect(mail.id).toStartWith('mail-1778570000000-')
         expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/planner-mail.yml'), 'utf8')).toContain('Please schedule')
+    })
+
+    it('applies visible assistant action packets to update global preference markdown', async () => {
+        const store = new Store(':memory:')
+        const root = workspace()
+        const { project, goal } = seedProject(store, root)
+        const { engine } = engineFor(store)
+        const assistant = await ensureProjectAssistantSession({
+            store,
+            engine,
+            namespace: 'default',
+            projectId: project.id,
+            goalId: goal.id,
+            kind: 'normal'
+        })
+        store.messages.addMessage(assistant.session.id, {
+            role: 'assistant',
+            content: {
+                type: 'text',
+                text: [
+                    'I will remember that globally.',
+                    '',
+                    'HOPI_ASSISTANT_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_global_preference',
+                                markdown: '# HOPI Preferences\n\n- Do not auto-commit.\n'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        const ready = store.messages.addMessage(assistant.session.id, {
+            role: 'assistant',
+            content: {
+                type: 'event',
+                data: { type: 'ready' }
+            }
+        })
+
+        const applied = applyProjectAssistantActionPacketFromReady({
+            store,
+            engine,
+            namespace: 'default',
+            sessionId: assistant.session.id,
+            readyMessage: {
+                id: ready.id,
+                seq: ready.seq,
+                localId: ready.localId,
+                content: ready.content,
+                createdAt: ready.createdAt
+            }
+        })
+
+        expect(applied).toBe(true)
+        expect(readFileSync(join(root, '.hopi/preference.md'), 'utf8')).toBe('# HOPI Preferences\n\n- Do not auto-commit.\n')
     })
 
     it('briefs assistant to maintain global preference markdown instead of goal preferences', () => {

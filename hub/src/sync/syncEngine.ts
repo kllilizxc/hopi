@@ -40,6 +40,7 @@ import { OmcExecutionAutomation } from './omc/executionAutomation'
 import { OmcLoopAutomation } from './omc/loopAutomation'
 import { OmcPlanningAutomation } from './omc/planningAutomation'
 import { OmcTopicAutomation } from './omc/topicAutomation'
+import { getOperatorConsolePermissionMode, isOperatorConsoleMetadata } from './operatorConsole'
 import { applyProjectAssistantActionPacketFromReady } from './projectAssistant'
 
 export type { Session, SyncEvent } from '@hopi/protocol/types'
@@ -567,15 +568,23 @@ export class SyncEngine {
         const fallbackPermissionMode = taskModeFallback?.permissionMode
         const fallbackModelMode = taskModeFallback?.modelMode
 
-        const previousPermissionMode = session.permissionMode
-            ?? (fallbackPermissionMode && isPermissionModeAllowedForFlavor(fallbackPermissionMode, flavor)
-                ? fallbackPermissionMode
-                : undefined)
-        const previousModelMode = session.modelMode
-            ?? (fallbackModelMode && isModelModeAllowedForFlavor(fallbackModelMode, flavor)
-                ? fallbackModelMode
-                : undefined)
-        const resumeWithYolo = previousPermissionMode === 'yolo' ? true : undefined
+        const operatorConsoleSession = isOperatorConsoleMetadata(metadata)
+        const operatorConsolePermissionMode = operatorConsoleSession
+            ? getOperatorConsolePermissionMode(flavor) ?? undefined
+            : undefined
+        const previousPermissionMode = operatorConsoleSession
+            ? operatorConsolePermissionMode
+            : session.permissionMode
+                ?? (fallbackPermissionMode && isPermissionModeAllowedForFlavor(fallbackPermissionMode, flavor)
+                    ? fallbackPermissionMode
+                    : undefined)
+        const previousModelMode = operatorConsoleSession
+            ? undefined
+            : session.modelMode
+                ?? (fallbackModelMode && isModelModeAllowedForFlavor(fallbackModelMode, flavor)
+                    ? fallbackModelMode
+                    : undefined)
+        const resumeWithYolo = !operatorConsoleSession && previousPermissionMode === 'yolo' ? true : undefined
 
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,

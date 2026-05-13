@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import YAML from 'yaml'
 import { z } from 'zod'
 import { getGlobalPreferencePath, getGoalOperatorDir, getGoalPlannerMailPath, getGoalPreferencesPath } from './operatorDocPaths'
@@ -128,6 +129,16 @@ export function readGlobalPreferenceMarkdown(workspacePath: string): string | nu
     }
     const raw = readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim()
     return raw.length > 0 ? raw.slice(0, 8_000) : null
+}
+
+export function writeGlobalPreferenceMarkdown(workspacePath: string, markdown: string): void {
+    const path = getGlobalPreferencePath(workspacePath)
+    const normalized = normalizeText(markdown)
+    if (!normalized) {
+        throw new Error('Global preference markdown cannot be empty')
+    }
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${normalized}\n`, 'utf8')
 }
 
 export function appendPlannerMail(options: {

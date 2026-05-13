@@ -3,6 +3,7 @@ import { ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine, Session } from '../../sync/syncEngine'
+import { isOperatorConsoleMetadata } from '../../sync/operatorConsole'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
 
@@ -227,6 +228,9 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
         if (sessionResult instanceof Response) {
             return sessionResult
+        }
+        if (isOperatorConsoleMetadata(sessionResult.session.metadata)) {
+            return c.json({ error: 'Operator console sessions cannot change permission mode' }, 403)
         }
 
         const body = await c.req.json().catch(() => null)

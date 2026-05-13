@@ -85,6 +85,9 @@ export type HopiTaskRole = z.infer<typeof HopiTaskRoleSchema>
 export const ProjectAssistantSessionKindSchema = z.enum(['normal', 'intervention'])
 export type ProjectAssistantSessionKind = z.infer<typeof ProjectAssistantSessionKindSchema>
 
+export const SessionCapabilityProfileSchema = z.enum(['coding_agent', 'automation_role', 'operator_console'])
+export type SessionCapabilityProfile = z.infer<typeof SessionCapabilityProfileSchema>
+
 export const ProjectAssistantInterventionKindSchema = z.enum([
     'decision_needed',
     'task_blocked',
@@ -183,6 +186,7 @@ export const MetadataSchema = z.object({
     projectId: z.string().optional(),
     goalId: z.string().optional(),
     taskId: z.string().optional(),
+    capabilityProfile: SessionCapabilityProfileSchema.optional(),
     hopiTaskRole: HopiTaskRoleSchema.optional(),
     hopiAssistant: z.boolean().optional(),
     assistantKind: ProjectAssistantSessionKindSchema.optional(),
