@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import YAML from 'yaml'
 import { z } from 'zod'
-import { getGoalOperatorDir, getGoalPlannerMailPath, getGoalPreferencesPath } from './operatorDocPaths'
+import { getGlobalPreferencePath, getGoalOperatorDir, getGoalPlannerMailPath, getGoalPreferencesPath } from './operatorDocPaths'
 
 export const GoalPreferenceCategorySchema = z.enum([
     'implementation_tradeoff',
@@ -21,7 +21,7 @@ export type GoalPreferenceAutonomy = z.infer<typeof GoalPreferenceAutonomySchema
 export const PlannerMailKindSchema = z.enum(['idea', 'request', 'preference'])
 export type PlannerMailKind = z.infer<typeof PlannerMailKindSchema>
 
-export const PlannerMailStatusSchema = z.enum(['unread', 'included', 'resolved', 'dismissed'])
+export const PlannerMailStatusSchema = z.enum(['unread', 'included', 'resolved', 'superseded'])
 export type PlannerMailStatus = z.infer<typeof PlannerMailStatusSchema>
 
 const OperatorSourceSchema = z.object({
@@ -121,6 +121,15 @@ export function readGoalOperatorDocs(options: {
     }
 }
 
+export function readGlobalPreferenceMarkdown(workspacePath: string): string | null {
+    const path = getGlobalPreferencePath(workspacePath)
+    if (!existsSync(path)) {
+        return null
+    }
+    const raw = readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim()
+    return raw.length > 0 ? raw.slice(0, 8_000) : null
+}
+
 export function appendPlannerMail(options: {
     workspacePath: string
     goalKey: string
@@ -175,7 +184,7 @@ export function updatePlannerMailStatus(options: {
             includedAt: options.status === 'included'
                 ? now
                 : item.includedAt,
-            resolvedAt: options.status === 'resolved' || options.status === 'dismissed'
+            resolvedAt: options.status === 'resolved' || options.status === 'superseded'
                 ? now
                 : item.resolvedAt
         } satisfies PlannerMailItem

@@ -16,7 +16,7 @@ import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/tas
 import type { SyncEngine } from './syncEngine'
 import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
 import { buildAgentOutputLanguageSection, resolveAgentOutputLocale } from './agentOutputLanguage'
-import { readGoalOperatorDocs } from './operator/operatorDocs'
+import { readGlobalPreferenceMarkdown, readGoalOperatorDocs } from './operator/operatorDocs'
 import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type SessionRootPathLike } from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
@@ -470,7 +470,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
             '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref.',
-            '- update_planner_mail_status: mark goal operator/planner-mail.yml entries as included, resolved, or dismissed after you have incorporated or triaged them.',
+            '- update_planner_mail_status: mark goal operator/planner-mail.yml entries as included, resolved, or superseded after you have incorporated or triaged them.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
@@ -628,22 +628,19 @@ function buildGoalOperatorDocsSection(options: {
         workspacePath: workspace.path,
         goalKey: goal.goalKey
     })
-    const activePolicies = docs.preferences.policies.filter((policy) => policy.archivedAt === null)
+    const globalPreferences = readGlobalPreferenceMarkdown(workspace.path)
     const role = getGoalTaskRole(options.task)
     const plannerMail = role === 'Planner'
         ? docs.mail.mail.filter((item) => item.status === 'unread' || item.status === 'included')
         : []
 
-    if (activePolicies.length === 0 && plannerMail.length === 0) {
+    if (!globalPreferences && plannerMail.length === 0) {
         return ''
     }
 
     const lines = ['', '', 'Goal Operator Docs']
-    if (activePolicies.length > 0) {
-        lines.push('', 'Goal Preferences:')
-        for (const policy of activePolicies) {
-            lines.push(`- [${policy.category}; ${policy.autonomy}] ${policy.instruction}`)
-        }
+    if (globalPreferences) {
+        lines.push('', 'Global Preferences:', globalPreferences)
     }
     if (plannerMail.length > 0) {
         lines.push('', 'Planner Mail:')

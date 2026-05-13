@@ -11,14 +11,9 @@ import { z } from 'zod'
 import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredSession, StoredTask, StoredWorkspace } from '../store'
 import {
     appendPlannerMail,
-    GoalPreferenceAutonomySchema,
-    GoalPreferenceCategorySchema,
     PlannerMailKindSchema,
+    readGlobalPreferenceMarkdown,
     readGoalOperatorDocs,
-    setGoalPreference,
-    type GoalPreference,
-    type GoalPreferenceAutonomy,
-    type GoalPreferenceCategory,
     type OperatorSource,
     type PlannerMailItem,
     type PlannerMailKind
@@ -90,13 +85,6 @@ const assistantActionPacketSchema = z.object({
             goalId: z.string().trim().min(1),
             kind: PlannerMailKindSchema,
             body: z.string().trim().min(1).max(20_000)
-        }),
-        z.object({
-            type: z.literal('set_goal_preference'),
-            goalId: z.string().trim().min(1),
-            category: GoalPreferenceCategorySchema,
-            autonomy: GoalPreferenceAutonomySchema,
-            instruction: z.string().trim().min(1).max(20_000)
         })
     ])).min(1).max(10)
 })
@@ -525,7 +513,8 @@ function buildProjectAssistantSystemPrompt(): string {
         'You help the user inspect project/goal workflow state and decide what operator guidance to provide.',
         'Workflow ownership stays with Planner, Generator, Evaluator, merge, and scheduler services.',
         'Do not directly claim that you changed kanban/task state unless HOPI exposes and confirms a typed action result.',
-        'When you need HOPI to apply a narrow operator action, include a visible HOPI_ASSISTANT_ACTIONS JSON block with actions: resolve_decision, send_planner_mail, or set_goal_preference.',
+        'When you need HOPI to apply a narrow operator action, include a visible HOPI_ASSISTANT_ACTIONS JSON block with actions: resolve_decision or send_planner_mail.',
+        'When the user expresses a durable project-wide preference, maintain .hopi/preference.md directly with normal file read/write ability. Do not emit a HOPI_ASSISTANT_ACTIONS action for preferences.',
         'When the user gives a decision, restate the exact decision and the goal/task it applies to before suggesting the narrow operator action.',
         'Keep replies concise and practical.'
     ].join('\n')
@@ -560,10 +549,9 @@ export function buildProjectAssistantBriefingPrompt(options: {
             return null
         }
     })()
-    const activePreferences = operatorDocs?.preferences.policies
-        .filter((preference) => preference.archivedAt === null) ?? []
     const unreadMail = operatorDocs?.mail.mail
         .filter((mail) => mail.status === 'unread') ?? []
+    const globalPreferences = readGlobalPreferenceMarkdown(workspace.path)
 
     return [
         'Start this Project Assistant conversation.',
@@ -582,8 +570,11 @@ export function buildProjectAssistantBriefingPrompt(options: {
         'Waiting decisions:',
         formatDecisionTopics(topics),
         '',
+        'Preference memory:',
+        `- File: .hopi/preference.md`,
+        globalPreferences ? globalPreferences : '- No global preferences recorded.',
+        '',
         'Operator docs snapshot:',
-        `- Active preferences: ${activePreferences.length}`,
         `- Unread planner mail: ${unreadMail.length}`,
         '',
         'Reply with a brief greeting and ask what the user wants to inspect or decide next.'
@@ -1159,30 +1150,6 @@ export function applyProjectAssistantActionPacketFromReady(options: {
             }
             continue
         }
-        if (action.type === 'set_goal_preference') {
-            try {
-                setProjectAssistantGoalPreference({
-                    store: options.store,
-                    namespace: options.namespace,
-                    projectId: metadata.projectId,
-                    goalId: action.goalId,
-                    category: action.category,
-                    autonomy: action.autonomy,
-                    instruction: action.instruction,
-                    source: {
-                        sessionId: options.sessionId,
-                        messageId: found.message.id
-                    }
-                })
-                emitProjectUpdated({
-                    engine: options.engine,
-                    namespace: options.namespace,
-                    projectId: metadata.projectId
-                })
-                applied = true
-            } catch {
-            }
-        }
     }
 
     return applied
@@ -1206,31 +1173,6 @@ export function sendProjectAssistantPlannerMail(options: {
         goalKey: goal.goalKey,
         kind: options.kind,
         body: options.body,
-        source: options.source,
-        now: options.now
-    })
-}
-
-export function setProjectAssistantGoalPreference(options: {
-    store: Store
-    namespace: string
-    projectId: string
-    goalId: string
-    category: GoalPreferenceCategory
-    autonomy: GoalPreferenceAutonomy
-    instruction: string
-    source: OperatorSource
-    now?: number
-}): GoalPreference {
-    const project = getProject(options.store, options.projectId, options.namespace)
-    const workspace = getProjectWorkspace(options.store, project)
-    const goal = getGoal(options.store, options.goalId, options.namespace, project.id)
-    return setGoalPreference({
-        workspacePath: workspace.path,
-        goalKey: goal.goalKey,
-        category: options.category,
-        autonomy: options.autonomy,
-        instruction: options.instruction,
         source: options.source,
         now: options.now
     })

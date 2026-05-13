@@ -23,9 +23,6 @@ import type {
     ProjectAutomationVerificationResponse,
     ProjectAssistantMailResponse,
     ProjectAssistantPlannerMailKind,
-    ProjectAssistantPreferenceAutonomy,
-    ProjectAssistantPreferenceCategory,
-    ProjectAssistantPreferenceResponse,
     ProjectAssistantResolveResponse,
     ProjectAssistantSessionResponse,
     ProjectAssistantSessionsResponse,
@@ -376,23 +373,6 @@ export class ApiClient {
         }
     }): Promise<ProjectAssistantMailResponse> {
         return await this.request<ProjectAssistantMailResponse>(`/api/projects/${encodeURIComponent(projectId)}/assistant-mail`, {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        })
-    }
-
-    async setProjectAssistantPreference(projectId: string, payload: {
-        goalId: string
-        category: ProjectAssistantPreferenceCategory
-        autonomy: ProjectAssistantPreferenceAutonomy
-        instruction: string
-        source: {
-            sessionId: string
-            messageId: string
-            quote?: string
-        }
-    }): Promise<ProjectAssistantPreferenceResponse> {
-        return await this.request<ProjectAssistantPreferenceResponse>(`/api/projects/${encodeURIComponent(projectId)}/assistant-preferences`, {
             method: 'POST',
             body: JSON.stringify(payload)
         })

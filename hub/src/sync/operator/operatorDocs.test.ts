@@ -96,4 +96,31 @@ describe('operator docs', () => {
             resolvedAt: null
         })
     })
+
+    it('marks planner mail as superseded without deleting the original message', () => {
+        const root = workspace()
+        const mail = appendPlannerMail({
+            workspacePath: root,
+            goalKey: 'ship-ui',
+            kind: 'request',
+            body: 'Try a different queue model.',
+            source: { sessionId: 'session-a', messageId: 'message-d' },
+            now: 1778570000000
+        })
+
+        expect(updatePlannerMailStatus({
+            workspacePath: root,
+            goalKey: 'ship-ui',
+            mailId: mail.id,
+            status: 'superseded',
+            now: 1778570002000
+        })).toBe(true)
+
+        const docs = readGoalOperatorDocs({ workspacePath: root, goalKey: 'ship-ui' })
+        expect(docs.mail.mail[0]).toMatchObject({
+            id: mail.id,
+            status: 'superseded',
+            resolvedAt: 1778570002000
+        })
+    })
 })

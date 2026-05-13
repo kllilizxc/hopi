@@ -148,7 +148,7 @@ export function ProjectAssistantPage(props: {
         pendingCount,
         isLoading,
         error
-    } = useProjectAssistantSessions(api, props.projectId)
+    } = useProjectAssistantSessions(api, props.projectId, props.selectedGoalId)
     const actions = useProjectAssistantActions(api, props.projectId)
 
     const selectedSession = useMemo(() => (

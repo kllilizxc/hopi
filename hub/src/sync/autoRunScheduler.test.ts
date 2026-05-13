@@ -207,8 +207,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -286,6 +287,78 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents.some((event) => event.type === 'session-added')).toBe(true)
     })
 
+    it('does not block a task when auto-run start failure is retryable', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-retryable-start-failure'
+        const goalId = 'goal-retryable-start-failure'
+        const taskId = 'task-retryable-start-failure'
+        const workspaceId = 'workspace-retryable-start-failure'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            defaultWorkspaceId: workspaceId,
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/hopi-retryable-start-failure'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Run retryable task',
+            status: 'planned',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: false,
+                    runnerState: { status: 'stopped' }
+                }
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
+        expect(listProjectAssistantSessions({
+            store,
+            namespace,
+            projectId
+        }).sessions).toHaveLength(0)
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
     it('auto-runs goal planner tasks when project auto-run is on even if goal autopilot is off', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -334,8 +407,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -929,10 +1003,10 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1023,8 +1097,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1419,14 +1494,14 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
-    it('blocks planned tasks when session startup throws unexpectedly', async () => {
+    it('keeps planned tasks retryable when session startup throws unexpectedly', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-start-throws'
@@ -1480,11 +1555,11 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
-        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(true)
+        expect(task?.status).toBe('planned')
+        expect(realtimeEvents.some((event) => event.type === 'task-updated')).toBe(false)
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
         const toastEvent = realtimeEvents.find((event) => event.type === 'toast')
         expect(toastEvent?.type === 'toast' ? toastEvent.data.taskStartFailure?.code : null).toBe('unexpected_error')
@@ -1535,10 +1610,10 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1603,10 +1678,10 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         sessionActive = false
         scheduler.handleEvent({ type: 'session-updated', sessionId })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => realtimeEvents.some((event) => event.type === 'toast'))
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planned')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 

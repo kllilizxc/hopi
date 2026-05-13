@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import type { SyncEvent } from '@hopi/protocol/types'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store } from '../store'
-import { appendPlannerMail, setGoalPreference } from './operator/operatorDocs'
+import { appendPlannerMail } from './operator/operatorDocs'
 import { startSessionFromTask } from './taskSessionService'
 import type { SyncEngine } from './syncEngine'
 
@@ -348,15 +348,8 @@ describe('startSessionFromTask', () => {
             workspaceId,
             source: 'planner'
         })
-        setGoalPreference({
-            workspacePath,
-            goalKey: 'ship-ui',
-            category: 'test_scope',
-            autonomy: 'auto_decide_and_report',
-            instruction: 'Let the model choose focused regression tests.',
-            source: { sessionId: 'assistant-session', messageId: 'message-pref' },
-            now: 1778570000000
-        })
+        mkdirSync(join(workspacePath, '.hopi'), { recursive: true })
+        writeFileSync(join(workspacePath, '.hopi/preference.md'), '# HOPI Preferences\n\n- Let the model choose focused regression tests.\n', 'utf8')
         appendPlannerMail({
             workspacePath,
             goalKey: 'ship-ui',
@@ -417,7 +410,7 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         expect(kickoffText).toContain('Goal Operator Docs')
-        expect(kickoffText).toContain('Goal Preferences')
+        expect(kickoffText).toContain('Global Preferences')
         expect(kickoffText).toContain('Let the model choose focused regression tests.')
         expect(kickoffText).toContain('Planner Mail')
         expect(kickoffText).toContain('Please schedule an accessibility pass.')

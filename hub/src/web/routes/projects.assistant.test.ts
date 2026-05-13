@@ -159,7 +159,7 @@ describe('project assistant routes', () => {
         expect(response.status).toBe(400)
     })
 
-    it('writes planner mail and preferences to goal-scoped operator docs', async () => {
+    it('writes planner mail and no longer exposes goal preference route', async () => {
         const store = new Store(':memory:')
         const app = createTestApp(store)
         const root = mkdtempSync(join(tmpdir(), 'hopi-assistant-routes-'))
@@ -190,10 +190,9 @@ describe('project assistant routes', () => {
                 source: { sessionId: 'assistant-session-1', messageId: 'message-2' }
             })
         })
-        expect(preferenceResponse.status).toBe(200)
+        expect(preferenceResponse.status).toBe(404)
 
         expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/planner-mail.yml'), 'utf8')).toContain('denser review queue')
-        expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/preferences.yml'), 'utf8')).toContain('lightweight table copy')
     })
 
     it('resolves pending intervention sessions through the assistant route', async () => {

@@ -433,6 +433,7 @@ export class TaskAutomation {
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly autoCommitInFlightBySessionId: Set<string> = new Set()
     private readonly bootstrapPreviewInFlightByTaskKey: Set<string> = new Set()
+    private readonly pendingNoReplyReadyBySessionId: Map<string, DecryptedMessage> = new Map()
 
     constructor(
         private readonly store: Store,
@@ -456,6 +457,7 @@ export class TaskAutomation {
         if (event.type === 'session-removed' && event.sessionId) {
             this.lastThinkingBySessionId.delete(event.sessionId)
             this.autoCommitInFlightBySessionId.delete(event.sessionId)
+            this.pendingNoReplyReadyBySessionId.delete(event.sessionId)
             return
         }
 
@@ -497,6 +499,7 @@ export class TaskAutomation {
         if (!linked) return
 
         if (isTaskProgressPromptMessage(message)) {
+            this.pendingNoReplyReadyBySessionId.delete(sessionId)
             const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
             if (!current) return
             if (current.archivedAt) return
@@ -535,14 +538,20 @@ export class TaskAutomation {
 
         if (getMessageRole(message) === 'assistant' && isReadyEventMessage(message)) {
             const details = getReadyEventDetails(message)
-            if (details?.hasAssistantReply === false) {
-                return
-            }
             const goalActionResult = this.tryApplyGoalActionPacketFromReady(sessionId)
             if (goalActionResult === 'applied') {
+                this.pendingNoReplyReadyBySessionId.delete(sessionId)
                 this.maybeRequestAutoMergeAcceptedTask(sessionId)
                 this.maybeAutoCommitWorktreeFromReady(sessionId, message)
                 this.tryMoveToInReviewFromReady(sessionId, message)
+                return
+            }
+            if (details?.hasAssistantReply === false) {
+                if (goalActionResult === 'goal_task') {
+                    this.pendingNoReplyReadyBySessionId.set(sessionId, message)
+                } else {
+                    this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                }
                 return
             }
             if (goalActionResult === 'goal_task') {
@@ -560,6 +569,23 @@ export class TaskAutomation {
             }
             this.maybeAutoCommitWorktreeFromReady(sessionId, message)
             return
+        }
+
+        if (getMessageRole(message) === 'assistant') {
+            const pendingReadyMessage = this.pendingNoReplyReadyBySessionId.get(sessionId)
+            if (pendingReadyMessage) {
+                const goalActionResult = this.tryApplyGoalActionPacketFromReady(sessionId)
+                if (goalActionResult === 'applied') {
+                    this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                    this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                    this.maybeAutoCommitWorktreeFromReady(sessionId, pendingReadyMessage)
+                    this.tryMoveToInReviewFromReady(sessionId, pendingReadyMessage)
+                    return
+                }
+                if (goalActionResult === 'not_goal_task') {
+                    this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                }
+            }
         }
 
         if (getMessageRole(message) === 'assistant' && getTaskInterruptionDetails(message)) {

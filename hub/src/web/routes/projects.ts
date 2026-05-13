@@ -12,12 +12,9 @@ import {
     ensureProjectAssistantSession,
     listProjectAssistantSessions,
     resolveProjectAssistantIntervention,
-    sendProjectAssistantPlannerMail,
-    setProjectAssistantGoalPreference
+    sendProjectAssistantPlannerMail
 } from '../../sync/projectAssistant'
 import {
-    GoalPreferenceAutonomySchema,
-    GoalPreferenceCategorySchema,
     PlannerMailKindSchema
 } from '../../sync/operator/operatorDocs'
 import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
@@ -91,14 +88,6 @@ const assistantMailBodySchema = z.object({
     goalId: z.string().min(1),
     kind: PlannerMailKindSchema,
     body: z.string().trim().min(1).max(20_000),
-    source: operatorSourceBodySchema
-})
-
-const assistantPreferenceBodySchema = z.object({
-    goalId: z.string().min(1),
-    category: GoalPreferenceCategorySchema,
-    autonomy: GoalPreferenceAutonomySchema,
-    instruction: z.string().trim().min(1).max(20_000),
     source: operatorSourceBodySchema
 })
 
@@ -468,39 +457,6 @@ export function createProjectsRoutes(options: {
             return c.json({ mail })
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to write planner mail'
-            return c.json({ error: message }, message.includes('not found') ? 404 : 400)
-        }
-    })
-
-    app.post('/projects/:projectId/assistant-preferences', async (c) => {
-        const namespace = c.get('namespace')
-        const projectId = c.req.param('projectId')
-        const body = await c.req.json().catch(() => null)
-        const parsed = assistantPreferenceBodySchema.safeParse(body)
-        if (!parsed.success) {
-            return c.json({ error: 'Invalid body' }, 400)
-        }
-
-        try {
-            const preference = setProjectAssistantGoalPreference({
-                store: options.store,
-                namespace,
-                projectId,
-                goalId: parsed.data.goalId,
-                category: parsed.data.category,
-                autonomy: parsed.data.autonomy,
-                instruction: parsed.data.instruction,
-                source: parsed.data.source
-            })
-            options.getSyncEngine()?.handleRealtimeEvent({
-                type: 'project-updated',
-                projectId,
-                namespace,
-                data: { assistantPreference: preference.id, goalId: parsed.data.goalId }
-            })
-            return c.json({ preference })
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to write goal preference'
             return c.json({ error: message }, message.includes('not found') ? 404 : 400)
         }
     })

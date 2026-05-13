@@ -142,7 +142,7 @@ export type ProjectAssistantOperatorSource = {
     quote?: string
 }
 export type ProjectAssistantPlannerMailKind = 'idea' | 'request' | 'preference'
-export type ProjectAssistantPlannerMailStatus = 'unread' | 'included' | 'resolved' | 'dismissed'
+export type ProjectAssistantPlannerMailStatus = 'unread' | 'included' | 'resolved' | 'superseded'
 export type ProjectAssistantPlannerMail = {
     id: string
     kind: ProjectAssistantPlannerMailKind
@@ -153,27 +153,8 @@ export type ProjectAssistantPlannerMail = {
     includedAt: number | null
     resolvedAt: number | null
 }
-export type ProjectAssistantPreferenceCategory =
-    | 'implementation_tradeoff'
-    | 'ui_product_choice'
-    | 'merge_repair'
-    | 'dependency_choice'
-    | 'test_scope'
-    | 'planning_priority'
-    | 'communication_style'
-export type ProjectAssistantPreferenceAutonomy = 'auto_decide' | 'auto_decide_and_report'
-export type ProjectAssistantGoalPreference = {
-    id: string
-    category: ProjectAssistantPreferenceCategory
-    autonomy: ProjectAssistantPreferenceAutonomy
-    instruction: string
-    source: ProjectAssistantOperatorSource
-    createdAt: number
-    archivedAt: number | null
-}
 export type ProjectAssistantSessionResponse = { session: ProjectAssistantSessionSummary }
 export type ProjectAssistantMailResponse = { mail: ProjectAssistantPlannerMail }
-export type ProjectAssistantPreferenceResponse = { preference: ProjectAssistantGoalPreference }
 export type ProjectAssistantResolveResponse = { session: Session }
 export type WorkspacesResponse = { workspaces: Workspace[] }
 export type WorkspaceResponse = { workspace: Workspace }

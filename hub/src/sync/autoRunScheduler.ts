@@ -3,7 +3,7 @@ import { normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from
 import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
 import type { AutomationLane } from '@hopi/protocol/types'
-import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
+import { buildTaskSessionStartFailureToast, isTaskSessionStartFailureRetryable } from '@hopi/protocol/task-session-start'
 import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
@@ -733,6 +733,23 @@ export class AutoRunScheduler {
                 startedByLane[lane] += 1
 
                 if (result.ok) {
+                    continue
+                }
+
+                if (isTaskSessionStartFailureRetryable(result.error)) {
+                    this.engine.handleRealtimeEvent({
+                        type: 'toast',
+                        namespace,
+                        data: {
+                            ...buildTaskSessionStartFailureToast({
+                                taskTitle: task.title,
+                                failure: result.error
+                            }),
+                            sessionId: '',
+                            url: '',
+                            taskStartFailure: result.error
+                        }
+                    })
                     continue
                 }
 

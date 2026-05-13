@@ -296,6 +296,219 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
 
+    it('applies existing goal action packets when ready is marked as having no assistant reply', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-actions-no-reply-ready'
+        const goalId = 'goal-no-reply-ready'
+        const taskId = 'planner-task-no-reply-ready'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal action project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'planning'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal and plan first iteration',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Planning complete.',
+                    '',
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'create_goal_task',
+                                title: 'Implement scoped assistant conversation',
+                                description: 'Keep assistant state scoped to the selected goal.',
+                                priority: 'high'
+                            },
+                            {
+                                type: 'update_current_task',
+                                status: 'finished',
+                                handoff: 'Created first executable task.',
+                                evidence: 'Goal docs and todo were reviewed.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: false } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const tasks = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+        expect(tasks.some((task) => task.title === 'Implement scoped assistant conversation')).toBe(true)
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('finished')
+        expect(realtimeEvents.some((event) => event.type === 'task-added')).toBe(true)
+    })
+
+    it('applies goal action packets when assistant output arrives after no-reply ready', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-actions-after-ready'
+        const goalId = 'goal-after-ready'
+        const taskId = 'planner-task-after-ready'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal action project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Fix TextArea',
+            status: 'planning'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal and plan first iteration',
+            status: 'in_progress',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: `auto:kickoff:${taskId}:1`,
+                    hasAssistantReply: false
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    message: {
+                        role: 'assistant',
+                        content: [
+                            {
+                                type: 'text',
+                                text: [
+                                    'Created the first generator task.',
+                                    '',
+                                    'HOPI_ACTIONS:',
+                                    '```json',
+                                    JSON.stringify({
+                                        actions: [
+                                            {
+                                                type: 'create_goal_task',
+                                                title: 'Fix TextArea resize handle position',
+                                                todoRef: 'textarea-resize',
+                                                description: 'Fix the position offset of the resize drag handle.',
+                                                priority: 'high'
+                                            },
+                                            {
+                                                type: 'update_goal',
+                                                currentFocus: 'Investigate and fix the resize handle position on TextArea components'
+                                            },
+                                            {
+                                                type: 'update_current_task',
+                                                status: 'finished',
+                                                handoff: 'Created the first task to fix the TextArea resize handle position.',
+                                                evidence: 'Created a task targeting the CSS fix.'
+                                            }
+                                        ]
+                                    }, null, 2),
+                                    '```'
+                                ].join('\n')
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const created = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .find((task) => task.title === 'Fix TextArea resize handle position')
+        expect(created?.goalTodoRef).toBe('textarea-resize')
+        expect(store.goals.getGoalByNamespace(goalId, namespace)?.currentFocus).toBe('Investigate and fix the resize handle position on TextArea components')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('finished')
+        expect(realtimeEvents.some((event) => event.type === 'task-added')).toBe(true)
+    })
+
     it('blocks a goal when a packet creates a goal-level blocking decision topic', () => {
         const store = new Store(':memory:')
         const namespace = 'default'

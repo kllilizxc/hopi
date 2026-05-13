@@ -14,7 +14,7 @@ const taskStatusSchema = z.enum(['planned', 'in_progress', 'in_review', 'finishe
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
 const taskSourceSchema = z.enum(['manual', 'planner', 'radar', 'evaluator'])
 const goalStatusSchema = z.enum(['planning', 'active', 'blocked', 'paused', 'done', 'archived'])
-const plannerMailStatusSchema = z.enum(['unread', 'included', 'resolved', 'dismissed'])
+const plannerMailStatusSchema = z.enum(['unread', 'included', 'resolved', 'superseded'])
 
 const goalActionPacketSchema = z.object({
     actions: z.array(z.discriminatedUnion('type', [

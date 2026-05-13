@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Session } from '@hopi/protocol/types'
@@ -8,12 +8,12 @@ import type { SyncEngine } from './syncEngine'
 import {
     activateProjectAssistantSession,
     applyProjectAssistantActionPacketFromReady,
+    buildProjectAssistantBriefingPrompt,
     createProjectAssistantIntervention,
     ensureProjectAssistantSession,
     listProjectAssistantSessions,
     resolveProjectAssistantIntervention,
     sendProjectAssistantPlannerMail,
-    setProjectAssistantGoalPreference,
     tryCreateProjectAssistantIntervention
 } from './projectAssistant'
 
@@ -376,7 +376,7 @@ describe('project assistant', () => {
         }).sessions).toHaveLength(0)
     })
 
-    it('writes planner mail and preferences through goal-scoped operator docs', () => {
+    it('writes planner mail through goal-scoped operator docs', () => {
         const store = new Store(':memory:')
         const root = workspace()
         const { project, goal } = seedProject(store, root)
@@ -391,21 +391,27 @@ describe('project assistant', () => {
             source: { sessionId: 'assistant-session-1', messageId: 'message-1' },
             now: 1778570000000
         })
-        const preference = setProjectAssistantGoalPreference({
+
+        expect(mail.id).toStartWith('mail-1778570000000-')
+        expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/planner-mail.yml'), 'utf8')).toContain('Please schedule')
+    })
+
+    it('briefs assistant to maintain global preference markdown instead of goal preferences', () => {
+        const store = new Store(':memory:')
+        const root = workspace()
+        const { project, goal } = seedProject(store, root)
+        mkdirSync(join(root, '.hopi'), { recursive: true })
+        writeFileSync(join(root, '.hopi/preference.md'), '# HOPI Preferences\n\n- Do not auto-commit.\n', 'utf8')
+
+        const prompt = buildProjectAssistantBriefingPrompt({
             store,
             namespace: 'default',
             projectId: project.id,
-            goalId: goal.id,
-            category: 'test_scope',
-            autonomy: 'auto_decide_and_report',
-            instruction: 'Let the model choose focused regression tests.',
-            source: { sessionId: 'assistant-session-1', messageId: 'message-2' },
-            now: 1778570001000
+            goalId: goal.id
         })
 
-        expect(mail.id).toStartWith('mail-1778570000000-')
-        expect(preference.id).toStartWith('pref-1778570001000-')
-        expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/planner-mail.yml'), 'utf8')).toContain('Please schedule')
-        expect(readFileSync(join(root, '.hopi/docs/goals/ship-ui/operator/preferences.yml'), 'utf8')).toContain('focused regression')
+        expect(prompt).toContain('.hopi/preference.md')
+        expect(prompt).toContain('Do not auto-commit.')
+        expect(prompt).not.toContain('Active preferences')
     })
 })
