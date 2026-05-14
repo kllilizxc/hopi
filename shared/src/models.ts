@@ -5,6 +5,61 @@ export type ModelPresetOption = {
     label: string
 }
 
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'auto'
+
+export const CODEX_REASONING_EFFORT_OPTIONS: readonly { value: CodexReasoningEffort | ''; label: string }[] = [
+    { value: '', label: 'Auto' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'Extra High' },
+]
+
+const EFFORT_SUFFIX_MAP: Record<string, CodexReasoningEffort> = {
+    auto: 'auto',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh',
+}
+
+const EFFORT_TO_SUFFIX: Record<CodexReasoningEffort, string> = {
+    auto: 'auto',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh',
+}
+
+export function parseEffortFromModel(model?: string | null): CodexReasoningEffort | undefined {
+    if (typeof model !== 'string') return undefined
+    const tokens = model.trim().split(/\s+/)
+    if (tokens.length <= 1) return undefined
+    const suffix = tokens[tokens.length - 1]!.toLowerCase()
+    return EFFORT_SUFFIX_MAP[suffix]
+}
+
+export function stripEffortFromModel(model?: string | null): string | null {
+    const normalized = model?.trim()
+    if (!normalized) return null
+    const tokens = normalized.split(/\s+/)
+    if (tokens.length <= 1) return normalized || null
+    const suffix = tokens[tokens.length - 1]!.toLowerCase()
+    if (EFFORT_SUFFIX_MAP[suffix]) {
+        const base = tokens.slice(0, -1).join(' ').trim()
+        return base || null
+    }
+    return normalized
+}
+
+export function combineModelAndEffort(model?: string | null, effort?: CodexReasoningEffort | '' | null): string {
+    const base = stripEffortFromModel(model) ?? model?.trim()
+    if (!base) return ''
+    if (!effort) return base
+    const suffix = EFFORT_TO_SUFFIX[effort as CodexReasoningEffort]
+    return suffix ? `${base} ${suffix}` : base
+}
+
 export const DEFAULT_AGENT_FLAVOR: AgentFlavor = 'codex'
 export const DEFAULT_TASK_MODEL = 'gpt-5.5'
 export const DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE: PermissionMode = 'safe-yolo'
@@ -96,7 +151,8 @@ export function isModelPresetAllowedForFlavor(model?: string | null, flavor?: st
 }
 
 export function shouldResetModelForFlavor(model?: string | null, flavor?: string | null): boolean {
-    const normalized = normalizeModelName(model)
+    const base = stripEffortFromModel(model) ?? model
+    const normalized = normalizeModelName(base)
     if (!normalized) {
         return false
     }

@@ -8,7 +8,7 @@ import { getAgentOutputLanguageOptions, normalizeProjectAgentOutputLanguage } fr
 import { useToast } from '@/lib/toast-context'
 import { LoadingState } from '@/components/LoadingState'
 import { PageHeader } from '@/components/PageHeader'
-import { ModelSelector } from '@/components/NewSession/ModelSelector'
+import { ModelWithEffort } from '@/components/NewSession/ModelSelector'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
@@ -443,7 +443,7 @@ export function ProjectSettingsPage() {
                             </div>
 
                             <div className="space-y-1.5">
-                                <ModelSelector
+                                <ModelWithEffort
                                     agent={defaultAgentFlavor}
                                     model={defaultModel}
                                     isDisabled={isPending}

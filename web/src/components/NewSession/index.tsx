@@ -12,7 +12,7 @@ import { ActionButtons } from './ActionButtons'
 import { AgentSelector } from './AgentSelector'
 import { DirectorySection } from './DirectorySection'
 import { MachineSelector } from './MachineSelector'
-import { ModelSelector } from './ModelSelector'
+import { ModelWithEffort } from './ModelSelector'
 import {
     loadPreferredAgent,
     loadPreferredYoloMode,
@@ -273,7 +273,7 @@ export function NewSession(props: {
                 isDisabled={isFormDisabled}
                 onAgentChange={setAgent}
             />
-            <ModelSelector
+            <ModelWithEffort
                 agent={agent}
                 model={model}
                 isDisabled={isFormDisabled}

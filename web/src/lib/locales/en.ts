@@ -544,6 +544,7 @@ export default {
   'newSession.model.custom': 'Custom model',
   'newSession.model.custom.placeholder': 'Enter model ID',
   'newSession.model.custom.hint': 'Choose a preset or enter any CLI-supported model ID.',
+  'newSession.model.effort': 'Reasoning Effort',
   'newSession.yolo': 'YOLO mode',
   'newSession.yolo.title': 'Bypass approvals and sandbox',
   'newSession.yolo.desc': 'Uses dangerous agent flags when spawning.',

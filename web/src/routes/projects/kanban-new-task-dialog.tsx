@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AdaptiveSelectField } from '@/components/ui/AdaptiveSelectField'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
-import { ModelSelector } from '@/components/NewSession/ModelSelector'
+import { ModelWithEffort } from '@/components/NewSession/ModelSelector'
 import type { AgentType } from '@/components/NewSession/types'
 import { getTaskPermissionModeOptionsForFlavor, resolveTaskPermissionModeForFlavor } from '@/lib/taskPermissionMode'
 import { getModelOptionsForFlavor, shouldResetModelForFlavor } from '@hopi/protocol'
@@ -296,7 +296,7 @@ const NewTaskDialogComponent = (props: NewTaskDialogProps) => {
                             />
                         </div>
                         <div className="space-y-1.5">
-                            <ModelSelector
+                            <ModelWithEffort
                                 agent={newTaskAgent}
                                 model={newTaskModel}
                                 isDisabled={props.isCreating}

@@ -90,6 +90,26 @@ vi.mock('@/components/NewSession/ModelSelector', () => ({
                 disabled={isDisabled}
             />
         </label>
+    ),
+    EffortSelector: () => null,
+    ModelWithEffort: ({
+        model,
+        onModelChange,
+        isDisabled
+    }: {
+        model: string
+        onModelChange: (value: string) => void
+        isDisabled: boolean
+    }) => (
+        <label>
+            <span>Model</span>
+            <input
+                aria-label="Model"
+                value={model}
+                onChange={(event) => onModelChange(event.target.value)}
+                disabled={isDisabled}
+            />
+        </label>
     )
 }))
 

@@ -31,7 +31,7 @@ import { useTask } from '@/hooks/queries/useTask'
 import { useWorkflowStrategies } from '@/hooks/queries/useWorkflowStrategies'
 import { useWorkspaces } from '@/hooks/queries/useWorkspaces'
 import { AgentSelector } from '@/components/NewSession/AgentSelector'
-import { ModelSelector } from '@/components/NewSession/ModelSelector'
+import { ModelWithEffort } from '@/components/NewSession/ModelSelector'
 import { YoloToggle } from '@/components/NewSession/YoloToggle'
 import type { AgentType } from '@/components/NewSession/types'
 import { TaskSessionChat } from '@/routes/projects/task-session-chat'
@@ -422,7 +422,7 @@ function StartSessionDialog(props: {
                     </div>
 
                     <AgentSelector agent={agent} isDisabled={isPending} onAgentChange={setAgent} />
-                    <ModelSelector agent={agent} model={model} isDisabled={isPending} onModelChange={setModel} />
+                    <ModelWithEffort agent={agent} model={model} isDisabled={isPending} onModelChange={setModel} />
 
                     <div className="px-3 space-y-1.5">
                         <label className="text-xs font-medium text-[var(--app-hint)]">
@@ -997,7 +997,7 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
 
                 {props.effectiveAgentFlavor !== 'opencode' ? (
                     <div className="space-y-1.5">
-                        <ModelSelector
+                        <ModelWithEffort
                             agent={props.effectiveAgentFlavor}
                             model={props.model}
                             isDisabled={props.isUpdatingTask}

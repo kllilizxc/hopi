@@ -152,7 +152,7 @@ describe('appServerConfig', () => {
         });
 
         expect(params.model).toBe('gpt-5.3-codex-spark');
-        expect(params.effort).toBe('high');
+        expect(params.effort).toBe('xhigh');
     });
 
     it('trims model suffix in collaboration mode settings', () => {
