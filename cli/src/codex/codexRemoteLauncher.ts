@@ -20,6 +20,7 @@ import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerC
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import type { PermissionMode } from '@hopi/protocol/types';
 import { PRODUCT_SLUG } from '@hopi/protocol/brand';
+import { hashObject } from '@/utils/deterministicJson';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -293,6 +294,10 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 || message.includes('unrecognized');
         };
 
+        const getThreadConfigHash = (mode: EnhancedMode): string => hashObject({
+            appendSystemPrompt: mode.appendSystemPrompt
+        });
+
         const notifyCollaborationModeFallback = (mode: string) => {
             if (this.collaborationModeFallbackNotified) {
                 return;
@@ -323,10 +328,13 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
         };
 
+        let activeMode: EnhancedMode | null = null;
+
         const permissionHandler = new CodexPermissionHandler(
             session.client,
             () => session.getPermissionMode() as PermissionMode | undefined,
             {
+                getDisallowedTools: () => activeMode?.disallowedTools,
                 onRequest: ({ id, toolName, input }) => {
                     const inputRecord = input && typeof input === 'object' ? input as Record<string, unknown> : {};
                     const message = typeof inputRecord.message === 'string' ? inputRecord.message : undefined;
@@ -747,7 +755,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             });
         }
 
-        const mcpServers = {};
+        const mcpServers = session.mcpServers ?? {};
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),
@@ -796,6 +804,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         let wasCreated = false;
         let currentModeHash: string | null = null;
+        let currentThreadConfigHash: string | null = null;
         let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; localKey: string | null } | null = null;
         let first = true;
 
@@ -843,6 +852,20 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 break;
             }
 
+            const messageThreadConfigHash = getThreadConfigHash(message.mode);
+            if (useAppServer && wasCreated && currentThreadConfigHash && messageThreadConfigHash !== currentThreadConfigHash) {
+                logger.debug('[Codex] Thread-level operator instructions changed – resuming app-server thread with updated config');
+                wasCreated = false;
+                currentModeHash = null;
+                currentThreadConfigHash = null;
+                pending = message;
+                permissionHandler.reset();
+                reasoningProcessor.abort();
+                diffProcessor.reset();
+                session.onThinkingChange(false);
+                continue;
+            }
+
             if (!useAppServer && wasCreated && currentModeHash && message.hash !== currentModeHash) {
                 logger.debug('[Codex] Mode changed – restarting Codex session');
                 messageBuffer.addMessage('═'.repeat(40), 'status');
@@ -860,6 +883,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
             messageBuffer.addMessage(message.message, 'user');
             currentModeHash = message.hash;
+            activeMode = message.mode;
             activeTurnLocalKey = message.localKey ?? null;
             activeTurnHasAssistantReply = false;
             trackTurnOutput = true;
@@ -913,6 +937,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
                         this.currentThreadId = threadId;
                         session.onSessionFound(threadId);
+                        currentThreadConfigHash = messageThreadConfigHash;
 
                         const turnParams = buildTurnStartParams({
                             threadId,

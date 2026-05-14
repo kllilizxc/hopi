@@ -10,11 +10,18 @@ import type {
     TurnStartParams
 } from '../appServerTypes';
 
-export type McpServersConfig = Record<string, { command: string; args: string[] }>;
+export type McpServersConfig = Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
 
 const DEFAULT_CODEX_THREAD_INSTRUCTIONS = 'You are Codex, an AI coding agent. Follow the user instructions and repository guidance.';
 
+function hasHardToolRestrictions(mode: EnhancedMode | undefined): boolean {
+    return Array.isArray(mode?.disallowedTools) && mode.disallowedTools.length > 0;
+}
+
 function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
+    if (hasHardToolRestrictions(mode)) {
+        return 'on-request';
+    }
     switch (mode.permissionMode) {
         case 'default': return 'untrusted';
         case 'read-only': return 'never';
@@ -69,7 +76,8 @@ function buildMcpServerConfig(mcpServers: McpServersConfig): Record<string, unkn
     for (const [name, server] of Object.entries(mcpServers)) {
         config[`mcp_servers.${name}`] = {
             command: server.command,
-            args: server.args
+            args: server.args,
+            ...(server.env ? { env: server.env } : {})
         };
     }
 
@@ -86,7 +94,7 @@ export function buildThreadStartParams(args: {
 }): ThreadStartParams {
     const approvalPolicy = resolveApprovalPolicy(args.mode);
     const sandbox = resolveSandbox(args.mode);
-    const allowCliOverrides = args.mode.permissionMode === 'default';
+    const allowCliOverrides = args.mode.permissionMode === 'default' && !hasHardToolRestrictions(args.mode);
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
     const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? approvalPolicy;
     const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
@@ -98,7 +106,8 @@ export function buildThreadStartParams(args: {
         : DEFAULT_CODEX_THREAD_INSTRUCTIONS;
     const resolvedDeveloperInstructions = [
         baseInstructions,
-        args.developerInstructions
+        args.developerInstructions,
+        args.mode.appendSystemPrompt
     ].filter((part): part is string => Boolean(part && part.trim())).join('\n\n');
     const configWithInstructions = {
         ...config,
@@ -146,11 +155,14 @@ export function buildTurnStartParams(args: {
         params.cwd = args.cwd;
     }
 
-    const allowCliOverrides = args.mode?.permissionMode === 'default';
+    const allowCliOverrides = args.mode?.permissionMode === 'default' && !hasHardToolRestrictions(args.mode);
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
-    const approvalPolicy = args.overrides?.approvalPolicy
-        ?? cliOverrides?.approvalPolicy
-        ?? (args.mode ? resolveApprovalPolicy(args.mode) : undefined);
+    const hardToolRestrictions = hasHardToolRestrictions(args.mode);
+    const approvalPolicy = hardToolRestrictions
+        ? (args.mode ? resolveApprovalPolicy(args.mode) : undefined)
+        : args.overrides?.approvalPolicy
+            ?? cliOverrides?.approvalPolicy
+            ?? (args.mode ? resolveApprovalPolicy(args.mode) : undefined);
     if (approvalPolicy) {
         params.approvalPolicy = approvalPolicy;
     }

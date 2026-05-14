@@ -73,7 +73,7 @@ export function bootstrapGoalDocs(input: {
         '- `decisions.md`: decisions that affect more than one Goal.',
         '- `tech-debt.md`: curated cross-Goal technical debt and radar findings.',
         '- `goals/<goal-key>/goal.md`: the Goal brief, strategy, focus, and planning history.',
-        '- `goals/<goal-key>/todo.yml`: the Goal todo reservoir.',
+        '- `goals/<goal-key>/todo.yml`: the Goal todo reservoir; use stable item `ref` values and `dependencyTaskList` for normal prerequisites.',
         '- `goals/<goal-key>/decisions.md`: decisions local to that Goal.',
         '',
         '## Working Rules', '',

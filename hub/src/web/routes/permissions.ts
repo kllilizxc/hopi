@@ -2,6 +2,7 @@ import { isPermissionModeAllowedForFlavor } from '@hopi/protocol'
 import { PermissionModeSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { isOperatorConsoleMetadata } from '../../sync/operatorConsole'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
@@ -42,6 +43,9 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
             return sessionResult
         }
         const { sessionId, session } = sessionResult
+        if (isOperatorConsoleMetadata(session.metadata)) {
+            return c.json({ error: 'Operator console sessions cannot approve permission requests' }, 403)
+        }
 
         const json = await c.req.json().catch(() => null)
         const parsed = approveBodySchema.safeParse(json ?? {})

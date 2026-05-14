@@ -352,12 +352,16 @@ export class ApiClient {
         })
     }
 
-    async activateProjectAssistantSession(projectId: string, sessionId: string): Promise<ProjectAssistantSessionResponse> {
+    async activateProjectAssistantSession(projectId: string, sessionId: string, initialMessage?: {
+        text: string
+        localId?: string | null
+        attachments?: AttachmentMetadata[]
+    }): Promise<ProjectAssistantSessionResponse> {
         return await this.request<ProjectAssistantSessionResponse>(
             `/api/projects/${encodeURIComponent(projectId)}/assistant-sessions/${encodeURIComponent(sessionId)}/activate`,
             {
                 method: 'POST',
-                body: JSON.stringify({})
+                body: JSON.stringify(initialMessage ? { initialMessage } : {})
             }
         )
     }

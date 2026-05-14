@@ -64,16 +64,20 @@ export const ProjectAssistantSessionChat = memo(function ProjectAssistantSession
         retryMessage,
         isSending,
     } = useSendMessage(props.api, props.sessionId, {
-        resolveSessionId: async (currentSessionId) => {
+        resolveSessionId: async (currentSessionId, message) => {
             if (!props.api || !session || session.active) {
                 return currentSessionId
             }
             if (session.metadata?.hopiAssistant === true && !hasAgentResumeMetadata(session.metadata)) {
-                const response = await props.api.activateProjectAssistantSession(props.projectId, currentSessionId)
-                return response.session.id
+                const response = await props.api.activateProjectAssistantSession(props.projectId, currentSessionId, {
+                    text: message.text,
+                    localId: message.localId,
+                    attachments: message.attachments,
+                })
+                return { sessionId: response.session.id, notify: true, handled: true }
             }
             try {
-                return await props.api.resumeSession(currentSessionId)
+                return { sessionId: await props.api.resumeSession(currentSessionId), notify: true }
             } catch (error) {
                 const resumeFailedMessage = t('projects.sessions.resumeFailed')
                 const message = error instanceof Error ? error.message : resumeFailedMessage

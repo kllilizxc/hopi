@@ -4,7 +4,14 @@ import type { CodexCliOverrides } from './codexCliOverrides';
 import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
 
+function hasHardToolRestrictions(mode: EnhancedMode): boolean {
+    return Array.isArray(mode.disallowedTools) && mode.disallowedTools.length > 0;
+}
+
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
+    if (hasHardToolRestrictions(mode)) {
+        return 'on-request';
+    }
     switch (mode.permissionMode) {
         case 'default': return 'untrusted';
         case 'read-only': return 'never';
@@ -33,13 +40,13 @@ export function buildCodexStartConfig(args: {
     mode: EnhancedMode;
     first: boolean;
     cwd?: string;
-    mcpServers: Record<string, { command: string; args: string[] }>;
+    mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
     cliOverrides?: CodexCliOverrides;
     developerInstructions?: string;
 }): CodexSessionConfig {
     const approvalPolicy = resolveApprovalPolicy(args.mode);
     const sandbox = resolveSandbox(args.mode);
-    const allowCliOverrides = args.mode.permissionMode === 'default';
+    const allowCliOverrides = args.mode.permissionMode === 'default' && !hasHardToolRestrictions(args.mode);
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
     const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? approvalPolicy;
     const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
@@ -48,7 +55,8 @@ export function buildCodexStartConfig(args: {
     const baseInstructions = codexSystemPrompt;
     const developerInstructions = [
         baseInstructions,
-        args.developerInstructions
+        args.developerInstructions,
+        args.mode.appendSystemPrompt
     ].filter((part): part is string => Boolean(part && part.trim())).join('\n\n');
     const config: Record<string, unknown> = {
         ...(Object.keys(args.mcpServers).length > 0 ? { mcp_servers: args.mcpServers } : {}),

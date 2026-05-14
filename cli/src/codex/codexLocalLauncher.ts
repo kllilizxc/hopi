@@ -28,7 +28,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 onSessionFound: handleSessionFound,
                 abort: abortSignal,
                 codexArgs: session.codexArgs,
-                mcpServers: {}
+                mcpServers: session.mcpServers
             });
         },
         sendFailureMessage: (message) => {

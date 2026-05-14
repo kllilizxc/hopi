@@ -161,6 +161,8 @@ export default {
   'projects.tasks.moveFailed': 'Move failed',
   'projects.tasks.generated': 'Auto-generated',
   'projects.tasks.subtasksProgress': 'Subtasks {completed}/{total}',
+  'projects.tasks.dependencies': 'Depends on',
+  'projects.tasks.dependencies.unknown': 'Unknown',
   'projects.tasks.subtasks.expand': 'Expand subtasks',
   'projects.tasks.subtasks.collapse': 'Collapse subtasks',
   'projects.tasks.approve': 'Approve',

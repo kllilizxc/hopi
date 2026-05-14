@@ -8,6 +8,7 @@ import { ApiClient, ApiSessionClient } from '@/lib';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { CodexPermissionMode } from '@hopi/protocol/types';
 import type { CollaborationMode } from './appServerTypes';
+import { buildOperatorMcpServerConfig } from '@/operator/consoleTools';
 
 export type PermissionMode = CodexPermissionMode;
 
@@ -15,6 +16,9 @@ export interface EnhancedMode {
     permissionMode: PermissionMode;
     model?: string;
     collaborationMode?: CollaborationMode['mode'];
+    appendSystemPrompt?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
 }
 
 interface LoopOptions {
@@ -36,6 +40,7 @@ export async function loop(opts: LoopOptions): Promise<void> {
     const logPath = logger.getLogPath();
     const startedBy = opts.startedBy ?? 'terminal';
     const startingMode = opts.startingMode ?? 'local';
+    const mcpServers = buildOperatorMcpServerConfig(opts.session);
     const session = new CodexSession({
         api: opts.api,
         client: opts.session,
@@ -49,6 +54,7 @@ export async function loop(opts: LoopOptions): Promise<void> {
         startingMode,
         codexArgs: opts.codexArgs,
         codexCliOverrides: opts.codexCliOverrides,
+        mcpServers,
         permissionMode: opts.permissionMode ?? 'default'
     });
 

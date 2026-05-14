@@ -328,6 +328,35 @@ describe('Task store worktree merge fields', () => {
         expect(unblocked?.blockedAt).toBeNull()
     })
 
+    it('persists task dependency ids across create and update', () => {
+        const store = new Store(':memory:')
+        store.projects.createProject({
+            id: 'project-task-dependencies',
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+
+        const created = store.tasks.createTask({
+            id: 'task-dependent',
+            projectId: 'project-task-dependencies',
+            title: 'Dependent task',
+            status: 'planned',
+            workflowProfile: 'default',
+            dependsOnTaskIds: [' task-upstream ', 'task-upstream', '', 'task-other']
+        })
+
+        expect(created.dependsOnTaskIds).toEqual(['task-upstream', 'task-other'])
+        expect(store.tasks.getTaskByNamespace('task-dependent', 'default')?.dependsOnTaskIds)
+            .toEqual(['task-upstream', 'task-other'])
+
+        const updated = store.tasks.updateTaskByNamespace('task-dependent', 'default', {
+            dependsOnTaskIds: ['task-new-upstream']
+        })
+
+        expect(updated?.dependsOnTaskIds).toEqual(['task-new-upstream'])
+    })
+
     it('preserves merge markers when relinking with preserve flag', () => {
         const store = new Store(':memory:')
         store.projects.createProject({

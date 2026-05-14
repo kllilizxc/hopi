@@ -1,4 +1,4 @@
-import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationBackstopPolicySchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, AgentOutputLanguageSchema, AttachmentMetadataSchema, AutomationBackstopPolicySchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
@@ -76,6 +76,14 @@ const listQuerySchema = z.object({
 const assistantSessionBodySchema = z.object({
     kind: z.literal('normal').optional().default('normal'),
     goalId: z.string().min(1).nullable().optional()
+})
+
+const assistantActivationBodySchema = z.object({
+    initialMessage: z.object({
+        text: z.string(),
+        localId: z.string().min(1).optional(),
+        attachments: z.array(AttachmentMetadataSchema).optional()
+    }).optional()
 })
 
 const operatorSourceBodySchema = z.object({
@@ -396,6 +404,11 @@ export function createProjectsRoutes(options: {
         const namespace = c.get('namespace')
         const projectId = c.req.param('projectId')
         const sessionId = c.req.param('sessionId')
+        const body = await c.req.json().catch(() => ({}))
+        const parsed = assistantActivationBodySchema.safeParse(body ?? {})
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
         const engine = options.getSyncEngine()
         if (!engine) {
             return c.json({ error: 'Runner is not connected' }, 503)
@@ -407,7 +420,8 @@ export function createProjectsRoutes(options: {
                 engine,
                 namespace,
                 projectId,
-                sessionId
+                sessionId,
+                initialMessage: parsed.data.initialMessage
             })
             const list = listProjectAssistantSessions({
                 store: options.store,

@@ -26,7 +26,10 @@ interface PermissionResult {
     reason?: string;
 }
 
+const HOPI_OPERATOR_MCP_TOOL_PREFIX = 'mcp__hopi_operator__';
+
 type CodexPermissionHandlerOptions = {
+    getDisallowedTools?: () => string[] | undefined;
     onRequest?: (request: { id: string; toolName: string; input: unknown }) => void;
     onComplete?: (result: {
         id: string;
@@ -47,6 +50,55 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
         super(session);
     }
 
+    private isToolDisallowed(toolName: string): boolean {
+        const disallowedTools = this.options?.getDisallowedTools?.() ?? [];
+        if (disallowedTools.length === 0) {
+            return false;
+        }
+        const normalizedToolName = toolName.trim().toLowerCase();
+        return disallowedTools.some((tool) => tool.trim().toLowerCase() === normalizedToolName);
+    }
+
+    private completeImmediateRequest(
+        toolCallId: string,
+        toolName: string,
+        input: unknown,
+        result: PermissionResult,
+        completion: {
+            approved: boolean;
+            status: 'approved' | 'denied';
+            mode: PermissionMode;
+            reason?: string;
+        }
+    ): void {
+        this.options?.onRequest?.({ id: toolCallId, toolName, input });
+        this.options?.onComplete?.({
+            id: toolCallId,
+            toolName,
+            input,
+            approved: completion.approved,
+            decision: result.decision,
+            reason: result.reason
+        });
+
+        this.client.updateAgentState((currentState) => ({
+            ...currentState,
+            completedRequests: {
+                ...currentState.completedRequests,
+                [toolCallId]: {
+                    tool: toolName,
+                    arguments: input,
+                    createdAt: Date.now(),
+                    completedAt: Date.now(),
+                    status: completion.status,
+                    mode: completion.mode,
+                    decision: result.decision,
+                    reason: completion.reason
+                }
+            }
+        }));
+    }
+
     protected override onRequestRegistered(id: string, toolName: string, input: unknown): void {
         this.options?.onRequest?.({ id, toolName, input });
     }
@@ -64,34 +116,38 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
         input: unknown
     ): Promise<PermissionResult> {
         const mode = this.getPermissionMode() ?? 'default';
+        if (this.isToolDisallowed(toolName)) {
+            const reason = 'Tool is disallowed for this operator console session';
+            const result: PermissionResult = { decision: 'denied', reason };
+            this.completeImmediateRequest(toolCallId, toolName, input, result, {
+                approved: false,
+                status: 'denied',
+                mode,
+                reason
+            });
+            logger.debug(`[Codex] Denied disallowed tool ${toolName} (${toolCallId}) mode=${mode}`);
+            return result;
+        }
+
+        if (toolName.trim().toLowerCase().startsWith(HOPI_OPERATOR_MCP_TOOL_PREFIX)) {
+            const result: PermissionResult = { decision: 'approved' };
+            this.completeImmediateRequest(toolCallId, toolName, input, result, {
+                approved: true,
+                status: 'approved',
+                mode
+            });
+            logger.debug(`[Codex] Auto-approved HOPI operator tool ${toolName} (${toolCallId}) mode=${mode}`);
+            return result;
+        }
+
         const autoDecision = this.resolveAutoApprovalDecision(mode, toolName, toolCallId);
         if (autoDecision) {
             const result: PermissionResult = { decision: autoDecision };
-            this.options?.onRequest?.({ id: toolCallId, toolName, input });
-            this.options?.onComplete?.({
-                id: toolCallId,
-                toolName,
-                input,
+            this.completeImmediateRequest(toolCallId, toolName, input, result, {
                 approved: true,
-                decision: result.decision
+                status: 'approved',
+                mode
             });
-
-            // Record completion in agent state (mirrors Gemini/Opencode handlers).
-            this.client.updateAgentState((currentState) => ({
-                ...currentState,
-                completedRequests: {
-                    ...currentState.completedRequests,
-                    [toolCallId]: {
-                        tool: toolName,
-                        arguments: input,
-                        createdAt: Date.now(),
-                        completedAt: Date.now(),
-                        status: 'approved',
-                        mode,
-                        decision: result.decision
-                    }
-                }
-            }));
 
             logger.debug(`[Codex] Auto-approved ${toolName} (${toolCallId}) mode=${mode} decision=${result.decision}`);
             return result;
@@ -124,6 +180,49 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
         }
 
         for (const [id, pending] of Array.from(this.pendingRequests.entries())) {
+            if (this.isToolDisallowed(pending.toolName)) {
+                this.pendingRequests.delete(id);
+                const reason = 'Tool is disallowed for this operator console session';
+                const result: PermissionResult = { decision: 'denied', reason };
+                this.options?.onComplete?.({
+                    id,
+                    toolName: pending.toolName,
+                    input: pending.input,
+                    approved: false,
+                    decision: result.decision,
+                    reason
+                });
+                pending.resolve(result);
+                this.finalizeRequest(id, {
+                    status: 'denied',
+                    mode,
+                    decision: result.decision,
+                    reason
+                });
+                logger.debug(`[Codex] Denied pending disallowed ${pending.toolName} (${id}) mode=${mode}`);
+                continue;
+            }
+
+            if (pending.toolName.trim().toLowerCase().startsWith(HOPI_OPERATOR_MCP_TOOL_PREFIX)) {
+                this.pendingRequests.delete(id);
+                const result: PermissionResult = { decision: 'approved' };
+                this.options?.onComplete?.({
+                    id,
+                    toolName: pending.toolName,
+                    input: pending.input,
+                    approved: true,
+                    decision: result.decision
+                });
+                pending.resolve(result);
+                this.finalizeRequest(id, {
+                    status: 'approved',
+                    mode,
+                    decision: result.decision
+                });
+                logger.debug(`[Codex] Auto-approved pending HOPI operator tool ${pending.toolName} (${id}) mode=${mode}`);
+                continue;
+            }
+
             const autoDecision = this.resolveAutoApprovalDecision(mode, pending.toolName, id);
             if (!autoDecision) {
                 continue;

@@ -28,6 +28,7 @@ function createTestApp(store: Store, options?: { activeSessionIds?: Set<string> 
     sent: Array<{
         sessionId: string
         text: string
+        appendSystemPrompt?: string | null
         allowedTools?: string[] | null
         disallowedTools?: string[] | null
     }>
@@ -35,6 +36,7 @@ function createTestApp(store: Store, options?: { activeSessionIds?: Set<string> 
     const sent: Array<{
         sessionId: string
         text: string
+        appendSystemPrompt?: string | null
         allowedTools?: string[] | null
         disallowedTools?: string[] | null
     }> = []
@@ -71,12 +73,14 @@ function createTestApp(store: Store, options?: { activeSessionIds?: Set<string> 
         async sendMessage(sessionId: string, payload: {
             text: string
             localId?: string | null
+            appendSystemPrompt?: string | null
             allowedTools?: string[] | null
             disallowedTools?: string[] | null
         }) {
             sent.push({
                 sessionId,
                 text: payload.text,
+                appendSystemPrompt: payload.appendSystemPrompt,
                 allowedTools: payload.allowedTools,
                 disallowedTools: payload.disallowedTools
             })
@@ -188,11 +192,15 @@ describe('messages routes', () => {
             sessionId: session.id,
             text: 'Record that preference.'
         })
-        expect(sent[0]?.disallowedTools).toContain('Bash')
         expect(sent[0]?.disallowedTools).toContain('Write')
         expect(sent[0]?.disallowedTools).toContain('Edit')
         expect(sent[0]?.disallowedTools).toContain('MultiEdit')
         expect(sent[0]?.disallowedTools).toContain('Task')
+        expect(sent[0]?.disallowedTools).not.toContain('Bash')
+        expect(sent[0]?.disallowedTools).not.toContain('CodexBash')
+        expect(sent[0]?.disallowedTools).toContain('CodexPatch')
+        expect(sent[0]?.appendSystemPrompt).toContain('operator_console')
+        expect(sent[0]?.appendSystemPrompt).toContain('hopi_retry_blocked_merge')
     })
 
     it('does not treat inactive synthetic intervention replies as hidden decision resolution', async () => {

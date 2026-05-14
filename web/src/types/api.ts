@@ -163,12 +163,18 @@ export type GoalResponse = { goal: Goal }
 export type GoalDecisionTopicsResponse = { topics: GoalDecisionTopic[] }
 export type GoalDecisionTopicResponse = { topic: GoalDecisionTopic }
 export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
+export type GoalTodoDependencyTask = {
+    ref: string | null
+    taskId: string | null
+    title: string | null
+}
 export type GoalTodoSection = {
     kind: GoalTodoSectionKind
     title: string
     body: string
     taskId: string | null
     todoRef: string | null
+    dependencyTaskList: GoalTodoDependencyTask[]
 }
 export type GoalTodoResponse = {
     exists: boolean

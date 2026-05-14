@@ -59,10 +59,22 @@ export class GeminiPermissionHandler extends BasePermissionHandler<PermissionRes
     constructor(
         session: ApiSessionClient,
         private readonly backend: AgentBackend,
-        private readonly getPermissionMode: () => GeminiPermissionMode | undefined
+        private readonly getPermissionMode: () => GeminiPermissionMode | undefined,
+        private readonly options?: {
+            getDisallowedTools?: () => string[] | undefined;
+        }
     ) {
         super(session);
         this.backend.onPermissionRequest((request) => this.handlePermissionRequest(request));
+    }
+
+    private isToolDisallowed(toolName: string): boolean {
+        const disallowedTools = this.options?.getDisallowedTools?.() ?? [];
+        if (disallowedTools.length === 0) {
+            return false;
+        }
+        const normalizedToolName = toolName.trim().toLowerCase();
+        return disallowedTools.some((tool) => tool.trim().toLowerCase() === normalizedToolName);
     }
 
     private handlePermissionRequest(request: PermissionRequest): void {
@@ -73,6 +85,11 @@ export class GeminiPermissionHandler extends BasePermissionHandler<PermissionRes
         });
         const toolInput = deriveToolInput(request);
         const mode = this.getPermissionMode() ?? 'default';
+
+        if (this.isToolDisallowed(toolName)) {
+            void this.denyDisallowed(request, toolName, toolInput, mode);
+            return;
+        }
 
         const autoDecision = this.resolveAutoApprovalDecision(mode, toolName, request.toolCallId);
         if (autoDecision) {
@@ -87,6 +104,36 @@ export class GeminiPermissionHandler extends BasePermissionHandler<PermissionRes
         });
 
         logger.debug(`[Gemini] Permission request queued for ${toolName} (${request.id})`);
+    }
+
+    private async denyDisallowed(
+        request: PermissionRequest,
+        toolName: string,
+        toolInput: unknown,
+        mode: GeminiPermissionMode
+    ): Promise<void> {
+        const decision = 'denied' as const;
+        const outcome = mapDecisionToOutcome(request, decision);
+        await this.backend.respondToPermission(request.sessionId, request, outcome);
+
+        this.client.updateAgentState((currentState) => ({
+            ...currentState,
+            completedRequests: {
+                ...currentState.completedRequests,
+                [request.id]: {
+                    tool: toolName,
+                    arguments: toolInput,
+                    createdAt: Date.now(),
+                    completedAt: Date.now(),
+                    status: 'denied',
+                    mode,
+                    decision,
+                    reason: 'Tool is disallowed for this operator console session'
+                }
+            }
+        }));
+
+        logger.debug(`[Gemini] Denied disallowed tool ${toolName} (${request.id}) mode=${mode}`);
     }
 
     private async autoApprove(

@@ -12,12 +12,19 @@ import {
 
 export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
 
+export type GoalTodoDependencyTask = {
+    ref: string | null
+    taskId: string | null
+    title: string | null
+}
+
 export type GoalTodoSection = {
     kind: GoalTodoSectionKind
     title: string
     body: string
     taskId: string | null
     todoRef: string | null
+    dependencyTaskList: GoalTodoDependencyTask[]
 }
 
 export type GoalTodoResponse = {
@@ -41,6 +48,7 @@ type GoalTodoYamlItem = {
     title: string
     taskId?: string | null
     body?: string | null
+    dependencyTaskList?: GoalTodoDependencyTask[]
     [key: string]: unknown
 }
 
@@ -100,6 +108,29 @@ function cleanNullableString(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+function normalizeDependencyTaskList(value: unknown): GoalTodoDependencyTask[] {
+    if (!Array.isArray(value)) return []
+    const dependencies: GoalTodoDependencyTask[] = []
+    const seen = new Set<string>()
+    for (const item of value) {
+        const dependency = typeof item === 'string'
+            ? { ref: cleanNullableString(item), taskId: null, title: null }
+            : item && typeof item === 'object' && !Array.isArray(item)
+                ? {
+                    ref: cleanNullableString((item as Record<string, unknown>).ref),
+                    taskId: cleanNullableString((item as Record<string, unknown>).taskId),
+                    title: cleanNullableString((item as Record<string, unknown>).title)
+                }
+                : null
+        if (!dependency || (!dependency.ref && !dependency.taskId)) continue
+        const key = `${dependency.ref ?? ''}\0${dependency.taskId ?? ''}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        dependencies.push(dependency)
+    }
+    return dependencies
+}
+
 function getCanonicalGoalTodoYamlPath(defaultWorkspace: StoredWorkspace | null, scope: GoalTodoScope): string | null {
     const docsRoot = getDocsRoot(defaultWorkspace)
     const goalKey = scope.goalKey?.trim() || scope.goalId
@@ -139,7 +170,8 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
                     status: normalizeStatus(item.status ?? 'candidate'),
                     title: cleanNullableString(item.title) ?? item.ref.trim(),
                     taskId: cleanNullableString(item.taskId),
-                    body: cleanNullableString(item.body ?? item.notes ?? item.description)
+                    body: cleanNullableString(item.body ?? item.notes ?? item.description),
+                    dependencyTaskList: normalizeDependencyTaskList(item.dependencyTaskList)
                 }))
             }))
         }
@@ -156,8 +188,9 @@ function cleanYamlItem(item: GoalTodoYamlItem): Record<string, unknown> {
     }
     if (item.taskId) next.taskId = item.taskId
     if (item.body) next.body = item.body
+    if (item.dependencyTaskList && item.dependencyTaskList.length > 0) next.dependencyTaskList = item.dependencyTaskList
     for (const [key, value] of Object.entries(item)) {
-        if (['ref', 'status', 'title', 'taskId', 'body', 'notes', 'description'].includes(key)) continue
+        if (['ref', 'status', 'title', 'taskId', 'body', 'notes', 'description', 'dependencyTaskList'].includes(key)) continue
         if (value !== undefined && value !== null) next[key] = value
     }
     return next
@@ -187,7 +220,8 @@ function sectionFromYamlItem(item: GoalTodoYamlItem): GoalTodoSection | null {
         title,
         body: item.body?.trim() ?? '',
         taskId: item.taskId?.trim() || null,
-        todoRef: ref
+        todoRef: ref,
+        dependencyTaskList: item.dependencyTaskList ?? []
     }
 }
 
@@ -437,7 +471,8 @@ export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): P
                     title,
                     body: collected.body,
                     taskId: extractLegacyTaskId(joined),
-                    todoRef: metadata.todoRef
+                    todoRef: metadata.todoRef,
+                    dependencyTaskList: []
                 })
             }
             index = collected.nextIndex
@@ -464,7 +499,8 @@ export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): P
                     title,
                     body: collected.body,
                     taskId: extractLegacyTaskId(joined),
-                    todoRef: metadata.todoRef
+                    todoRef: metadata.todoRef,
+                    dependencyTaskList: []
                 })
             }
             index = collected.nextIndex

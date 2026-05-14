@@ -7,6 +7,7 @@ import type { EnhancedMode } from './loop';
 import type { PermissionMode } from './loop';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 import type { PermissionHandler } from './utils/permissionHandler';
+import { buildOperatorToolBridgeMetadataPatch } from '@/operator/consoleTools';
 
 type LocalLaunchFailure = {
     message: string;
@@ -63,7 +64,8 @@ export class Session extends AgentSessionBase<EnhancedMode> {
             sessionIdLabel: 'Claude Code',
             applySessionIdToMetadata: (metadata, sessionId) => ({
                 ...metadata,
-                claudeSessionId: sessionId
+                claudeSessionId: sessionId,
+                ...buildOperatorToolBridgeMetadataPatch(opts.mcpServers)
             }),
             permissionMode: opts.permissionMode,
             modelMode: opts.modelMode

@@ -50,12 +50,18 @@ export async function runGemini(opts: {
 
     const messageQueue = new MessageQueue2<GeminiMode>((mode) => hashObject({
         permissionMode: mode.permissionMode,
-        model: mode.model
+        model: mode.model,
+        appendSystemPrompt: mode.appendSystemPrompt,
+        allowedTools: mode.allowedTools,
+        disallowedTools: mode.disallowedTools
     }));
 
     const sessionWrapperRef: { current: GeminiSession | null } = { current: null };
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
     const resolvedModel = resolveGeminiRuntimeConfig({ model: opts.model }).model;
+    let currentAppendSystemPrompt: string | undefined;
+    let currentAllowedTools: string[] | undefined;
+    let currentDisallowedTools: string[] | undefined;
 
     const hookServer = await startHookServer({
         onSessionHook: (sessionId, data) => {
@@ -102,10 +108,31 @@ export async function runGemini(opts: {
     };
 
     session.onUserMessage((message) => {
+        let messageAppendSystemPrompt = currentAppendSystemPrompt;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'appendSystemPrompt')) {
+            messageAppendSystemPrompt = message.meta?.appendSystemPrompt || undefined;
+            currentAppendSystemPrompt = messageAppendSystemPrompt;
+        }
+
+        let messageAllowedTools = currentAllowedTools;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'allowedTools')) {
+            messageAllowedTools = message.meta?.allowedTools || undefined;
+            currentAllowedTools = messageAllowedTools;
+        }
+
+        let messageDisallowedTools = currentDisallowedTools;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'disallowedTools')) {
+            messageDisallowedTools = message.meta?.disallowedTools || undefined;
+            currentDisallowedTools = messageDisallowedTools;
+        }
+
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
         const mode: GeminiMode = {
             permissionMode: currentPermissionMode,
-            model: resolvedModel
+            model: resolvedModel,
+            appendSystemPrompt: messageAppendSystemPrompt,
+            allowedTools: messageAllowedTools,
+            disallowedTools: messageDisallowedTools
         };
         messageQueue.push(formattedText, mode, message.localKey ?? null);
     });

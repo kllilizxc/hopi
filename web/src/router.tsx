@@ -173,7 +173,7 @@ function SessionPage() {
                 return currentSessionId
             }
             try {
-                return await api.resumeSession(currentSessionId)
+                return { sessionId: await api.resumeSession(currentSessionId), notify: true }
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Resume failed'
                 addToast({

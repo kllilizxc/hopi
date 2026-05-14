@@ -1,3 +1,9 @@
+export type OperatorConsoleSpawnConfig = {
+    projectId: string
+    goalId?: string | null
+    taskId?: string | null
+}
+
 export interface SpawnSessionOptions {
     machineId?: string
     directory: string
@@ -13,6 +19,7 @@ export interface SpawnSessionOptions {
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
     worktreeTargetBranch?: string
+    operatorConsole?: OperatorConsoleSpawnConfig
 }
 
 export type SpawnSessionResult =

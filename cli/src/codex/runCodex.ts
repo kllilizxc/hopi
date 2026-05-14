@@ -50,7 +50,10 @@ export async function runCodex(opts: {
     const messageQueue = new MessageQueue2<EnhancedMode>((mode) => hashObject({
         permissionMode: mode.permissionMode,
         model: mode.model,
-        collaborationMode: mode.collaborationMode
+        collaborationMode: mode.collaborationMode,
+        appendSystemPrompt: mode.appendSystemPrompt,
+        allowedTools: mode.allowedTools,
+        disallowedTools: mode.disallowedTools
     }));
 
     const codexCliOverrides = parseCodexCliOverrides(opts.codexArgs);
@@ -59,6 +62,9 @@ export async function runCodex(opts: {
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
     const currentModel = opts.model;
     let currentCollaborationMode: EnhancedMode['collaborationMode'];
+    let currentAppendSystemPrompt: string | undefined;
+    let currentAllowedTools: string[] | undefined;
+    let currentDisallowedTools: string[] | undefined;
 
     const lifecycle = createRunnerLifecycle({
         session,
@@ -80,12 +86,37 @@ export async function runCodex(opts: {
 
     session.onUserMessage((message) => {
         const messagePermissionMode = currentPermissionMode;
-        logger.debug(`[Codex] User message received with permission mode: ${currentPermissionMode}`);
+        let messageAppendSystemPrompt = currentAppendSystemPrompt;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'appendSystemPrompt')) {
+            messageAppendSystemPrompt = message.meta?.appendSystemPrompt || undefined;
+            currentAppendSystemPrompt = messageAppendSystemPrompt;
+        }
+
+        let messageAllowedTools = currentAllowedTools;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'allowedTools')) {
+            messageAllowedTools = message.meta?.allowedTools || undefined;
+            currentAllowedTools = messageAllowedTools;
+        }
+
+        let messageDisallowedTools = currentDisallowedTools;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'disallowedTools')) {
+            messageDisallowedTools = message.meta?.disallowedTools || undefined;
+            currentDisallowedTools = messageDisallowedTools;
+        }
+
+        logger.debug(
+            `[Codex] User message received with permission mode: ${currentPermissionMode}, ` +
+            `appendSystemPrompt=${messageAppendSystemPrompt ? 'set' : 'none'}, ` +
+            `disallowedTools=${messageDisallowedTools ? messageDisallowedTools.join(',') : 'none'}`
+        );
 
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode ?? 'default',
             model: currentModel,
-            collaborationMode: currentCollaborationMode
+            collaborationMode: currentCollaborationMode,
+            appendSystemPrompt: messageAppendSystemPrompt,
+            allowedTools: messageAllowedTools,
+            disallowedTools: messageDisallowedTools
         };
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
         const normalizedText = normalizeCodexSlashCommand(formattedText, { diffBaseRef });

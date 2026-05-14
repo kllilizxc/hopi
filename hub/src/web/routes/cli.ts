@@ -26,6 +26,12 @@ const getMessagesQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).optional()
 })
 
+const operatorToolCallSchema = z.object({
+    sessionId: z.string().min(1),
+    toolName: z.string().min(1),
+    input: z.unknown().optional()
+})
+
 type CliEnv = {
     Variables: {
         namespace: string
@@ -173,6 +179,27 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             return c.json({ error: resolved.error }, resolved.status)
         }
         return c.json({ machine: resolved.machine })
+    })
+
+    app.post('/operator-tools/call', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ ok: false, error: 'Not ready' }, 503)
+        }
+        const json = await c.req.json().catch(() => null)
+        const parsed = operatorToolCallSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ ok: false, error: 'Invalid body' }, 400)
+        }
+
+        const namespace = c.get('namespace')
+        const result = await engine.executeProjectAssistantOperatorTool({
+            namespace,
+            sessionId: parsed.data.sessionId,
+            toolName: parsed.data.toolName,
+            input: parsed.data.input ?? {}
+        })
+        return c.json(result, result.ok ? 200 : 403)
     })
 
     return app

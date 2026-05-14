@@ -6,6 +6,7 @@ import { geminiLocalLauncher } from './geminiLocalLauncher';
 import { geminiRemoteLauncher } from './geminiRemoteLauncher';
 import { ApiClient, ApiSessionClient } from '@/lib';
 import type { GeminiMode, PermissionMode } from './types';
+import { buildOperatorMcpServerList } from '@/operator/consoleTools';
 
 interface GeminiLoopOptions {
     path: string;
@@ -26,6 +27,7 @@ export async function geminiLoop(opts: GeminiLoopOptions): Promise<void> {
     const logPath = logger.getLogPath();
     const startedBy = opts.startedBy ?? 'terminal';
     const startingMode = opts.startingMode ?? 'local';
+    const mcpServers = buildOperatorMcpServerList(opts.session);
 
     const session = new GeminiSession({
         api: opts.api,
@@ -38,6 +40,7 @@ export async function geminiLoop(opts: GeminiLoopOptions): Promise<void> {
         mode: startingMode,
         startedBy,
         startingMode,
+        mcpServers,
         permissionMode: opts.permissionMode ?? 'default'
     });
 

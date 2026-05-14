@@ -17,7 +17,7 @@ import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
-import { KANBAN_COLUMNS } from '@/lib/task-status'
+import { KANBAN_COLUMNS, TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
 import { isMobileViewport } from '@/lib/device'
 import { isOptimisticTaskId } from '@/lib/optimistic-task'
 import { Tag } from '@/components/ui/tag'
@@ -340,6 +340,7 @@ type TouchDragState = {
 
 type KanbanTaskCardProps = {
     task: Task
+    tasksById: Map<string, Task>
     index: number
     columnStatus: TaskStatus
     isSelectedTask: boolean
@@ -360,6 +361,12 @@ type KanbanTaskCardProps = {
     onTaskTouchCancel: (taskId: string) => void
 }
 
+type KanbanTaskDependency = {
+    id: string
+    title: string
+    status: TaskStatus | null
+}
+
 const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) {
     const { t } = useTranslation()
     const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
@@ -372,6 +379,17 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
+    const dependencyTasks = useMemo<KanbanTaskDependency[]>(() => {
+        const dependencyIds = props.task.dependsOnTaskIds ?? []
+        return dependencyIds.map((taskId) => {
+            const dependencyTask = props.tasksById.get(taskId)
+            return {
+                id: taskId,
+                title: dependencyTask?.title ?? `#${taskId.slice(0, 8)}`,
+                status: dependencyTask?.status ?? null
+            }
+        })
+    }, [props.task.dependsOnTaskIds, props.tasksById])
     const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
     const blockedSummary = buildTaskBlockedStatusSummary(props.task)
     const canExpandSubTasks = subTasks.length > 0
@@ -495,6 +513,30 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         {blockedSummary?.detail ? (
                             <div className="mt-2 rounded-md bg-[var(--app-badge-error-bg)] px-2 py-1.5 text-[11px] leading-snug text-[var(--app-badge-error-text)] shadow-[inset_0_0_0_1px_var(--app-badge-error-border)]">
                                 {blockedSummary.detail}
+                            </div>
+                        ) : null}
+                        {dependencyTasks.length > 0 ? (
+                            <div className="mt-2 flex flex-col gap-1 text-[11px] leading-snug text-[var(--app-hint)]">
+                                <div className="font-medium text-[var(--app-muted-fg)]">
+                                    {t('projects.tasks.dependencies')}
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                    {dependencyTasks.map((dependencyTask) => {
+                                        const statusLabel = dependencyTask.status
+                                            ? t(TASK_STATUS_TITLE_KEY_BY_STATUS[dependencyTask.status])
+                                            : t('projects.tasks.dependencies.unknown')
+                                        return (
+                                            <span
+                                                key={dependencyTask.id}
+                                                className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-[var(--app-secondary-bg)] px-1.5 py-1 text-[11px] text-[var(--app-fg)] shadow-[inset_0_0_0_1px_var(--app-border)]"
+                                                title={`${dependencyTask.title} · ${statusLabel}`}
+                                            >
+                                                <span className="min-w-0 truncate">{dependencyTask.title}</span>
+                                                <span className="shrink-0 text-[10px] text-[var(--app-hint)]">{statusLabel}</span>
+                                            </span>
+                                        )
+                                    })}
+                                </div>
                             </div>
                         ) : null}
                         {isGeneratedPending ? (
@@ -664,6 +706,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
     }, [collapsedColumns])
 
     const kanbanState = useMemo(() => buildKanbanDerivedState(tasks), [tasks])
+    const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
     const columns = kanbanState.columns
     const kanbanStateRef = useRef(kanbanState)
 
@@ -1171,6 +1214,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                                 <KanbanTaskCard
                                                     key={task.id}
                                                     task={task}
+                                                    tasksById={tasksById}
                                                     index={index}
                                                     columnStatus={col.status}
                                                     isSelectedTask={selectedTaskId === task.id}

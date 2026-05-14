@@ -9,4 +9,12 @@ describe('resolveCommand', () => {
         expect(context.subcommand).toBe('mcp')
         expect(context.commandArgs).toEqual(['mcp'])
     })
+
+    it('registers the scoped assistant operator MCP bridge command', () => {
+        const { command, context } = resolveCommand(['assistant-operator-mcp'])
+
+        expect(command.name).toBe('assistant-operator-mcp')
+        expect(context.subcommand).toBe('assistant-operator-mcp')
+        expect(context.commandArgs).toEqual([])
+    })
 })

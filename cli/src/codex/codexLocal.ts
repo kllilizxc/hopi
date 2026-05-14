@@ -3,6 +3,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { spawnWithAbort } from '@/utils/spawnWithAbort';
 import { buildMcpServerConfigArgs, buildDeveloperInstructionsArg } from './utils/codexMcpConfig';
 import { codexSystemPrompt } from './utils/systemPrompt';
+import type { OperatorMcpServerConfig } from '@/operator/consoleTools';
 
 /**
  * Filter out 'resume' subcommand which is managed internally by hopi.
@@ -31,7 +32,7 @@ export async function codexLocal(opts: {
     sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
     onSessionFound: (id: string) => void;
     codexArgs?: string[];
-    mcpServers?: Record<string, { command: string; args: string[] }>;
+    mcpServers?: Record<string, OperatorMcpServerConfig>;
 }): Promise<void> {
     const args: string[] = [];
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
 import { convertAgentMessage } from '@/agent/messageConverter';
-import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
+import type { AgentMessage, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
 import { OpencodeDisplay } from '@/ui/ink/OpencodeDisplay';
 import type { OpencodeSession } from './session';
@@ -9,6 +9,30 @@ import type { PermissionMode } from './types';
 import { createOpencodeBackend } from './utils/opencodeBackend';
 import { OpencodePermissionHandler } from './utils/permissionHandler';
 import { TITLE_INSTRUCTION } from './utils/systemPrompt';
+
+export function buildOpencodePromptText(options: {
+    message: string;
+    appendSystemPrompt?: string;
+    includeTitleInstruction?: boolean;
+}): string {
+    const titleInstruction = options.includeTitleInstruction && TITLE_INSTRUCTION.trim()
+        ? TITLE_INSTRUCTION.trim()
+        : null;
+    const appendSystemPrompt = options.appendSystemPrompt?.trim();
+
+    const userMessage = appendSystemPrompt
+        ? [
+            appendSystemPrompt,
+            '',
+            'User message:',
+            options.message
+        ].join('\n')
+        : options.message;
+
+    return titleInstruction
+        ? `${titleInstruction}\n\n${userMessage}`
+        : userMessage;
+}
 
 function isAssistantTextCodexMessage(message: unknown): boolean {
     if (!message || typeof message !== 'object') {
@@ -78,7 +102,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         await backend.initialize();
 
         const resumeSessionId = session.sessionId;
-        const mcpServerList: McpServerStdio[] = [];
+        const mcpServerList = session.mcpServers;
         let acpSessionId: string;
         if (resumeSessionId) {
             try {
@@ -142,12 +166,12 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             activeTurnHasAssistantReply = false;
             turnInFlight = true;
 
-            // Inject title instructions on first prompt
-            let messageText = batch.message;
+            const messageText = buildOpencodePromptText({
+                message: batch.message,
+                appendSystemPrompt: batch.mode.appendSystemPrompt,
+                includeTitleInstruction: !this.instructionsSent
+            });
             if (!this.instructionsSent) {
-                messageText = TITLE_INSTRUCTION
-                    ? `${TITLE_INSTRUCTION}\n\n${batch.message}`
-                    : batch.message;
                 this.instructionsSent = true;
             }
 

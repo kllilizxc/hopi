@@ -7,6 +7,10 @@ function createInactiveSession(overrides?: {
     modelMode?: Session['modelMode']
     flavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
     capabilityProfile?: 'operator_console'
+    operatorToolBridgeVersion?: number
+    projectId?: string
+    goalId?: string
+    taskId?: string
 }): Session {
     const now = Date.now()
     const flavor = overrides?.flavor ?? 'codex'
@@ -27,6 +31,18 @@ function createInactiveSession(overrides?: {
     }
     if (overrides?.capabilityProfile) {
         ;(metadata as Record<string, unknown>).capabilityProfile = overrides.capabilityProfile
+    }
+    if (typeof overrides?.operatorToolBridgeVersion === 'number') {
+        ;(metadata as Record<string, unknown>).operatorToolBridgeVersion = overrides.operatorToolBridgeVersion
+    }
+    if (overrides?.projectId) {
+        metadata.projectId = overrides.projectId
+    }
+    if (overrides?.goalId) {
+        metadata.goalId = overrides.goalId
+    }
+    if (overrides?.taskId) {
+        metadata.taskId = overrides.taskId
     }
 
     return {
@@ -126,6 +142,7 @@ describe('SyncEngine.resumeSession', () => {
         expect(result).toEqual({ type: 'success', sessionId: 'session-new' })
         expect(spawnCalls).toHaveLength(1)
         expect(spawnCalls[0]?.[4]).toBeUndefined()
+        expect(spawnCalls[0]?.[7]).toBe('resume-token')
         expect(applyCalls).toHaveLength(1)
         expect(applyCalls[0]).toEqual({
             sessionId: 'session-new',
@@ -177,7 +194,8 @@ describe('SyncEngine.resumeSession', () => {
     it('forces operator console codex sessions back to read-only on resume', async () => {
         const session = createInactiveSession({
             permissionMode: 'yolo',
-            capabilityProfile: 'operator_console'
+            capabilityProfile: 'operator_console',
+            operatorToolBridgeVersion: 1
         })
         const { engine, spawnCalls, applyCalls } = createResumeHarness({
             session,
@@ -197,6 +215,30 @@ describe('SyncEngine.resumeSession', () => {
                 permissionMode: 'read-only',
                 modelMode: undefined
             }
+        })
+    })
+
+    it('does not resume pre-tool-bridge operator console codex threads', async () => {
+        const session = createInactiveSession({
+            capabilityProfile: 'operator_console',
+            projectId: 'project-1',
+            goalId: 'goal-1',
+            taskId: 'task-1'
+        })
+        const { engine, spawnCalls } = createResumeHarness({
+            session,
+            spawnedSessionId: 'session-new'
+        })
+
+        const result = await (SyncEngine.prototype.resumeSession as any).call(engine, session.id, session.namespace)
+
+        expect(result).toEqual({ type: 'success', sessionId: 'session-new' })
+        expect(spawnCalls).toHaveLength(1)
+        expect(spawnCalls[0]?.[7]).toBeUndefined()
+        expect(spawnCalls[0]?.[11]).toEqual({
+            projectId: 'project-1',
+            goalId: 'goal-1',
+            taskId: 'task-1'
         })
     })
 })

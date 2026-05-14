@@ -178,7 +178,8 @@ export class ApiMachineClient {
                 token,
                 sessionType,
                 worktreeName,
-                worktreeTargetBranch
+                worktreeTargetBranch,
+                operatorConsole
             } = params || {}
 
             if (!directory) {
@@ -206,7 +207,8 @@ export class ApiMachineClient {
                 token,
                 sessionType,
                 worktreeName,
-                worktreeTargetBranch
+                worktreeTargetBranch,
+                operatorConsole
             })
 
             switch (result.type) {

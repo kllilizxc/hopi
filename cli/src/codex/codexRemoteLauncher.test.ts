@@ -5,6 +5,7 @@ import type { EnhancedMode } from './loop';
 const harness = vi.hoisted(() => ({
     notifications: [] as Array<{ method: string; params: unknown }>,
     registerRequestCalls: [] as string[],
+    threadStartParams: [] as Array<Record<string, unknown>>,
     startTurnParams: [] as Array<Record<string, unknown>>,
     failOnCollaboration: false,
     emitPlanUpdate: false,
@@ -29,11 +30,13 @@ vi.mock('./codexAppServerClient', () => {
             harness.registerRequestCalls.push(method);
         }
 
-        async startThread(): Promise<{ thread: { id: string } }> {
+        async startThread(params: Record<string, unknown>): Promise<{ thread: { id: string } }> {
+            harness.threadStartParams.push(params);
             return { thread: { id: 'thread-anonymous' } };
         }
 
-        async resumeThread(): Promise<{ thread: { id: string } }> {
+        async resumeThread(params: Record<string, unknown>): Promise<{ thread: { id: string } }> {
+            harness.threadStartParams.push(params);
             return { thread: { id: 'thread-anonymous' } };
         }
 
@@ -86,9 +89,13 @@ type FakeAgentState = {
     completedRequests: Record<string, unknown>;
 };
 
-function createMode(collaborationMode?: EnhancedMode['collaborationMode']): EnhancedMode {
+function createMode(
+    collaborationMode?: EnhancedMode['collaborationMode'],
+    overrides: Partial<EnhancedMode> = {}
+): EnhancedMode {
     return {
         permissionMode: 'default',
+        ...overrides,
         ...(collaborationMode ? { collaborationMode } : {})
     };
 }
@@ -174,6 +181,7 @@ describe('codexRemoteLauncher', () => {
     afterEach(() => {
         harness.notifications = [];
         harness.registerRequestCalls = [];
+        harness.threadStartParams = [];
         harness.startTurnParams = [];
         harness.failOnCollaboration = false;
         harness.emitPlanUpdate = false;
@@ -266,5 +274,31 @@ describe('codexRemoteLauncher', () => {
             reason: 'process-exited'
         });
         expect(sessionEvents.some((event) => event.type === 'message' && event.message === 'Process exited unexpectedly')).toBe(false);
+    });
+
+    it('passes operator console instructions and hard restrictions into app-server turns', async () => {
+        const operatorPrompt = [
+            'You are HOPI Project Assistant inside an operator_console agent session.',
+            'Use hopi_retry_blocked_merge for retry requests.'
+        ].join('\n');
+        const {
+            session
+        } = createSessionStub(createMode(undefined, {
+            permissionMode: 'read-only',
+            appendSystemPrompt: operatorPrompt,
+            disallowedTools: ['CodexPatch']
+        }));
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.threadStartParams).toHaveLength(1);
+        expect(harness.threadStartParams[0]?.developerInstructions).toContain('operator_console');
+        expect(harness.threadStartParams[0]?.developerInstructions).toContain('hopi_retry_blocked_merge');
+        expect(harness.threadStartParams[0]?.approvalPolicy).toBe('on-request');
+        expect(harness.threadStartParams[0]?.sandbox).toBe('read-only');
+        expect(harness.startTurnParams).toHaveLength(1);
+        expect(harness.startTurnParams[0]?.approvalPolicy).toBe('on-request');
+        expect(harness.startTurnParams[0]?.sandboxPolicy).toEqual({ type: 'readOnly' });
     });
 });

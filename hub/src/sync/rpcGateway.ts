@@ -132,6 +132,12 @@ export type RpcPreviewStatus = {
     logTail: string[]
 }
 
+export type OperatorConsoleSpawnConfig = {
+    projectId: string
+    goalId?: string | null
+    taskId?: string | null
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -203,7 +209,8 @@ export class RpcGateway {
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
         worktreeTargetBranch?: string,
-        sessionTag?: string
+        sessionTag?: string,
+        operatorConsole?: OperatorConsoleSpawnConfig
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
@@ -220,7 +227,8 @@ export class RpcGateway {
                     worktreeName,
                     resumeSessionId,
                     worktreeTargetBranch,
-                    sessionTag
+                    sessionTag,
+                    operatorConsole
                 }
             )
             if (result && typeof result === 'object') {

@@ -152,6 +152,7 @@ describe('SessionCache.deleteSession', () => {
         })
         expect(hasTaskUpdated).toBe(true)
     })
+
 })
 
 describe('SessionCache.mergeSessions', () => {
@@ -231,5 +232,99 @@ describe('SessionCache.mergeSessions', () => {
             return data?.activeSessionId === newSession.id
         })
         expect(hasTaskUpdated).toBe(true)
+    })
+
+    it('preserves project assistant operator metadata when merging into a runner session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const oldSession = store.sessions.getOrCreateSession(
+            'assistant-synthetic',
+            {
+                path: '/repo',
+                host: 'hopi',
+                machineId: 'machine-1',
+                projectId: 'project-assistant',
+                goalId: 'goal-assistant',
+                taskId: 'task-assistant',
+                name: 'Auto-merge blocked',
+                hopiAssistant: true,
+                assistantKind: 'intervention',
+                interventionKind: 'merge_blocked',
+                interventionStatus: 'pending',
+                interventionKey: 'merge-blocked:task-assistant',
+                suggestedActions: [{ id: 'retry_merge', label: 'Retry merge', recommended: true }],
+                capabilityProfile: 'operator_console'
+            },
+            null,
+            namespace
+        )
+        const newSession = store.sessions.getOrCreateSession(
+            'runner-created',
+            {
+                path: '/repo',
+                host: 'localhost',
+                machineId: 'machine-1',
+                flavor: 'codex',
+                model: 'gpt-5',
+                startedFromRunner: true
+            },
+            null,
+            namespace
+        )
+
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const cache = new SessionCache(store, publisher)
+
+        await cache.mergeSessions(oldSession.id, newSession.id, namespace)
+
+        expect(store.sessions.getSessionByNamespace(oldSession.id, namespace)).toBeNull()
+        expect(store.sessions.getSessionByNamespace(newSession.id, namespace)?.metadata).toMatchObject({
+            path: '/repo',
+            host: 'localhost',
+            machineId: 'machine-1',
+            flavor: 'codex',
+            model: 'gpt-5',
+            startedFromRunner: true,
+            projectId: 'project-assistant',
+            goalId: 'goal-assistant',
+            taskId: 'task-assistant',
+            name: 'Auto-merge blocked',
+            hopiAssistant: true,
+            assistantKind: 'intervention',
+            interventionKind: 'merge_blocked',
+            interventionStatus: 'pending',
+            interventionKey: 'merge-blocked:task-assistant',
+            suggestedActions: [{ id: 'retry_merge', label: 'Retry merge', recommended: true }],
+            capabilityProfile: 'operator_console'
+        })
+    })
+
+    it('keeps operator tool bridge version in parsed session metadata', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const cache = new SessionCache(store, publisher)
+
+        const stored = store.sessions.getOrCreateSession(
+            'operator-console',
+            {
+                path: '/repo',
+                host: 'localhost',
+                flavor: 'codex',
+                capabilityProfile: 'operator_console',
+                operatorToolBridgeVersion: 1
+            },
+            null,
+            namespace
+        )
+
+        expect(cache.refreshSession(stored.id)?.metadata).toMatchObject({
+            capabilityProfile: 'operator_console',
+            operatorToolBridgeVersion: 1
+        })
     })
 })

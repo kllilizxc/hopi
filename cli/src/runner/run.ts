@@ -22,6 +22,7 @@ import { PreviewManager } from './previewManager';
 import { basename, dirname, join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { PRODUCT_ENV, PRODUCT_SLUG, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
+import { OPERATOR_CONSOLE_CONFIG_ENV } from '@/operator/consoleTools';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -401,6 +402,12 @@ export async function startRunner(): Promise<void> {
           extraEnv = {
             ...extraEnv,
             [PRODUCT_ENV.SESSION_TAG]: sessionTag
+          };
+        }
+        if (options.operatorConsole) {
+          extraEnv = {
+            ...extraEnv,
+            [OPERATOR_CONSOLE_CONFIG_ENV]: JSON.stringify(options.operatorConsole)
           };
         }
 

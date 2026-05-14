@@ -17,6 +17,7 @@ import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, resolveC
 import { ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import { buildOperatorMcpServerConfig } from '@/operator/consoleTools';
 
 export interface StartOptions {
     model?: string
@@ -306,6 +307,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
     let loopError: unknown = null;
     let loopFailed = false;
+    const mcpServers = buildOperatorMcpServerConfig(session);
     try {
         await loop({
             path: workingDirectory,
@@ -320,7 +322,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 currentSessionRef.current = sessionInstance;
                 syncSessionModes();
             },
-            mcpServers: {},
+            mcpServers,
             session,
             claudeEnvVars: options.claudeEnvVars,
             claudeArgs: options.claudeArgs,

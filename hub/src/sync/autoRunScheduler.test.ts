@@ -1348,6 +1348,370 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(store.tasks.getTaskByNamespace('task-generator-4', namespace)?.status).toBe('planned')
     })
 
+    it('does not let legacy project sessions without task roles occupy the generator lane', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-legacy-sessions-no-role'
+        const goalId = 'goal-legacy-sessions-no-role'
+        const workspaceId = 'workspace-legacy-sessions-no-role'
+        const taskId = 'task-ready-after-legacy-sessions'
+        const sessionId = 'session-ready-after-legacy-sessions'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 5,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Ready task',
+            status: 'planned',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        store.sessions.getOrCreateSession(
+            sessionId,
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return [1, 2, 3].map((index) => ({
+                    id: `legacy-session-${index}`,
+                    namespace,
+                    active: true,
+                    thinking: true,
+                    metadata: {
+                        projectId,
+                        taskId: 'legacy-task',
+                        path: '/tmp/workspace'
+                    }
+                }))
+            },
+            getSessionByNamespace(id: string) {
+                if (id !== sessionId) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, path: '/tmp/workspace' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+    })
+
+    it('does not let sessions for non-running tasks occupy the generator lane', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-stale-session-task-state'
+        const goalId = 'goal-stale-session-task-state'
+        const workspaceId = 'workspace-stale-session-task-state'
+        const taskId = 'task-ready-after-stale-sessions'
+        const sessionId = 'session-ready-after-stale-sessions'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 5,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        for (let index = 1; index <= 3; index += 1) {
+            store.tasks.createTask({
+                id: `finished-task-${index}`,
+                projectId,
+                goalId,
+                title: `Finished task ${index}`,
+                status: 'finished',
+                source: 'manual',
+                workflowProfile: 'default',
+                workflowPhase: null
+            })
+        }
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Ready task',
+            status: 'planned',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        store.sessions.getOrCreateSession(
+            sessionId,
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return [1, 2, 3].map((index) => ({
+                    id: `stale-session-${index}`,
+                    namespace,
+                    active: true,
+                    thinking: true,
+                    metadata: {
+                        projectId,
+                        taskId: `finished-task-${index}`,
+                        path: '/tmp/workspace',
+                        hopiTaskRole: 'generator'
+                    }
+                }))
+            },
+            getSessionByNamespace(id: string) {
+                if (id !== sessionId) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, path: '/tmp/workspace' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('in_progress')
+    })
+
+    it('starts a planned task only after all declared dependencies finish and merge successfully', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-task-dependency-gate'
+        const goalId = 'goal-task-dependency-gate'
+        const workspaceId = 'workspace-task-dependency-gate'
+        const upstreamTaskId = 'task-upstream'
+        const downstreamTaskId = 'task-downstream'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Autonomous goal',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: upstreamTaskId,
+            projectId,
+            goalId,
+            title: 'Build prerequisite',
+            status: 'in_progress',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        store.tasks.createTask({
+            id: downstreamTaskId,
+            projectId,
+            goalId,
+            title: 'Use prerequisite',
+            status: 'planned',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null,
+            dependsOnTaskIds: [upstreamTaskId]
+        })
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                const stored = store.sessions.getSessionByNamespace(sessionId, namespace)
+                if (!stored) {
+                    return undefined
+                }
+                return {
+                    id: stored.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, path: '/tmp/workspace' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                const sessionId = `session-dependent-${spawnCount}`
+                store.sessions.getOrCreateSession(
+                    sessionId,
+                    { path: '/tmp/workspace', host: 'localhost' },
+                    null,
+                    namespace
+                )
+                return {
+                    type: 'success' as const,
+                    sessionId
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(spawnCount).toBe(0)
+        expect(store.tasks.getTaskByNamespace(downstreamTaskId, namespace)?.status).toBe('planned')
+
+        store.tasks.updateTaskByNamespace(upstreamTaskId, namespace, {
+            status: 'finished',
+            mergeRuntime: {
+                status: 'succeeded',
+                updatedAt: Date.now()
+            }
+        })
+
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(downstreamTaskId, namespace)?.status).toBe('in_progress')
+    })
+
     it('uses a custom evaluator lane limit to pause review starts', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'

@@ -72,6 +72,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         attachments: overrides.attachments ?? null,
         source: overrides.source ?? null,
         sourceTaskId: overrides.sourceTaskId ?? null,
+        dependsOnTaskIds: overrides.dependsOnTaskIds,
         contract: overrides.contract ?? null,
         handoff: overrides.handoff ?? null,
         evidence: overrides.evidence ?? null,
@@ -170,5 +171,35 @@ describe('ProjectKanbanBoard', () => {
         )
 
         expect(screen.getByText('Legacy ready task')).toBeInTheDocument()
+    })
+
+    it('renders dependency tasks on task cards', () => {
+        mocks.tasks = [
+            createTask({
+                id: 'task-upstream',
+                title: 'Implement tutorial session reset',
+                status: 'finished'
+            }),
+            createTask({
+                id: 'task-downstream',
+                title: 'Render tutorial hint overlay',
+                status: 'planned',
+                dependsOnTaskIds: ['task-upstream']
+            })
+        ]
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        const card = screen.getByText('Render tutorial hint overlay').closest('[data-kanban-task-id]')
+        expect(card).not.toBeNull()
+        expect(card!).toHaveTextContent('Depends on')
+        expect(card!).toHaveTextContent('Implement tutorial session reset')
+        expect(card!).toHaveTextContent('Finished')
     })
 })

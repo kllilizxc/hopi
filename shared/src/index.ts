@@ -5,6 +5,7 @@ export * from './goalKeys'
 export * from './messages'
 export * from './models'
 export * from './modes'
+export * from './operatorConsole'
 export * from './sessionMessages'
 export {
     AgentOutputLanguageSchema,

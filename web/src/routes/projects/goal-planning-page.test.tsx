@@ -50,14 +50,16 @@ describe('GoalPlanningDocument', () => {
                     title: 'Ship the first playable slice',
                     body: '**Objective:** render the map.\n\n**Acceptance:** user can pick a path.',
                     taskId: null,
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 },
                 {
                     kind: 'candidate',
                     title: 'Tune generated task contracts',
                     body: 'Notes: Keep contracts lightweight.',
                     taskId: 'task-123',
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 }
             ]
         }
@@ -96,21 +98,24 @@ describe('GoalPlanningDocument', () => {
                     title: 'Ship the first playable slice',
                     body: 'Ready now.',
                     taskId: null,
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 },
                 {
                     kind: 'candidate',
                     title: 'Tune generated task contracts',
                     body: 'Candidate notes.',
                     taskId: null,
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 },
                 {
                     kind: 'candidate',
                     title: 'Improve planning parser',
                     body: 'Parser notes.',
                     taskId: null,
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 }
             ]
         }
@@ -189,7 +194,8 @@ describe('GoalPlanningDocument', () => {
                     title: 'Keep planning reachable',
                     body: 'Planning should stay in the main page scroll after decisions.',
                     taskId: null,
-                    todoRef: null
+                    todoRef: null,
+                    dependencyTaskList: []
                 }
             ]
         }

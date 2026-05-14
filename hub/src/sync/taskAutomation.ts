@@ -5,6 +5,7 @@ import type { Store } from '../store'
 import { buildTaskInitRuntime, buildTaskPreviewRuntime } from '../utils/taskActionRuntime'
 import { loadProjectActionContractFromSession } from './actionContract'
 import { applyGoalActionPacketFromSession } from './goals/goalActionPacket'
+import { tryCreateProjectAssistantIntervention } from './projectAssistant'
 import { requestAutoMergeAcceptedTask } from './taskAutoMerge'
 import {
     resolveSessionPreferredRootPath,
@@ -28,6 +29,10 @@ const BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_POLL_INTERVAL_MS = 1_000
 const BOOTSTRAP_PREVIEW_TIMEOUT_MS = 120_000
 const EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS = 1
+const GOAL_CONTROL_MISSING_ACTION_RETRY_MAX_ATTEMPTS = 1
+const MISSING_GOAL_ACTION_PACKET_BLOCKED_REASON = 'Agent finished without a HOPI_ACTIONS packet.'
+const MISSING_GOAL_ACTION_REPAIR_LOCAL_ID_PREFIX = 'auto:missing_goal_action_repair:'
+const MISSING_GOAL_ACTION_REPAIR_NOTE_PREFIX = 'Missing HOPI_ACTIONS packet; asked agent to emit final packet'
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -227,6 +232,66 @@ function formatBootstrapContractErrors(error: string): string {
         .filter((part) => part.length > 0)
         .map((part) => `- ${part}`)
         .join('\n')
+}
+
+function getGoalControlRole(
+    task: { source?: string | null },
+    session: { metadata?: unknown } | null | undefined
+): 'planner' | 'radar' | null {
+    const metadata = toRecord(session?.metadata)
+    const metadataRole = typeof metadata?.hopiTaskRole === 'string'
+        ? metadata.hopiTaskRole.trim().toLowerCase()
+        : ''
+    if (metadataRole === 'planner' || metadataRole === 'radar') {
+        return metadataRole
+    }
+
+    const source = typeof task.source === 'string'
+        ? task.source.trim().toLowerCase()
+        : ''
+    if (source === 'planner' || source === 'radar') {
+        return source
+    }
+
+    return null
+}
+
+function getMissingGoalActionRepairRetryCount(currentRuntime: { retryCount?: number; latestNote?: string | null } | null | undefined): number {
+    if (!currentRuntime?.latestNote?.startsWith(MISSING_GOAL_ACTION_REPAIR_NOTE_PREFIX)) {
+        return 0
+    }
+    return currentRuntime.retryCount ?? 0
+}
+
+function buildMissingGoalActionRepairPrompt(options: {
+    role: 'planner' | 'radar'
+    attempt: number
+    maxAttempts: number
+}): string {
+    const roleLabel = options.role === 'planner' ? 'Planner' : 'Radar'
+    return [
+        `Your ${roleLabel} turn ended without a visible HOPI_ACTIONS packet, so HOPI could not advance the task.`,
+        '',
+        `Recovery attempt ${options.attempt}/${options.maxAttempts}: emit the final HOPI_ACTIONS packet now.`,
+        '',
+        'Rules for this recovery turn:',
+        '- Do not continue planning or scanning.',
+        '- Do not edit files.',
+        '- Do not run git commit, git add, git push, or any release/deploy command.',
+        '- Do not use EnterPlanMode or ExitPlanMode.',
+        '- If you already changed .hopi docs or selected work, encode the intended durable HOPI state changes in the packet.',
+        '- If you cannot safely encode the intended state changes, block the current task with update_current_task and explain what is missing.',
+        '',
+        'Return exactly one visible packet in this shape:',
+        'HOPI_ACTIONS:',
+        '```json',
+        '{',
+        '  "actions": [',
+        '    { "type": "update_current_task", "status": "finished", "handoff": "...", "evidence": "..." }',
+        '  ]',
+        '}',
+        '```'
+    ].join('\n')
 }
 
 function buildBootstrapContractRepairPrompt(error: string, attempt: number): string {
@@ -504,6 +569,7 @@ export class TaskAutomation {
             if (!current) return
             if (current.archivedAt) return
             if (current.goalId && current.status === 'in_review' && isTaskKickoffLocalId(message.localId)) return
+            if (current.status === 'blocked' && current.mergeRuntime?.status === 'blocked') return
 
             const strategy = getWorkflowStrategy(current)
             const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'in_progress' }
@@ -558,9 +624,14 @@ export class TaskAutomation {
                 if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
                     return
                 }
+                if (this.tryRecoverMissingGoalControlActionPacket(sessionId)) {
+                    return
+                }
                 if (isMergeRuntimeReadyEvent(message)) {
                     this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                    return
                 }
+                this.tryBlockMissingGoalActionPacket(sessionId)
                 return
             }
             this.tryMoveToInReviewFromReady(sessionId, message)
@@ -584,6 +655,24 @@ export class TaskAutomation {
                 }
                 if (goalActionResult === 'not_goal_task') {
                     this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                    return
+                }
+                if (goalActionResult === 'goal_task') {
+                    if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
+                        this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                        return
+                    }
+                    if (this.tryRecoverMissingGoalControlActionPacket(sessionId)) {
+                        this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                        return
+                    }
+                    if (isMergeRuntimeReadyEvent(pendingReadyMessage)) {
+                        this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                        this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                        return
+                    }
+                    this.pendingNoReplyReadyBySessionId.delete(sessionId)
+                    this.tryBlockMissingGoalActionPacket(sessionId)
                 }
             }
         }
@@ -667,6 +756,170 @@ export class TaskAutomation {
                 reason: blockedReason,
                 localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:missing-evaluator-action`
             })
+        }
+
+        return true
+    }
+
+    private tryRecoverMissingGoalControlActionPacket(sessionId: string): boolean {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return false
+
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current || current.archivedAt || !current.goalId) return false
+        if (current.status !== 'in_progress' && current.status !== 'in_review') return false
+
+        const session = this.engine.getSession(sessionId)
+        const role = getGoalControlRole(current, session)
+        if (!role) return false
+
+        const currentRetryCount = getMissingGoalActionRepairRetryCount(current.initRuntime)
+        if (currentRetryCount >= GOAL_CONTROL_MISSING_ACTION_RETRY_MAX_ATTEMPTS) {
+            return false
+        }
+
+        const nextRetryCount = currentRetryCount + 1
+        const latestNote = `${MISSING_GOAL_ACTION_REPAIR_NOTE_PREFIX} (${nextRetryCount}/${GOAL_CONTROL_MISSING_ACTION_RETRY_MAX_ATTEMPTS}).`
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: current.status,
+            blockedReason: null,
+            blockedSource: null,
+            blockedSessionId: null,
+            initRuntime: buildTaskInitRuntime({
+                current: current.initRuntime,
+                activeSessionId: current.activeSessionId,
+                status: 'retrying',
+                sessionId,
+                retryCount: nextRetryCount,
+                latestNote,
+                blockedReason: null,
+                completedAt: null
+            })
+        })
+        if (!updated) return false
+
+        this.engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: updated.id,
+            projectId: linked.projectId,
+            namespace: linked.namespace,
+            data: { taskId: updated.id }
+        })
+
+        void this.sendMissingGoalControlActionPacketRepairPrompt({
+            sessionId,
+            taskId: updated.id,
+            role,
+            attempt: nextRetryCount
+        })
+
+        return true
+    }
+
+    private async sendMissingGoalControlActionPacketRepairPrompt(options: {
+        sessionId: string
+        taskId: string
+        role: 'planner' | 'radar'
+        attempt: number
+    }): Promise<void> {
+        try {
+            await this.engine.sendMessage(options.sessionId, {
+                text: buildMissingGoalActionRepairPrompt({
+                    role: options.role,
+                    attempt: options.attempt,
+                    maxAttempts: GOAL_CONTROL_MISSING_ACTION_RETRY_MAX_ATTEMPTS
+                }),
+                localId: `${MISSING_GOAL_ACTION_REPAIR_LOCAL_ID_PREFIX}${options.taskId}:${Date.now()}`,
+                sentFrom: 'webapp'
+            })
+        } catch {
+            this.tryBlockMissingGoalActionPacket(options.sessionId)
+        }
+    }
+
+    private tryBlockMissingGoalActionPacket(sessionId: string): boolean {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return false
+
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current || current.archivedAt || !current.goalId) return false
+        if (current.status !== 'in_progress' && current.status !== 'in_review') return false
+
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: 'blocked',
+            blockedReason: MISSING_GOAL_ACTION_PACKET_BLOCKED_REASON,
+            blockedSource: 'agent',
+            blockedSessionId: sessionId,
+            initRuntime: buildTaskInitRuntime({
+                current: current.initRuntime,
+                activeSessionId: current.activeSessionId,
+                status: 'blocked',
+                sessionId,
+                retryCount: current.initRuntime?.retryCount,
+                latestNote: `${MISSING_GOAL_ACTION_PACKET_BLOCKED_REASON} Retry the task or ask the project assistant to decide the next step.`,
+                blockedReason: MISSING_GOAL_ACTION_PACKET_BLOCKED_REASON
+            })
+        })
+        if (!updated) return false
+
+        this.engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: updated.id,
+            projectId: updated.projectId,
+            namespace: linked.namespace,
+            data: { taskId: updated.id }
+        })
+        appendTaskBlockedMessage({
+            store: this.store,
+            engine: this.engine,
+            sessionId,
+            taskId: updated.id,
+            reason: MISSING_GOAL_ACTION_PACKET_BLOCKED_REASON,
+            localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:missing-goal-action`
+        })
+
+        const goalId = updated.goalId
+        const goal = goalId ? this.store.goals.getGoalByNamespace(goalId, linked.namespace) : null
+        const project = this.store.projects.getProjectByNamespace(updated.projectId, linked.namespace)
+        if (goal && project && goal.projectId === project.id) {
+            const intervention = tryCreateProjectAssistantIntervention({
+                store: this.store,
+                namespace: linked.namespace,
+                projectId: project.id,
+                goalId: goal.id,
+                taskId: updated.id,
+                interventionKey: `task:${updated.id}:missing-goal-action:${sessionId}`,
+                interventionKind: 'task_blocked',
+                title: `Blocked task: ${updated.title}`,
+                body: [
+                    `Task "${updated.title}" finished without a HOPI_ACTIONS packet.`,
+                    '',
+                    'HOPI could not advance the task because goal tasks must update their state through HOPI_ACTIONS.',
+                    '',
+                    `Task: ${updated.id}`,
+                    `Session: ${sessionId}`
+                ].join('\n'),
+                suggestedActions: [
+                    {
+                        id: 'retry_task',
+                        label: 'Retry task',
+                        recommended: true
+                    },
+                    {
+                        id: 'let_agent_decide',
+                        label: 'Let agent decide'
+                    }
+                ]
+            })
+            if (intervention) {
+                this.engine.handleRealtimeEvent({
+                    type: 'session-added',
+                    sessionId: intervention.session.id,
+                    projectId: project.id,
+                    namespace: linked.namespace,
+                    data: { sessionId: intervention.session.id }
+                })
+            }
         }
 
         return true

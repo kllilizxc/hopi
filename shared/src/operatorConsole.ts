@@ -1,0 +1,2 @@
+export const OPERATOR_TOOL_BRIDGE_VERSION = 1
+

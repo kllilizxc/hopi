@@ -381,6 +381,7 @@ export type StoredTask = {
     attachments: unknown | null
     source: string | null
     sourceTaskId: string | null
+    dependsOnTaskIds: string[]
     workflowProfile: string
     workflowPhase: string | null
     subTasks: unknown | null

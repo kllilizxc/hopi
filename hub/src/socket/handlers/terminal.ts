@@ -1,5 +1,6 @@
 import { TerminalOpenPayloadSchema } from '@hopi/protocol'
 import { z } from 'zod'
+import { isOperatorConsoleMetadata } from '../../sync/operatorConsole'
 import type { TerminalRegistry, TerminalRegistryEntry } from '../terminalRegistry'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 
@@ -22,7 +23,7 @@ const terminalCloseSchema = z.object({
 
 export type TerminalHandlersDeps = {
     io: SocketServer
-    getSession: (sessionId: string) => { active: boolean; namespace: string } | null
+    getSession: (sessionId: string) => { active: boolean; namespace: string; metadata?: unknown } | null
     terminalRegistry: TerminalRegistry
     maxTerminalsPerSocket: number
     maxTerminalsPerSession: number
@@ -92,6 +93,10 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
         const session = getSession(sessionId)
         if (!namespace || !session || session.namespace !== namespace || !session.active) {
             emitTerminalError(terminalId, 'Session is inactive or unavailable.')
+            return
+        }
+        if (isOperatorConsoleMetadata(session.metadata)) {
+            emitTerminalError(terminalId, 'Operator console sessions cannot open terminals.')
             return
         }
 

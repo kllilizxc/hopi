@@ -7,7 +7,11 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import {
+    isModelModeAllowedForFlavor,
+    isPermissionModeAllowedForFlavor,
+    OPERATOR_TOOL_BRIDGE_VERSION
+} from '@hopi/protocol'
 import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
@@ -28,6 +32,7 @@ import {
     type RpcGitRemoveWorktreeResponse,
     type RpcGitVerifyWorktreeMergeResponse,
     type RpcListDirectoryResponse,
+    type OperatorConsoleSpawnConfig,
     type RpcPathExistsResponse,
     type RpcPreviewStatus,
     type RpcReadFileResponse,
@@ -41,7 +46,10 @@ import { OmcLoopAutomation } from './omc/loopAutomation'
 import { OmcPlanningAutomation } from './omc/planningAutomation'
 import { OmcTopicAutomation } from './omc/topicAutomation'
 import { getOperatorConsolePermissionMode, isOperatorConsoleMetadata } from './operatorConsole'
-import { applyProjectAssistantActionPacketFromReady } from './projectAssistant'
+import {
+    executeProjectAssistantOperatorTool,
+    type ProjectAssistantOperatorToolResult
+} from './projectAssistant'
 
 export type { Session, SyncEvent } from '@hopi/protocol/types'
 export type { Machine } from './machineCache'
@@ -205,6 +213,14 @@ export class SyncEngine {
         return { ok: true, machineId: targetMachine.id, sessionPath }
     }
 
+    private isOperatorConsoleSession(sessionId: string): boolean {
+        return isOperatorConsoleMetadata(this.getSession(sessionId)?.metadata)
+    }
+
+    private operatorConsoleDeniedMessage(): string {
+        return 'Operator console sessions are read-only; use HOPI operator tools for allowed actions.'
+    }
+
     getSessions(): Session[] {
         return this.sessionCache.getSessions()
     }
@@ -231,6 +247,10 @@ export class SyncEngine {
         namespace: string
     ): { ok: true; sessionId: string; session: Session } | { ok: false; reason: 'not-found' | 'access-denied' } {
         return this.sessionCache.resolveSessionAccess(sessionId, namespace)
+    }
+
+    async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {
+        await this.sessionCache.mergeSessions(oldSessionId, newSessionId, namespace)
     }
 
     getActiveSessions(): Session[] {
@@ -292,13 +312,6 @@ export class SyncEngine {
             if (!this.getSession(event.sessionId)) {
                 this.sessionCache.refreshSession(event.sessionId)
             }
-            applyProjectAssistantActionPacketFromReady({
-                store: this.store,
-                engine: this,
-                namespace: event.namespace ?? this.getSession(event.sessionId)?.namespace ?? 'default',
-                sessionId: event.sessionId,
-                readyMessage: event.message
-            })
         }
 
         this.eventPublisher.emit(event)
@@ -364,6 +377,22 @@ export class SyncEngine {
         await this.messageService.sendMessage(sessionId, payload)
     }
 
+    async executeProjectAssistantOperatorTool(options: {
+        namespace: string
+        sessionId: string
+        toolName: string
+        input: unknown
+    }): Promise<ProjectAssistantOperatorToolResult> {
+        return await executeProjectAssistantOperatorTool({
+            store: this.store,
+            engine: this,
+            namespace: options.namespace,
+            sessionId: options.sessionId,
+            toolName: options.toolName,
+            input: options.input
+        })
+    }
+
     injectMessage(
         sessionId: string,
         payload: {
@@ -422,6 +451,14 @@ export class SyncEngine {
             collaborationMode?: string
         }
     ): Promise<void> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            const session = this.getSession(sessionId)
+            const flavor = session?.metadata?.flavor ?? null
+            const operatorMode = getOperatorConsolePermissionMode(flavor)
+            if (config.permissionMode && config.permissionMode !== operatorMode) {
+                throw new Error('Operator console sessions cannot change permission mode')
+            }
+        }
         const result = await this.rpcGateway.requestSessionConfig(sessionId, config)
         if (!result || typeof result !== 'object') {
             throw new Error('Invalid response from session config RPC')
@@ -472,7 +509,8 @@ export class SyncEngine {
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
         worktreeTargetBranch?: string,
-        sessionTag?: string
+        sessionTag?: string,
+        operatorConsole?: OperatorConsoleSpawnConfig
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -485,7 +523,8 @@ export class SyncEngine {
             resumeSessionId,
             worktreeWorkspacePaths,
             worktreeTargetBranch,
-            sessionTag
+            sessionTag,
+            operatorConsole
         )
     }
 
@@ -512,7 +551,7 @@ export class SyncEngine {
         const flavor = metadata.flavor === 'codex' || metadata.flavor === 'gemini' || metadata.flavor === 'opencode'
             ? metadata.flavor
             : 'claude'
-        const resumeToken = flavor === 'codex'
+        const rawResumeToken = flavor === 'codex'
             ? metadata.codexSessionId
             : flavor === 'gemini'
                 ? metadata.geminiSessionId
@@ -520,7 +559,15 @@ export class SyncEngine {
                     ? metadata.opencodeSessionId
                     : metadata.claudeSessionId
 
-        if (!resumeToken) {
+        const operatorConsoleSession = isOperatorConsoleMetadata(metadata)
+        const operatorToolBridgeVersion = typeof metadata.operatorToolBridgeVersion === 'number'
+            ? metadata.operatorToolBridgeVersion
+            : null
+        const resumeToken = operatorConsoleSession && operatorToolBridgeVersion !== OPERATOR_TOOL_BRIDGE_VERSION
+            ? undefined
+            : rawResumeToken
+
+        if (!resumeToken && !operatorConsoleSession) {
             return { type: 'error', message: 'Resume session ID unavailable', code: 'resume_unavailable' }
         }
 
@@ -568,7 +615,6 @@ export class SyncEngine {
         const fallbackPermissionMode = taskModeFallback?.permissionMode
         const fallbackModelMode = taskModeFallback?.modelMode
 
-        const operatorConsoleSession = isOperatorConsoleMetadata(metadata)
         const operatorConsolePermissionMode = operatorConsoleSession
             ? getOperatorConsolePermissionMode(flavor) ?? undefined
             : undefined
@@ -585,6 +631,13 @@ export class SyncEngine {
                     ? fallbackModelMode
                     : undefined)
         const resumeWithYolo = !operatorConsoleSession && previousPermissionMode === 'yolo' ? true : undefined
+        const operatorConsole = operatorConsoleSession && typeof metadata.projectId === 'string'
+            ? {
+                projectId: metadata.projectId,
+                goalId: typeof metadata.goalId === 'string' ? metadata.goalId : null,
+                taskId: typeof metadata.taskId === 'string' ? metadata.taskId : null
+            }
+            : undefined
 
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,
@@ -594,7 +647,11 @@ export class SyncEngine {
             resumeWithYolo,
             undefined,
             undefined,
-            resumeToken
+            resumeToken,
+            undefined,
+            undefined,
+            undefined,
+            operatorConsole
         )
 
         if (spawnResult.type !== 'success') {
@@ -650,6 +707,9 @@ export class SyncEngine {
         cwd?: string
         timeout?: number
     }): Promise<RpcCommandResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.runBash(sessionId, params)
     }
 
@@ -677,6 +737,16 @@ export class SyncEngine {
         mode: 'local' | 'worktree'
         basePort?: number
     }): Promise<RpcPreviewStatus> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return {
+                active: false,
+                status: 'error',
+                sessionId,
+                updatedAt: Date.now(),
+                error: this.operatorConsoleDeniedMessage(),
+                logTail: []
+            }
+        }
         return await this.rpcGateway.previewStartForSession(sessionId, params)
     }
 
@@ -756,6 +826,9 @@ export class SyncEngine {
     }
 
     async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.gitAutocommitWorktree(sessionId, options)
     }
 
@@ -764,10 +837,16 @@ export class SyncEngine {
         commitMessage: string
         strategy?: 'ff' | 'merge_commit' | 'squash'
     }): Promise<RpcGitMergeWorktreeResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.gitMergeWorktree(sessionId, options)
     }
 
     async gitRemoveWorktree(sessionId: string): Promise<RpcGitRemoveWorktreeResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.gitRemoveWorktree(sessionId)
     }
 
@@ -776,6 +855,9 @@ export class SyncEngine {
     }
 
     async gitCaptureWorktreeMergeSnapshot(sessionId: string, options: { targetBranch: string }): Promise<RpcGitCaptureWorktreeMergeSnapshotResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.gitCaptureWorktreeMergeSnapshot(sessionId, options)
     }
 
@@ -784,6 +866,9 @@ export class SyncEngine {
         mergeBase: string
         snapshotRef: string
     }): Promise<RpcGitVerifyWorktreeMergeResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.gitVerifyWorktreeMerge(sessionId, options)
     }
 
@@ -819,6 +904,9 @@ export class SyncEngine {
         createParents?: boolean
         overwrite?: boolean
     }): Promise<RpcWriteFileResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         try {
             return await this.rpcGateway.writeSessionFile(sessionId, path, options)
         } catch (error) {
@@ -860,10 +948,16 @@ export class SyncEngine {
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.uploadFile(sessionId, filename, content, mimeType)
     }
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
+        if (this.isOperatorConsoleSession(sessionId)) {
+            return { success: false, error: this.operatorConsoleDeniedMessage() }
+        }
         return await this.rpcGateway.deleteUploadFile(sessionId, path)
     }
 

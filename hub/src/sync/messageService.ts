@@ -75,6 +75,59 @@ export class MessageService {
             disallowedTools?: string[] | null
         }
     ): Promise<void> {
+        const content = this.buildUserMessageContent(payload)
+        this.injectMessage(sessionId, {
+            content,
+            localId: payload.localId ?? undefined
+        })
+    }
+
+    recordLocalUserMessage(
+        sessionId: string,
+        payload: {
+            text: string
+            localId?: string | null
+            attachments?: AttachmentMetadata[]
+            sentFrom?: 'telegram-bot' | 'webapp'
+            appendSystemPrompt?: string | null
+            allowedTools?: string[] | null
+            disallowedTools?: string[] | null
+        }
+    ): void {
+        const msg = this.store.messages.addMessage(
+            sessionId,
+            this.buildUserMessageContent(payload),
+            payload.localId ?? undefined
+        )
+        this.publishLocalMessage(sessionId, msg)
+    }
+
+    recordLocalAssistantMessage(
+        sessionId: string,
+        payload: {
+            text: string
+            localId?: string | null
+        }
+    ): void {
+        const msg = this.store.messages.addMessage(sessionId, {
+            role: 'assistant',
+            content: {
+                type: 'text',
+                text: payload.text
+            }
+        }, payload.localId ?? undefined)
+        this.publishLocalMessage(sessionId, msg)
+    }
+
+    private buildUserMessageContent(payload: {
+        text: string
+        localId?: string | null
+        attachments?: AttachmentMetadata[]
+        sentFrom?: 'telegram-bot' | 'webapp'
+        appendSystemPrompt?: string | null
+        allowedTools?: string[] | null
+        disallowedTools?: string[] | null
+    }): unknown {
         const sentFrom = payload.sentFrom ?? 'webapp'
 
         const meta = {
@@ -96,11 +149,7 @@ export class MessageService {
             localKey: payload.localId ?? undefined,
             meta
         }
-
-        this.injectMessage(sessionId, {
-            content,
-            localId: payload.localId ?? undefined
-        })
+        return content
     }
 
     injectMessage(
@@ -111,7 +160,20 @@ export class MessageService {
         }
     ): void {
         const msg = this.store.messages.addMessage(sessionId, payload.content, payload.localId ?? undefined)
+        this.emitCliMessage(sessionId, msg)
+        this.publishLocalMessage(sessionId, msg)
+    }
 
+    private emitCliMessage(
+        sessionId: string,
+        msg: {
+            id: string
+            seq: number
+            createdAt: number
+            localId: string | null
+            content: unknown
+        }
+    ): void {
         const update = {
             id: msg.id,
             seq: msg.seq,
@@ -129,7 +191,18 @@ export class MessageService {
             }
         }
         this.io.of('/cli').to(`session:${sessionId}`).emit('update', update)
+    }
 
+    private publishLocalMessage(
+        sessionId: string,
+        msg: {
+            id: string
+            seq: number
+            createdAt: number
+            localId: string | null
+            content: unknown
+        }
+    ): void {
         this.publisher.emit({
             type: 'message-received',
             sessionId,

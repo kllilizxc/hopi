@@ -307,6 +307,7 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('Emit the packet as visible assistant text')
         expect(kickoffText).toContain('ExitPlanMode plans are not parsed by HOPI')
         expect(kickoffText).toContain('Do not call EnterPlanMode or ExitPlanMode as a substitute for this packet')
+        expect(kickoffText).toContain('Do not run git commit')
         expect(kickoffText).toContain('Do not mark the Goal paused, done, or archived')
         expect(kickoffText).not.toContain('Mark this Goal active, paused, blocked')
     })

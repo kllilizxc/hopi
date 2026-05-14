@@ -56,6 +56,7 @@ function getGoalTitle(goals: Goal[], goalId: string | null): string | null {
 
 function SessionRow(props: {
     session: ProjectAssistantSessionSummary
+    className: string
     selected: boolean
     goals: Goal[]
     onSelect: (sessionId: string) => void
@@ -68,7 +69,7 @@ function SessionRow(props: {
     return (
         <Pressable
             onClick={() => props.onSelect(props.session.id)}
-            className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all cursor-pointer ${
+            className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all cursor-pointer ${props.className} ${
                 props.selected
                     ? 'bg-[var(--app-subtle-bg)] text-[var(--app-text)] shadow-sm ring-1 ring-black/5 dark:ring-white/10'
                     : 'text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)]/50 hover:text-[var(--app-text)]'
@@ -143,6 +144,7 @@ export function ProjectAssistantPage(props: {
     const { t } = useTranslation()
     const { addToast } = useToast()
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+    const [pendingCreatedSession, setPendingCreatedSession] = useState<ProjectAssistantSessionSummary | null>(null)
     const {
         sessions,
         pendingCount,
@@ -151,24 +153,41 @@ export function ProjectAssistantPage(props: {
     } = useProjectAssistantSessions(api, props.projectId, props.selectedGoalId)
     const actions = useProjectAssistantActions(api, props.projectId)
 
+    const visibleSessions = useMemo(() => {
+        if (!pendingCreatedSession) return sessions
+        const belongsToCurrentScope = pendingCreatedSession.projectId === props.projectId
+            && (pendingCreatedSession.goalId ?? null) === props.selectedGoalId
+        if (!belongsToCurrentScope || sessions.some((session) => session.id === pendingCreatedSession.id)) {
+            return sessions
+        }
+        return [pendingCreatedSession, ...sessions]
+    }, [pendingCreatedSession, props.projectId, props.selectedGoalId, sessions])
+
     const selectedSession = useMemo(() => (
-        sessions.find((session) => session.id === selectedSessionId) ?? sessions[0] ?? null
-    ), [selectedSessionId, sessions])
+        visibleSessions.find((session) => session.id === selectedSessionId) ?? visibleSessions[0] ?? null
+    ), [selectedSessionId, visibleSessions])
 
     useEffect(() => {
-        if (sessions.length === 0) {
+        if (pendingCreatedSession && sessions.some((session) => session.id === pendingCreatedSession.id)) {
+            setPendingCreatedSession(null)
+        }
+    }, [pendingCreatedSession, sessions])
+
+    useEffect(() => {
+        if (visibleSessions.length === 0) {
             if (selectedSessionId !== null) {
                 setSelectedSessionId(null)
             }
             return
         }
-        if (!selectedSessionId || !sessions.some((session) => session.id === selectedSessionId)) {
-            setSelectedSessionId(sessions[0].id)
+        if (!selectedSessionId || !visibleSessions.some((session) => session.id === selectedSessionId)) {
+            setSelectedSessionId(visibleSessions[0].id)
         }
-    }, [selectedSessionId, sessions])
+    }, [selectedSessionId, visibleSessions])
 
     const createSession = useCallback(() => {
         void actions.ensureSession({ kind: 'normal', goalId: props.selectedGoalId }).then((session) => {
+            setPendingCreatedSession(session)
             setSelectedSessionId(session.id)
         }).catch((err) => {
             addToast({
@@ -221,14 +240,15 @@ export function ProjectAssistantPage(props: {
                                     <LoadingState label={t('loading')} className="text-sm" />
                                 </div>
                             ) : null}
-                            {!isLoading && sessions.length === 0 ? (
+                            {!isLoading && visibleSessions.length === 0 ? (
                                 <div className="p-4 text-sm text-[var(--app-hint)]">
                                     {t('projects.assistant.empty')}
                                 </div>
                             ) : null}
-                            <div className="grid gap-1">
-                                {sessions.map((session) => (
+                            <div className="block">
+                                {visibleSessions.map((session) => (
                                     <SessionRow
+                                        className="mb-[8px]"
                                         key={session.id}
                                         session={session}
                                         selected={session.id === selectedSession?.id}

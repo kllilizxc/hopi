@@ -118,6 +118,9 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         if (sessionResult instanceof Response) {
             return sessionResult
         }
+        if (isOperatorConsoleMetadata(sessionResult.session.metadata)) {
+            return c.json({ success: false, error: 'Operator console sessions cannot upload files' }, 403)
+        }
 
         const body = await c.req.json().catch(() => null)
         const parsed = uploadSchema.safeParse(body)
@@ -155,6 +158,9 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
         if (sessionResult instanceof Response) {
             return sessionResult
+        }
+        if (isOperatorConsoleMetadata(sessionResult.session.metadata)) {
+            return c.json({ success: false, error: 'Operator console sessions cannot delete uploaded files' }, 403)
         }
 
         const body = await c.req.json().catch(() => null)

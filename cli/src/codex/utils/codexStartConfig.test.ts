@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { buildCodexStartConfig } from './codexStartConfig';
-import { codexSystemPrompt } from './systemPrompt';
 import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('buildCodexStartConfig', () => {
@@ -46,6 +45,26 @@ describe('buildCodexStartConfig', () => {
         });
 
         expect(config.model).toBe('o3');
+    });
+
+    it('includes operator console developer instructions and approval checks', () => {
+        const config = buildCodexStartConfig({
+            message: 'retry',
+            mode: {
+                permissionMode: 'read-only',
+                appendSystemPrompt: 'operator_console: use hopi_retry_blocked_merge.',
+                disallowedTools: ['CodexPatch']
+            },
+            first: true,
+            mcpServers
+        });
+
+        expect(config.sandbox).toBe('read-only');
+        expect(config['approval-policy']).toBe('on-request');
+        expect(config.config).toEqual({
+            mcp_servers: mcpServers,
+            developer_instructions: 'operator_console: use hopi_retry_blocked_merge.'
+        });
     });
 
     it('strips xhigh from model when building start config', () => {

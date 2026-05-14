@@ -37,6 +37,57 @@ describe('goal todo yaml', () => {
         expect(parsed.sections.map((section) => section.todoRef)).toEqual(['reconnect-indicator', 'resume-affordance'])
     })
 
+    it('parses and preserves todo dependency task lists', () => {
+        const yaml = [
+            'version: 1',
+            'goals:',
+            '  - goalKey: tutorial',
+            '    goalId: goal-tutorial',
+            '    title: Tutorial',
+            '    items:',
+            '      - ref: hub-route',
+            '        status: ready',
+            '        title: Build tutorial hub route',
+            '        dependencyTaskList:',
+            '          - ref: resource-catalog',
+            '            taskId: task-resource-catalog',
+            '            title: Register tutorial resources',
+            '          - ref: teaching-matrix',
+            '            title: Finalize teaching matrix'
+        ].join('\n')
+
+        const parsed = parseGoalTodoYaml(yaml, {
+            goalId: 'goal-tutorial',
+            goalKey: 'tutorial'
+        })
+
+        expect(parsed.sections[0]?.dependencyTaskList).toEqual([
+            {
+                ref: 'resource-catalog',
+                taskId: 'task-resource-catalog',
+                title: 'Register tutorial resources'
+            },
+            {
+                ref: 'teaching-matrix',
+                taskId: null,
+                title: 'Finalize teaching matrix'
+            }
+        ])
+
+        const promoted = updateGoalTodoYaml(yaml, {
+            goalId: 'goal-tutorial',
+            goalKey: 'tutorial',
+            todoRef: 'hub-route',
+            taskId: 'task-hub-route',
+            title: 'Build tutorial hub route',
+            kind: 'promoted'
+        })
+
+        expect(promoted).toContain('dependencyTaskList:')
+        expect(promoted).toContain('ref: resource-catalog')
+        expect(promoted).toContain('taskId: task-resource-catalog')
+    })
+
     it('moves yaml items through promoted and done states', () => {
         const yaml = [
             'version: 1',

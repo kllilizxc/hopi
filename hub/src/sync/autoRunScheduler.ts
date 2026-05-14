@@ -74,12 +74,31 @@ function getSessionAutomationLane(session: { metadata?: unknown }): AutomationLa
         return null
     }
     const parsed = HopiTaskRoleSchema.safeParse(metadata.hopiTaskRole)
-    return parsed.success ? parsed.data : 'generator'
+    return parsed.success ? parsed.data : null
+}
+
+function getSessionTaskId(session: { metadata?: unknown }): string | null {
+    const metadata = toRecord(session.metadata)
+    const taskId = metadata?.taskId
+    return typeof taskId === 'string' && taskId.trim()
+        ? taskId.trim()
+        : null
+}
+
+function isTaskOccupyingAutomationLane(
+    task: Pick<StoredTask, 'status'>,
+    lane: AutomationLane
+): boolean {
+    if (lane === 'evaluator') {
+        return task.status === 'in_review'
+    }
+    return task.status === 'in_progress'
 }
 
 function countRunningSessionsByLane(
     sessions: Array<{ thinking?: boolean; metadata?: unknown }>,
-    projectId: string
+    projectId: string,
+    tasksById: Map<string, StoredTask>
 ): Record<AutomationLane, number> {
     const counts = createLaneCounts()
     for (const session of sessions) {
@@ -92,6 +111,14 @@ function countRunningSessionsByLane(
         }
         const lane = getSessionAutomationLane(session)
         if (!lane) {
+            continue
+        }
+        const taskId = getSessionTaskId(session)
+        if (!taskId) {
+            continue
+        }
+        const task = tasksById.get(taskId)
+        if (!task || !isTaskOccupyingAutomationLane(task, lane)) {
             continue
         }
         counts[lane] += 1
@@ -121,12 +148,43 @@ function sortAutomationCandidates(tasks: StoredTask[]): StoredTask[] {
         .map((item) => item.task)
 }
 
+function areTaskDependenciesSatisfied(task: {
+    status: string
+    projectId: string
+    dependsOnTaskIds?: string[] | null
+}, options: {
+    namespace: string
+    store: Store
+}): boolean {
+    if (task.status !== 'planned') {
+        return true
+    }
+    const dependencyIds = task.dependsOnTaskIds ?? []
+    if (dependencyIds.length === 0) {
+        return true
+    }
+
+    return dependencyIds.every((dependencyId) => {
+        const dependency = options.store.tasks.getTaskByNamespace(dependencyId, options.namespace)
+        if (!dependency || dependency.projectId !== task.projectId || dependency.archivedAt) {
+            return false
+        }
+        if (dependency.status !== 'finished') {
+            return false
+        }
+        return !dependency.mergeRuntime || dependency.mergeRuntime.status === 'succeeded'
+    })
+}
+
 function isTaskAutoRunnable(task: {
+    id: string
+    projectId: string
     status: string
     archivedAt: number | null
     activeSessionId: string | null
     source: string | null
     goalId: string | null
+    dependsOnTaskIds: string[]
     workflowPhase: string | null
     workflowProfile: string
 }, options: {
@@ -138,6 +196,7 @@ function isTaskAutoRunnable(task: {
     const isReviewTask = task.status === 'in_review'
     if (task.status !== 'planned' && !isReviewTask) return false
     if (task.archivedAt) return false
+    if (!areTaskDependenciesSatisfied(task, options)) return false
     if (task.activeSessionId) {
         const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
         if (
@@ -330,7 +389,7 @@ function buildPlannerLoopContract(options: {
         '## Suggested Checks',
         '',
         '- Confirm active kanban work is not overfilled beyond the fill target.',
-        '- Confirm todo.yml items use stable refs and status values candidate/ready/promoted/in_review/blocked/deferred/done rather than an uncurated dump.',
+        '- Confirm todo.yml items use stable refs, status values candidate/ready/promoted/in_review/blocked/deferred/done, and `dependencyTaskList` for normal prerequisites rather than natural-language blockers.',
         '',
         '## Non-goals / Constraints',
         '',
@@ -351,7 +410,7 @@ function buildRadarContract(goal: StoredGoal): string {
         `- Scan .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/tech-debt.md, .hopi/docs/goals/${goal.goalKey}/goal.md, .hopi/docs/goals/${goal.goalKey}/todo.yml, and .hopi/docs/goals/${goal.goalKey}/decisions.md for drift.`,
         '- Scan recent code signals such as TODO/FIXME comments, stale docs references, repeated failures, and obvious technical debt.',
         '- Update .hopi/docs/tech-debt.md only with curated, durable debt worth tracking.',
-        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml with candidate work only when it is actionable and scoped.`,
+        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml with candidate work only when it is actionable and scoped; use dependencyTaskList for normal prerequisites.`,
         '- Create goal-scoped tasks only for small, verifiable, high-confidence maintenance work.',
         '',
         '## Suggested Checks',
@@ -683,10 +742,15 @@ export class AutoRunScheduler {
 
             const projectReadinessReady = project.automationReadinessStatus === 'ready'
 
-            const laneLimits = normalizeAutomationLaneLimits(project.automationLaneLimits)
-            const runningByLane = countRunningSessionsByLane(this.engine.getSessionsByNamespace(namespace), projectId)
-            const startedByLane = createLaneCounts()
             const projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            const tasksById = new Map(projectTasks.map((task) => [task.id, task]))
+            const laneLimits = normalizeAutomationLaneLimits(project.automationLaneLimits)
+            const runningByLane = countRunningSessionsByLane(
+                this.engine.getSessionsByNamespace(namespace),
+                projectId,
+                tasksById
+            )
+            const startedByLane = createLaneCounts()
             const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: 200 })
             const review = projectTasks.filter((task) => task.status === 'in_review')
             const candidates = sortAutomationCandidates([...review, ...planned])
@@ -696,7 +760,18 @@ export class AutoRunScheduler {
 
             for (const task of candidates) {
                 const lane = getTaskAutomationLane(task)
-                if (runningByLane[lane] + startedByLane[lane] >= laneLimits[lane]) continue
+                if (runningByLane[lane] + startedByLane[lane] >= laneLimits[lane]) {
+                    console.warn('[AutoRunScheduler] Skipping task because automation lane is full', {
+                        namespace,
+                        projectId,
+                        taskId: task.id,
+                        lane,
+                        running: runningByLane[lane],
+                        started: startedByLane[lane],
+                        limit: laneLimits[lane]
+                    })
+                    continue
+                }
 
                 const policy = getTaskAutopilotPolicy({
                     task,

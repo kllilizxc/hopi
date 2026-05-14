@@ -72,6 +72,31 @@ describe('appServerConfig', () => {
         expect(params.model).toBe('o3');
     });
 
+    it('forces approval checks when operator console disallows Codex tools', () => {
+        const thread = buildThreadStartParams({
+            mode: {
+                permissionMode: 'read-only',
+                disallowedTools: ['CodexPatch'],
+                appendSystemPrompt: 'operator console instructions'
+            },
+            mcpServers
+        });
+        const turn = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: 'retry',
+            mode: {
+                permissionMode: 'read-only',
+                disallowedTools: ['CodexPatch']
+            }
+        });
+
+        expect(thread.approvalPolicy).toBe('on-request');
+        expect(thread.sandbox).toBe('read-only');
+        expect(thread.developerInstructions).toContain('operator console instructions');
+        expect(turn.approvalPolicy).toBe('on-request');
+        expect(turn.sandboxPolicy).toEqual({ type: 'readOnly' });
+    });
+
     it('puts collaboration mode in turn params with model settings', () => {
         const params = buildTurnStartParams({
             threadId: 'thread-1',

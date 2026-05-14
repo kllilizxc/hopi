@@ -87,4 +87,40 @@ describe('operator console session routes', () => {
         })
         expect(appliedConfigs).toEqual([])
     })
+
+    it('rejects upload writes for Project Assistant operator console sessions', async () => {
+        const store = new Store(':memory:')
+        const { app } = createTestApp(store)
+        const session = store.sessions.getOrCreateSession(
+            'assistant-session',
+            {
+                path: '/tmp/workspace',
+                host: 'hopi',
+                projectId: 'project-1',
+                name: 'Project Assistant',
+                hopiAssistant: true,
+                assistantKind: 'normal',
+                capabilityProfile: 'operator_console',
+                flavor: 'codex'
+            },
+            null,
+            'default'
+        )
+
+        const response = await app.request(`/api/sessions/${session.id}/upload`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                filename: 'notes.txt',
+                content: Buffer.from('hello').toString('base64'),
+                mimeType: 'text/plain'
+            })
+        })
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            success: false,
+            error: 'Operator console sessions cannot upload files'
+        })
+    })
 })

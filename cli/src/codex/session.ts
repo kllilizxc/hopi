@@ -5,6 +5,10 @@ import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { CodexPermissionHandler } from './utils/permissionHandler';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import {
+    buildOperatorToolBridgeMetadataPatch,
+    type OperatorMcpServerConfig
+} from '@/operator/consoleTools';
 
 type LocalLaunchFailure = {
     message: string;
@@ -14,6 +18,7 @@ type LocalLaunchFailure = {
 export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode> {
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
+    readonly mcpServers: Record<string, OperatorMcpServerConfig>;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -32,6 +37,7 @@ export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode>
         startingMode: 'local' | 'remote';
         codexArgs?: string[];
         codexCliOverrides?: CodexCliOverrides;
+        mcpServers: Record<string, OperatorMcpServerConfig>;
         permissionMode?: PermissionMode;
     }) {
         super({
@@ -47,13 +53,15 @@ export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode>
             sessionIdLabel: 'Codex',
             applySessionIdToMetadata: (metadata, sessionId) => ({
                 ...metadata,
-                codexSessionId: sessionId
+                codexSessionId: sessionId,
+                ...buildOperatorToolBridgeMetadataPatch(opts.mcpServers)
             }),
             permissionMode: opts.permissionMode
         });
 
         this.codexArgs = opts.codexArgs;
         this.codexCliOverrides = opts.codexCliOverrides;
+        this.mcpServers = opts.mcpServers;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

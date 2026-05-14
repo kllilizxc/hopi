@@ -12,6 +12,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 
 type SendMessageInput = {
     sessionId: string
+    sourceSessionId?: string
     text: string
     localId: string
     createdAt: number
@@ -20,8 +21,19 @@ type SendMessageInput = {
 
 type BlockedReason = 'no-api' | 'no-session' | 'pending'
 
+type SessionResolution = string | {
+    sessionId: string
+    notify?: boolean
+    handled?: boolean
+}
+
 type UseSendMessageOptions = {
-    resolveSessionId?: (sessionId: string) => Promise<string>
+    resolveSessionId?: (sessionId: string, message: {
+        text: string
+        localId: string
+        createdAt: number
+        attachments?: AttachmentMetadata[]
+    }) => Promise<SessionResolution>
     onSessionResolved?: (sessionId: string) => void
     onBlocked?: (reason: BlockedReason) => void
 }
@@ -38,6 +50,57 @@ function findMessageByLocalId(
         if (message.localId === localId) return message
     }
     return null
+}
+
+function createOptimisticUserMessage(input: {
+    localId: string
+    text: string
+    createdAt: number
+    attachments?: AttachmentMetadata[]
+}): DecryptedMessage {
+    return {
+        id: input.localId,
+        seq: null,
+        localId: input.localId,
+        content: {
+            role: 'user',
+            content: {
+                type: 'text',
+                text: input.text,
+                attachments: input.attachments
+            }
+        },
+        createdAt: input.createdAt,
+        status: 'sending',
+        originalText: input.text,
+    }
+}
+
+function updateMessageStatusForResolvedSession(input: SendMessageInput, status: 'sent' | 'failed'): void {
+    updateMessageStatus(input.sessionId, input.localId, status)
+    if (input.sourceSessionId && input.sourceSessionId !== input.sessionId) {
+        updateMessageStatus(input.sourceSessionId, input.localId, status)
+    }
+}
+
+function normalizeSessionResolution(
+    resolution: SessionResolution,
+    currentSessionId: string
+): { sessionId: string; notify: boolean; handled: boolean } | null {
+    if (typeof resolution === 'string') {
+        return resolution
+            ? { sessionId: resolution, notify: resolution !== currentSessionId, handled: false }
+            : null
+    }
+    const resolvedSessionId = resolution.sessionId.trim()
+    if (!resolvedSessionId) {
+        return null
+    }
+    return {
+        sessionId: resolvedSessionId,
+        notify: resolution.notify ?? resolvedSessionId !== currentSessionId,
+        handled: resolution.handled ?? false
+    }
 }
 
 export function useSendMessage(
@@ -69,32 +132,12 @@ export function useSendMessage(
             }
             await api.sendMessage(input.sessionId, input.text, input.localId, input.attachments)
         },
-        onMutate: async (input) => {
-            const optimisticMessage: DecryptedMessage = {
-                id: input.localId,
-                seq: null,
-                localId: input.localId,
-                content: {
-                    role: 'user',
-                    content: {
-                        type: 'text',
-                        text: input.text,
-                        attachments: input.attachments
-                    }
-                },
-                createdAt: input.createdAt,
-                status: 'sending',
-                originalText: input.text,
-            }
-
-            appendOptimisticMessage(input.sessionId, optimisticMessage)
-        },
         onSuccess: (_, input) => {
-            updateMessageStatus(input.sessionId, input.localId, 'sent')
+            updateMessageStatusForResolvedSession(input, 'sent')
             haptic.notification('success')
         },
         onError: (_, input) => {
-            updateMessageStatus(input.sessionId, input.localId, 'failed')
+            updateMessageStatusForResolvedSession(input, 'failed')
             haptic.notification('error')
         },
     })
@@ -116,6 +159,12 @@ export function useSendMessage(
         }
         const localId = makeClientSideId('local')
         const createdAt = Date.now()
+        appendOptimisticMessage(sessionId, createOptimisticUserMessage({
+            localId,
+            text,
+            createdAt,
+            attachments,
+        }))
         void (async () => {
             let targetSessionId = sessionId
             const resolveSessionId = resolveSessionIdRef.current
@@ -123,12 +172,33 @@ export function useSendMessage(
                 resolveGuardRef.current = true
                 setIsResolving(true)
                 try {
-                    const resolved = await resolveSessionId(sessionId)
-                    if (resolved && resolved !== sessionId) {
-                        onSessionResolvedRef.current?.(resolved)
-                        targetSessionId = resolved
+                    const resolved = await resolveSessionId(sessionId, {
+                        text,
+                        localId,
+                        createdAt,
+                        attachments,
+                    })
+                    const resolution = normalizeSessionResolution(resolved, sessionId)
+                    if (resolution) {
+                        if (resolution.notify) {
+                            onSessionResolvedRef.current?.(resolution.sessionId)
+                        }
+                        targetSessionId = resolution.sessionId
+                        if (resolution.handled) {
+                            updateMessageStatusForResolvedSession({
+                                sessionId: targetSessionId,
+                                sourceSessionId: sessionId,
+                                text,
+                                localId,
+                                createdAt,
+                                attachments,
+                            }, 'sent')
+                            haptic.notification('success')
+                            return
+                        }
                     }
                 } catch (error) {
+                    updateMessageStatus(sessionId, localId, 'failed')
                     haptic.notification('error')
                     console.error('Failed to resolve session before send:', error)
                     return
@@ -139,6 +209,7 @@ export function useSendMessage(
             }
             mutation.mutate({
                 sessionId: targetSessionId,
+                sourceSessionId: sessionId,
                 text,
                 localId,
                 createdAt,

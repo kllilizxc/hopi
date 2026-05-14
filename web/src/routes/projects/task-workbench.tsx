@@ -49,6 +49,16 @@ const MAX_TASK_ATTACHMENTS_BYTES = 10 * 1024 * 1024
 type TaskWorkbenchTab = 'task' | 'chat' | 'terminal' | 'diffs' | 'files'
 const TASK_AGENT_OPTIONS: AgentType[] = ['claude', 'codex', 'gemini', 'opencode']
 
+export function resolveTaskChatPanel(options: {
+    sessionId: string | null
+    pendingAssistantInterventionId?: string | null
+}): { kind: 'task-session'; sessionId: string } | { kind: 'empty' } {
+    if (options.sessionId) {
+        return { kind: 'task-session', sessionId: options.sessionId }
+    }
+    return { kind: 'empty' }
+}
+
 function getTaskPriorityLabelKey(priority: TaskPriority): string {
     return `projects.task.priority.${priority}`
 }
@@ -1936,13 +1946,14 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         </div>
     ) : null
 
+    const taskChatPanel = resolveTaskChatPanel({ sessionId })
     const nonTaskPanel = activeTab === 'chat' ? (
-        sessionId ? (
+        taskChatPanel.kind === 'task-session' ? (
             <TaskSessionChat
                 api={api}
                 projectId={props.projectId}
                 taskId={props.taskId}
-                sessionId={sessionId}
+                sessionId={taskChatPanel.sessionId}
                 onBack={handleBackToProject}
                 onViewFiles={handleOpenFiles}
                 onViewDiffs={handleOpenDiffs}

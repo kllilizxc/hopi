@@ -5,7 +5,7 @@ import type { AgentMessage, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
 import { GeminiDisplay } from '@/ui/ink/GeminiDisplay';
 import type { GeminiSession } from './session';
-import type { PermissionMode } from './types';
+import type { GeminiMode, PermissionMode } from './types';
 import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
@@ -89,14 +89,18 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
         const acpSessionId = await backend.newSession({
             cwd: session.path,
-            mcpServers: []
+            mcpServers: session.mcpServers
         });
         session.onSessionFound(acpSessionId);
 
+        let activeMode: GeminiMode | null = null;
         this.permissionHandler = new GeminiPermissionHandler(
             session.client,
             backend,
-            () => session.getPermissionMode() as PermissionMode | undefined
+            () => session.getPermissionMode() as PermissionMode | undefined,
+            {
+                getDisallowedTools: () => activeMode?.disallowedTools
+            }
         );
         this.applyDisplayMode(session.getPermissionMode() as PermissionMode, runtimeConfig.model);
 
@@ -123,14 +127,23 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             }
 
             this.applyDisplayMode(batch.mode.permissionMode, batch.mode.model);
+            activeMode = batch.mode;
             messageBuffer.addMessage(batch.message, 'user');
             activeTurnLocalKey = batch.localKey ?? null;
             activeTurnHasAssistantReply = false;
             turnInFlight = true;
 
+            const promptText = batch.mode.appendSystemPrompt
+                ? [
+                    batch.mode.appendSystemPrompt,
+                    '',
+                    'User message:',
+                    batch.message
+                ].join('\n')
+                : batch.message;
             const promptContent: PromptContent[] = [{
                 type: 'text',
-                text: batch.message
+                text: promptText
             }];
 
             session.onThinkingChange(true);

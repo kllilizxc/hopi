@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '@/test/renderWithProviders'
 import type { ProjectAssistantSessionSummary } from '@/types/api'
@@ -21,7 +21,8 @@ const session: ProjectAssistantSessionSummary = {
 }
 
 const mocks = vi.hoisted(() => ({
-    useProjectAssistantSessions: vi.fn()
+    useProjectAssistantSessions: vi.fn(),
+    ensureSession: vi.fn()
 }))
 
 vi.mock('@/lib/app-context', () => ({
@@ -38,7 +39,7 @@ vi.mock('@/hooks/queries/useProjectAssistantSessions', () => ({
 
 vi.mock('@/hooks/mutations/useProjectAssistantActions', () => ({
     useProjectAssistantActions: () => ({
-        ensureSession: vi.fn(),
+        ensureSession: mocks.ensureSession,
         resolveIntervention: vi.fn(),
         isPending: false,
         error: null
@@ -61,12 +62,19 @@ vi.mock('@/routes/projects/project-assistant-session-chat', () => ({
 describe('ProjectAssistantPage', () => {
     beforeEach(() => {
         mocks.useProjectAssistantSessions.mockReset()
+        mocks.ensureSession.mockReset()
         mocks.useProjectAssistantSessions.mockReturnValue({
             sessions: [session],
             pendingCount: 0,
             isLoading: false,
             error: null,
             refetch: vi.fn()
+        })
+        mocks.ensureSession.mockResolvedValue({
+            ...session,
+            id: 'assistant-session-2',
+            title: 'New assistant thread',
+            updatedAt: 3
         })
     })
 
@@ -128,5 +136,37 @@ describe('ProjectAssistantPage', () => {
         )
 
         expect(mocks.useProjectAssistantSessions).toHaveBeenCalledWith({}, 'project-1', 'goal-1')
+    })
+
+    it('selects a newly created conversation before the session list refreshes', async () => {
+        renderWithProviders(
+            <ProjectAssistantPage
+                projectId="project-1"
+                selectedGoalId="goal-1"
+                goals={[{
+                    id: 'goal-1',
+                    projectId: 'project-1',
+                    namespace: 'default',
+                    goalKey: 'ship-ui',
+                    title: 'Ship UI',
+                    description: null,
+                    status: 'active',
+                    successCriteria: null,
+                    autopilotEnabled: false,
+                    automationPausedAt: null,
+                    deployRequiresApproval: false,
+                    currentFocus: null,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    archivedAt: null
+                }]}
+            />
+        )
+
+        fireEvent.click(screen.getByRole('button', { name: 'New conversation' }))
+
+        await waitFor(() => {
+            expect(screen.getByText('Shared session panel: assistant-session-2')).toBeInTheDocument()
+        })
     })
 })

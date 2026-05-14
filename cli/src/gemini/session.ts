@@ -3,6 +3,8 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { AgentSessionBase } from '@/agent/sessionBase';
 import type { GeminiMode, PermissionMode } from './types';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import type { McpServerStdio } from '@/agent/types';
+import { buildOperatorToolBridgeMetadataPatchFromList } from '@/operator/consoleTools';
 
 type LocalLaunchFailure = {
     message: string;
@@ -11,6 +13,7 @@ type LocalLaunchFailure = {
 
 export class GeminiSession extends AgentSessionBase<GeminiMode, PermissionMode> {
     transcriptPath: string | null = null;
+    readonly mcpServers: McpServerStdio[];
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -28,6 +31,7 @@ export class GeminiSession extends AgentSessionBase<GeminiMode, PermissionMode> 
         mode?: 'local' | 'remote';
         startedBy: 'runner' | 'terminal';
         startingMode: 'local' | 'remote';
+        mcpServers: McpServerStdio[];
         permissionMode?: PermissionMode;
     }) {
         super({
@@ -43,11 +47,13 @@ export class GeminiSession extends AgentSessionBase<GeminiMode, PermissionMode> 
             sessionIdLabel: 'Gemini',
             applySessionIdToMetadata: (metadata, sessionId) => ({
                 ...metadata,
-                geminiSessionId: sessionId
+                geminiSessionId: sessionId,
+                ...buildOperatorToolBridgeMetadataPatchFromList(opts.mcpServers)
             }),
             permissionMode: opts.permissionMode
         });
 
+        this.mcpServers = opts.mcpServers;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

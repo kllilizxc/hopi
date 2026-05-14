@@ -77,5 +77,51 @@ describe('CodexPermissionHandler', () => {
         expect(state.requests).toEqual({});
         expect(Object.keys(state.completedRequests)).toContain('req-2');
     });
-});
 
+    it('allows read-only Codex shell inspection and denies disallowed Codex patch tools', async () => {
+        const { client, getState } = createClient();
+
+        const handler = new CodexPermissionHandler(
+            client as any,
+            () => 'read-only' as any,
+            {
+                getDisallowedTools: () => ['CodexPatch']
+            }
+        );
+
+        const shellResult = await handler.handleToolCall('req-shell', 'CodexBash', { command: 'git status' });
+        const patchResult = await handler.handleToolCall('req-patch', 'CodexPatch', { grantRoot: '/tmp/worktree' });
+
+        expect(shellResult).toEqual({ decision: 'approved' });
+        expect(patchResult).toEqual({
+            decision: 'denied',
+            reason: 'Tool is disallowed for this operator console session'
+        });
+        expect(getState().requests).toEqual({});
+        expect(getState().completedRequests).toMatchObject({
+            'req-shell': { status: 'approved', decision: 'approved' },
+            'req-patch': { status: 'denied', decision: 'denied' }
+        });
+    });
+
+    it('auto-approves HOPI operator MCP tools in read-only mode', async () => {
+        const { client, getState } = createClient();
+
+        const handler = new CodexPermissionHandler(
+            client as any,
+            () => 'read-only' as any
+        );
+
+        const result = await handler.handleToolCall(
+            'req-preference',
+            'mcp__hopi_operator__hopi_write_preference',
+            { path: '.hopi/preference.md' }
+        );
+
+        expect(result).toEqual({ decision: 'approved' });
+        expect(getState().requests).toEqual({});
+        expect(getState().completedRequests).toMatchObject({
+            'req-preference': { status: 'approved', decision: 'approved' }
+        });
+    });
+});

@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import { Hono } from 'hono'
 import type { Session } from '@hopi/protocol/types'
 import { Store, type StoredSession } from '../../store'
+import { EventPublisher } from '../../sync/eventPublisher'
 import { createProjectAssistantIntervention } from '../../sync/projectAssistant'
+import { SessionCache } from '../../sync/sessionCache'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { createGoalsRoutes } from './goals'
 import { createProjectsRoutes } from './projects'
@@ -28,8 +30,21 @@ function runtimeSession(stored: StoredSession): Session {
     }
 }
 
-function engineFor(store: Store): SyncEngine {
+function engineFor(store: Store, options?: { spawnCreatesNewSession?: boolean }): SyncEngine {
     const sessions = new Map<string, Session>()
+    const publisher = new EventPublisher({ broadcast() {} } as never, (event) => event.namespace)
+    const sessionCache = new SessionCache(store, publisher)
+    publisher.subscribe((event) => {
+        if (!('sessionId' in event) || !event.sessionId) return
+        if (event.type === 'session-removed') {
+            sessions.delete(event.sessionId)
+            return
+        }
+        const stored = store.sessions.getSessionByNamespace(event.sessionId, event.namespace ?? 'default')
+        if (stored) {
+            sessions.set(stored.id, runtimeSession(stored))
+        }
+    })
     return {
         async spawnSession(
             machineId: string,
@@ -44,8 +59,11 @@ function engineFor(store: Store): SyncEngine {
             _worktreeTargetBranch?: string,
             sessionTag?: string
         ) {
+            const tag = options?.spawnCreatesNewSession
+                ? `assistant-route-spawned-${sessions.size + 1}`
+                : sessionTag ?? `assistant-route-${sessions.size + 1}`
             const stored = store.sessions.getOrCreateSession(
-                sessionTag ?? `assistant-route-${sessions.size + 1}`,
+                tag,
                 {
                     path: directory,
                     host: 'localhost',
@@ -59,6 +77,9 @@ function engineFor(store: Store): SyncEngine {
             )
             sessions.set(stored.id, runtimeSession(stored))
             return { type: 'success' as const, sessionId: stored.id }
+        },
+        async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string) {
+            await sessionCache.mergeSessions(oldSessionId, newSessionId, namespace)
         },
         async waitForSessionActive() {
             return true
@@ -96,9 +117,9 @@ function engineFor(store: Store): SyncEngine {
     } as unknown as SyncEngine
 }
 
-function createTestApp(store: Store): Hono {
+function createTestApp(store: Store, options?: { spawnCreatesNewSession?: boolean }): Hono {
     const app = new Hono()
-    const engine = engineFor(store)
+    const engine = engineFor(store, options)
     app.use('*', async (c, next) => {
         const setContext = c.set as unknown as (key: string, value: unknown) => void
         setContext('userId', 1)
@@ -149,10 +170,22 @@ describe('project assistant routes', () => {
         expect(createBody.session.kind).toBe('normal')
         expect(createBody.session.goalId).toBe(goalId)
 
+        const secondCreateResponse = await app.request(`/api/projects/${projectId}/assistant-sessions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ kind: 'normal', goalId })
+        })
+        expect(secondCreateResponse.status).toBe(200)
+        const secondCreateBody = await secondCreateResponse.json() as { session: { id: string; kind: string; goalId: string } }
+        expect(secondCreateBody.session.kind).toBe('normal')
+        expect(secondCreateBody.session.goalId).toBe(goalId)
+        expect(secondCreateBody.session.id).not.toBe(createBody.session.id)
+
         const listResponse = await app.request(`/api/projects/${projectId}/assistant-sessions`)
         expect(listResponse.status).toBe(200)
         const listBody = await listResponse.json() as { sessions: Array<{ id: string }>; pendingCount: number }
         expect(listBody.sessions.map((session) => session.id)).toContain(createBody.session.id)
+        expect(listBody.sessions.map((session) => session.id)).toContain(secondCreateBody.session.id)
         expect(listBody.pendingCount).toBe(0)
     })
 
@@ -265,6 +298,73 @@ describe('project assistant routes', () => {
         const body = await response.json() as { session: { id: string } }
         expect(body.session.id).toBe(intervention.session.id)
         const messages = store.messages.getMessages(intervention.session.id, 10)
+        expect(messages.some((message) => message.localId?.startsWith('auto:assistant:activation:'))).toBe(true)
+    })
+
+    it('activates and sends the first assistant user message without a separate activation turn', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+        const { projectId, goalId } = await createProjectAndGoal(app, mkdtempSync(join(tmpdir(), 'hopi-assistant-routes-')))
+        const intervention = createProjectAssistantIntervention({
+            store,
+            namespace: 'default',
+            projectId,
+            goalId,
+            interventionKey: 'merge-blocked:task-1',
+            interventionKind: 'merge_blocked',
+            title: 'Auto-merge blocked',
+            body: 'Merge conflicts persisted after 2 repair attempts.',
+            suggestedActions: [{ id: 'retry', label: 'Retry merge', recommended: true }]
+        })
+
+        const response = await app.request(`/api/projects/${projectId}/assistant-sessions/${intervention.session.id}/activate`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                initialMessage: {
+                    text: '啥意思',
+                    localId: 'local-first'
+                }
+            })
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { session: { id: string } }
+        expect(body.session.id).toBe(intervention.session.id)
+        const messages = store.messages.getMessages(intervention.session.id, 10)
+        expect(messages.some((message) => message.localId?.startsWith('auto:assistant:activation:'))).toBe(false)
+        expect(messages.some((message) => message.localId === 'local-first')).toBe(true)
+    })
+
+    it('activates a pending intervention when the runner returns a new session id', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store, { spawnCreatesNewSession: true })
+        const { projectId, goalId } = await createProjectAndGoal(app, mkdtempSync(join(tmpdir(), 'hopi-assistant-routes-')))
+        const intervention = createProjectAssistantIntervention({
+            store,
+            namespace: 'default',
+            projectId,
+            goalId,
+            interventionKey: 'goal:ship-ui:activate-new-session',
+            interventionKind: 'decision_needed',
+            title: 'Choose scope',
+            body: 'Need a decision on scope.',
+            suggestedActions: [{ id: 'answer', label: 'Answer', recommended: true }]
+        })
+
+        const response = await app.request(`/api/projects/${projectId}/assistant-sessions/${intervention.session.id}/activate`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { session: { id: string; kind: string; interventionStatus: string } }
+        expect(body.session.id).not.toBe(intervention.session.id)
+        expect(body.session.kind).toBe('intervention')
+        expect(body.session.interventionStatus).toBe('pending')
+        expect(store.sessions.getSessionByNamespace(intervention.session.id, 'default')).toBeNull()
+        const messages = store.messages.getMessages(body.session.id, 10)
         expect(messages.some((message) => message.localId?.startsWith('auto:assistant:activation:'))).toBe(true)
     })
 

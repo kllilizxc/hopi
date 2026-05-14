@@ -13,6 +13,14 @@ import { PermissionModeSchema } from '@hopi/protocol/schemas';
 import { startOpencodeHookServer } from './utils/startOpencodeHookServer';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import { buildOperatorMcpServerList } from '@/operator/consoleTools';
+
+export function hashOpencodeMode(mode: OpencodeMode): string {
+    return hashObject({
+        permissionMode: mode.permissionMode,
+        appendSystemPrompt: mode.appendSystemPrompt
+    });
+}
 
 export async function runOpencode(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -40,18 +48,18 @@ export async function runOpencode(opts: {
         workingDirectory,
         agentState: initialState
     });
+    const mcpServers = buildOperatorMcpServerList(session);
 
     const startingMode: 'local' | 'remote' = opts.startingMode
         ?? (startedBy === 'runner' ? 'remote' : 'local');
 
     setControlledByUser(session, startingMode);
 
-    const messageQueue = new MessageQueue2<OpencodeMode>((mode) => hashObject({
-        permissionMode: mode.permissionMode
-    }));
+    const messageQueue = new MessageQueue2<OpencodeMode>(hashOpencodeMode);
 
     const sessionWrapperRef: { current: OpencodeSession | null } = { current: null };
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
+    let currentAppendSystemPrompt: string | undefined;
     const hookServer = await startOpencodeHookServer({
         onEvent: (event) => {
             const currentSession = sessionWrapperRef.current;
@@ -85,9 +93,16 @@ export async function runOpencode(opts: {
     };
 
     session.onUserMessage((message) => {
+        let messageAppendSystemPrompt = currentAppendSystemPrompt;
+        if (Object.prototype.hasOwnProperty.call(message.meta ?? {}, 'appendSystemPrompt')) {
+            messageAppendSystemPrompt = message.meta?.appendSystemPrompt || undefined;
+            currentAppendSystemPrompt = messageAppendSystemPrompt;
+        }
+
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
         const mode: OpencodeMode = {
-            permissionMode: currentPermissionMode
+            permissionMode: currentPermissionMode,
+            appendSystemPrompt: messageAppendSystemPrompt
         };
         messageQueue.push(formattedText, mode, message.localKey ?? null);
     });
@@ -126,6 +141,7 @@ export async function runOpencode(opts: {
             resumeSessionId: opts.resumeSessionId,
             hookServer,
             hookUrl,
+            mcpServers,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

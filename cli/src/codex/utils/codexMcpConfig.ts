@@ -44,7 +44,7 @@ function buildTomlLiteralArray(values: string[]): string {
  * @returns Array of CLI arguments to pass to codex
  */
 export function buildMcpServerConfigArgs(
-    mcpServers: Record<string, { command: string; args: string[] }>
+    mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>
 ): string[] {
     const configArgs: string[] = [];
 
@@ -56,6 +56,10 @@ export function buildMcpServerConfigArgs(
         // Use TOML literal strings to avoid shell-quote mangling on Windows.
         const argsToml = buildTomlLiteralArray(server.args);
         configArgs.push('-c', `mcp_servers.${name}.args=${argsToml}`);
+
+        for (const [envName, envValue] of Object.entries(server.env ?? {})) {
+            configArgs.push('-c', `mcp_servers.${name}.env.${envName}="${escapeTomlString(envValue)}"`);
+        }
     }
 
     return configArgs;

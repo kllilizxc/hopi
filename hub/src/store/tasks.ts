@@ -35,6 +35,7 @@ type DbTaskRow = {
     attachments: string | null
     source: string | null
     source_task_id: string | null
+    depends_on_task_ids: string | null
     workflow_profile?: string | null
     workflow_phase: string | null
     sub_tasks: string | null
@@ -73,6 +74,23 @@ function normalizeTaskBlockedText(value: string | null | undefined, maxLength = 
     }
 
     return normalized.length > maxLength ? normalized.slice(0, maxLength).trim() : normalized
+}
+
+function normalizeTaskDependencyIds(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return []
+    }
+    const seen = new Set<string>()
+    const normalized: string[] = []
+    for (const item of value) {
+        if (typeof item !== 'string') continue
+        const id = item.trim()
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        normalized.push(id)
+        if (normalized.length >= 64) break
+    }
+    return normalized
 }
 
 function getRuntimeBlockedReason(runtime: TaskRuntimeWithSession | null | undefined): string | null {
@@ -187,6 +205,7 @@ function toStoredTask(row: DbTaskRow): StoredTask {
         attachments: safeJsonParse(row.attachments),
         source: row.source,
         sourceTaskId: row.source_task_id,
+        dependsOnTaskIds: normalizeTaskDependencyIds(safeJsonParse(row.depends_on_task_ids)),
         workflowProfile: (row.workflow_profile ?? '').trim() || 'default',
         workflowPhase: row.workflow_phase,
         subTasks: safeJsonParse(row.sub_tasks),
@@ -343,6 +362,7 @@ export function createTask(
         attachments?: unknown
         source?: string | null
         sourceTaskId?: string | null
+        dependsOnTaskIds?: unknown
         workflowProfile?: string | null
         workflowPhase?: string | null
         subTasks?: unknown
@@ -372,19 +392,20 @@ export function createTask(
         ? normalizeTaskBlockedText(task.blockedSessionId, 128) ?? resolveTaskBlockedSessionId({ mergeRuntime, previewRuntime, initRuntime })
         : null
     const blockedAt = isBlocked ? task.blockedAt ?? now : null
+    const dependsOnTaskIds = normalizeTaskDependencyIds(task.dependsOnTaskIds)
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, goal_id, goal_todo_ref, title, description, status, priority,
             blocked_reason, blocked_at, blocked_source, blocked_session_id,
             sort_key, active_session_id, workspace_id, agent_flavor,
-            attachments, source, source_task_id, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
+            attachments, source, source_task_id, depends_on_task_ids, workflow_profile, workflow_phase, sub_tasks, sub_tasks_updated_at, worktree_merged_at, worktree_merge_commit,
             permission_mode, model, model_mode, merge_runtime, preview_runtime, init_runtime, contract, handoff, evidence,
             created_at, updated_at, finished_at, archived_at
         ) VALUES (
             @id, @project_id, @goal_id, @goal_todo_ref, @title, @description, @status, @priority,
             @blocked_reason, @blocked_at, @blocked_source, @blocked_session_id,
             @sort_key, @active_session_id, @workspace_id, @agent_flavor,
-            @attachments, @source, @source_task_id, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
+            @attachments, @source, @source_task_id, @depends_on_task_ids, @workflow_profile, @workflow_phase, @sub_tasks, @sub_tasks_updated_at, @worktree_merged_at, @worktree_merge_commit,
             @permission_mode, @model, @model_mode, @merge_runtime, @preview_runtime, @init_runtime, @contract, @handoff, @evidence,
             @created_at, @updated_at, NULL, NULL
         )
@@ -411,6 +432,7 @@ export function createTask(
         attachments: task.attachments !== undefined ? JSON.stringify(task.attachments) : null,
         source: task.source ?? null,
         source_task_id: task.sourceTaskId ?? null,
+        depends_on_task_ids: JSON.stringify(dependsOnTaskIds),
         workflow_profile: (task.workflowProfile ?? '').trim() || 'default',
         workflow_phase: task.workflowPhase ?? null,
         sub_tasks: task.subTasks !== undefined ? JSON.stringify(task.subTasks) : null,
@@ -458,6 +480,7 @@ export function updateTaskByNamespace(
         model?: string | null
         modelMode?: string | null
         source?: string | null
+        dependsOnTaskIds?: unknown
         workflowProfile?: string
         workflowPhase?: string | null
         attachments?: unknown
@@ -502,6 +525,9 @@ export function updateTaskByNamespace(
         model: patch.model !== undefined ? patch.model : current.model,
         modelMode: patch.modelMode !== undefined ? patch.modelMode : current.modelMode,
         source: patch.source !== undefined ? patch.source : current.source,
+        dependsOnTaskIds: patch.dependsOnTaskIds !== undefined
+            ? normalizeTaskDependencyIds(patch.dependsOnTaskIds)
+            : current.dependsOnTaskIds,
         workflowProfile: patch.workflowProfile !== undefined ? patch.workflowProfile : current.workflowProfile,
         workflowPhase: patch.workflowPhase !== undefined ? patch.workflowPhase : current.workflowPhase,
         attachments: patch.attachments !== undefined ? patch.attachments : current.attachments,
@@ -605,6 +631,7 @@ export function updateTaskByNamespace(
             model = @model,
             model_mode = @model_mode,
             source = @source,
+            depends_on_task_ids = @depends_on_task_ids,
             workflow_profile = @workflow_profile,
             workflow_phase = @workflow_phase,
             attachments = @attachments,
@@ -644,6 +671,7 @@ export function updateTaskByNamespace(
         model: next.model,
         model_mode: next.modelMode,
         source: next.source,
+        depends_on_task_ids: JSON.stringify(next.dependsOnTaskIds),
         workflow_profile: (next.workflowProfile ?? '').trim() || 'default',
         workflow_phase: next.workflowPhase,
         attachments: next.attachments !== undefined && next.attachments !== null ? JSON.stringify(next.attachments) : null,

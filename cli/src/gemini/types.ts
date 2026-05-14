@@ -5,4 +5,7 @@ export type PermissionMode = GeminiPermissionMode;
 export interface GeminiMode {
     permissionMode: PermissionMode;
     model?: string;
+    appendSystemPrompt?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
 }

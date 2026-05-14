@@ -522,6 +522,30 @@ export class SessionCache {
             changed = true
         }
 
+        if (oldObj.hopiAssistant === true) {
+            const assistantKeys = [
+                'projectId',
+                'goalId',
+                'taskId',
+                'name',
+                'hopiAssistant',
+                'assistantKind',
+                'interventionKind',
+                'interventionStatus',
+                'interventionKey',
+                'suggestedActions',
+                'interventionResolution',
+                'capabilityProfile'
+            ]
+            for (const key of assistantKeys) {
+                const oldValue = oldObj[key]
+                if (oldValue !== undefined && merged[key] !== oldValue) {
+                    merged[key] = oldValue
+                    changed = true
+                }
+            }
+        }
+
         return changed ? merged : newMetadata
     }
 }

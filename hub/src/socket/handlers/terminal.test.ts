@@ -69,6 +69,7 @@ type Harness = {
 
 function createHarness(options?: {
     sessionActive?: boolean
+    sessionMetadata?: unknown
     maxTerminalsPerSocket?: number
     maxTerminalsPerSession?: number
 }): Harness {
@@ -80,7 +81,11 @@ function createHarness(options?: {
 
     registerTerminalHandlers(terminalSocket as unknown as SocketWithData, {
         io: io as unknown as SocketServer,
-        getSession: () => ({ active: options?.sessionActive ?? true, namespace: 'default' }),
+        getSession: () => ({
+            active: options?.sessionActive ?? true,
+            namespace: 'default',
+            metadata: options?.sessionMetadata
+        }),
         terminalRegistry,
         maxTerminalsPerSocket: options?.maxTerminalsPerSocket ?? 4,
         maxTerminalsPerSession: options?.maxTerminalsPerSession ?? 4
@@ -118,6 +123,32 @@ describe('terminal socket handlers', () => {
         expect(errorEvent?.data).toEqual({
             terminalId: 'terminal-1',
             message: 'Session is inactive or unavailable.'
+        })
+        expect(terminalRegistry.get('terminal-1')).toBeNull()
+    })
+
+    it('rejects terminal creation for operator console sessions', () => {
+        const { terminalSocket, terminalRegistry } = createHarness({
+            sessionMetadata: {
+                path: '/tmp/workspace',
+                host: 'hopi',
+                capabilityProfile: 'operator_console',
+                hopiAssistant: true,
+                assistantKind: 'normal'
+            }
+        })
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 80,
+            rows: 24
+        })
+
+        const errorEvent = lastEmit(terminalSocket, 'terminal:error')
+        expect(errorEvent?.data).toEqual({
+            terminalId: 'terminal-1',
+            message: 'Operator console sessions cannot open terminals.'
         })
         expect(terminalRegistry.get('terminal-1')).toBeNull()
     })

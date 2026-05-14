@@ -52,7 +52,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 29
+const SCHEMA_VERSION: number = 30
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -491,6 +491,7 @@ export class Store {
                 attachments TEXT,
                 source TEXT,
                 source_task_id TEXT,
+                depends_on_task_ids TEXT,
                 workflow_profile TEXT,
                 workflow_phase TEXT,
                 sub_tasks TEXT,
@@ -945,6 +946,9 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 29) {
             this.migrateFromV28ToV29()
+        }
+        if (SCHEMA_VERSION >= 30) {
+            this.migrateFromV29ToV30()
         }
         this.normalizeTaskStatusValues()
     }
@@ -1791,6 +1795,16 @@ export class Store {
                 row.blocked_at ?? row.updated_at,
                 row.id
             )
+        }
+    }
+
+    private migrateFromV29ToV30(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v29 to v30 migration.')
+        }
+        if (!taskColumns.has('depends_on_task_ids')) {
+            this.db.exec("ALTER TABLE tasks ADD COLUMN depends_on_task_ids TEXT NOT NULL DEFAULT '[]'")
         }
     }
 

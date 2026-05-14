@@ -79,7 +79,7 @@ export const TaskSessionChat = memo(function TaskSessionChat(props: {
                 }
             }
 
-            return resumedSessionId
+            return { sessionId: resumedSessionId, notify: true }
         },
         onSessionResolved: (resolvedSessionId) => {
             void (async () => {

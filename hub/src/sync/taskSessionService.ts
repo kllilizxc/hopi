@@ -469,7 +469,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const exampleStatus = role === 'Generator' ? 'in_review' : 'finished'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
-            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref.',
+            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting a .hopi/docs/goals/<goalKey>/todo.yml item, set title to the item title and todoRef to the item ref. Normal prerequisites belong in the todo item `dependencyTaskList`; HOPI projects that docs source into task `dependsOnTaskIds` instead of blocking it.',
             '- update_planner_mail_status: mark goal operator/planner-mail.yml entries as included, resolved, or superseded after you have incorporated or triaged them.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
             '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
@@ -489,17 +489,18 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         '',
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
+        '- Do not run git commit, git add, git push, or release/deploy commands; HOPI automation owns commits and merge state when needed.',
         '- If no HOPI state change is needed, omit the packet. For goal-role tasks, finishing or blocking the current task is a HOPI state change, so include update_current_task before stopping.',
         '- Emit the packet as visible assistant text. Hidden thinking, tool inputs, plan files, and ExitPlanMode plans are not parsed by HOPI.',
         '- Do not call EnterPlanMode or ExitPlanMode as a substitute for this packet; this task is already the planning/review/execution turn.',
-        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `ref`, `status`, `title`, optional `taskId`, and optional `body`.',
+        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `ref`, `status`, `title`, optional `taskId`, optional `body`, and optional `dependencyTaskList[]` entries with `ref`, optional `taskId`, and optional `title`.',
         '- Todo item status values are ready, candidate, promoted, in_review, blocked, deferred, done. When creating a task from a todo item, keep its stable `ref` as todoRef.',
         '- Task titles are user-visible text only. Do not prefix or include `ref`, `todoRef`, yaml keys, or ids in `title`.',
         '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
         '- The fenced block must be strict JSON accepted by JSON.parse. Do not put raw `"` characters inside string values; use single quotes in prose or escape them as `\\"`.',
         ...commonActions,
         ...(role === 'Planner' || role === 'Radar'
-            ? ['- create_goal_task shape: { "type": "create_goal_task", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
+            ? ['- create_goal_task shape: { "type": "create_goal_task", "todoRef": "stable-todo-ref", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
             : []),
         '- Finish with one fenced JSON block in this shape; add create_goal_task actions before update_current_task when needed:',
         'HOPI_ACTIONS:',
@@ -528,7 +529,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.md, and the current Goal kanban snapshot.',
             '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
-            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: promoted` and set its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
+            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: promoted`, keep any `dependencyTaskList`, and set its `taskId` before the final HOPI_ACTIONS packet; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
             '',
             'Task creation quality bar:',
             '- Create tasks that a Generator can execute without re-planning the whole Goal.',

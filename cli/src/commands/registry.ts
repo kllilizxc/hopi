@@ -9,6 +9,7 @@ import { opencodeCommand } from './opencode'
 import { hookForwarderCommand } from './hookForwarder'
 import { notifyCommand } from './notify'
 import { hubCommand } from './hub'
+import { assistantOperatorMcpCommand } from './assistantOperatorMcp'
 import type { CommandContext, CommandDefinition } from './types'
 
 const COMMANDS: CommandDefinition[] = [
@@ -22,7 +23,8 @@ const COMMANDS: CommandDefinition[] = [
     hookForwarderCommand,
     doctorCommand,
     runnerCommand,
-    notifyCommand
+    notifyCommand,
+    assistantOperatorMcpCommand
 ]
 
 const commandMap = new Map<string, CommandDefinition>()
