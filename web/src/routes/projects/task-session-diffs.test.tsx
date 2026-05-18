@@ -80,7 +80,41 @@ describe('TaskSessionDiffs', () => {
         fireEvent.click(screen.getByText('app.ts'))
 
         await waitFor(() => {
-            expect(getTaskMergedDiffFile).toHaveBeenCalledWith('task-1', 'src/app.ts')
+            expect(getTaskMergedDiffFile).toHaveBeenCalledWith('task-1', 'src/app.ts', { baseRef: 'abc123' })
         })
+    })
+
+    it('loads merged diff summaries live when only the merge refs are available', async () => {
+        const originalTask = mocks.task
+        mocks.task = {
+            ...originalTask,
+            worktreeMergeCommit: 'def456',
+            mergedDiffSnapshot: {
+                files: [],
+                capturedAt: 1_700_000_000_000,
+                baseCommit: 'abc123'
+            }
+        } as unknown as Task
+
+        const getTaskMergedDiffNumstat = vi.fn(async () => ({
+            success: true,
+            stdout: '2\t1\tsrc/app.ts\n'
+        }))
+        const api = {
+            getTaskMergedDiffNumstat
+        } as unknown as ApiClient
+
+        try {
+            renderWithProviders(<TaskSessionDiffs api={api} sessionId="session-1" />)
+
+            await waitFor(() => {
+                expect(getTaskMergedDiffNumstat).toHaveBeenCalledWith('task-1', { baseRef: 'abc123' })
+            })
+
+            expect(await screen.findByText('Merged changes (1)')).toBeInTheDocument()
+            expect(screen.getByText('app.ts')).toBeInTheDocument()
+        } finally {
+            mocks.task = originalTask
+        }
     })
 })

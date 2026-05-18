@@ -1,15 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
 import { DEFAULT_AGENT_FLAVOR } from '@hopi/protocol'
-import type { Task, TaskPriority, TaskStatus, TasksResponse } from '@/types/api'
-import { queryKeys } from '@/lib/query-keys'
+import { productStorageKey } from '@hopi/protocol/brand'
+import type { Task, TaskPriority } from '@/types/api'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
-import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
-import type { ActionSheetSelectOption } from '@/components/ui/ActionSheetSelect'
 import { IconButton } from '@/components/ui/icon-button'
 import { ScrollShadow } from '@/components/ui/scroll-shadow'
 import { useAppContext } from '@/lib/app-context'
@@ -17,23 +14,22 @@ import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
-import { KANBAN_COLUMNS } from '@/lib/task-status'
+import { KANBAN_COLUMNS, type GoalTaskLane, getTaskLane } from '@/lib/task-status'
 import { isMobileViewport } from '@/lib/device'
 import { isOptimisticTaskId } from '@/lib/optimistic-task'
 import { Tag } from '@/components/ui/tag'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { buildTaskBlockedStatusSummary } from '@/lib/task-action-runtime'
 import type { AgentType } from '@/components/NewSession/types'
-import { ChevronDownIcon, ChevronRightIcon, PlusIcon, TaskCardMenuIcon } from '@/assets/icons'
-import { productStorageKey } from '@hopi/protocol/brand'
+import { ChevronDownIcon, ChevronRightIcon, PlusIcon } from '@/assets/icons'
 
-const TASK_STATUS_VALUES: TaskStatus[] = KANBAN_COLUMNS.map((col) => col.status)
-const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = productStorageKey('kanban-collapsed-columns-v1')
-const DEFAULT_COLLAPSED_COLUMNS: Record<string, boolean> = {
-    planning: false,
-    running: false,
-    review: false,
-    blocked: true,
+const KANBAN_LANE_VALUES: GoalTaskLane[] = KANBAN_COLUMNS.map((column) => column.status)
+const KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY = productStorageKey('kanban-collapsed-columns-v2')
+const DEFAULT_COLLAPSED_COLUMNS: Record<GoalTaskLane, boolean> = {
+    planned: false,
+    in_progress: false,
+    in_review: false,
+    merging: false,
     done: true
 }
 
@@ -75,22 +71,18 @@ function getTaskMergeRuntimeTag(t: ReturnType<typeof useTranslation>['t'], task:
             }
         case 'succeeded':
             return null
-        default: {
-            const _exhaustive: never = runtime.status
-            return _exhaustive
-        }
+        default:
+            return null
     }
 }
 
-type CollapsedColumns = Record<string, boolean>
+type CollapsedColumns = Record<GoalTaskLane, boolean>
 
 function getDefaultCollapsedColumns(): CollapsedColumns {
     const collapsed = { ...DEFAULT_COLLAPSED_COLUMNS }
     if (!isMobileViewport()) {
-        collapsed.blocked = false
         collapsed.done = false
     }
-
     return collapsed
 }
 
@@ -105,10 +97,10 @@ function loadCollapsedColumnsFromStorage(): CollapsedColumns {
         if (!parsed || typeof parsed !== 'object') return collapsed
 
         const parsedRecord = parsed as Record<string, unknown>
-        for (const status of TASK_STATUS_VALUES) {
-            const value = parsedRecord[status]
+        for (const lane of KANBAN_LANE_VALUES) {
+            const value = parsedRecord[lane]
             if (typeof value === 'boolean') {
-                collapsed[status] = value
+                collapsed[lane] = value
             }
         }
     } catch {
@@ -124,30 +116,7 @@ function saveCollapsedColumnsToStorage(collapsedColumns: CollapsedColumns): void
     try {
         window.localStorage.setItem(KANBAN_COLLAPSED_COLUMNS_STORAGE_KEY, JSON.stringify(collapsedColumns))
     } catch {
-        // ignore storage quota/private mode errors
-    }
-}
-
-function asTaskStatus(value: string | undefined): TaskStatus | null {
-    if (!value) return null
-    if (TASK_STATUS_VALUES.includes(value as TaskStatus)) {
-        return value as TaskStatus
-    }
-    return null
-}
-
-function normalizeKanbanStatus(status: TaskStatus): TaskStatus {
-    switch (status) {
-        case 'planned':
-            return 'planning' as TaskStatus
-        case 'in_progress':
-            return 'running' as TaskStatus
-        case 'in_review':
-            return 'review' as TaskStatus
-        case 'finished':
-            return 'done' as TaskStatus
-        default:
-            return status
+        // Ignore browser storage errors.
     }
 }
 
@@ -160,24 +129,24 @@ type KanbanStatusTheme = {
     accent2: string
 }
 
-function getKanbanStatusTheme(status: TaskStatus): KanbanStatusTheme {
-    switch (normalizeKanbanStatus(status)) {
-        case 'planning':
+function getKanbanStatusTheme(status: GoalTaskLane): KanbanStatusTheme {
+    switch (status) {
+        case 'planned':
             return {
                 accent1: 'var(--app-kanban-planned)',
                 accent2: 'var(--app-kanban-planned-2)'
             }
-        case 'running':
+        case 'in_progress':
             return {
                 accent1: 'var(--app-kanban-in-progress)',
                 accent2: 'var(--app-kanban-in-progress-2)'
             }
-        case 'review':
+        case 'in_review':
             return {
                 accent1: 'var(--app-kanban-in-review)',
                 accent2: 'var(--app-kanban-in-review-2)'
             }
-        case 'blocked':
+        case 'merging':
             return {
                 accent1: 'var(--app-kanban-blocked)',
                 accent2: 'var(--app-kanban-blocked-2)'
@@ -217,10 +186,8 @@ function getSubTaskStatusLabelKey(status: KanbanTaskSubTask['status']): string {
             return 'projects.task.subtasks.status.inProgress'
         case 'pending':
             return 'projects.task.subtasks.status.pending'
-        default: {
-            const _exhaustive: never = status
-            return _exhaustive
-        }
+        default:
+            return 'projects.task.subtasks.status.pending'
     }
 }
 
@@ -232,15 +199,14 @@ function getSubTaskStatusIconColor(status: KanbanTaskSubTask['status']): string 
             return 'var(--app-kanban-in-progress)'
         case 'pending':
             return 'var(--app-hint)'
-        default: {
-            const _exhaustive: never = status
-            return _exhaustive
-        }
+        default:
+            return 'var(--app-hint)'
     }
 }
+
 function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
     if (!Array.isArray(task.subTasks)) return []
-    return task.subTasks.filter((item): item is KanbanTaskSubTask => {
+    return task.subTasks.filter((item: unknown): item is KanbanTaskSubTask => {
         if (!item || typeof item !== 'object') return false
         if (typeof item.id !== 'string') return false
         if (typeof item.content !== 'string') return false
@@ -265,112 +231,47 @@ function getTaskSubTaskProgress(subTasks: KanbanTaskSubTask[]): { completed: num
     return { completed, total: subTasks.length }
 }
 
-function sortTasksInColumn(tasks: Task[]): Task[] {
-    return [...tasks].sort((a, b) => {
-        const av = getTaskOrderValue(a)
-        const bv = getTaskOrderValue(b)
-        if (av !== bv) {
-            return bv - av
+function sortTasksInLane(tasks: Task[]): Task[] {
+    return [...tasks].sort((left, right) => {
+        const leftValue = getTaskOrderValue(left)
+        const rightValue = getTaskOrderValue(right)
+        if (leftValue !== rightValue) {
+            return rightValue - leftValue
         }
-        return b.updatedAt - a.updatedAt
+        return right.updatedAt - left.updatedAt
     })
 }
 
-type KanbanColumnsByStatus = Record<string, Task[]>
-
-type KanbanDerivedState = {
-    tasks: Task[]
-    tasksById: Map<string, Task>
-    columns: KanbanColumnsByStatus
-}
+type KanbanColumnsByStatus = Record<GoalTaskLane, Task[]>
 
 function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
-    const grouped: KanbanColumnsByStatus = Object.fromEntries(
-        KANBAN_COLUMNS.map((col) => [col.status, [] as Task[]])
-    )
+    const grouped = Object.fromEntries(
+        KANBAN_COLUMNS.map((column) => [column.status, [] as Task[]])
+    ) as KanbanColumnsByStatus
+
     for (const task of tasks) {
-        const status = normalizeKanbanStatus(task.status)
-        if (!grouped[status]) grouped[status] = []
-        grouped[status].push(task)
-    }
-    return Object.fromEntries(
-        Object.entries(grouped).map(([status, statusTasks]) => [status, sortTasksInColumn(statusTasks)])
-    )
-}
-
-function buildKanbanDerivedState(tasks: Task[]): KanbanDerivedState {
-    const tasksById = new Map<string, Task>()
-    for (const task of tasks) {
-        tasksById.set(task.id, task)
+        grouped[getTaskLane(task)].push(task)
     }
 
-    return {
-        tasks,
-        tasksById,
-        columns: buildKanbanColumns(tasks)
+    for (const lane of KANBAN_LANE_VALUES) {
+        grouped[lane] = sortTasksInLane(grouped[lane])
     }
-}
 
-function computeInsertedSortKey(above: Task | null, below: Task | null): number {
-    const aboveValue = above ? getTaskOrderValue(above) : null
-    const belowValue = below ? getTaskOrderValue(below) : null
-
-    if (aboveValue !== null && belowValue !== null) {
-        return (aboveValue + belowValue) / 2
-    }
-    if (aboveValue !== null) {
-        return aboveValue - 1
-    }
-    if (belowValue !== null) {
-        return belowValue + 1
-    }
-    return Date.now()
-}
-
-type DragState = {
-    taskId: string
-    fromStatus: TaskStatus
-}
-
-type DropTarget = {
-    status: TaskStatus
-    index: number
-}
-
-type TouchDragState = {
-    taskId: string
-    touchId: number
-    startX: number
-    startY: number
-    longPressTimer: ReturnType<typeof setTimeout> | null
-    dragStarted: boolean
+    return grouped
 }
 
 type KanbanTaskCardProps = {
     task: Task
-    index: number
-    columnStatus: TaskStatus
     isSelectedTask: boolean
-    isDragging: boolean
     isGeneratedActionPending: boolean
     defaultTaskAgent: AgentType
-    moveOptions: ActionSheetSelectOption<TaskStatus>[]
-    onStartDrag: (taskId: string, fromStatus: TaskStatus, index: number) => void
-    onEndDrag: () => void
-    onHoverDropTarget: (status: TaskStatus, index: number) => void
     onActivateTask: (task: Task) => void
-    onMoveTask: (taskId: string, toStatus: TaskStatus, toIndex: number) => void | Promise<void>
     onApproveGeneratedTask: (taskId: string) => void | Promise<void>
     onRejectGeneratedTask: (taskId: string) => void | Promise<void>
-    onTaskTouchStart: (event: React.TouchEvent<HTMLDivElement>, task: Task, columnStatus: TaskStatus, index: number) => void
-    onTaskTouchMove: (event: React.TouchEvent<HTMLDivElement>, taskId: string) => void
-    onTaskTouchEnd: (taskId: string) => void
-    onTaskTouchCancel: (taskId: string) => void
 }
 
 const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) {
     const { t } = useTranslation()
-    const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
     const [isSubTasksExpanded, setIsSubTasksExpanded] = useState(false)
 
     const isGeneratedPending = props.task.source === 'improvements_scan'
@@ -405,26 +306,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     return (
         <div className="relative">
             <div
-                draggable={!isCreatingTask}
                 data-kanban-task-id={props.task.id}
-                data-kanban-task-index={props.index}
-                data-kanban-column-status={props.columnStatus}
-                onDragStart={(event) => {
-                    if (isCreatingTask) {
-                        event.preventDefault()
-                        return
-                    }
-                    event.dataTransfer.setData('text/plain', props.task.id)
-                    props.onStartDrag(props.task.id, props.columnStatus, props.index)
-                }}
-                onDragEnd={props.onEndDrag}
-                onDragOver={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    const rect = event.currentTarget.getBoundingClientRect()
-                    const before = event.clientY < rect.top + rect.height / 2
-                    props.onHoverDropTarget(props.columnStatus, before ? props.index : props.index + 1)
-                }}
                 onDoubleClick={() => {
                     if (isCreatingTask) return
                     props.onActivateTask(props.task)
@@ -433,24 +315,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                     if (isCreatingTask) return
                     props.onActivateTask(props.task)
                 }}
-                onTouchStart={(event) => {
-                    if (isCreatingTask) return
-                    props.onTaskTouchStart(event, props.task, props.columnStatus, props.index)
-                }}
-                onTouchMove={(event) => props.onTaskTouchMove(event, props.task.id)}
-                onTouchEnd={() => props.onTaskTouchEnd(props.task.id)}
-                onTouchCancel={() => props.onTaskTouchCancel(props.task.id)}
-                onContextMenu={(event) => {
-                    if (isCreatingTask) {
-                        event.preventDefault()
-                        return
-                    }
-                    event.preventDefault()
-                    setIsMoveMenuOpen(true)
-                }}
-                className={`group app-interactive-card task-card-hover rounded-xl bg-[var(--app-bg)] p-3 text-left app-shadow-surface ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${props.isSelectedTask ? 'app-interactive-card-selected' : ''
-                    } ${props.isDragging ? 'opacity-60' : ''
-                    }`}
+                className={`group app-interactive-card task-card-hover rounded-xl bg-[var(--app-bg)] p-3 text-left app-shadow-surface ${isCreatingTask ? 'cursor-progress' : 'cursor-pointer'} ${props.isSelectedTask ? 'app-interactive-card-selected' : ''}`}
                 style={cardStyle}
             >
                 <div className="flex items-start justify-between gap-2">
@@ -501,6 +366,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                     {mergeRuntimeTag.label}
                                 </Tag>
                             ) : null}
+                            {blockedSummary ? (
+                                <Tag size="xs" variant="error">
+                                    {t('projects.tasks.blocked')}
+                                </Tag>
+                            ) : null}
                             {isGeneratedPending ? (
                                 <Tag size="xs" variant="warning">
                                     {t('projects.tasks.generated')}
@@ -517,7 +387,6 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 <Button
                                     type="button"
                                     size="sm"
-                                    draggable={false}
                                     variant="secondary"
                                     className="h-7 px-2 py-1 text-[11px]"
                                     onClick={(event) => {
@@ -532,7 +401,6 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 <Button
                                     type="button"
                                     size="sm"
-                                    draggable={false}
                                     variant="destructive"
                                     className="h-7 px-2 py-1 text-[11px]"
                                     onClick={(event) => {
@@ -547,41 +415,11 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                             </div>
                         ) : null}
                     </div>
-                    <AdaptiveSelect
-                        title={t('projects.tasks.moveTo')}
-                        value={props.columnStatus}
-                        options={props.moveOptions}
-                        onValueChange={(value) => {
-                            if (isCreatingTask) return
-                            props.onMoveTask(props.task.id, value, 0)
-                            setIsMoveMenuOpen(false)
-                        }}
-                        open={isMoveMenuOpen}
-                        onOpenChange={setIsMoveMenuOpen}
-                        disabled={isCreatingTask}
-                        align="end"
-                        trigger={
-                            <IconButton
-                                type="button"
-                                variant="ghost"
-                                size="xs"
-                                className="shrink-0 rounded-md"
-                                disabled={isCreatingTask}
-                                onClick={(event) => {
-                                    event.stopPropagation()
-                                }}
-                                aria-label={t('projects.tasks.moveTo')}
-                            >
-                                <TaskCardMenuIcon />
-                            </IconButton>
-                        }
-                    />
                 </div>
                 {canExpandSubTasks ? (
                     <div className="mt-2 w-full">
                         <button
                             type="button"
-                            draggable={false}
                             className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] cursor-pointer"
                             onClick={(event) => {
                                 event.preventDefault()
@@ -628,13 +466,11 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
     onOpenNewTask: () => void
 }) {
     const { api } = useAppContext()
-    const queryClient = useQueryClient()
     const navigate = useNavigate()
     const matchRoute = useMatchRoute()
     const { addToast } = useToast()
     const { t } = useTranslation()
     const { project } = useProject(api, props.projectId)
-    const tasksKey = useMemo(() => queryKeys.tasks(props.projectId, props.goalId), [props.goalId, props.projectId])
     const { tasks, isLoading, error } = useTasks(api, props.goalId ? props.projectId : null, props.goalId)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
@@ -645,143 +481,22 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
         : null
 
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
-
     const [pendingGeneratedActionTaskId, setPendingGeneratedActionTaskId] = useState<string | null>(null)
     const [collapsedColumns, setCollapsedColumns] = useState<CollapsedColumns>(() => loadCollapsedColumnsFromStorage())
     const pendingGeneratedActionTaskIdRef = useRef<string | null>(null)
-
-    const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
-    const boardScrollRef = useRef<HTMLDivElement | null>(null)
-    const dragStateRef = useRef<DragState | null>(null)
-    const dropTargetRef = useRef<DropTarget | null>(null)
-    const suppressClickRef = useRef(false)
-    const touchDragRef = useRef<TouchDragState | null>(null)
-    const touchCleanupRef = useRef<(() => void) | null>(null)
-
-    const setDragStateRef = useCallback((next: DragState | null) => {
-        dragStateRef.current = next
-        setDraggingTaskId(next?.taskId ?? null)
-    }, [])
-
-    const setDropTargetRef = useCallback((next: DropTarget | null) => {
-        dropTargetRef.current = next
-    }, [])
-
-    const toggleColumnCollapsed = useCallback((status: TaskStatus) => {
-        setCollapsedColumns((current) => ({
-            ...current,
-            [status]: !current[status]
-        }))
-    }, [])
 
     useEffect(() => {
         saveCollapsedColumnsToStorage(collapsedColumns)
     }, [collapsedColumns])
 
-    const kanbanState = useMemo(() => buildKanbanDerivedState(tasks), [tasks])
-    const columns = kanbanState.columns
-    const kanbanStateRef = useRef(kanbanState)
+    const columns = useMemo(() => buildKanbanColumns(tasks), [tasks])
 
-    useEffect(() => {
-        kanbanStateRef.current = kanbanState
-    }, [kanbanState])
-
-    const moveOptionsByStatus = useMemo<Record<TaskStatus, ActionSheetSelectOption<TaskStatus>[]>>(() => {
-        const baseOptions: Array<ActionSheetSelectOption<TaskStatus> & { value: TaskStatus }> = KANBAN_COLUMNS.map((col) => {
-            const theme = getKanbanStatusTheme(col.status)
-            return {
-                value: col.status,
-                label: t(col.titleKey),
-                icon: (
-                    <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ background: `linear-gradient(135deg, ${theme.accent1}, ${theme.accent2})` }}
-                    />
-                )
-            }
-        })
-
-        const grouped = {} as Record<TaskStatus, ActionSheetSelectOption<TaskStatus>[]>
-        for (const status of TASK_STATUS_VALUES) {
-            grouped[status] = baseOptions.map((option) => ({
-                ...option,
-                disabled: option.value === status
-            }))
-        }
-        return grouped
-    }, [t])
-
-    const applyOptimisticTasks = useCallback((nextTasks: Task[]) => {
-        kanbanStateRef.current = buildKanbanDerivedState(nextTasks)
-        queryClient.setQueryData<TasksResponse>(tasksKey, (prev) => {
-            if (!prev) {
-                return { tasks: nextTasks }
-            }
-            return { ...prev, tasks: nextTasks }
-        })
-    }, [queryClient, tasksKey])
-
-    const moveTask = useCallback(async (taskId: string, toStatus: TaskStatus, toIndex: number) => {
-        const currentState = kanbanStateRef.current
-        const task = currentState.tasksById.get(taskId)
-        if (!task) return
-
-        const fromStatus = task.status
-        const fromList = currentState.columns[fromStatus]
-        const toList = currentState.columns[toStatus]
-        const fromIndex = fromList.findIndex((t) => t.id === taskId)
-
-        let insertIndex = toIndex
-        if (fromStatus === toStatus && fromIndex >= 0 && fromIndex < insertIndex) {
-            insertIndex = Math.max(0, insertIndex - 1)
-        }
-
-        const nextToList = toList.filter((t) => t.id !== taskId)
-        const clampedIndex = Math.min(Math.max(insertIndex, 0), nextToList.length)
-        nextToList.splice(clampedIndex, 0, { ...task, status: toStatus })
-
-        const above = clampedIndex > 0 ? nextToList[clampedIndex - 1] : null
-        const below = clampedIndex < nextToList.length - 1 ? nextToList[clampedIndex + 1] : null
-        const nextSortKey = computeInsertedSortKey(above, below)
-
-        const previous = queryClient.getQueryData<TasksResponse>(tasksKey)
-        const nextAll = currentState.tasks.map((t) => {
-            if (t.id !== taskId) return t
-            return {
-                ...t,
-                status: toStatus,
-                sortKey: nextSortKey
-            }
-        })
-
-        applyOptimisticTasks(nextAll)
-
-        try {
-            await updateTask({
-                taskId,
-                patch: {
-                    status: toStatus,
-                    sortKey: nextSortKey
-                }
-            })
-        } catch (error) {
-            if (previous) {
-                queryClient.setQueryData(tasksKey, previous)
-            }
-            kanbanStateRef.current = currentState
-            addToast({
-                title: t('projects.tasks.moveFailed'),
-                body: error instanceof Error ? error.message : 'Failed to move task',
-                sessionId: '',
-                url: ''
-            })
-        }
-    }, [updateTask, addToast, t, queryClient, applyOptimisticTasks, tasksKey])
-
-    const moveTaskRef = useRef(moveTask)
-    useEffect(() => {
-        moveTaskRef.current = moveTask
-    }, [moveTask])
+    const toggleColumnCollapsed = useCallback((status: GoalTaskLane) => {
+        setCollapsedColumns((current) => ({
+            ...current,
+            [status]: !current[status]
+        }))
+    }, [])
 
     const handleApproveGeneratedTask = useCallback(async (taskId: string) => {
         if (pendingGeneratedActionTaskIdRef.current) return
@@ -794,10 +509,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                     source: 'manual'
                 }
             })
-        } catch (error) {
+        } catch (approveError) {
             addToast({
                 title: t('projects.tasks.moveFailed'),
-                body: error instanceof Error ? error.message : 'Failed to approve task',
+                body: approveError instanceof Error ? approveError.message : 'Failed to approve task',
                 sessionId: '',
                 url: ''
             })
@@ -813,10 +528,10 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
         setPendingGeneratedActionTaskId(taskId)
         try {
             await deleteTask({ taskId, projectId: props.projectId })
-        } catch (error) {
+        } catch (rejectError) {
             addToast({
                 title: t('projects.tasks.rejectFailed'),
-                body: error instanceof Error ? error.message : 'Failed to reject task',
+                body: rejectError instanceof Error ? rejectError.message : 'Failed to reject task',
                 sessionId: '',
                 url: ''
             })
@@ -826,157 +541,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
         }
     }, [deleteTask, props.projectId, addToast, t])
 
-    const computeDropTargetFromPoint = useCallback((clientX: number, clientY: number): DropTarget | null => {
-        const hit = document.elementFromPoint(clientX, clientY)
-        if (!hit || !(hit instanceof HTMLElement)) return null
-
-        const cardEl = hit.closest('[data-kanban-task-id]') as HTMLElement | null
-        const columnEl = hit.closest('[data-kanban-column-status]') as HTMLElement | null
-        const status = asTaskStatus(columnEl?.dataset.kanbanColumnStatus)
-        if (!status) return null
-
-        if (cardEl) {
-            const indexValue = cardEl.dataset.kanbanTaskIndex
-            const index = indexValue ? Number.parseInt(indexValue, 10) : Number.NaN
-            if (!Number.isFinite(index)) {
-                return { status, index: kanbanStateRef.current.columns[status].length }
-            }
-            const rect = cardEl.getBoundingClientRect()
-            const before = clientY < rect.top + rect.height / 2
-            return { status, index: before ? index : index + 1 }
-        }
-
-        return { status, index: kanbanStateRef.current.columns[status].length }
-    }, [])
-
-    const handleBoardAutoScroll = useCallback((clientX: number) => {
-        const el = boardScrollRef.current
-        if (!el) return
-        const rect = el.getBoundingClientRect()
-        const edge = 80
-        const speed = 24
-        if (clientX < rect.left + edge) {
-            el.scrollLeft -= speed
-        } else if (clientX > rect.right - edge) {
-            el.scrollLeft += speed
-        }
-    }, [])
-
-    const clearTouchDrag = useCallback(() => {
-        const state = touchDragRef.current
-        if (state?.longPressTimer) {
-            clearTimeout(state.longPressTimer)
-        }
-        touchDragRef.current = null
-    }, [])
-
-    const clearTouchListeners = useCallback(() => {
-        touchCleanupRef.current?.()
-        touchCleanupRef.current = null
-    }, [])
-
-    const beginTouchDrag = useCallback((taskId: string, fromStatus: TaskStatus, touchId: number, initialTarget: DropTarget) => {
-        setDragStateRef({ taskId, fromStatus })
-        setDropTargetRef(initialTarget)
-
-        const handleTouchMove = (event: TouchEvent) => {
-            const touch = Array.from(event.touches).find((t) => t.identifier === touchId)
-            if (!touch) return
-
-            event.preventDefault()
-            handleBoardAutoScroll(touch.clientX)
-
-            const target = computeDropTargetFromPoint(touch.clientX, touch.clientY)
-            setDropTargetRef(target)
-        }
-
-        const finish = (options: { shouldMove: boolean }) => {
-            clearTouchListeners()
-            clearTouchDrag()
-
-            if (options.shouldMove) {
-                const drag = dragStateRef.current
-                const target = dropTargetRef.current
-                if (drag && target) {
-                    const isSameSpot = target.status === initialTarget.status && target.index === initialTarget.index
-                    if (!isSameSpot) {
-                        void moveTaskRef.current(drag.taskId, target.status, target.index)
-                    }
-                }
-            }
-
-            setDragStateRef(null)
-            setDropTargetRef(null)
-            suppressClickRef.current = true
-        }
-
-        const handleTouchEnd = (event: TouchEvent) => {
-            const ended = Array.from(event.changedTouches).some((t) => t.identifier === touchId)
-            if (!ended) return
-
-            event.preventDefault()
-            finish({ shouldMove: true })
-        }
-
-        const handleTouchCancel = (event: TouchEvent) => {
-            const canceled = Array.from(event.changedTouches).some((t) => t.identifier === touchId)
-            if (!canceled) return
-
-            finish({ shouldMove: false })
-        }
-
-        document.addEventListener('touchmove', handleTouchMove, { passive: false })
-        document.addEventListener('touchend', handleTouchEnd, { passive: false })
-        document.addEventListener('touchcancel', handleTouchCancel, { passive: false })
-
-        touchCleanupRef.current = () => {
-            document.removeEventListener('touchmove', handleTouchMove)
-            document.removeEventListener('touchend', handleTouchEnd)
-            document.removeEventListener('touchcancel', handleTouchCancel)
-        }
-    }, [
-        clearTouchDrag,
-        clearTouchListeners,
-        computeDropTargetFromPoint,
-        handleBoardAutoScroll,
-        setDragStateRef,
-        setDropTargetRef
-    ])
-
-    const handleBoardDragOver = useCallback((event: React.DragEvent) => {
-        if (!dragStateRef.current) return
-        const el = boardScrollRef.current
-        if (!el) return
-        const rect = el.getBoundingClientRect()
-        const edge = 80
-        const speed = 24
-        if (event.clientX < rect.left + edge) {
-            el.scrollLeft -= speed
-        } else if (event.clientX > rect.right - edge) {
-            el.scrollLeft += speed
-        }
-    }, [])
-
-    const handleTaskDragStart = useCallback((taskId: string, fromStatus: TaskStatus, index: number) => {
-        setDragStateRef({ taskId, fromStatus })
-        setDropTargetRef({ status: fromStatus, index })
-    }, [setDragStateRef, setDropTargetRef])
-
-    const handleTaskDragEnd = useCallback(() => {
-        setDragStateRef(null)
-        setDropTargetRef(null)
-    }, [setDragStateRef, setDropTargetRef])
-
-    const handleTaskDropHover = useCallback((status: TaskStatus, index: number) => {
-        if (!dragStateRef.current) return
-        setDropTargetRef({ status, index })
-    }, [setDropTargetRef])
-
     const handleTaskActivate = useCallback((task: Task) => {
-        if (suppressClickRef.current) {
-            suppressClickRef.current = false
-            return
-        }
         if (isOptimisticTaskId(task.id)) {
             return
         }
@@ -988,75 +553,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             params: { projectId: props.projectId, taskId: task.id }
         })
     }, [navigate, props.projectId])
-
-    const handleTaskTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>, task: Task, columnStatus: TaskStatus, index: number) => {
-        if (event.touches.length !== 1) return
-        if (dragStateRef.current) return
-        if (touchDragRef.current) return
-
-        const target = event.target as HTMLElement
-        if (target.closest('button')) return
-
-        const touch = event.touches[0]
-        const touchId = touch.identifier
-
-        const timer = setTimeout(() => {
-            const state = touchDragRef.current
-            if (!state) return
-            if (state.touchId !== touchId) return
-            state.dragStarted = true
-            beginTouchDrag(task.id, columnStatus, touchId, { status: columnStatus, index })
-        }, 180)
-
-        touchDragRef.current = {
-            taskId: task.id,
-            touchId,
-            startX: touch.clientX,
-            startY: touch.clientY,
-            longPressTimer: timer,
-            dragStarted: false
-        }
-    }, [beginTouchDrag])
-
-    const handleTaskTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>, taskId: string) => {
-        const state = touchDragRef.current
-        if (!state) return
-        if (state.taskId !== taskId) return
-        if (state.dragStarted) return
-
-        const touch = Array.from(event.touches).find((entry) => entry.identifier === state.touchId)
-        if (!touch) return
-
-        const dx = touch.clientX - state.startX
-        const dy = touch.clientY - state.startY
-        const distance = Math.hypot(dx, dy)
-        if (distance < 10) return
-
-        clearTouchDrag()
-    }, [clearTouchDrag])
-
-    const handleTaskTouchEnd = useCallback((taskId: string) => {
-        const state = touchDragRef.current
-        if (!state) return
-        if (state.taskId !== taskId) return
-        if (state.dragStarted) return
-        clearTouchDrag()
-    }, [clearTouchDrag])
-
-    const handleTaskTouchCancel = useCallback((taskId: string) => {
-        const state = touchDragRef.current
-        if (!state) return
-        if (state.taskId !== taskId) return
-        if (state.dragStarted) return
-        clearTouchDrag()
-    }, [clearTouchDrag])
-
-    useEffect(() => {
-        return () => {
-            clearTouchListeners()
-            clearTouchDrag()
-        }
-    }, [clearTouchDrag, clearTouchListeners])
 
     if (!props.goalId) {
         return (
@@ -1084,16 +580,16 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
 
     return (
         <div className="relative h-full min-h-0 flex flex-col">
-            <div
-                ref={boardScrollRef}
-                className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
-                onDragOver={handleBoardDragOver}
-            >
+            <div className="px-3 pt-3 text-xs text-[var(--app-hint)]">
+                {t('projects.board.projectedHint')}
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
                 <div className="h-full w-max mx-auto flex gap-3 p-3">
-                    {KANBAN_COLUMNS.map((col) => {
-                        const colTasks = columns[col.status] ?? []
-                        const isCollapsed = collapsedColumns[col.status]
-                        const theme = getKanbanStatusTheme(col.status)
+                    {KANBAN_COLUMNS.map((column) => {
+                        const columnTasks = columns[column.status] ?? []
+                        const isCollapsed = collapsedColumns[column.status]
+                        const theme = getKanbanStatusTheme(column.status)
                         const columnStyle = {
                             '--kanban-accent-1': theme.accent1,
                             '--kanban-accent-2': theme.accent2,
@@ -1109,33 +605,12 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
 
                         return (
                             <div
-                                key={col.status}
+                                key={column.status}
                                 className={columnClass}
                                 style={{ ...columnStyle, ...columnWidth }}
-                                data-kanban-column-status={col.status}
-                                onDragOver={(event) => {
-                                    event.preventDefault()
-                                    if (!dragStateRef.current) return
-                                    if (event.target !== event.currentTarget) return
-                                    setDropTargetRef({ status: col.status, index: colTasks.length })
-                                }}
-                                onDrop={() => {
-                                    const drag = dragStateRef.current
-                                    if (!drag) return
-
-                                    const targetFromHover = dropTargetRef.current
-                                    const target = targetFromHover?.status === col.status
-                                        ? targetFromHover
-                                        : { status: col.status, index: colTasks.length }
-
-                                    void moveTask(drag.taskId, target.status, target.index)
-                                    setDragStateRef(null)
-                                    setDropTargetRef(null)
-                                }}
+                                data-kanban-column-status={column.status}
                             >
-                                <div
-                                    className={headerClass}
-                                >
+                                <div className={headerClass}>
                                     <div className={isCollapsed ? 'flex flex-col items-center gap-1 min-w-0' : 'flex items-center gap-2 min-w-0'}>
                                         <div
                                             className="h-2 w-2 rounded-full shrink-0 opacity-90"
@@ -1144,12 +619,12 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                             }}
                                         />
                                         <div className={isCollapsed ? 'text-[11px] font-semibold text-center leading-tight break-words' : 'text-xs font-semibold truncate'}>
-                                            {t(col.titleKey)}
+                                            {t(column.titleKey)}
                                         </div>
                                     </div>
                                     <div className={isCollapsed ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1.5'}>
                                         <div className="shrink-0 rounded-full bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--kanban-accent-1)]">
-                                            {colTasks.length}
+                                            {columnTasks.length}
                                         </div>
                                         <IconButton
                                             type="button"
@@ -1159,7 +634,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                             onClick={(event) => {
                                                 event.preventDefault()
                                                 event.stopPropagation()
-                                                toggleColumnCollapsed(col.status)
+                                                toggleColumnCollapsed(column.status)
                                             }}
                                             aria-label={columnToggleLabel}
                                             title={columnToggleLabel}
@@ -1174,39 +649,24 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
                                         className="flex-1 min-h-0"
                                         viewportClassName="h-full overflow-y-auto px-2 py-2 flex flex-col gap-2"
                                         style={{ '--scroll-shadow-bg': 'var(--kanban-column-bg)' } as CSSProperties}
-                                        onDragOver={(event) => {
-                                            event.preventDefault()
-                                            if (!dragStateRef.current) return
-                                            if (event.target !== event.currentTarget) return
-                                            setDropTargetRef({ status: col.status, index: colTasks.length })
-                                        }}
                                     >
-                                        {colTasks.map((task, index) => {
-                                            return (
-                                                <KanbanTaskCard
-                                                    key={task.id}
-                                                    task={task}
-                                                    index={index}
-                                                    columnStatus={col.status}
-                                                    isSelectedTask={selectedTaskId === task.id}
-                                                    isDragging={draggingTaskId === task.id}
-                                                    isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
-                                                    defaultTaskAgent={defaultTaskAgent}
-                                                    moveOptions={moveOptionsByStatus[col.status]}
-                                                    onStartDrag={handleTaskDragStart}
-                                                    onEndDrag={handleTaskDragEnd}
-                                                    onHoverDropTarget={handleTaskDropHover}
-                                                    onActivateTask={handleTaskActivate}
-                                                    onMoveTask={moveTask}
-                                                    onApproveGeneratedTask={handleApproveGeneratedTask}
-                                                    onRejectGeneratedTask={handleRejectGeneratedTask}
-                                                    onTaskTouchStart={handleTaskTouchStart}
-                                                    onTaskTouchMove={handleTaskTouchMove}
-                                                    onTaskTouchEnd={handleTaskTouchEnd}
-                                                    onTaskTouchCancel={handleTaskTouchCancel}
-                                                />
-                                            )
-                                        })}
+                                        {columnTasks.length === 0 ? (
+                                            <div className="rounded-xl border border-dashed border-[var(--app-divider)] px-3 py-4 text-xs text-[var(--app-hint)]">
+                                                {t('projects.board.emptyLane')}
+                                            </div>
+                                        ) : null}
+                                        {columnTasks.map((task) => (
+                                            <KanbanTaskCard
+                                                key={task.id}
+                                                task={task}
+                                                isSelectedTask={selectedTaskId === task.id}
+                                                isGeneratedActionPending={pendingGeneratedActionTaskId === task.id}
+                                                defaultTaskAgent={defaultTaskAgent}
+                                                onActivateTask={handleTaskActivate}
+                                                onApproveGeneratedTask={handleApproveGeneratedTask}
+                                                onRejectGeneratedTask={handleRejectGeneratedTask}
+                                            />
+                                        ))}
                                     </ScrollShadow>
                                 )}
                             </div>
@@ -1225,7 +685,6 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             >
                 <PlusIcon className="h-6 w-6" />
             </IconButton>
-
         </div>
     )
 })

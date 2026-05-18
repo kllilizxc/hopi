@@ -295,6 +295,359 @@ describe('TaskAutomation', () => {
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
     })
 
+    it('applies radar goal action packets when the session becomes inactive before ready', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar-actions'
+        const goalId = 'goal-radar-actions'
+        const taskId = 'radar-task-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal radar project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Keep docs in sync',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Run radar scan',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'radar'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'Radar scan complete.',
+                    '',
+                    '## HOPI_ACTIONS',
+                    '',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'done',
+                                handoff: 'Radar scan complete. No follow-up tasks required.',
+                                evidence: 'Docs coherent; todo status accurate; no new tech debt.'
+                            }
+                        ]
+                    }, null, 2),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        session.active = false
+        session.thinking = false
+        automation.handleEvent({ type: 'session-updated', sessionId })
+
+        const radarTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(radarTask?.status).toBe('done')
+        expect(radarTask?.handoff).toBe('Radar scan complete. No follow-up tasks required.')
+        expect(radarTask?.evidence).toBe('Docs coherent; todo status accurate; no new tech debt.')
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })).toHaveLength(1)
+        expect(realtimeEvents.filter((event) => event.type === 'task-updated')).toHaveLength(1)
+    })
+
+    it('blocks radar tasks when the session becomes inactive without a final status update', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar-inactive'
+        const goalId = 'goal-radar-inactive'
+        const taskId = 'radar-task-inactive'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Inactive radar project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Watch for drift',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Run periodic radar',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'radar'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: 'Radar notes captured, but the final action packet was never emitted.'
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        session.active = false
+        session.thinking = false
+        automation.handleEvent({ type: 'session-updated', sessionId })
+
+        const radarTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(radarTask?.status).toBe('blocked')
+        expect(radarTask?.blockedReason).toBe('Agent session became inactive before applying its final HOPI_ACTIONS packet.')
+        expect(radarTask?.blockedSource).toBe('agent')
+        expect(radarTask?.blockedSessionId).toBe(sessionId)
+        expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+
+        const messages = store.messages.getMessages(sessionId)
+        expect(messages.some((message) => {
+            const content = message.content as { content?: { text?: unknown } }
+            return content.content?.text === 'Task blocked: Agent session became inactive before applying its final HOPI_ACTIONS packet.'
+        })).toBe(true)
+    })
+
+    it('applies radar goal action packets embedded in an ExitPlanMode tool input when the session becomes inactive', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-radar-tool-plan'
+        const goalId = 'goal-radar-tool-plan'
+        const taskId = 'radar-task-tool-plan'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Radar tool plan project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Watch for drift',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Run periodic radar',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'radar'
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    message: {
+                        content: [
+                            {
+                                type: 'tool_use',
+                                id: 'call_exit_plan_mode',
+                                name: 'ExitPlanMode',
+                                input: {
+                                    plan: [
+                                        '# Radar Scan Plan',
+                                        '',
+                                        '## HOPI_ACTIONS',
+                                        '',
+                                        '```json',
+                                        JSON.stringify({
+                                            actions: [
+                                                {
+                                                    type: 'update_current_task',
+                                                    status: 'done',
+                                                    handoff: 'Radar scan complete. No follow-up tasks required.',
+                                                    evidence: 'Docs coherent; no new tech debt.'
+                                                }
+                                            ]
+                                        }, null, 2),
+                                        '```'
+                                    ].join('\n')
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        session.active = false
+        session.thinking = false
+        automation.handleEvent({ type: 'session-updated', sessionId })
+
+        const radarTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(radarTask?.status).toBe('done')
+        expect(radarTask?.handoff).toBe('Radar scan complete. No follow-up tasks required.')
+        expect(radarTask?.evidence).toBe('Docs coherent; no new tech debt.')
+    })
+
+    it('reconciles inactive goal sessions on session-added after a restart', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-session-added-reconcile'
+        const goalId = 'goal-session-added-reconcile'
+        const taskId = 'planner-task-session-added-reconcile'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Restart reconcile project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Recover stale planner sessions',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'update_current_task',
+                                status: 'done',
+                                handoff: 'Recovered on startup.',
+                                evidence: 'Packet replayed from stored messages.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+
+        session.active = false
+        session.thinking = false
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const plannerTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(plannerTask?.status).toBe('done')
+        expect(plannerTask?.handoff).toBe('Recovered on startup.')
+        expect(plannerTask?.evidence).toBe('Packet replayed from stored messages.')
+    })
+
     it('blocks a goal when a packet creates a goal-level blocking decision topic', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -392,6 +745,103 @@ describe('TaskAutomation', () => {
         expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('done')
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
+    })
+
+    it('accepts planner decision topics that use description instead of body', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-checkpoint-description'
+        const goalId = 'goal-checkpoint-description'
+        const taskId = 'planner-task-checkpoint-description'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal checkpoint project'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build architecture spine',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Plan next goal iteration',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'planner'
+        })
+
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: [
+                    'HOPI_ACTIONS:',
+                    '```json',
+                    JSON.stringify({
+                        actions: [
+                            {
+                                type: 'create_decision_topic',
+                                taskId: null,
+                                title: 'Milestone review',
+                                description: 'Should we stop after the architecture pass or continue directly into the content spike?',
+                                blocking: true
+                            },
+                            {
+                                type: 'update_goal',
+                                status: 'blocked',
+                                currentFocus: 'Awaiting milestone review.'
+                            },
+                            {
+                                type: 'update_current_task',
+                                status: 'done',
+                                handoff: 'Stopped for milestone review.',
+                                evidence: 'Architecture pass is complete.'
+                            }
+                        ]
+                    }),
+                    '```'
+                ].join('\n')
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready', hasAssistantReply: true } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        expect(topics).toHaveLength(1)
+        expect(topics[0]?.body).toBe('Should we stop after the architecture pass or continue directly into the content spike?')
+        expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('done')
     })
 
     it('skips duplicate goal task creation when a non-archived task with the same title already exists', () => {
@@ -2589,6 +3039,162 @@ describe('TaskAutomation', () => {
         expect(accepted?.status).toBe('done')
         expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(1)
+    })
+
+    it('resumes evaluator merge repair ready events before treating them as missing HOPI_ACTIONS', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-evaluator-merge-ready-priority'
+        const goalId = 'goal-evaluator-merge-ready-priority'
+        const taskId = 'generator-task-evaluator-merge-ready-priority'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal evaluator project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build autopilot',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false,
+            worktree: true
+        })
+        markSessionAsEvaluator(session)
+
+        const now = Date.now()
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement map traversal',
+            status: 'review',
+            activeSessionId: sessionId,
+            source: 'evaluator',
+            mergeRuntime: {
+                status: 'retrying',
+                sessionId,
+                requestedAt: now - 2_000,
+                startedAt: now - 1_500,
+                updatedAt: now - 1_000,
+                completedAt: null,
+                retryCount: 1,
+                failureFingerprint: 'merge_conflict:test',
+                latestNote: 'Auto-merge found conflicts; asked the linked agent to repair them (1/2).',
+                blockedReason: null,
+                failure: null
+            }
+        })
+
+        let mergeCalls = 0
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            getSessionByNamespace(id: string, ns: string) {
+                return id === sessionId && ns === namespace ? session : undefined
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: Buffer.from(VALID_ACTIONS_MANIFEST, 'utf8').toString('base64')
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: true,
+                    committedChangedCount: 2,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return {
+                    success: true,
+                    targetBranch: 'main',
+                    sourceBranch: 'task-branch',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1
+                }
+            },
+            async gitMergeWorktree() {
+                mergeCalls += 1
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return {
+                    success: true,
+                    verified: true,
+                    targetBranch: 'main',
+                    mergeBase: MERGE_BASE,
+                    snapshotRef: SNAPSHOT_REF,
+                    expectedChangeCount: 1,
+                    targetHead: TARGET_HEAD
+                }
+            },
+            async getGitDiffNumstat() {
+                return { success: true, stdout: '1\t0\tsrc/map.ts\n' }
+            },
+            async archiveSession() {
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'text',
+                text: 'Resolved the merge conflicts by rebasing the source branch onto main.'
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const promptLocalId = `auto:merge_runtime:${taskId}:1:${now - 500}`
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'event',
+                data: {
+                    type: 'ready',
+                    forLocalKey: promptLocalId,
+                    hasAssistantReply: true
+                }
+            }
+        }, `ready:${promptLocalId}`)
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        await waitForTask({
+            store,
+            namespace,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(accepted?.status).toBe('done')
+        expect(accepted?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(mergeCalls).toBe(1)
+        expect(accepted?.initRuntime?.status).not.toBe('blocked')
     })
 
     it('auto-merges an accepted goal worktree task with a default merge workflow when actions manifest is missing', async () => {

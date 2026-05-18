@@ -1,9 +1,7 @@
 import {
     DEFAULT_AGENT_FLAVOR,
-    DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE,
     DEFAULT_TASK_MODEL,
-    isModelModeAllowedForFlavor,
-    isPermissionModeAllowedForFlavor
+    isModelModeAllowedForFlavor
 } from '@hopi/protocol'
 import { createHash } from 'node:crypto'
 import type { AgentFlavor, ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
@@ -133,6 +131,7 @@ function buildControllerEventText(options: {
             '这里有一个需要我决定的问题。',
             '',
             '请用个人助理的口吻，简短说明需要我决定什么、这个决定会影响什么，然后直接问我该怎么选。',
+            '不要自己代替任务实现、改代码或执行仓库写操作。',
             '',
             `决策主题：${options.title}`,
             '',
@@ -148,6 +147,7 @@ function buildControllerEventText(options: {
         `任务「${options.title}」被阻塞了。`,
         '',
         '请用个人助理的口吻，告诉我发生了什么、会影响当前目标吗、下一步应该怎么处理。不要直接复制原始报错，先翻译成人话。',
+        '不要自己代替任务实现、改代码或执行仓库写操作。',
         '',
         '已整理的信息：',
         options.body.trim() || '没有记录更多信息。',
@@ -193,7 +193,7 @@ function mergeControllerMetadata(input: {
         ...base,
         path: typeof base.path === 'string' && base.path.trim() ? base.path : input.workspace.path,
         host: typeof base.host === 'string' && base.host.trim() ? base.host : input.machineHost ?? 'controller',
-        name: `Controller - ${input.project.name} - ${input.goal.title}`,
+        name: `Goal Assistant - ${input.project.name} - ${input.goal.title}`,
         projectId: input.project.id,
         goalId: input.goal.id,
         hopiController: true,
@@ -285,30 +285,50 @@ function resolveControllerAgent(project: StoredProject): AgentFlavor {
     return (project.defaultAgentFlavor as AgentFlavor | null) ?? DEFAULT_AGENT_FLAVOR
 }
 
+function isAgentFlavor(value: unknown): value is AgentFlavor {
+    return value === 'claude' || value === 'codex' || value === 'gemini' || value === 'opencode'
+}
+
+function resolveControllerSessionAgent(project: StoredProject, metadata: unknown): AgentFlavor {
+    if (isRecord(metadata) && isAgentFlavor(metadata.flavor)) {
+        return metadata.flavor
+    }
+    return resolveControllerAgent(project)
+}
+
 function resolveControllerModel(project: StoredProject, agent: AgentFlavor): string | undefined {
     return project.defaultModel ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
 }
 
-function resolveControllerPermissionMode(project: StoredProject, agent: AgentFlavor): PermissionMode | undefined {
-    const projectMode = project.defaultPermissionMode as PermissionMode | null
-    if (projectMode && isPermissionModeAllowedForFlavor(projectMode, agent)) {
-        return projectMode
+function resolveControllerPermissionMode(_project: StoredProject, agent: AgentFlavor): PermissionMode | undefined {
+    if (agent === 'claude') {
+        return 'plan'
     }
-    if (isPermissionModeAllowedForFlavor(DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE, agent)) {
-        return DEFAULT_AUTONOMOUS_TASK_PERMISSION_MODE
+    if (agent === 'codex' || agent === 'gemini') {
+        return 'read-only'
     }
-    if (isPermissionModeAllowedForFlavor('acceptEdits', agent)) {
-        return 'acceptEdits'
-    }
-    if (isPermissionModeAllowedForFlavor('yolo', agent)) {
-        return 'yolo'
-    }
-    return undefined
+    return 'default'
 }
 
 function resolveControllerModelMode(project: StoredProject, agent: AgentFlavor): ModelMode | undefined {
     const mode = project.defaultModelMode as ModelMode | null
     return mode && isModelModeAllowedForFlavor(mode, agent) ? mode : undefined
+}
+
+async function applyControllerSessionPolicy(options: {
+    engine: SyncEngine
+    sessionId: string
+    project: StoredProject
+    agent: AgentFlavor
+}): Promise<void> {
+    const permissionMode = resolveControllerPermissionMode(options.project, options.agent)
+    const modelMode = resolveControllerModelMode(options.project, options.agent)
+    if (permissionMode || modelMode) {
+        try {
+            await options.engine.applySessionConfig(options.sessionId, { permissionMode, modelMode })
+        } catch {
+        }
+    }
 }
 
 function buildGoalSummary(store: Store, project: StoredProject, goal: StoredGoal, workspace: StoredWorkspace | null, namespace: string): string {
@@ -386,7 +406,7 @@ function buildProjectControllerBriefingPrompt(options: {
         : '- No current goal selected.'
 
     return [
-        `Controller briefing request for project "${options.project.name}".`,
+        `Goal Assistant briefing request for project "${options.project.name}".`,
         '',
         'Review the current project state and send the user one concise personal-assistant greeting.',
         '',
@@ -397,7 +417,8 @@ function buildProjectControllerBriefingPrompt(options: {
         goalLine,
         '',
         'Rules:',
-        '- Do not edit files or run implementation work for this briefing.',
+        '- Do not edit files, implement code, or run shell/tool actions that mutate the repo.',
+        '- Stay in an operator-console role: explain current state, blockers, likely next lane/planner action, and what user input is needed.',
         '- Focus only on the current goal above. Do not inspect or summarize other goals unless the user asks.',
         '- Mention only useful status: what changed, what is blocked or waiting for a decision, and the best next action.',
         '- Keep it short and natural, like a project assistant greeting the user after they came back.',
@@ -462,12 +483,28 @@ export async function ensureProjectControllerSession(options: {
     const existing = findStoredProjectControllerSession(options.store, options.namespace, project.id, goal.id)
     if (existing) {
         const runtime = options.engine.getSessionByNamespace(existing.id, options.namespace)
+        const existingAgent = resolveControllerSessionAgent(project, runtime?.metadata ?? existing.metadata)
         if (runtime?.active) {
+            markProjectControllerSession({
+                store: options.store,
+                engine: options.engine,
+                namespace: options.namespace,
+                sessionId: existing.id,
+                project,
+                goal,
+                workspace,
+                agent: existingAgent
+            })
+            await applyControllerSessionPolicy({
+                engine: options.engine,
+                sessionId: existing.id,
+                project,
+                agent: existingAgent
+            })
             return { ok: true, created: false, sessionId: existing.id, session: runtime }
         }
         const resumed = await options.engine.resumeSession(existing.id, options.namespace)
         if (resumed.type === 'success') {
-            const agent = resolveControllerAgent(project)
             markProjectControllerSession({
                 store: options.store,
                 engine: options.engine,
@@ -476,7 +513,13 @@ export async function ensureProjectControllerSession(options: {
                 project,
                 goal,
                 workspace,
-                agent
+                agent: existingAgent
+            })
+            await applyControllerSessionPolicy({
+                engine: options.engine,
+                sessionId: resumed.sessionId,
+                project,
+                agent: existingAgent
             })
             return {
                 ok: true,
@@ -523,14 +566,12 @@ export async function ensureProjectControllerSession(options: {
         agent
     })
 
-    const permissionMode = resolveControllerPermissionMode(project, agent)
-    const modelMode = resolveControllerModelMode(project, agent)
-    if (permissionMode || modelMode) {
-        try {
-            await options.engine.applySessionConfig(spawned.sessionId, { permissionMode, modelMode })
-        } catch {
-        }
-    }
+    await applyControllerSessionPolicy({
+        engine: options.engine,
+        sessionId: spawned.sessionId,
+        project,
+        agent
+    })
 
     return {
         ok: true,

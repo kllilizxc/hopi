@@ -218,4 +218,23 @@ describe('NewTaskDialog', () => {
             expect(screen.getByLabelText('Permission Mode')).toHaveValue('safe-yolo')
         })
     })
+
+    it('maps legacy Claude-incompatible permission modes from localStorage to bypassPermissions', async () => {
+        renderWithProviders(<ReopenHarness />)
+
+        localStorage.setItem(NEW_TASK_DIALOG_STORAGE_KEY, JSON.stringify({
+            priority: '',
+            agent: 'claude',
+            model: 'auto',
+            permissionMode: 'yolo',
+            workflowProfile: 'default',
+        }))
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+
+        await waitFor(() => {
+            expect(screen.getByLabelText('Agent')).toHaveValue('claude')
+            expect(screen.getByLabelText('Permission Mode')).toHaveValue('bypassPermissions')
+        })
+    })
 })

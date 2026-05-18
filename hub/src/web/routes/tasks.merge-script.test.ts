@@ -93,7 +93,7 @@ function seedMergeTask(store: Store, options: {
     })
 }
 
-function createSession(sessionId: string) {
+function createSession(sessionId: string, baseCommit?: string) {
     return {
         id: sessionId,
         namespace: 'default',
@@ -105,7 +105,8 @@ function createSession(sessionId: string) {
             worktree: {
                 basePath: '/tmp/base',
                 branch: 'task-branch',
-                name: 'task-branch'
+                name: 'task-branch',
+                baseCommit
             }
         },
         agentState: null
@@ -507,6 +508,81 @@ describe('tasks merge route contract workflow', () => {
         expect(updatedTask?.status).toBe('done')
         expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
         expect(mergeCalls).toBe(1)
+    })
+
+    it('preserves merge diff refs even when numstat capture is unavailable', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-merge-platform-diff-fallback'
+        const taskId = 'task-merge-platform-diff-fallback'
+        const session = createSession('session-merge-diff-fallback', MERGE_BASE)
+        const sessionId = store.sessions.getOrCreateSession('session-merge-diff-fallback', session.metadata, null, 'default').id
+        seedMergeTask(store, { projectId, taskId, sessionId })
+
+        const engine = {
+            resolveSessionAccess() {
+                return { ok: true, sessionId, session }
+            },
+            getSessionByNamespace() {
+                return session
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'ENOENT: no such file or directory'
+                }
+            },
+            async gitMergeWorktreeState() {
+                return {
+                    success: true,
+                    targetBranch: 'main',
+                    sourceBranch: 'task-branch',
+                    hasWorkingTreeChanges: false,
+                    committedChangedCount: 1,
+                    mergeable: true
+                }
+            },
+            async gitCaptureWorktreeMergeSnapshot() {
+                return createMergeVerificationSnapshot()
+            },
+            async gitMergeWorktree() {
+                return {
+                    success: true,
+                    commitHash: TARGET_HEAD
+                }
+            },
+            async gitVerifyWorktreeMerge() {
+                return createMergeVerificationResult()
+            },
+            async getGitDiffNumstat() {
+                return { success: false, error: 'diff unavailable' }
+            },
+            async archiveSession() {
+            },
+            handleRealtimeEvent() {}
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({})
+        })
+
+        expect(response.status).toBe(200)
+
+        await waitForTask({
+            store,
+            taskId,
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
+        })
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
+        expect(updatedTask?.worktreeMergeCommit).toBe(TARGET_HEAD)
+        expect(updatedTask?.mergedDiffSnapshot).toEqual({
+            files: [],
+            capturedAt: updatedTask?.worktreeMergedAt,
+            baseCommit: MERGE_BASE
+        })
     })
 
     it('runs contract-defined merge verify commands before landing', async () => {

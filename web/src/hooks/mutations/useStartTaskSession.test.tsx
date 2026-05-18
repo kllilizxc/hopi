@@ -191,7 +191,7 @@ describe('useStartTaskSession', () => {
                             blockedReason: 'Runner offline',
                             retry: {
                                 count: 0,
-                                action: 'manual_fix_then_retry_start',
+                                action: 'wait_then_retry_start',
                                 available: true
                             }
                         }
@@ -223,7 +223,7 @@ describe('useStartTaskSession', () => {
                 message: 'Runner offline',
                 retry: {
                     count: 0,
-                    action: 'manual_fix_then_retry_start',
+                    action: 'wait_then_retry_start',
                     available: true
                 }
             })

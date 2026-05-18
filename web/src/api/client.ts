@@ -723,9 +723,23 @@ export class ApiClient {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`)
     }
 
-    async getTaskMergedDiffFile(taskId: string, path: string): Promise<GitCommandResponse> {
+    async getTaskMergedDiffNumstat(taskId: string, options?: { baseRef?: string }): Promise<GitCommandResponse> {
+        const params = new URLSearchParams()
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
+        const qs = params.toString()
+        return await this.request<GitCommandResponse>(
+            `/api/tasks/${encodeURIComponent(taskId)}/worktree/merged-diff-numstat${qs ? `?${qs}` : ''}`
+        )
+    }
+
+    async getTaskMergedDiffFile(taskId: string, path: string, options?: { baseRef?: string }): Promise<GitCommandResponse> {
         const params = new URLSearchParams()
         params.set('path', path)
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
         return await this.request<GitCommandResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merged-diff-file?${params.toString()}`)
     }
 

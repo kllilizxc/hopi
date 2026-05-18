@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTOMATION_BACKSTOP_POLICY, DEFAULT_AUTOMATION_LANE_LIMITS, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, isPermissionModeAllowedForFlavor, normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_AUTOMATION_BACKSTOP_POLICY, DEFAULT_AUTOMATION_LANE_LIMITS, DEFAULT_TASK_MODEL, getPermissionModeOptionsForFlavor, normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits, normalizeModelName, resolveClaudeModelMode, resolvePermissionModeForFlavor, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
 import type { AgentFlavor, AgentOutputLanguage, AutomationBackstopPolicy, PermissionMode, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { useTranslation } from '@/lib/use-translation'
@@ -169,7 +169,10 @@ export function ProjectSettingsPage() {
         setName(project.name ?? '')
         setDescription(project.description ?? '')
         setDefaultAgentFlavor(resolvedDefaultAgent)
-        setDefaultPermissionMode((project.defaultPermissionMode as PermissionMode | null) ?? 'default')
+        setDefaultPermissionMode(resolvePermissionModeForFlavor(
+            resolvedDefaultAgent,
+            project.defaultPermissionMode as PermissionMode | null
+        ))
         setDefaultModel(resolveStoredModel(project.defaultModel, project.defaultModelMode) ?? (
             resolvedDefaultAgent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : 'auto'
         ))
@@ -199,8 +202,9 @@ export function ProjectSettingsPage() {
     const agentOutputLanguageOptions = useMemo(() => getAgentOutputLanguageOptions(t), [t])
 
     useEffect(() => {
-        if (!isPermissionModeAllowedForFlavor(defaultPermissionMode, defaultAgentFlavor)) {
-            setDefaultPermissionMode('default')
+        const resolvedPermissionMode = resolvePermissionModeForFlavor(defaultAgentFlavor, defaultPermissionMode)
+        if (resolvedPermissionMode !== defaultPermissionMode) {
+            setDefaultPermissionMode(resolvedPermissionMode)
         }
         if (defaultAgentFlavor === 'opencode' && defaultModel !== 'auto') {
             setDefaultModel('auto')

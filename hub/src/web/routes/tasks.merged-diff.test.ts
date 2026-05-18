@@ -98,4 +98,66 @@ describe('task merged diff routes', () => {
             }
         ])
     })
+
+    it('loads merged diff numstat with a query baseRef fallback for legacy tasks', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-legacy'
+        const taskId = 'task-legacy'
+        const workspaceId = 'workspace-legacy'
+        const baseCommit = '1111111111111111111111111111111111111111'
+        const targetCommit = '2222222222222222222222222222222222222222'
+        const calls: Array<{ machineId: string; options: { cwd?: string; baseRef?: string; targetRef?: string } }> = []
+
+        store.projects.createProject({
+            id: projectId,
+            namespace: 'default',
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/Users/test/repo'
+        })
+        store.projects.updateProject(projectId, 'default', { defaultWorkspaceId: workspaceId })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Finished task',
+            status: 'finished',
+            activeSessionId: 'removed-worktree-session',
+            workspaceId,
+            worktreeMergedAt: 1_700_000_000_000,
+            worktreeMergeCommit: targetCommit,
+            mergedDiffSnapshot: null
+        })
+
+        const engine = {
+            async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; baseRef?: string; targetRef?: string }) {
+                calls.push({ machineId, options })
+                return {
+                    success: true,
+                    stdout: '2\t1\tsrc/app.ts\n'
+                }
+            }
+        } as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/worktree/merged-diff-numstat?baseRef=${baseCommit}`)
+        const body = await response.json() as { success: boolean; stdout?: string }
+
+        expect(response.status).toBe(200)
+        expect(body.success).toBe(true)
+        expect(body.stdout).toContain('src/app.ts')
+        expect(calls).toEqual([
+            {
+                machineId: 'machine-1',
+                options: {
+                    cwd: '/Users/test/repo',
+                    baseRef: baseCommit,
+                    targetRef: targetCommit
+                }
+            }
+        ])
+    })
 })

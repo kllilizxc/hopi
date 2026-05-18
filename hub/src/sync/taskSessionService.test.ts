@@ -2026,6 +2026,212 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('docs maintenance')
     })
 
+    it('lets planner goal tasks inherit project-configured Claude bypassPermissions mode', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-claude-bypass'
+        const goalId = 'goal-planner-claude-bypass'
+        const taskId = 'task-planner-claude-bypass'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultAgentFlavor: 'claude',
+            defaultPermissionMode: 'bypassPermissions'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Clarify autonomous loop',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal',
+            status: 'planning',
+            source: 'planner',
+            workspaceId,
+            contract: '## Objective\nClarify first.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-planner-claude-bypass',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let appliedPermissionMode = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig(_sessionId: string, patch: { permissionMode?: string; collaborationMode?: string }) {
+                appliedPermissionMode = patch.permissionMode ?? patch.collaborationMode ?? appliedPermissionMode
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(appliedPermissionMode).toBe('bypassPermissions')
+    })
+
+    it('coerces legacy Claude planner project permission modes to bypassPermissions at session start', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-planner-claude-legacy-yolo'
+        const goalId = 'goal-planner-claude-legacy-yolo'
+        const taskId = 'task-planner-claude-legacy-yolo'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = '/tmp/workspace'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultAgentFlavor: 'claude',
+            defaultPermissionMode: 'yolo'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Clarify autonomous loop',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Clarify goal',
+            status: 'planning',
+            source: 'planner',
+            workspaceId,
+            contract: '## Objective\nClarify first.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-planner-claude-legacy-yolo',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let appliedPermissionMode = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig(_sessionId: string, patch: { permissionMode?: string; collaborationMode?: string }) {
+                appliedPermissionMode = patch.permissionMode ?? patch.collaborationMode ?? appliedPermissionMode
+            },
+            async readSessionFile() {
+                return {
+                    success: false,
+                    error: 'Failed to read file: ENOENT'
+                }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(appliedPermissionMode).toBe('bypassPermissions')
+    })
+
     it('starts planner goal tasks in the main workspace without creating a worktree', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -3603,6 +3809,65 @@ describe('startSessionFromTask', () => {
 
         expect(result.ok).toBe(true)
         expect(sendMessageCalled).toBe(false)
+    })
+
+    it('marks runner offline starts as wait-then-retry failures', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-runner-offline-retry'
+        const taskId = 'task-runner-offline-retry'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planning',
+            workspaceId
+        })
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: false,
+                    runnerState: { status: 'stopped' }
+                }
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: {
+                code: 'runner_offline',
+                retry: {
+                    action: 'wait_then_retry_start',
+                    available: true
+                }
+            }
+        })
     })
 
 })

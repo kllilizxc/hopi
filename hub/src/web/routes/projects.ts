@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FLAVOR, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, resolvePermissionModeForFlavor } from '@hopi/protocol'
 import { AgentFlavorSchema, AgentOutputLanguageSchema, AutomationBackstopPolicySchema, AutomationLaneLimitsSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, SessionTypeSchema, WorktreeAutoCommitModeSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
@@ -75,6 +76,10 @@ const controllerBriefingSchema = z.object({
 const controllerSessionQuerySchema = z.object({
     goalId: z.string().min(1).optional()
 })
+
+function resolveProjectAgentFlavor(flavor: z.infer<typeof AgentFlavorSchema> | null | undefined): z.infer<typeof AgentFlavorSchema> {
+    return flavor ?? DEFAULT_AGENT_FLAVOR
+}
 
 function hasProjectHistory(store: Store, options: { projectId: string; namespace: string }): boolean {
     const tasks = store.tasks.listTasksByProjectAndNamespace(options.projectId, options.namespace, { includeArchived: true })
@@ -185,6 +190,19 @@ export function createProjectsRoutes(options: {
         const parsed = createProjectSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
+        }
+        const defaultAgentFlavor = resolveProjectAgentFlavor(parsed.data.defaultAgentFlavor)
+        if (
+            parsed.data.defaultPermissionMode
+            && !isPermissionModeAllowedForFlavor(parsed.data.defaultPermissionMode, defaultAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid defaultPermissionMode for project agent flavor' }, 400)
+        }
+        if (
+            parsed.data.defaultModelMode
+            && !isModelModeAllowedForFlavor(parsed.data.defaultModelMode, defaultAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid defaultModelMode for project agent flavor' }, 400)
         }
 
         const normalizedWorkspaces = parsed.data.workspaces.map((input) => ({
@@ -414,6 +432,11 @@ export function createProjectsRoutes(options: {
         const nextSessionType = parsed.data.defaultSessionType === undefined
             ? currentSessionType
             : parsed.data.defaultSessionType ?? 'simple'
+        const nextAgentFlavor = resolveProjectAgentFlavor(
+            parsed.data.defaultAgentFlavor === undefined
+                ? existing.defaultAgentFlavor as z.infer<typeof AgentFlavorSchema> | null
+                : parsed.data.defaultAgentFlavor
+        )
         const sessionTypeChanged = nextSessionType !== currentSessionType
         if (currentSessionType === 'worktree' && nextSessionType !== 'worktree') {
             return c.json({ error: 'defaultSessionType downgrade is not supported (simple -> worktree only)' }, 400)
@@ -424,14 +447,49 @@ export function createProjectsRoutes(options: {
         if ((sessionTypeChanged || targetBranchChanged) && hasProjectHistory(options.store, { projectId, namespace })) {
             return c.json({ error: 'worktree mode and target branch are immutable after first task/session' }, 400)
         }
+        if (
+            parsed.data.defaultPermissionMode
+            && !isPermissionModeAllowedForFlavor(parsed.data.defaultPermissionMode, nextAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid defaultPermissionMode for project agent flavor' }, 400)
+        }
+        if (
+            parsed.data.defaultModelMode
+            && !isModelModeAllowedForFlavor(parsed.data.defaultModelMode, nextAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid defaultModelMode for project agent flavor' }, 400)
+        }
+
+        let nextDefaultPermissionMode = parsed.data.defaultPermissionMode
+        if (
+            parsed.data.defaultPermissionMode === undefined
+            && parsed.data.defaultAgentFlavor !== undefined
+            && existing.defaultPermissionMode
+            && !isPermissionModeAllowedForFlavor(existing.defaultPermissionMode as z.infer<typeof PermissionModeSchema>, nextAgentFlavor)
+        ) {
+            nextDefaultPermissionMode = resolvePermissionModeForFlavor(
+                nextAgentFlavor,
+                existing.defaultPermissionMode as z.infer<typeof PermissionModeSchema>
+            )
+        }
+
+        let nextDefaultModelMode = parsed.data.defaultModelMode
+        if (
+            parsed.data.defaultModelMode === undefined
+            && parsed.data.defaultAgentFlavor !== undefined
+            && existing.defaultModelMode
+            && !isModelModeAllowedForFlavor(existing.defaultModelMode as z.infer<typeof ModelModeSchema>, nextAgentFlavor)
+        ) {
+            nextDefaultModelMode = null
+        }
 
         const updated = options.store.projects.updateProject(projectId, namespace, {
             name: parsed.data.name,
             description: parsed.data.description,
             defaultAgentFlavor: parsed.data.defaultAgentFlavor,
-            defaultPermissionMode: parsed.data.defaultPermissionMode,
+            defaultPermissionMode: nextDefaultPermissionMode,
             defaultModel: parsed.data.defaultModel,
-            defaultModelMode: parsed.data.defaultModelMode,
+            defaultModelMode: nextDefaultModelMode,
             defaultSessionType: parsed.data.defaultSessionType,
             worktreeTargetBranch: parsed.data.worktreeTargetBranch,
             worktreeAutoCommitMode: parsed.data.worktreeAutoCommitMode,

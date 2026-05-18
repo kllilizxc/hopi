@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, memo } from 'react'
 import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
-import { DEFAULT_AGENT_FLAVOR, normalizeModelName, resolveClaudeModelMode } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, normalizeModelName, resolveClaudeModelMode, resolvePermissionModeForFlavor } from '@hopi/protocol'
 import type { AgentOutputLanguage, AutomationLaneLimits, Goal, Machine, PermissionMode, TaskPriority } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineDisplayTitle } from '@/lib/displayNames'
@@ -32,7 +32,7 @@ import { ProjectKanbanBoard } from '@/routes/projects/kanban'
 import { NewTaskDialog } from '@/routes/projects/kanban-new-task-dialog'
 import { GoalSwitcher } from '@/routes/projects/goal-switcher'
 import { CreateGoalDialog } from '@/routes/projects/create-goal-dialog'
-import { ProjectControllerPanel } from '@/routes/projects/project-controller'
+import { ProjectAssistantPanel } from '@/routes/projects/project-assistant'
 import { useSelectedProjectGoal } from '@/routes/projects/selected-goal-storage'
 import type { AgentType } from '@/components/NewSession/types'
 
@@ -385,13 +385,14 @@ export default function ProjectsPage() {
     const projectMatch = matchRoute({ to: '/projects/$projectId', fuzzy: true })
     const taskMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
     const settingsMatch = matchRoute({ to: '/projects/$projectId/settings' })
+    const assistantMatch = matchRoute({ to: '/projects/$projectId/assistant' })
     const controllerMatch = matchRoute({ to: '/projects/$projectId/controller' })
 
     const selectedProjectId = projectMatch ? projectMatch.projectId : null
     const isTaskRoute = Boolean(taskMatch)
     const isProjectSettingsRoute = Boolean(settingsMatch)
-    const isProjectControllerRoute = Boolean(controllerMatch)
-    const shouldUseRoutePanel = isTaskRoute || isProjectSettingsRoute || isProjectControllerRoute
+    const isProjectAssistantRoute = Boolean(assistantMatch) || Boolean(controllerMatch)
+    const shouldUseRoutePanel = isTaskRoute || isProjectSettingsRoute || isProjectAssistantRoute
 
     const isProjectsIndex = pathname === '/projects' || pathname === '/projects/'
     const shouldShowProjectShell = isProjectsIndex || Boolean(selectedProjectId)
@@ -410,7 +411,10 @@ export default function ProjectsPage() {
     const { goals, isLoading: isGoalsLoading } = useGoals(api, selectedProjectId)
     const { strategies: workflowStrategies } = useWorkflowStrategies(api)
     const defaultTaskAgent: AgentType = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
-    const projectDefaultPermissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? null
+    const projectDefaultPermissionMode = resolvePermissionModeForFlavor(
+        defaultTaskAgent,
+        project?.defaultPermissionMode as PermissionMode | null | undefined,
+    )
     const { selectedGoalId, selectGoal } = useSelectedProjectGoal(selectedProjectId, goals)
 
     const handleCreateProject = useCallback(async (input: {
@@ -468,7 +472,7 @@ export default function ProjectsPage() {
                     title: data.title,
                     description: data.description,
                     priority: data.priority || undefined,
-                    status: 'planning',
+                    status: 'planned',
                     agentFlavor: data.agent,
                     permissionMode: data.permissionMode,
                     model: model ?? undefined,
@@ -597,7 +601,7 @@ export default function ProjectsPage() {
                         detailPanel={shouldUseRoutePanel ? (
                             <Outlet />
                         ) : (
-                            <ProjectControllerPanel
+                            <ProjectAssistantPanel
                                 projectId={selectedProjectId}
                                 goalId={selectedGoalId}
                                 showBack={false}

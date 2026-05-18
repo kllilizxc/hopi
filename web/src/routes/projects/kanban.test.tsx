@@ -153,4 +153,37 @@ describe('ProjectKanbanBoard', () => {
         expect(subTaskPanel!).not.toHaveClass('app-shadow-border')
         expect(subTaskPanel!).toHaveClass('app-shadow-control')
     })
+
+    it('projects blocked merge tasks into the merging lane instead of rendering a blocked column', () => {
+        mocks.tasks = [createTask({
+            id: 'task-merge-blocked',
+            title: 'Repair merge conflict',
+            status: 'blocked',
+            mergeRuntime: {
+                status: 'blocked',
+                sessionId: 'merge-session-1',
+                updatedAt: 30,
+                requestedAt: 10,
+                startedAt: 20,
+                completedAt: 30,
+                retryCount: 1,
+                failureFingerprint: 'merge-blocked',
+                latestNote: 'Conflict still unresolved.',
+                blockedReason: 'Need manual conflict resolution.'
+            }
+        })]
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        expect(document.querySelector('[data-kanban-column-status="blocked"]')).toBeNull()
+        const mergingColumn = document.querySelector('[data-kanban-column-status="merging"]')
+        expect(mergingColumn).not.toBeNull()
+        expect(mergingColumn?.textContent).toContain('Repair merge conflict')
+    })
 })

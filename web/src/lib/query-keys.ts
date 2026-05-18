@@ -7,6 +7,7 @@ export const queryKeys = {
     projects: ['projects'] as const,
     workflowStrategies: ['workflow-strategies'] as const,
     project: (projectId: string) => ['project', projectId] as const,
+    projectAssistant: (projectId: string, goalId: string) => ['project-controller', projectId, goalId] as const,
     projectController: (projectId: string, goalId: string) => ['project-controller', projectId, goalId] as const,
     workspaces: (projectId: string) => ['workspaces', projectId] as const,
     goals: (projectId: string) => ['goals', projectId] as const,
@@ -21,6 +22,12 @@ export const queryKeys = {
     taskMergeState: (taskId: string) => ['task-merge-state', taskId] as const,
     gitStatus: (sessionId: string) => ['git-status', sessionId] as const,
     gitCommittedDiff: (sessionId: string, baseRef: string) => ['git-committed-diff', sessionId, baseRef] as const,
+    taskMergedDiffNumstat: (taskId: string, baseRef: string, targetRef: string) => [
+        'task-merged-diff-numstat',
+        taskId,
+        baseRef,
+        targetRef
+    ] as const,
     sessionFiles: (sessionId: string, query: string) => ['session-files', sessionId, query] as const,
     sessionDirectory: (sessionId: string, path: string) => ['session-directory', sessionId, path] as const,
     sessionFile: (sessionId: string, path: string) => ['session-file', sessionId, path] as const,
@@ -31,7 +38,12 @@ export const queryKeys = {
         options?.baseRef ? `base:${options.baseRef}` : 'working-tree',
         options?.staged === true ? 'staged' : options?.staged === false ? 'unstaged' : 'auto'
     ] as const,
-    taskMergedFileDiff: (taskId: string, path: string) => ['task-merged-file-diff', taskId, path] as const,
+    taskMergedFileDiff: (taskId: string, path: string, baseRef?: string) => [
+        'task-merged-file-diff',
+        taskId,
+        path,
+        baseRef ?? 'none'
+    ] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     skills: (sessionId: string) => ['skills', sessionId] as const,
 }

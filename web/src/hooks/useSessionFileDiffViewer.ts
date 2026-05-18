@@ -77,6 +77,7 @@ export function useSessionFileDiffViewer(params: {
     staged?: boolean
     baseRef?: string
     taskMergedDiffId?: string
+    taskMergedBaseRef?: string
 }): UseSessionFileDiffViewerResult {
     const missingPath = !params.filePath
     const [displayMode, setDisplayMode] = useState<FileViewerDisplayMode>('diff')
@@ -85,7 +86,7 @@ export function useSessionFileDiffViewer(params: {
 
     const diffQuery = useQuery({
         queryKey: params.taskMergedDiffId
-            ? queryKeys.taskMergedFileDiff(params.taskMergedDiffId, params.filePath)
+            ? queryKeys.taskMergedFileDiff(params.taskMergedDiffId, params.filePath, params.taskMergedBaseRef)
             : queryKeys.gitFileDiff(params.sessionId, params.filePath, {
                 staged: params.staged,
                 baseRef: params.baseRef,
@@ -95,7 +96,9 @@ export function useSessionFileDiffViewer(params: {
                 throw new Error('Missing API client or path')
             }
             if (params.taskMergedDiffId) {
-                return await params.api.getTaskMergedDiffFile(params.taskMergedDiffId, params.filePath)
+                return await params.api.getTaskMergedDiffFile(params.taskMergedDiffId, params.filePath, {
+                    baseRef: params.taskMergedBaseRef,
+                })
             }
             if (!params.sessionId) {
                 throw new Error('Missing session')
@@ -157,7 +160,7 @@ export function useSessionFileDiffViewer(params: {
 
     useEffect(() => {
         setDisplayMode('diff')
-    }, [params.filePath, params.sessionId, params.staged, params.baseRef, params.taskMergedDiffId])
+    }, [params.filePath, params.sessionId, params.staged, params.baseRef, params.taskMergedDiffId, params.taskMergedBaseRef])
 
     useEffect(() => {
         if (diffContent) {

@@ -194,10 +194,11 @@ function buildDecisionTopicBody(action: Record<string, unknown>): unknown {
 
     const question = getTrimmedString(action.question)
     const context = getTrimmedString(action.context)
+    const description = getTrimmedString(action.description)
     if (question && context) {
         return `${question}\n\n${context}`
     }
-    return question ?? context ?? action.body
+    return question ?? context ?? description ?? action.body
 }
 
 function normalizeActionPacketInput(raw: unknown): unknown {
@@ -308,6 +309,16 @@ function extractText(content: unknown): string | null {
     if (objectContent.type === 'text' && typeof objectContent.text === 'string') {
         const normalized = normalizeText(objectContent.text)
         return normalized || null
+    }
+
+    if (objectContent.type === 'tool_use') {
+        const input = toRecord(objectContent.input)
+        const plan = typeof input?.plan === 'string'
+            ? normalizeText(input.plan)
+            : ''
+        if (plan) {
+            return plan
+        }
     }
 
     if (objectContent.type === 'output') {

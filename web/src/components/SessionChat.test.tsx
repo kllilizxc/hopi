@@ -307,6 +307,43 @@ describe('SessionChat runtime summaries', () => {
         expect(summary?.detail).toContain('Fix dependency mirror, then retry init.')
     })
 
+    it('surfaces runner recovery waits as auto-resuming infra holds', () => {
+        const task = createTask({
+            status: 'in_review',
+            initRuntime: {
+                status: 'waiting',
+                sessionId: null,
+                updatedAt: 20,
+                requestedAt: 10,
+                startedAt: 11,
+                completedAt: null,
+                retryCount: 0,
+                failureFingerprint: 'start:runner_offline',
+                latestNote: 'Runner 当前离线。HOPI 会在 machine runner 恢复后自动重试。',
+                blockedReason: 'Runner offline',
+                failure: {
+                    code: 'runner_offline',
+                    message: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start',
+                    blockedReason: 'Runner offline',
+                    retry: {
+                        count: 0,
+                        action: 'wait_then_retry_start',
+                        available: true
+                    }
+                }
+            }
+        })
+
+        const summary = buildInitStatusSummary(task)
+
+        expect(summary).toEqual({
+            title: '等待 Runner 恢复',
+            detail: 'Runner 当前离线。HOPI 会在 machine runner 恢复后自动重试。',
+            tone: 'info',
+            busy: true
+        })
+    })
+
     it('marks running init as visible only for the linked session', () => {
         const task = createTask({
             initRuntime: {

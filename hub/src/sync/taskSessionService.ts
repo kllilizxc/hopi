@@ -1,12 +1,22 @@
 import { createHash } from 'node:crypto'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, normalizeModelName, resolveClaudeModelMode, resolveStoredModel } from '@hopi/protocol'
+import {
+    coercePermissionModeForFlavor,
+    DEFAULT_AGENT_FLAVOR,
+    DEFAULT_TASK_MODEL,
+    isModelModeAllowedForFlavor,
+    isPermissionModeAllowedForFlavor,
+    normalizeModelName,
+    resolveAutonomousPermissionModeForFlavor,
+    resolveClaudeModelMode,
+    resolveStoredModel
+} from '@hopi/protocol'
 import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import { AgentFlavorSchema, ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { TaskSessionStartFailure, TaskSessionStartFailureCode, TaskSessionStartRetryAction } from '@hopi/protocol/task-session-start'
 import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 import { z } from 'zod'
-import type { Store, StoredMessage, StoredProject, StoredTask, StoredWorkspace } from '../store'
+import type { Store, StoredMachine, StoredMessage, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import {
     buildRepeatedTaskActionFailureNote,
     buildTaskActionCommandReportLines,
@@ -87,6 +97,26 @@ function createTaskSessionStartFailure(options: {
             available: retryAvailable
         }
     }
+}
+
+export function isMachineRunnerReady(
+    machine: Pick<StoredMachine, 'active' | 'runnerState'> | null | undefined
+): boolean {
+    if (!machine) {
+        return false
+    }
+
+    if (machine.active) {
+        return true
+    }
+
+    const runnerState = machine.runnerState
+    if (!runnerState || typeof runnerState !== 'object') {
+        return false
+    }
+
+    const status = (runnerState as Record<string, unknown>).status
+    return status === 'running'
 }
 function collectCodexPlanText(data: Record<string, unknown>): string | null {
     const explanation = typeof data.explanation === 'string' ? normalizeText(data.explanation) : ''
@@ -1557,9 +1587,17 @@ async function startSessionFromTaskInternal(options: {
         ?? projectDefaultModel
         ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
 
+    const taskPermissionMode = coercePermissionModeForFlavor(
+        task.permissionMode as z.infer<typeof PermissionModeSchema> | null,
+        agent
+    )
+    const projectPermissionMode = coercePermissionModeForFlavor(
+        project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null,
+        agent
+    )
     let permissionMode = overrides.permissionMode
-        ?? (task.permissionMode as z.infer<typeof PermissionModeSchema> | null)
-        ?? (project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null)
+        ?? taskPermissionMode
+        ?? projectPermissionMode
         ?? undefined
 
     const workflowProfile = (task.workflowProfile ?? '').trim().toLowerCase()
@@ -1569,7 +1607,7 @@ async function startSessionFromTaskInternal(options: {
     const isGoalPlanningRole = Boolean(task.goalId) && (task.source === 'planner' || task.source === 'radar')
     const isGoalReviewRole = Boolean(task.goalId) && (task.status === 'review' || task.status === 'in_review')
     const goalTaskRole = getGoalTaskRole(task)
-    if (isGsdNonExecutionPhase || isGoalPlanningRole) {
+    if (isGsdNonExecutionPhase) {
         // Workflow phases that should not trigger execution:
         // force session into an explicit planning / read-only posture regardless of stored task settings.
         permissionMode = agent === 'claude'
@@ -1579,6 +1617,8 @@ async function startSessionFromTaskInternal(options: {
             : agent === 'gemini'
                 ? 'read-only'
                 : 'default'
+    } else if (isGoalPlanningRole) {
+        permissionMode = resolveAutonomousPermissionModeForFlavor(agent, permissionMode) ?? undefined
     }
     if (agent === 'codex' && permissionMode === 'plan') {
         permissionMode = 'safe-yolo'
@@ -1650,21 +1690,13 @@ async function startSessionFromTaskInternal(options: {
         }
     }
 
-    const runnerSeemsOnline = machine.active || (() => {
-        if (!machine.runnerState || typeof machine.runnerState !== 'object') {
-            return false
-        }
-        const status = (machine.runnerState as Record<string, unknown>).status
-        return status === 'running'
-    })()
-
-    if (!runnerSeemsOnline) {
+    if (!isMachineRunnerReady(machine)) {
         return {
             ok: false,
             error: createTaskSessionStartFailure({
                 code: 'runner_offline',
                 message: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start',
-                retryAction: 'manual_fix_then_retry_start'
+                retryAction: 'wait_then_retry_start'
             })
         }
     }

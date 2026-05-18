@@ -156,6 +156,66 @@ describe('project workspace policy', () => {
         expect(updateBody.project.agentOutputLanguage).toBe('en')
     })
 
+    it('rejects Codex-style permission modes when creating a Claude project', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const response = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Claude Project',
+                workspaces: [{ path: '/tmp/workspace-claude-project' }],
+                defaultAgentFlavor: 'claude',
+                defaultPermissionMode: 'yolo'
+            })
+        })
+
+        expect(response.status).toBe(400)
+    })
+
+    it('maps a stored Codex-style permission mode to the closest Claude option when switching agents', async () => {
+        const store = new Store(':memory:')
+        const app = createTestApp(store)
+
+        const createResponse = await app.request('/api/projects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                name: 'Project Switch',
+                workspaces: [{ path: '/tmp/workspace-switch' }],
+                defaultAgentFlavor: 'codex',
+                defaultPermissionMode: 'yolo'
+            })
+        })
+        expect(createResponse.status).toBe(200)
+        const createBody = await createResponse.json() as {
+            project: {
+                id: string
+            }
+        }
+
+        const updateResponse = await app.request(`/api/projects/${createBody.project.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                defaultAgentFlavor: 'claude'
+            })
+        })
+        expect(updateResponse.status).toBe(200)
+        const updateBody = await updateResponse.json() as {
+            project: {
+                defaultAgentFlavor: string | null
+                defaultPermissionMode: string | null
+            }
+        }
+
+        expect(updateBody.project.defaultAgentFlavor).toBe('claude')
+        expect(updateBody.project.defaultPermissionMode).toBe('bypassPermissions')
+    })
+
     it('rejects workspace changes after project creation', async () => {
         const store = new Store(':memory:')
         const app = createTestApp(store)

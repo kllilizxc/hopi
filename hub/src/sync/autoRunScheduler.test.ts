@@ -162,6 +162,154 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents).toEqual([])
     })
 
+    it('does not create planner refill tasks while a goal is blocked for milestone review', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-blocked-goal-no-planner-refill'
+        const goalId = 'goal-blocked-no-planner-refill'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'unknown'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Blocked autonomous goal',
+            status: 'blocked',
+            autopilotEnabled: true,
+            currentFocus: 'Awaiting milestone review.'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        await (scheduler as unknown as {
+            tickProject(namespace: string, projectId: string): Promise<void>
+        }).tickProject(namespace, projectId)
+
+        expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })).toEqual([])
+        expect(realtimeEvents).toEqual([])
+    })
+
+    it('continues existing planned goal tasks even when the goal is blocked', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-blocked-goal-planned-continue'
+        const goalId = 'goal-blocked-planned-continue'
+        const taskId = 'task-blocked-goal-planned-continue'
+        const workspaceId = 'workspace-blocked-goal-planned-continue'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Blocked goal',
+            status: 'blocked',
+            autopilotEnabled: true,
+            currentFocus: 'Awaiting milestone review.'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Finish current batch task',
+            status: 'planning',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-blocked-goal-planned-continue',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== spawned.id) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: spawned.id
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'running')
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.activeSessionId).toBe(spawned.id)
+    })
+
     it('auto-runs planner tasks for an enabled goal even when project auto-run is off', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -934,10 +1082,20 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planning')
+        expect(task?.initRuntime).toMatchObject({
+            status: 'waiting',
+            failure: {
+                code: 'runner_offline',
+                retry: {
+                    action: 'wait_then_retry_start',
+                    available: true
+                }
+            }
+        })
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1170,6 +1328,124 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             hopiTaskRole: 'evaluator'
         })
         expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === reviewTaskId)).toBe(true)
+    })
+
+    it('continues blocked-goal review tasks into evaluator runs for the current batch', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-blocked-goal-review-continue'
+        const goalId = 'goal-blocked-review-continue'
+        const workspaceId = 'workspace-blocked-goal-review-continue'
+        const reviewTaskId = 'task-blocked-goal-review-continue'
+        const previousSessionId = 'session-generator-done-blocked-goal'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Blocked goal',
+            status: 'blocked',
+            autopilotEnabled: true,
+            currentFocus: 'Awaiting milestone review.'
+        })
+        store.tasks.createTask({
+            id: reviewTaskId,
+            projectId,
+            goalId,
+            title: 'Review should still drain',
+            status: 'review',
+            source: 'manual',
+            activeSessionId: previousSessionId,
+            workflowProfile: 'default',
+            workflowPhase: null,
+            handoff: 'Ready for evaluator.'
+        })
+
+        const evaluatorSession = store.sessions.getOrCreateSession(
+            'session-evaluator-blocked-goal',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId === previousSessionId) {
+                    return {
+                        id: previousSessionId,
+                        namespace,
+                        active: false,
+                        thinking: false,
+                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    }
+                }
+                if (sessionId === evaluatorSession.id) {
+                    return {
+                        id: evaluatorSession.id,
+                        namespace,
+                        active: true,
+                        thinking: false,
+                        metadata: { projectId, path: '/tmp/workspace' }
+                    }
+                }
+                return undefined
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: evaluatorSession.id
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.source === 'evaluator')
+
+        expect(spawnCount).toBe(1)
+        expect(store.tasks.getTaskByNamespace(reviewTaskId, namespace)?.status).toBe('review')
+        expect(store.sessions.getSessionByNamespace(evaluatorSession.id, namespace)?.metadata).toMatchObject({
+            taskId: reviewTaskId,
+            hopiTaskRole: 'evaluator'
+        })
     })
 
     it('starts at most three generator tasks by default', async () => {
@@ -1424,10 +1700,20 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planning')
+        expect(task?.initRuntime).toMatchObject({
+            status: 'waiting',
+            failure: {
+                code: 'runner_offline',
+                retry: {
+                    action: 'wait_then_retry_start',
+                    available: true
+                }
+            }
+        })
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1540,10 +1826,20 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planning')
+        expect(task?.initRuntime).toMatchObject({
+            status: 'waiting',
+            failure: {
+                code: 'runner_offline',
+                retry: {
+                    action: 'wait_then_retry_start',
+                    available: true
+                }
+            }
+        })
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1608,11 +1904,143 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         sessionActive = false
         scheduler.handleEvent({ type: 'session-updated', sessionId })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('blocked')
+        expect(task?.status).toBe('planning')
+        expect(task?.initRuntime).toMatchObject({
+            status: 'waiting',
+            failure: {
+                code: 'runner_offline',
+                retry: {
+                    action: 'wait_then_retry_start',
+                    available: true
+                }
+            }
+        })
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
+    })
+
+    it('waits for runner recovery without retrying until the machine comes back', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-runner-recovery-wait'
+        const taskId = 'task-runner-recovery-wait'
+        const workspaceId = 'workspace-runner-recovery-wait'
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-runner-recovery-wait',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: true,
+            maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
+            automationReadinessStatus: 'ready'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'planning',
+            workflowProfile: 'default'
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        let runnerReady = false
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== spawned.id) {
+                    return undefined
+                }
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: runnerReady,
+                    runnerState: { status: runnerReady ? 'running' : 'stopped' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: spawned.id
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
+
+        const waitingTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(waitingTask?.status).toBe('planning')
+        expect(waitingTask?.initRuntime?.failure?.code).toBe('runner_offline')
+        expect(spawnCount).toBe(0)
+
+        const toastCountBeforeRetryProbe = realtimeEvents.filter((event) => event.type === 'toast').length
+        scheduler.handleEvent({
+            type: 'task-updated',
+            namespace,
+            projectId,
+            taskId,
+            data: { taskId }
+        })
+        await delay(120)
+
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status).toBe('waiting')
+        expect(spawnCount).toBe(0)
+        expect(realtimeEvents.filter((event) => event.type === 'toast')).toHaveLength(toastCountBeforeRetryProbe)
+
+        runnerReady = true
+        scheduler.handleEvent({
+            type: 'machine-updated',
+            namespace,
+            machineId: 'machine-1',
+            data: { activeAt: Date.now() }
+        })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'running')
+
+        const resumedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(resumedTask?.activeSessionId).toBe(spawned.id)
+        expect(resumedTask?.initRuntime?.status).toBe('running')
+        expect(spawnCount).toBe(1)
     })
 
     it('reruns after a new planned task arrives during an active scheduler pass', async () => {

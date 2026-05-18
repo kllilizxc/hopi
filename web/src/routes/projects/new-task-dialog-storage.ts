@@ -99,7 +99,10 @@ export function resolveNewTaskDialogOptions(input: ResolveNewTaskDialogOptionsIn
         priority: storedOptions.priority ?? '',
         agent,
         model,
-        permissionMode: storedOptions.permissionMode ?? resolveTaskPermissionModeForFlavor(agent, defaultPermissionPreference),
+        permissionMode: resolveTaskPermissionModeForFlavor(
+            agent,
+            storedOptions.permissionMode ?? defaultPermissionPreference
+        ),
         workflowProfile: normalizeWorkflowProfile(storedOptions.workflowProfile),
     }
 }

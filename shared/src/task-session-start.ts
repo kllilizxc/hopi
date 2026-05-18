@@ -149,9 +149,11 @@ export function buildTaskSessionStartFailureToast(options: {
     title: string
     body: string
 } {
-    const title = isTaskSessionStartFailureRetryable(options.failure)
-        ? 'Auto-run blocked'
-        : 'Auto-run failed'
+    const title = options.failure.retry?.action === 'wait_then_retry_start'
+        ? 'Auto-run paused'
+        : isTaskSessionStartFailureRetryable(options.failure)
+            ? 'Auto-run blocked'
+            : 'Auto-run failed'
     const taskTitle = options.taskTitle.trim()
     const detail = options.failure.message.trim()
     return {

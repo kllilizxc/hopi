@@ -4,17 +4,19 @@ import type { SyncEvent } from '@hopi/protocol/types'
 import type { AutomationLane } from '@hopi/protocol/types'
 import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
 import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../store'
+import { buildTaskInitRuntime } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
 import { bootstrapGoalDocs } from './goals/goalDocs'
 import { createGoalTodoTaskId, readGoalTodo } from './goals/goalTodo'
 import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
 import { notifyProjectControllerTaskBlockedTransition } from './projectController'
-import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
+import { continueTaskInLinkedSession, isMachineRunnerReady, startSessionFromTask } from './taskSessionService'
 import { getWorkflowStrategy } from './workflowStrategy'
 import { getProjectDefaultTaskRuntimeSettings } from './projectTaskDefaults'
 
 type ProjectKey = `${string}:${string}`
+type MachineKey = `${string}:${string}`
 type TaskAutopilotPolicy = {
     enabled: boolean
     allowBeforeReadiness: boolean
@@ -39,6 +41,10 @@ const AUTOMATION_LANE_PRIORITY: Record<AutomationLane, number> = {
 
 function toProjectKey(namespace: string, projectId: string): ProjectKey {
     return `${namespace}:${projectId}`
+}
+
+function toMachineKey(namespace: string, machineId: string): MachineKey {
+    return `${namespace}:${machineId}`
 }
 
 function createLaneCounts(): Record<AutomationLane, number> {
@@ -122,6 +128,12 @@ function sortAutomationCandidates(tasks: StoredTask[]): StoredTask[] {
         .map((item) => item.task)
 }
 
+function isTaskWaitingForRunnerRecovery(task: Pick<StoredTask, 'initRuntime'>): boolean {
+    return task.initRuntime?.status === 'waiting'
+        && task.initRuntime.failure?.code === 'runner_offline'
+        && task.initRuntime.failure?.retry?.action === 'wait_then_retry_start'
+}
+
 function isTaskAutoRunnable(task: {
     id: string
     status: string
@@ -132,16 +144,23 @@ function isTaskAutoRunnable(task: {
     goalTodoRef: string | null
     workflowPhase: string | null
     workflowProfile: string
+    initRuntime: StoredTask['initRuntime']
 }, options: {
     namespace: string
     project: StoredProject
     store: Store
-    engine: Pick<SyncEngine, 'getSessionByNamespace'>
+    engine: Pick<SyncEngine, 'getMachineByNamespace' | 'getSessionByNamespace'>
 }): boolean {
     const isPlanningTask = task.status === 'planning' || task.status === 'planned'
     const isReviewTask = task.status === 'review' || task.status === 'in_review'
     if (!isPlanningTask && !isReviewTask) return false
     if (task.archivedAt) return false
+    if (isTaskWaitingForRunnerRecovery(task)) {
+        const machine = options.engine.getMachineByNamespace(options.project.machineId, options.namespace)
+        if (!isMachineRunnerReady(machine)) {
+            return false
+        }
+    }
     if (task.activeSessionId) {
         const linkedSession = options.engine.getSessionByNamespace(task.activeSessionId, options.namespace)
         if (
@@ -168,6 +187,10 @@ function isGoalRunnable(goal: StoredGoal): boolean {
         && ACTIVE_GOAL_STATUSES.has(goal.status)
 }
 
+function isGoalTaskExecutionContinuation(task: Pick<StoredTask, 'source'>): boolean {
+    return task.source !== 'planner' && task.source !== 'radar'
+}
+
 function isGoalAutomationPaused(goal: StoredGoal): boolean {
     return goal.automationPausedAt !== null
 }
@@ -176,6 +199,13 @@ function isGoalAutopilotRunnable(goal: StoredGoal): boolean {
     return goal.autopilotEnabled
         && !isGoalAutomationPaused(goal)
         && isGoalRunnable(goal)
+}
+
+function isGoalAutomationEnabled(goal: StoredGoal): boolean {
+    return goal.autopilotEnabled
+        && !isGoalAutomationPaused(goal)
+        && !goal.archivedAt
+        && (isGoalRunnable(goal) || goal.status === 'blocked')
 }
 
 function getTaskAutopilotPolicy(options: {
@@ -196,7 +226,7 @@ function getTaskAutopilotPolicy(options: {
         !goal
         || goal.projectId !== options.project.id
         || isGoalAutomationPaused(goal)
-        || !isGoalRunnable(goal)
+        || goal.archivedAt
     ) {
         return {
             enabled: false,
@@ -204,10 +234,24 @@ function getTaskAutopilotPolicy(options: {
         }
     }
 
-    const goalAutopilotEnabled = isGoalAutopilotRunnable(goal)
+    const goalAutomationEnabled = options.project.autoRunEnabled || goal.autopilotEnabled
+    if (goal.status === 'blocked') {
+        const allowContinuation = isGoalTaskExecutionContinuation(options.task)
+        return {
+            enabled: goalAutomationEnabled && allowContinuation,
+            allowBeforeReadiness: allowContinuation
+        }
+    }
+
+    if (!isGoalRunnable(goal)) {
+        return {
+            enabled: false,
+            allowBeforeReadiness: false
+        }
+    }
 
     return {
-        enabled: options.project.autoRunEnabled || goalAutopilotEnabled,
+        enabled: goalAutomationEnabled,
         allowBeforeReadiness: true
     }
 }
@@ -438,6 +482,7 @@ function buildRadarContract(goal: StoredGoal): string {
 export class AutoRunScheduler {
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly lastActiveBySessionId: Map<string, boolean> = new Map()
+    private readonly lastRunnerReadyByMachineId: Map<MachineKey, boolean> = new Map()
     private readonly tickTimers: Map<ProjectKey, NodeJS.Timeout> = new Map()
     private readonly runningTicks: Set<ProjectKey> = new Set()
     private readonly pendingTicks: Set<ProjectKey> = new Set()
@@ -520,6 +565,24 @@ export class AutoRunScheduler {
                 const projectId = session.metadata?.projectId
                 if (projectId && session.namespace) {
                     this.requestTick(session.namespace, projectId, { delayMs: 500 })
+                }
+            }
+            return
+        }
+
+        if (event.type === 'machine-updated' && event.machineId && event.namespace) {
+            const key = toMachineKey(event.namespace, event.machineId)
+            const runnerReady = isMachineRunnerReady(
+                this.engine.getMachineByNamespace(event.machineId, event.namespace)
+            )
+            const previousRunnerReady = this.lastRunnerReadyByMachineId.get(key)
+            this.lastRunnerReadyByMachineId.set(key, runnerReady)
+
+            if (runnerReady && previousRunnerReady !== true) {
+                const projects = this.store.projects.listProjectsByNamespace(event.namespace)
+                    .filter((project) => !project.archivedAt && project.machineId === event.machineId)
+                for (const project of projects) {
+                    this.requestTick(event.namespace, project.id, { delayMs: 250 })
                 }
             }
             return
@@ -781,7 +844,10 @@ export class AutoRunScheduler {
                 return
             }
             const autopilotGoals = this.ensureGoalAutopilotTasks(namespace, project)
-            if (!project.autoRunEnabled && autopilotGoals.length === 0) {
+            const hasEnabledGoalAutomation = this.store.goals
+                .listGoalsByProjectAndNamespace(project.id, namespace)
+                .some(isGoalAutomationEnabled)
+            if (!project.autoRunEnabled && !hasEnabledGoalAutomation && autopilotGoals.length === 0) {
                 return
             }
 
@@ -838,6 +904,48 @@ export class AutoRunScheduler {
 
                 if (result.ok) {
                     continue
+                }
+
+                const waitForRunnerRecovery = result.error.code === 'runner_offline'
+                    && result.error.retry?.action === 'wait_then_retry_start'
+                if (waitForRunnerRecovery) {
+                    const waitingTask = this.store.tasks.updateTaskByNamespace(task.id, namespace, {
+                        blockedReason: null,
+                        blockedSource: null,
+                        blockedSessionId: null,
+                        initRuntime: buildTaskInitRuntime({
+                            current: task.initRuntime,
+                            activeSessionId: task.activeSessionId,
+                            status: 'waiting',
+                            failure: result.error,
+                            failureFingerprint: `start:${result.error.code}`,
+                            latestNote: 'Runner 当前离线。HOPI 会在 machine runner 恢复后自动重试。'
+                        })
+                    })
+                    if (waitingTask) {
+                        this.engine.handleRealtimeEvent({
+                            type: 'task-updated',
+                            taskId: waitingTask.id,
+                            projectId: waitingTask.projectId,
+                            namespace,
+                            data: { taskId: waitingTask.id }
+                        })
+                    }
+
+                    this.engine.handleRealtimeEvent({
+                        type: 'toast',
+                        namespace,
+                        data: {
+                            ...buildTaskSessionStartFailureToast({
+                                taskTitle: task.title,
+                                failure: result.error
+                            }),
+                            sessionId: '',
+                            url: '',
+                            taskStartFailure: result.error
+                        }
+                    })
+                    break
                 }
 
                 const blocked = this.store.tasks.updateTaskByNamespace(task.id, namespace, {

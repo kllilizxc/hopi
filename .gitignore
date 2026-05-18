@@ -53,7 +53,15 @@ cli/npm/main/
 .roo
 .agents
 super
-docs
+docs/*
+!docs/.vitepress/
+!docs/guide/
+!docs/internal/
+!docs/public/
+!docs/index.md
+!docs/package.json
+!docs/task-tools-sync-implementation.md
+!docs/2026-05-15-hopi-goal-kanban-assistant-unified-design.md
 .agent-debugo
 *.cjs
 .hopi

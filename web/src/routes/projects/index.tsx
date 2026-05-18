@@ -1,6 +1,7 @@
 export { default } from './layout'
 export { ProjectsIndexPage } from './projects-index'
 export { ProjectOverviewPage } from './project-overview'
+export { ProjectAssistantPage } from './project-assistant'
 export { ProjectControllerPage } from './project-controller'
 export { ProjectSettingsPage } from './project-settings'
 export { TaskWorkbenchRoute } from './task-workbench'

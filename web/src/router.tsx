@@ -10,6 +10,7 @@ import {
     useMatchRoute,
     useNavigate,
     useParams,
+    useSearch,
 } from '@tanstack/react-router'
 import { App } from '@/App'
 import { SessionChat } from '@/components/SessionChat'
@@ -33,8 +34,8 @@ import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message
 import { IconButton } from '@/components/ui/icon-button'
 import { BackIcon, PlusIcon, SettingsIcon } from '@/assets/icons'
 import ProjectsPage, {
+    ProjectAssistantPage,
     ProjectOverviewPage,
-    ProjectControllerPage,
     ProjectSettingsPage,
     ProjectsIndexPage,
     TaskWorkbenchRoute,
@@ -394,6 +395,31 @@ const projectSettingsRoute = createRoute({
     component: ProjectSettingsPage,
 })
 
+const projectAssistantRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'assistant',
+    validateSearch: (search: Record<string, unknown>): { goalId?: string } => ({
+        goalId: typeof search.goalId === 'string' && search.goalId.trim().length > 0
+            ? search.goalId
+            : undefined
+    }),
+    component: ProjectAssistantPage,
+})
+
+function ProjectControllerRedirectPage() {
+    const { projectId } = useParams({ from: '/projects/$projectId/controller' })
+    const search = useSearch({ from: '/projects/$projectId/controller' })
+
+    return (
+        <Navigate
+            to="/projects/$projectId/assistant"
+            params={{ projectId }}
+            search={search.goalId ? { goalId: search.goalId } : {}}
+            replace
+        />
+    )
+}
+
 const projectControllerRoute = createRoute({
     getParentRoute: () => projectDetailRoute,
     path: 'controller',
@@ -402,7 +428,7 @@ const projectControllerRoute = createRoute({
             ? search.goalId
             : undefined
     }),
-    component: ProjectControllerPage,
+    component: ProjectControllerRedirectPage,
 })
 
 const projectTaskIndexRoute = createRoute({
@@ -535,6 +561,7 @@ export const routeTree = rootRoute.addChildren([
         projectsIndexRoute,
         projectDetailRoute.addChildren([
             projectDetailIndexRoute,
+            projectAssistantRoute,
             projectControllerRoute,
             projectSettingsRoute,
             projectTaskRoute.addChildren([

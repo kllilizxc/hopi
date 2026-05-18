@@ -46,7 +46,7 @@ describe('useSelectedProjectGoal', () => {
         expect(result.current.selectedGoalId).toBe('goal-1')
     })
 
-    it('reads the raw selected goal id for background controller briefing', () => {
+    it('reads the raw selected goal id for background goal assistant briefing', () => {
         localStorage.setItem(SELECTED_GOAL_STORAGE_KEY, JSON.stringify({
             'project-1': 'goal-2'
         }))

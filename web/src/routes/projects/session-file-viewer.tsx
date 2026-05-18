@@ -15,6 +15,7 @@ export function SessionFileViewer(props: {
     staged?: boolean
     baseRef?: string
     taskMergedDiffId?: string
+    taskMergedBaseRef?: string
     diffScope?: 'staged' | 'unstaged' | 'committed'
     onBack: () => void
     showSafeAreaTop?: boolean
@@ -34,6 +35,7 @@ export function SessionFileViewer(props: {
         staged: props.staged,
         baseRef: props.baseRef,
         taskMergedDiffId: props.taskMergedDiffId,
+        taskMergedBaseRef: props.taskMergedBaseRef,
     })
 
     return (

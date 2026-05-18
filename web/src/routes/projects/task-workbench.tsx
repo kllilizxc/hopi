@@ -1,10 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, getModelLabel, normalizeModelName, resolveClaudeModelMode, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
+import { DEFAULT_AGENT_FLAVOR, DEFAULT_TASK_MODEL, getModelLabel, normalizeModelName, resolveClaudeModelMode, resolvePermissionModeForFlavor, resolveStoredModel, shouldResetModelForFlavor } from '@hopi/protocol'
 import { useMatchRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { TASK_STATUS_ORDER } from '@hopi/protocol/tasks'
-import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TaskStatus, TodoItem, WorkflowStrategyDescriptor, Workspace } from '@/types/api'
+import type { AgentFlavor, PermissionMode, Task, TaskAttachment, TaskPriority, TodoItem, WorkflowStrategyDescriptor, Workspace } from '@/types/api'
 import { useAppContext } from '@/lib/app-context'
-import { TASK_STATUS_TITLE_KEY_BY_STATUS } from '@/lib/task-status'
+import { GOAL_TASK_LANE_TITLE_KEY_BY_LANE, getTaskLane } from '@/lib/task-status'
 import { getAgentFlavorLabel } from '@/lib/agentFlavorUtils'
 import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
@@ -61,10 +60,8 @@ function getTaskPriorityTagVariant(priority: TaskPriority): 'default' | 'warning
             return 'warning'
         case 'low':
             return 'default'
-        default: {
-            const _exhaustive: never = priority
-            return _exhaustive
-        }
+        default:
+            return 'default'
     }
 }
 
@@ -173,10 +170,13 @@ function getTaskReviewStageView(t: ReturnType<typeof useTranslation>['t'], stage
                 busy: false,
                 tone: 'warning'
             }
-        default: {
-            const _exhaustive: never = stage
-            return _exhaustive
-        }
+        default:
+            return {
+                title: t('projects.task.review.resultPending.title'),
+                detail: t('projects.task.review.resultPending.detail'),
+                busy: false,
+                tone: 'warning'
+            }
     }
 }
 
@@ -343,7 +343,7 @@ function StartSessionDialog(props: {
     const permissionOptions = useMemo(() => getTaskPermissionModeOptionsForFlavor(agent), [agent])
 
     useEffect(() => {
-        if (permissionOptions.some((option) => option.mode === permissionMode)) {
+        if (permissionOptions.some((option: { mode: PermissionMode }) => option.mode === permissionMode)) {
             return
         }
         const workflowProfile = (props.workflowProfile ?? '').trim().toLowerCase()
@@ -421,7 +421,7 @@ function StartSessionDialog(props: {
                         <AdaptiveSelectField
                             title={t('misc.permissionMode')}
                             value={permissionMode}
-                            options={permissionOptions.map((opt) => ({
+                            options={permissionOptions.map((opt: { mode: PermissionMode; label: string }) => ({
                                 value: opt.mode as PermissionMode,
                                 label: opt.label,
                             }))}
@@ -852,8 +852,7 @@ const TaskAttachmentsSection = memo(function TaskAttachmentsSection(props: {
 })
 
 const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
-    status: TaskStatus
-    statusOptions: Array<{ value: TaskStatus; label: string }>
+    laneLabel: string
     priority: TaskPriority | ''
     priorityOptions: Array<{ value: '' | TaskPriority; label: string }>
     workspaceId: string
@@ -876,7 +875,6 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
     overLimit: boolean
     isUpdatingTask: boolean
     isArchiving: boolean
-    onStatusChange: (value: string) => void
     onPriorityChange: (value: string) => void
     onWorkspaceChange: (value: string) => void
     onAgentFlavorChange: (value: string) => void
@@ -898,16 +896,16 @@ const TaskDetailsSidebar = memo(function TaskDetailsSidebar(props: {
 
                 <div className="space-y-1.5">
                     <label className="text-xs font-medium text-[var(--app-hint)]">
-                        {t('projects.task.status')}
+                        {t('projects.task.lane')}
                     </label>
-                    <AdaptiveSelectField
-                        title={t('projects.task.status')}
-                        value={props.status}
-                        options={props.statusOptions}
-                        onValueChange={props.onStatusChange}
-                        disabled={props.isUpdatingTask}
-                        align="start"
-                    />
+                    <div className="rounded-md app-shadow-border bg-[var(--app-secondary-bg)] px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Tag variant="default">{props.laneLabel}</Tag>
+                            <span className="text-xs text-[var(--app-hint)]">
+                                {t('projects.task.laneReadOnlyHint')}
+                            </span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -1155,7 +1153,6 @@ function TaskDetailsPanel(props: {
 
     const [title, setTitle] = useState(props.task.title)
     const [description, setDescription] = useState(props.task.description ?? '')
-    const [status, setStatus] = useState<TaskStatus>(props.task.status)
     const [priority, setPriority] = useState<TaskPriority | ''>(props.task.priority ?? '')
     const [workspaceId, setWorkspaceId] = useState<string>(props.task.workspaceId ?? '')
     const [agentFlavor, setAgentFlavor] = useState<AgentType | ''>((props.task.agentFlavor as AgentType | null) ?? '')
@@ -1186,7 +1183,6 @@ function TaskDetailsPanel(props: {
     useEffect(() => {
         setTitle(props.task.title)
         setDescription(props.task.description ?? '')
-        setStatus(props.task.status)
         setPriority(props.task.priority ?? '')
         setWorkspaceId(props.task.workspaceId ?? '')
         setAgentFlavor((props.task.agentFlavor as AgentType | null) ?? '')
@@ -1202,11 +1198,10 @@ function TaskDetailsPanel(props: {
     }, [props.task.id, props.task.updatedAt, props.workflowStrategy?.defaultTaskPhase])
 
     const effectiveAgentFlavor: AgentType = (agentFlavor || props.projectDefaults.agent) as AgentType
-
-    const statusOptions = useMemo<Array<{ value: TaskStatus; label: string }>>(() => TASK_STATUS_ORDER.map((taskStatus) => ({
-        value: taskStatus,
-        label: t(TASK_STATUS_TITLE_KEY_BY_STATUS[taskStatus]),
-    })), [t])
+    const laneLabel = useMemo(() => {
+        const lane = getTaskLane(props.task)
+        return t(GOAL_TASK_LANE_TITLE_KEY_BY_LANE[lane])
+    }, [props.task, t])
 
     const priorityOptions = useMemo<Array<{ value: '' | TaskPriority; label: string }>>(() => ([
         { value: '', label: t('projects.task.priority.none') },
@@ -1318,12 +1313,6 @@ function TaskDetailsPanel(props: {
     const handleCopyLink = useCallback(() => {
         void copy(window.location.href)
     }, [copy])
-
-    const handleStatusChange = useCallback((value: string) => {
-        const next = value as TaskStatus
-        setStatus(next)
-        void savePatch({ status: next, sortKey: Date.now() })
-    }, [savePatch])
 
     const handleWorkflowPhaseChange = useCallback((value: string) => {
         const next = value.trim()
@@ -1595,8 +1584,7 @@ function TaskDetailsPanel(props: {
                         </div>
 
                         <TaskDetailsSidebar
-                            status={status}
-                            statusOptions={statusOptions}
+                            laneLabel={laneLabel}
                             priority={priority}
                             priorityOptions={priorityOptions}
                             workspaceId={workspaceId}
@@ -1619,7 +1607,6 @@ function TaskDetailsPanel(props: {
                             overLimit={overLimit}
                             isUpdatingTask={isUpdatingTask}
                             isArchiving={isArchiving}
-                            onStatusChange={handleStatusChange}
                             onPriorityChange={handlePriorityChange}
                             onWorkspaceChange={handleWorkspaceChange}
                             onAgentFlavorChange={handleAgentFlavorChange}
@@ -1853,7 +1840,10 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
 
     const projectDefaults = useMemo(() => {
         const agent = (project?.defaultAgentFlavor as AgentType | null) ?? DEFAULT_AGENT_FLAVOR
-        const permissionMode = (project?.defaultPermissionMode as PermissionMode | null) ?? 'default'
+        const permissionMode = resolvePermissionModeForFlavor(
+            agent,
+            project?.defaultPermissionMode as PermissionMode | null | undefined
+        )
         const model = resolveStoredModel(project?.defaultModel, project?.defaultModelMode)
             ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : null)
         return { agent, permissionMode, model }
@@ -1964,7 +1954,7 @@ export const TaskWorkbench = memo(function TaskWorkbench(props: {
         )
     ) : activeTab === 'diffs' ? (
         sessionId ? (
-            <TaskSessionDiffs api={api} sessionId={sessionId} onBack={handleBack} />
+            <TaskSessionDiffs api={api} sessionId={sessionId} taskId={props.taskId} onBack={handleBack} />
         ) : (
             <div className="h-full flex items-center justify-center p-4 text-sm text-[var(--app-hint)]">
                 {t('projects.workbench.noSession')}

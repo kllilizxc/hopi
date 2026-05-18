@@ -170,7 +170,7 @@ describe('project controller session routes', () => {
         }])
         expect(appliedConfigs).toEqual([{
             sessionId: body.sessionId,
-            permissionMode: 'safe-yolo'
+            permissionMode: 'read-only'
         }])
         expect(sentMessages).toEqual([])
 
@@ -179,7 +179,7 @@ describe('project controller session routes', () => {
             projectId,
             goalId: 'goal-controller',
             hopiController: true,
-            name: 'Controller - Controller Project - Ship Controller'
+            name: 'Goal Assistant - Controller Project - Ship Controller'
         })
     })
 
@@ -223,7 +223,55 @@ describe('project controller session routes', () => {
         const body = await response.json() as { sessionId: string; created: boolean }
         expect(body).toMatchObject({ sessionId: stored.id, created: false })
         expect(controller.spawnCalls).toEqual([])
+        expect(controller.appliedConfigs).toEqual([{
+            sessionId: stored.id,
+            permissionMode: 'read-only'
+        }])
         expect(controller.sentMessages).toEqual([])
+    })
+
+    it('reuses an active controller session with its own stored flavor policy after project agent changes', async () => {
+        const store = new Store(':memory:')
+        const { projectId, workspacePath } = seedProject(store, { defaultAgentFlavor: 'claude' })
+        store.goals.createGoal({
+            id: 'goal-controller',
+            projectId,
+            namespace: 'default',
+            goalKey: 'ship-controller',
+            title: 'Ship Controller',
+            status: 'active'
+        })
+        const stored = store.sessions.getOrCreateSession(
+            'controller-existing-codex',
+            {
+                path: workspacePath,
+                host: 'localhost',
+                machineId: 'machine-1',
+                projectId,
+                goalId: 'goal-controller',
+                hopiController: true,
+                name: 'Goal Assistant - Controller Project - Ship Controller',
+                flavor: 'codex'
+            },
+            null,
+            'default'
+        )
+        const controller = createControllerEngine(store)
+        controller.sessions.set(stored.id, createRuntimeSession(stored))
+        const app = createTestApp(store, controller.engine)
+
+        const response = await app.request(`/api/projects/${projectId}/controller-session`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ goalId: 'goal-controller' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(controller.spawnCalls).toEqual([])
+        expect(controller.appliedConfigs).toEqual([{
+            sessionId: stored.id,
+            permissionMode: 'read-only'
+        }])
     })
 
     it('queues an opportunistic controller briefing with goal index and todo paths', async () => {
@@ -264,6 +312,7 @@ describe('project controller session routes', () => {
         expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/index.md')
         expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/todo.yml')
         expect(controller.sentMessages[0]?.text).toContain('Focus only on the current goal above')
+        expect(controller.sentMessages[0]?.text).toContain('Stay in an operator-console role')
 
         const stored = store.sessions.getSessionByNamespace(body.sessionId, 'default')
         expect(stored?.metadata).toMatchObject({

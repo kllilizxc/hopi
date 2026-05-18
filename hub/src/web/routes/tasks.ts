@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FLAVOR, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, resolvePermissionModeForFlavor } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { MergeWorkflow } from '@hopi/protocol/actions'
 import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskSourceSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
@@ -164,6 +165,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function extractMergedDiffBaseCommit(snapshot: unknown): string | null {
     if (!isObject(snapshot)) return null
     return normalizeGitCommitRef(snapshot.baseCommit)
+}
+
+function resolveMergedDiffBaseRef(
+    task: Pick<StoredTask, 'mergedDiffSnapshot'>,
+    fallbackBaseRef?: string | null
+): string | null {
+    return extractMergedDiffBaseCommit(task.mergedDiffSnapshot) ?? normalizeGitCommitRef(fallbackBaseRef)
 }
 
 function resolveTaskWorkspace(options: {
@@ -2101,18 +2109,22 @@ async function persistSuccessfulTaskMerge(options: {
         ? strategy.getTaskPatchForTransition('task_finished', options.task)
         : null
 
-    let diffSnapshot: unknown = null
+    let diffSnapshot: {
+        files: ReturnType<typeof parseDiffNumstat>
+        capturedAt: number
+        baseCommit: string
+    } | null = null
     try {
-        const baseCommit = options.sessionMetadataWorktreeBaseCommit
+        const baseCommit = normalizeGitCommitRef(options.sessionMetadataWorktreeBaseCommit)
         if (baseCommit) {
+            diffSnapshot = {
+                files: [],
+                capturedAt: mergedAt,
+                baseCommit
+            }
             const diffResult = await options.engine.getGitDiffNumstat(options.sessionId, { baseRef: baseCommit })
-            if (diffResult.success && diffResult.stdout) {
-                const files = parseDiffNumstat(diffResult.stdout)
-                diffSnapshot = {
-                    files,
-                    capturedAt: mergedAt,
-                    baseCommit
-                }
+            if (diffResult.success) {
+                diffSnapshot.files = parseDiffNumstat(diffResult.stdout ?? '')
             }
         }
     } catch (error) {
@@ -2240,6 +2252,17 @@ const updateTaskSchema = z.object({
     handoff: z.string().max(200_000).nullable().optional(),
     evidence: z.string().max(200_000).nullable().optional()
 })
+
+function resolveTaskAgentFlavor(options: {
+    projectDefaultAgentFlavor?: string | null
+    storedTaskAgentFlavor?: string | null
+    requestedAgentFlavor?: z.infer<typeof AgentFlavorSchema> | null
+}): z.infer<typeof AgentFlavorSchema> {
+    return options.requestedAgentFlavor
+        ?? (options.storedTaskAgentFlavor as z.infer<typeof AgentFlavorSchema> | null)
+        ?? (options.projectDefaultAgentFlavor as z.infer<typeof AgentFlavorSchema> | null)
+        ?? DEFAULT_AGENT_FLAVOR
+}
 
 const listTasksQuerySchema = z.object({
     includeArchived: z.enum(['true', 'false']).optional(),
@@ -2595,7 +2618,11 @@ function materializeGoalTodoTaskOverlayForWrite(options: {
     })
 }
 
-const mergedDiffFileQuerySchema = z.object({
+const mergedDiffLookupQuerySchema = z.object({
+    baseRef: z.string().optional()
+})
+
+const mergedDiffFileQuerySchema = mergedDiffLookupQuerySchema.extend({
     path: z.string().min(1)
 })
 
@@ -4384,6 +4411,22 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        const taskAgentFlavor = resolveTaskAgentFlavor({
+            projectDefaultAgentFlavor: project.defaultAgentFlavor,
+            requestedAgentFlavor: parsed.data.agentFlavor ?? null
+        })
+        if (
+            parsed.data.permissionMode
+            && !isPermissionModeAllowedForFlavor(parsed.data.permissionMode, taskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid permissionMode for task agent flavor' }, 400)
+        }
+        if (
+            parsed.data.modelMode
+            && !isModelModeAllowedForFlavor(parsed.data.modelMode, taskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid modelMode for task agent flavor' }, 400)
+        }
         const goal = parsed.data.goalId
             ? options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
             : null
@@ -4514,6 +4557,27 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
+        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        const nextTaskAgentFlavor = resolveTaskAgentFlavor({
+            projectDefaultAgentFlavor: project.defaultAgentFlavor,
+            storedTaskAgentFlavor: existing.agentFlavor,
+            requestedAgentFlavor: parsed.data.agentFlavor ?? null
+        })
+        if (
+            parsed.data.permissionMode
+            && !isPermissionModeAllowedForFlavor(parsed.data.permissionMode, nextTaskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid permissionMode for task agent flavor' }, 400)
+        }
+        if (
+            parsed.data.modelMode
+            && !isModelModeAllowedForFlavor(parsed.data.modelMode, nextTaskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid modelMode for task agent flavor' }, 400)
+        }
         if (parsed.data.goalId) {
             const goal = options.store.goals.getGoalByNamespace(parsed.data.goalId, namespace)
             if (!goal || goal.projectId !== existing.projectId) {
@@ -4540,6 +4604,27 @@ export function createTasksRoutes(options: {
         const finishedTransitionPatch = statusChangingToFinished
             ? strategy.getTaskPatchForTransition('task_finished', existing)
             : null
+        let nextPermissionMode = parsed.data.permissionMode
+        if (
+            parsed.data.permissionMode === undefined
+            && parsed.data.agentFlavor !== undefined
+            && existing.permissionMode
+            && !isPermissionModeAllowedForFlavor(existing.permissionMode as z.infer<typeof PermissionModeSchema>, nextTaskAgentFlavor)
+        ) {
+            nextPermissionMode = resolvePermissionModeForFlavor(
+                nextTaskAgentFlavor,
+                existing.permissionMode as z.infer<typeof PermissionModeSchema>
+            )
+        }
+        let nextModelMode = parsed.data.modelMode
+        if (
+            parsed.data.modelMode === undefined
+            && parsed.data.agentFlavor !== undefined
+            && existing.modelMode
+            && !isModelModeAllowedForFlavor(existing.modelMode as z.infer<typeof ModelModeSchema>, nextTaskAgentFlavor)
+        ) {
+            nextModelMode = null
+        }
 
         const updated = options.store.tasks.updateTaskByNamespace(existing.id, namespace, {
             title: parsed.data.title,
@@ -4553,9 +4638,9 @@ export function createTasksRoutes(options: {
             priority: parsed.data.priority,
             workspaceId: parsed.data.workspaceId,
             agentFlavor: parsed.data.agentFlavor,
-            permissionMode: parsed.data.permissionMode,
+            permissionMode: nextPermissionMode,
             model: parsed.data.model,
-            modelMode: parsed.data.modelMode,
+            modelMode: nextModelMode,
             workflowPhase: parsed.data.workflowPhase !== undefined
                 ? parsed.data.workflowPhase
                 : finishedTransitionPatch?.workflowPhase,
@@ -4770,6 +4855,27 @@ export function createTasksRoutes(options: {
         })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
+        }
+        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        const taskAgentFlavor = resolveTaskAgentFlavor({
+            projectDefaultAgentFlavor: project.defaultAgentFlavor,
+            storedTaskAgentFlavor: task.agentFlavor,
+            requestedAgentFlavor: parsed.data.agent ?? null
+        })
+        if (
+            parsed.data.permissionMode
+            && !isPermissionModeAllowedForFlavor(parsed.data.permissionMode, taskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid permissionMode for task agent flavor' }, 400)
+        }
+        if (
+            parsed.data.modelMode
+            && !isModelModeAllowedForFlavor(parsed.data.modelMode, taskAgentFlavor)
+        ) {
+            return c.json({ error: 'Invalid modelMode for task agent flavor' }, 400)
         }
 
         const result = await startSessionFromTask({
@@ -5227,6 +5333,9 @@ export function createTasksRoutes(options: {
         if (!parsed.success) {
             return c.json({ error: 'Invalid file path' }, 400)
         }
+        if (parsed.data.baseRef !== undefined && !normalizeGitCommitRef(parsed.data.baseRef)) {
+            return c.json({ success: false, error: 'Invalid baseRef' }, 400)
+        }
 
         const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
         if (!task) {
@@ -5238,7 +5347,7 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Project not found' }, 404)
         }
 
-        const baseRef = extractMergedDiffBaseCommit(task.mergedDiffSnapshot)
+        const baseRef = resolveMergedDiffBaseRef(task, parsed.data.baseRef)
         if (!baseRef) {
             return c.json({ success: false, error: 'Merged diff base commit not available' }, 400)
         }
@@ -5274,6 +5383,66 @@ export function createTasksRoutes(options: {
             return c.json({
                 success: false,
                 error: formatErrorMessage(error, 'Failed to load merged diff')
+            })
+        }
+    })
+
+    app.get('/tasks/:taskId/worktree/merged-diff-numstat', async (c) => {
+        const namespace = c.get('namespace')
+        const taskId = c.req.param('taskId')
+        const parsed = mergedDiffLookupQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query' }, 400)
+        }
+        if (parsed.data.baseRef !== undefined && !normalizeGitCommitRef(parsed.data.baseRef)) {
+            return c.json({ success: false, error: 'Invalid baseRef' }, 400)
+        }
+
+        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        if (!task) {
+            return c.json({ error: 'Task not found' }, 404)
+        }
+
+        const project = options.store.projects.getProjectByNamespace(task.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
+        const baseRef = resolveMergedDiffBaseRef(task, parsed.data.baseRef)
+        if (!baseRef) {
+            return c.json({ success: false, error: 'Merged diff base commit not available' }, 400)
+        }
+
+        const targetRef = normalizeGitCommitRef(task.worktreeMergeCommit)
+        if (!targetRef) {
+            return c.json({ success: false, error: 'Merge commit not available' }, 400)
+        }
+
+        const workspace = resolveTaskWorkspace({
+            store: options.store,
+            project,
+            task
+        })
+        if (!workspace) {
+            return c.json({ success: false, error: 'Workspace not found' }, 400)
+        }
+
+        const engine = options.getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        try {
+            const result = await engine.getGitDiffNumstatOnMachine(project.machineId, {
+                cwd: workspace.path,
+                baseRef,
+                targetRef
+            })
+            return c.json(result)
+        } catch (error) {
+            return c.json({
+                success: false,
+                error: formatErrorMessage(error, 'Failed to load merged diff summary')
             })
         }
     })

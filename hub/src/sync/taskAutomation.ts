@@ -447,6 +447,7 @@ export class TaskAutomation {
     private readonly lastThinkingBySessionId: Map<string, boolean> = new Map()
     private readonly autoCommitInFlightBySessionId: Set<string> = new Set()
     private readonly bootstrapPreviewInFlightByTaskKey: Set<string> = new Set()
+    private readonly appliedGoalActionPacketBySessionId: Set<string> = new Set()
 
     constructor(
         private readonly store: Store,
@@ -483,6 +484,9 @@ export class TaskAutomation {
             const session = this.engine.getSession(event.sessionId)
             if (session) {
                 this.lastThinkingBySessionId.set(event.sessionId, Boolean(session.thinking))
+                if (!session.active) {
+                    this.tryResolveInactiveSession(event.sessionId)
+                }
             }
             return
         }
@@ -490,6 +494,7 @@ export class TaskAutomation {
         if (event.type === 'session-removed' && event.sessionId) {
             this.lastThinkingBySessionId.delete(event.sessionId)
             this.autoCommitInFlightBySessionId.delete(event.sessionId)
+            this.appliedGoalActionPacketBySessionId.delete(event.sessionId)
             return
         }
 
@@ -509,8 +514,15 @@ export class TaskAutomation {
         if (!session) return
 
         const currentThinking = Boolean(session.thinking)
-
         const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
+
+        if (!session.active) {
+            if (this.tryResolveInactiveSession(sessionId)) {
+                this.lastThinkingBySessionId.set(sessionId, currentThinking)
+                return
+            }
+        }
+
         // When the agent starts thinking again (e.g. after approvals / mode changes),
         // the task should reflect "running" even if the agentState clears in a later tick.
         if (currentThinking) {
@@ -573,18 +585,19 @@ export class TaskAutomation {
             if (details?.hasAssistantReply === false) {
                 return
             }
-            const goalActionResult = this.tryApplyGoalActionPacketFromReady(sessionId)
-            if (goalActionResult === 'applied') {
+            const goalActionResult = this.tryApplyGoalActionPacketFromSession(sessionId)
+            if (goalActionResult === 'applied' || goalActionResult === 'already_applied') {
                 this.maybeRequestAutoMergeAcceptedTask(sessionId)
                 this.maybeAutoCommitWorktreeFromReady(sessionId, message)
                 return
             }
             if (goalActionResult === 'goal_task') {
-                if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
-                    return
-                }
                 if (isMergeRuntimeReadyEvent(message)) {
                     this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                    return
+                }
+                if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
+                    return
                 }
                 return
             }
@@ -601,7 +614,19 @@ export class TaskAutomation {
         }
     }
 
-    private tryApplyGoalActionPacketFromReady(sessionId: string): 'applied' | 'goal_task' | 'not_goal_task' {
+    private tryResolveInactiveSession(sessionId: string): boolean {
+        const goalActionResult = this.tryApplyGoalActionPacketFromSession(sessionId)
+        if (goalActionResult === 'applied' || goalActionResult === 'already_applied') {
+            this.maybeRequestAutoMergeAcceptedTask(sessionId)
+            return true
+        }
+        if (goalActionResult === 'goal_task' && this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
+            return true
+        }
+        return this.tryBlockTaskFromInactiveSession(sessionId)
+    }
+
+    private tryApplyGoalActionPacketFromSession(sessionId: string): 'applied' | 'already_applied' | 'goal_task' | 'not_goal_task' {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return 'not_goal_task'
 
@@ -609,18 +634,25 @@ export class TaskAutomation {
         if (!current || current.archivedAt || !current.goalId) {
             return 'not_goal_task'
         }
+        if (this.appliedGoalActionPacketBySessionId.has(sessionId)) {
+            return 'already_applied'
+        }
         if (!isRunningTaskStatus(current.status) && !isReviewTaskStatus(current.status)) {
             return 'goal_task'
         }
 
-        return applyGoalActionPacketFromSession({
+        const applied = applyGoalActionPacketFromSession({
             store: this.store,
             engine: this.engine,
             namespace: linked.namespace,
             projectId: linked.projectId,
             taskId: linked.taskId,
             sessionId
-        }) ? 'applied' : 'goal_task'
+        })
+        if (applied) {
+            this.appliedGoalActionPacketBySessionId.add(sessionId)
+        }
+        return applied ? 'applied' : 'goal_task'
     }
 
     private tryRecoverMissingEvaluatorActionPacket(sessionId: string): boolean {
@@ -1441,5 +1473,82 @@ export class TaskAutomation {
                 localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:${errorMessage.id}`
             })
         }
+    }
+
+    private tryBlockTaskFromInactiveSession(sessionId: string): boolean {
+        const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+        if (!linked) return false
+
+        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        if (!current) return false
+        if (current.archivedAt) return false
+        if (isDoneTaskStatus(current.status) || current.status === 'blocked') return false
+
+        const reportedBlockedReason = current.goalId
+            ? 'Agent session became inactive before applying its final HOPI_ACTIONS packet.'
+            : 'Agent session became inactive before updating the task status.'
+        const blockedReason = chooseBlockedReason(current.blockedReason, reportedBlockedReason)
+        const shouldAppendBlockedMessage = current.status !== 'blocked' || blockedReason !== current.blockedReason
+        const isBootstrapTask = current.source === 'project_init'
+        const shouldBlockInitRuntime = current.initRuntime?.sessionId === sessionId
+            && (current.initRuntime.status === 'running'
+                || current.initRuntime.status === 'waiting'
+                || current.initRuntime.status === 'retrying'
+                || (isBootstrapTask && current.initRuntime.status === 'succeeded'))
+
+        const initRuntime = shouldBlockInitRuntime
+            ? buildTaskInitRuntime({
+                current: current.initRuntime,
+                activeSessionId: current.activeSessionId,
+                status: 'blocked',
+                sessionId,
+                latestNote: isBootstrapTask
+                    ? `Starter scaffold was written, but the agent session became inactive before it could continue filling \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\`. Retry the bootstrap task to continue.`
+                    : 'Agent session became inactive before task kickoff could continue. Retry the task to continue.',
+                blockedReason
+            })
+            : undefined
+
+        const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+            status: 'blocked',
+            blockedReason,
+            blockedSource: 'agent',
+            blockedSessionId: sessionId,
+            initRuntime
+        })
+        if (!updated) {
+            return false
+        }
+
+        this.syncGoalTodo(updated, linked.namespace, current)
+        this.engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: updated.id,
+            projectId: updated.projectId,
+            namespace: linked.namespace,
+            data: { taskId: updated.id }
+        })
+        this.engine.handleRealtimeEvent({
+            type: 'toast',
+            namespace: linked.namespace,
+            data: {
+                title: 'Task blocked',
+                body: `${updated.title}: ${blockedReason}`,
+                sessionId,
+                url: ''
+            }
+        })
+        if (shouldAppendBlockedMessage) {
+            appendTaskBlockedMessage({
+                store: this.store,
+                engine: this.engine,
+                sessionId,
+                taskId: updated.id,
+                reason: blockedReason,
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:inactive`
+            })
+        }
+
+        return true
     }
 }

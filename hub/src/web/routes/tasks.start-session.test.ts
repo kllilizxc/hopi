@@ -93,6 +93,60 @@ function seedStartTask(store: Store, options: {
 
 
 describe('tasks start-session route', () => {
+    it('rejects Codex-style permission overrides when starting a Claude task session', async () => {
+        const store = new Store(':memory:')
+        const machineId = 'machine-claude-permission-check'
+        const projectId = 'project-claude-permission-check'
+        const workspaceId = 'workspace-claude-permission-check'
+        const taskId = 'task-claude-permission-check'
+        seedStartTask(store, {
+            projectId,
+            taskId,
+            workspaceId,
+            machineId
+        })
+        store.projects.updateProject(projectId, 'default', {
+            defaultAgentFlavor: 'claude'
+        })
+
+        const engine = withValidActionsManifest({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace: 'default',
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return null
+            },
+            async spawnSession() {
+                throw new Error('spawnSession should not be called')
+            },
+            async waitForSessionActive() {
+                return false
+            },
+            async applySessionConfig() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const app = createTestApp(store, engine)
+        const response = await app.request(`/api/tasks/${taskId}/start-session`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                permissionMode: 'yolo'
+            })
+        })
+
+        expect(response.status).toBe(400)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toBe('Invalid permissionMode for task agent flavor')
+    })
+
     it('keeps successful init quiet and sends kickoff without an extra init note', async () => {
         const store = new Store(':memory:')
         const machineId = 'machine-init-success'

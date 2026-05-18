@@ -96,7 +96,14 @@ function extractCommandError(result: GitCommandResponse | undefined): string | n
     return result.error ?? result.stderr ?? 'Failed to load diff'
 }
 
-export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: string; onBack?: () => void }) {
+function getQueryErrorMessage(value: unknown, fallback: string): string | null {
+    if (value instanceof Error) {
+        return value.message
+    }
+    return value ? fallback : null
+}
+
+export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: string; taskId?: string | null; onBack?: () => void }) {
     const { t } = useTranslation()
     const { session } = useSession(props.api, props.sessionId)
     const { status: gitStatus, error, isLoading, refetch } = useGitStatusFiles(props.api, props.sessionId)
@@ -104,9 +111,25 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
     const hasWorktreeBaseCommit = typeof worktreeBaseCommit === 'string' && worktreeBaseCommit.length > 0
 
     // Reuse canonical task query shape to avoid cache key collisions with useTask().
-    const taskId = session?.metadata?.taskId ?? null
+    const taskId = props.taskId ?? session?.metadata?.taskId ?? null
     const { task, isLoading: isTaskLoading } = useTask(props.api, taskId)
     const mergedDiffSnapshot = normalizeMergedDiffSnapshot(task?.mergedDiffSnapshot)
+    const mergeSessionId = task?.mergeRuntime?.sessionId ?? null
+    const { session: mergeSession, isLoading: isMergeSessionLoading } = useSession(
+        props.api,
+        mergeSessionId && mergeSessionId !== props.sessionId && !mergedDiffSnapshot?.baseCommit ? mergeSessionId : null
+    )
+    const mergedBaseCommit = mergedDiffSnapshot?.baseCommit
+        ?? mergeSession?.metadata?.worktree?.baseCommit
+        ?? session?.metadata?.worktree?.baseCommit
+        ?? undefined
+    const shouldLoadMergedDiffSummary = Boolean(
+        props.api
+        && taskId
+        && task?.worktreeMergeCommit
+        && mergedBaseCommit
+        && (mergedDiffSnapshot?.files.length ?? 0) === 0
+    )
 
     const sessionDiffQuery = useQuery({
         queryKey: queryKeys.gitCommittedDiff(props.sessionId, worktreeBaseCommit ?? 'none'),
@@ -119,17 +142,44 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         enabled: Boolean(props.api && props.sessionId && hasWorktreeBaseCommit && !mergedDiffSnapshot)
     })
 
+    const mergedDiffQuery = useQuery({
+        queryKey: queryKeys.taskMergedDiffNumstat(
+            taskId ?? 'none',
+            mergedBaseCommit ?? 'none',
+            task?.worktreeMergeCommit ?? 'none'
+        ),
+        queryFn: async () => {
+            if (!props.api || !taskId || !mergedBaseCommit) {
+                throw new Error('Merged diff unavailable')
+            }
+            return await props.api.getTaskMergedDiffNumstat(taskId, { baseRef: mergedBaseCommit })
+        },
+        enabled: shouldLoadMergedDiffSummary
+    })
+
     const hasWorkingTreeChanges = Boolean(gitStatus && (gitStatus.stagedFiles.length > 0 || gitStatus.unstagedFiles.length > 0))
     const sessionDiffOutput = sessionDiffQuery.data?.success ? (sessionDiffQuery.data.stdout ?? '') : ''
     const sessionDiffFiles = useMemo(() => parseCommittedFiles(sessionDiffOutput), [sessionDiffOutput])
     const showSessionDiff = hasWorktreeBaseCommit && sessionDiffFiles.length > 0
     const sessionDiffError = extractCommandError(sessionDiffQuery.data)
-    const combinedError = [error, sessionDiffError].filter(Boolean).join(' ') || null
+    const mergedDiffOutput = mergedDiffQuery.data?.success ? (mergedDiffQuery.data.stdout ?? '') : ''
+    const liveMergedDiffFiles = useMemo(() => parseCommittedFiles(mergedDiffOutput), [mergedDiffOutput])
+    const mergedDiffFiles = liveMergedDiffFiles.length > 0
+        ? liveMergedDiffFiles
+        : (mergedDiffSnapshot?.files ?? [])
+    const mergedDiffError = extractCommandError(mergedDiffQuery.data)
+        ?? getQueryErrorMessage(mergedDiffQuery.error, 'Failed to load merged diff')
+    const combinedError = [
+        error,
+        sessionDiffError,
+        mergedDiffFiles.length === 0 ? mergedDiffError : null
+    ].filter(Boolean).join(' ') || null
     const [openFile, setOpenFile] = useState<{
         path: string
         staged?: boolean
         baseRef?: string
         taskMergedDiffId?: string
+        taskMergedBaseRef?: string
         diffScope?: 'staged' | 'unstaged' | 'committed'
     } | null>(null)
 
@@ -166,22 +216,23 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                 }),
             })
         }
-        if (mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0) {
+        if (mergedDiffFiles.length > 0) {
             const mergedTaskId = task?.id ?? taskId
             sections.push({
                 key: 'merged',
                 title: t('projects.diffs.merged'),
                 titleClassName: 'text-[var(--app-git-staged-color)]',
-                files: mergedDiffSnapshot.files,
+                files: mergedDiffFiles,
                 onOpenFile: (file) => setOpenFile({
                     path: file.fullPath,
                     taskMergedDiffId: mergedTaskId ?? undefined,
+                    taskMergedBaseRef: mergedBaseCommit,
                     diffScope: 'committed'
                 }),
             })
         }
         return sections
-    }, [gitStatus, mergedDiffSnapshot, sessionDiffFiles, showSessionDiff, t, task?.id, taskId, worktreeBaseCommit])
+    }, [gitStatus, mergedBaseCommit, mergedDiffFiles, sessionDiffFiles, showSessionDiff, t, task?.id, taskId, worktreeBaseCommit])
 
     if (openFile) {
         return (
@@ -192,13 +243,20 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
                 staged={openFile.staged}
                 baseRef={openFile.baseRef}
                 taskMergedDiffId={openFile.taskMergedDiffId}
+                taskMergedBaseRef={openFile.taskMergedBaseRef}
                 diffScope={openFile.diffScope}
                 onBack={() => setOpenFile(null)}
             />
         )
     }
 
-    if (isLoading || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading && !mergedDiffSnapshot) || isTaskLoading) {
+    if (
+        isLoading
+        || isTaskLoading
+        || isMergeSessionLoading
+        || (hasWorktreeBaseCommit && sessionDiffQuery.isLoading && !mergedDiffSnapshot)
+        || (shouldLoadMergedDiffSummary && mergedDiffQuery.isLoading && mergedDiffFiles.length === 0)
+    ) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading.git')} className="text-sm" />
@@ -206,12 +264,15 @@ export function TaskSessionDiffs(props: { api: ApiClient | null; sessionId: stri
         )
     }
 
-    const hasChanges = hasWorkingTreeChanges || showSessionDiff || (mergedDiffSnapshot && mergedDiffSnapshot.files.length > 0)
+    const hasChanges = hasWorkingTreeChanges || showSessionDiff || mergedDiffFiles.length > 0
 
     const handleRefresh = async () => {
         await refetch()
         if (hasWorktreeBaseCommit) {
             await sessionDiffQuery.refetch()
+        }
+        if (shouldLoadMergedDiffSummary) {
+            await mergedDiffQuery.refetch()
         }
     }
 

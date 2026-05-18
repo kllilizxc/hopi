@@ -1,5 +1,6 @@
 import { areTaskSessionStartFailuresEqual } from '@hopi/protocol/task-session-start'
 import type { Task, TaskActionRuntimeEnvelope, TaskActionRuntimeCoreStatus, TaskPreviewStatus, TaskWorktreeMergeStateResponse } from '@/types/api'
+import { hasTaskDerivedBlocker } from '@/lib/task-status'
 
 export type TaskActionStatusSummary = {
     title: string
@@ -212,6 +213,8 @@ export function buildMergeRuntimeSummary(
                 tone: 'info'
             }
     }
+
+    return null
 }
 
 export function isActivePreviewRuntimeStatus(status: PreviewRuntimeStatus | null | undefined): boolean {
@@ -372,6 +375,14 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
                 busy: true
             }
         case 'waiting':
+            if (runtime.failure?.code === 'runner_offline' || runtime.failure?.retry?.action === 'wait_then_retry_start') {
+                return {
+                    title: '等待 Runner 恢复',
+                    detail: runtime.latestNote ?? 'Runner 当前离线，恢复连接后 HOPI 会自动重试。',
+                    tone: 'info',
+                    busy: true
+                }
+            }
             return {
                 title: '等待 Init 结果',
                 detail: runtime.latestNote ?? '等待链接会话确认 init 结果。',
@@ -404,10 +415,8 @@ export function buildInitStatusSummary(task: Task | null | undefined): TaskActio
                 detail: runtime.latestNote ?? '仓库 init 已完成，任务 kickoff 已继续。',
                 tone: 'success'
             }
-        default: {
-            const _exhaustive: never = runtime.status
-            return _exhaustive
-        }
+        default:
+            return null
     }
 }
 
@@ -428,11 +437,18 @@ function resolveTaskBlockedDetail(task: Task): string | null {
 }
 
 export function buildTaskBlockedStatusSummary(task: Task | null | undefined): TaskActionStatusSummary | null {
-    if (!task || task.status !== 'blocked') {
+    if (!task || !hasTaskDerivedBlocker(task)) {
         return null
     }
 
     const source = task.blockedSource
+        ?? (task.mergeRuntime?.status === 'blocked' || task.mergeRuntime?.status === 'canceled'
+            ? 'merge'
+            : task.previewRuntime?.status === 'blocked' || task.previewRuntime?.status === 'canceled'
+                ? 'preview'
+                : task.initRuntime?.status === 'blocked'
+                    ? 'init'
+                    : null)
     const title = source === 'merge'
         ? 'Merge 受阻'
         : source === 'preview'

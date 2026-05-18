@@ -11,4 +11,9 @@ describe('taskPermissionMode', () => {
         const mode = resolveTaskPermissionModeForFlavor('codex', 'plan')
         expect(mode).toBe('plan')
     })
+
+    it('falls back to a Claude-compatible mode when preferred mode is invalid', () => {
+        const mode = resolveTaskPermissionModeForFlavor('claude', 'yolo')
+        expect(mode).toBe('bypassPermissions')
+    })
 })
