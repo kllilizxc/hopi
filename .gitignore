@@ -53,6 +53,7 @@ cli/npm/main/
 .roo
 .agents
 super
+.worktrees/
 docs/*
 !docs/.vitepress/
 !docs/guide/
