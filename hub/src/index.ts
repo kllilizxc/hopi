@@ -18,6 +18,7 @@ import { startWebServer } from './web/server'
 import { getOrCreateJwtSecret } from './config/jwtSecret'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
+import { createSessionDebugLogger } from './sync/sessionDebugLogger'
 import { getOrCreateVapidKeys } from './config/vapidKeys'
 import { PushService } from './push/pushService'
 import { PushNotificationChannel } from './push/pushNotificationChannel'
@@ -172,6 +173,12 @@ async function main() {
 
     visibilityTracker = new VisibilityTracker()
     sseManager = new SSEManager(30_000, visibilityTracker)
+    const sessionDebugLogger = createSessionDebugLogger({
+        rootDir: config.sessionDebugLogDir,
+        enabled: config.sessionDebugLogsEnabled,
+        maxBytes: config.sessionDebugLogMaxBytes,
+        maxFiles: config.sessionDebugLogMaxFiles
+    })
 
     const socketServer = createSocketServer({
         store,
@@ -186,10 +193,11 @@ async function main() {
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
-        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload)
+        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload),
+        sessionDebugLogger
     })
 
-    syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
+    syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager, sessionDebugLogger)
 
     const notificationChannels: NotificationChannel[] = [
         new PushNotificationChannel(pushService, sseManager, visibilityTracker, config.publicUrl)

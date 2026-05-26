@@ -17,6 +17,7 @@ export type SessionSummaryMetadata = {
 
 export type SessionSummary = {
     id: string
+    debugId: string
     active: boolean
     thinking: boolean
     createdAt: number
@@ -52,6 +53,7 @@ export function toSessionSummary(session: Session): SessionSummary {
 
     return {
         id: session.id,
+        debugId: session.debugId,
         active: session.active,
         thinking: session.thinking,
         createdAt: session.createdAt,

@@ -41,6 +41,8 @@ export default {
   // Sessions page
   'sessions.count': '{n} sessions in {m} projects',
   'sessions.new': 'New Session',
+  'session.debugId.copy': 'Copy debug ID',
+  'session.debugId.copied': 'Copied debug ID',
 
   // Projects
   'projects.title': 'Projects',

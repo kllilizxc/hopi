@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session, SyncEvent } from '@hopi/protocol/types'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -81,6 +82,7 @@ function createLinkedSession(store: Store, options: {
     const now = Date.now()
     const session: Session = {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: options.namespace,
         seq: 0,
         createdAt: now,
@@ -119,6 +121,7 @@ function createUnlinkedSession(store: Store, options: {
     const now = Date.now()
     const session: Session = {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: options.namespace,
         seq: 0,
         createdAt: now,
@@ -1406,6 +1409,7 @@ describe('TaskAutomation', () => {
         const now = Date.now()
         const controllerSession: Session = {
             id: controllerStored.id,
+            debugId: getSessionDebugId(controllerStored.id),
             namespace,
             seq: 0,
             createdAt: now,
@@ -2284,6 +2288,7 @@ describe('TaskAutomation', () => {
         const now = Date.now()
         const oldGeneratorSession: Session = {
             id: oldGeneratorStored.id,
+            debugId: getSessionDebugId(oldGeneratorStored.id),
             namespace,
             seq: 0,
             createdAt: now - 1_000,
@@ -2481,6 +2486,7 @@ describe('TaskAutomation', () => {
         const now = Date.now()
         const inactiveSession: Session = {
             id: storedSession.id,
+            debugId: getSessionDebugId(storedSession.id),
             namespace,
             seq: 0,
             createdAt: now - 1_000,

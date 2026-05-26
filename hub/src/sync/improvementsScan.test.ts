@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session } from '@hopi/protocol/types'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,6 +31,7 @@ function createActiveProjectSession(store: Store, options: {
     const now = Date.now()
     const session: Session = {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: options.namespace,
         seq: 0,
         createdAt: now,

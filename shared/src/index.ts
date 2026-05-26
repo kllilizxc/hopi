@@ -6,6 +6,7 @@ export * from './messages'
 export * from './models'
 export * from './modes'
 export * from './sessionMessages'
+export * from './sessionDebug'
 export {
     AgentOutputLanguageSchema,
     AutomationBackstopPolicySchema,

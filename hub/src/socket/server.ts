@@ -3,6 +3,7 @@ import { Server, type DefaultEventsMap } from 'socket.io'
 import { jwtVerify } from 'jose'
 import { z } from 'zod'
 import { PRODUCT_ENV } from '@hopi/protocol/brand'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { configuration } from '../configuration'
 import { constantTimeEquals } from '../utils/crypto'
@@ -11,6 +12,7 @@ import { createCorsOriginChecker } from '../utils/corsOrigins'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
 import { RpcRegistry } from './rpcRegistry'
+import type { SessionDebugLogger } from '../sync/sessionDebugLogger'
 import type { SyncEvent } from '../sync/syncEngine'
 import { TerminalRegistry } from './terminalRegistry'
 import type { CliSocketWithData, SocketData, SocketServer } from './socketTypes'
@@ -38,9 +40,17 @@ export type SocketServerDeps = {
     corsOrigins?: string[]
     getSession?: (sessionId: string) => { active: boolean; namespace: string } | null
     onWebappEvent?: (event: SyncEvent) => void
-    onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
+    onSessionAlive?: (payload: {
+        sid: string
+        time: number
+        thinking?: boolean
+        mode?: 'local' | 'remote'
+        permissionMode?: PermissionMode
+        modelMode?: ModelMode
+    }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
+    sessionDebugLogger?: SessionDebugLogger
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -117,7 +127,8 @@ export function createSocketServer(deps: SocketServerDeps): {
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
         onMachineAlive: deps.onMachineAlive,
-        onWebappEvent: deps.onWebappEvent
+        onWebappEvent: deps.onWebappEvent,
+        sessionDebugLogger: deps.sessionDebugLogger
     }))
 
     terminalNs.use(async (socket, next) => {

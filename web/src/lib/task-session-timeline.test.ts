@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { SessionSummary, Task } from '@/types/api'
 import { buildTaskReviewStage, buildTaskSessionTimeline, resolveTaskSessionSelection } from './task-session-timeline'
 
@@ -42,6 +43,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
 function createSession(overrides: Partial<SessionSummary> & { id: string; taskId?: string; createdAt: number }): SessionSummary {
     return {
         id: overrides.id,
+        debugId: overrides.debugId ?? getSessionDebugId(overrides.id),
         active: overrides.active ?? false,
         thinking: overrides.thinking ?? false,
         createdAt: overrides.createdAt,

@@ -5,6 +5,7 @@ import { isTelegramApp } from '@/hooks/useTelegram'
 import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
 import { BackIcon, DiffIcon, FilesIcon, TaskIcon } from '@/assets/icons'
+import { SessionDebugIdButton } from '@/components/SessionDebugIdButton'
 import { IconButton } from '@/components/ui/icon-button'
 
 type SessionHeaderProps = {
@@ -62,6 +63,7 @@ function SessionHeaderImpl(props: SessionHeaderProps) {
                                 <span aria-hidden="true">❖</span>
                                 {session.metadata?.flavor?.trim() || 'unknown'}
                             </span>
+                            <SessionDebugIdButton debugId={session.debugId} />
                             <span>
                                 {t('session.item.modelMode')}: {session.modelMode || 'default'}
                             </span>
@@ -115,7 +117,7 @@ function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeade
     const prevSession = prev.session
     const nextSession = next.session
 
-    if (prevSession.id !== nextSession.id || prevSession.modelMode !== nextSession.modelMode) {
+    if (prevSession.id !== nextSession.id || prevSession.debugId !== nextSession.debugId || prevSession.modelMode !== nextSession.modelMode) {
         return false
     }
 

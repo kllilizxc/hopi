@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session } from '@hopi/protocol/types'
 import { SyncEngine } from './syncEngine'
 
@@ -27,6 +28,7 @@ function createInactiveSession(overrides?: {
 
     return {
         id: 'session-old',
+        debugId: getSessionDebugId('session-old'),
         namespace: 'default',
         seq: 1,
         createdAt: now - 2_000,

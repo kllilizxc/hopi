@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session } from '@hopi/protocol/types'
 import { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -38,6 +39,7 @@ function createActiveProjectSession(store: Store, options: {
 
     const session: Session = {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: options.namespace,
         seq: 0,
         createdAt: now,

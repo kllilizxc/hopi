@@ -19,6 +19,9 @@
  * - VAPID_SUBJECT: Contact email or URL for Web Push (defaults to mailto:admin@hopi.run)
  * - HOPI_HOME: Data directory (default: ~/.hopi)
  * - DB_PATH: SQLite database path (default: {HOPI_HOME}/hopi.db)
+ * - HOPI_SESSION_DEBUG_LOGS: Enable/disable raw session debug logs (default: enabled, set 0 to disable)
+ * - HOPI_SESSION_DEBUG_LOG_MAX_BYTES: Max total session debug log bytes (default: 200MB)
+ * - HOPI_SESSION_DEBUG_LOG_MAX_FILES: Max number of session debug log files (default: 200)
  */
 
 import { existsSync, mkdirSync } from 'node:fs'
@@ -39,6 +42,13 @@ export interface ConfigSources {
     publicUrl: ConfigSource
     corsOrigins: ConfigSource
     cliApiToken: 'env' | 'file' | 'generated'
+}
+
+function parsePositiveIntegerEnv(name: string, fallback: number): number {
+    const raw = process.env[name]
+    if (!raw) return fallback
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 class Configuration {
@@ -69,6 +79,18 @@ class Configuration {
     /** SQLite DB path */
     public readonly dbPath: string
 
+    /** Directory for raw per-session debug JSONL logs */
+    public readonly sessionDebugLogDir: string
+
+    /** Whether raw per-session debug logs are enabled */
+    public readonly sessionDebugLogsEnabled: boolean
+
+    /** Maximum total bytes for session debug logs */
+    public readonly sessionDebugLogMaxBytes: number
+
+    /** Maximum number of session debug log files */
+    public readonly sessionDebugLogMaxFiles: number
+
     /** Port for the HTTP service */
     public readonly listenPort: number
 
@@ -93,6 +115,10 @@ class Configuration {
     ) {
         this.dataDir = dataDir
         this.dbPath = dbPath
+        this.sessionDebugLogDir = join(dataDir, 'session-debug-logs')
+        this.sessionDebugLogsEnabled = process.env.HOPI_SESSION_DEBUG_LOGS !== '0'
+        this.sessionDebugLogMaxBytes = parsePositiveIntegerEnv('HOPI_SESSION_DEBUG_LOG_MAX_BYTES', 200 * 1024 * 1024)
+        this.sessionDebugLogMaxFiles = parsePositiveIntegerEnv('HOPI_SESSION_DEBUG_LOG_MAX_FILES', 200)
         this.settingsFile = getSettingsFile(dataDir)
 
         // Apply server settings

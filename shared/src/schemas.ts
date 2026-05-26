@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MODEL_MODES, PERMISSION_MODES } from './modes'
+import { SESSION_DEBUG_ID_PATTERN } from './sessionDebug'
 import { TaskSessionStartFailureSchema } from './task-session-start'
 import { TASK_STATUS_VALUES } from './tasks'
 
@@ -251,6 +252,7 @@ export type DecryptedMessage = z.infer<typeof DecryptedMessageSchema>
 
 export const SessionSchema = z.object({
     id: z.string(),
+    debugId: z.string().regex(SESSION_DEBUG_ID_PATTERN),
     namespace: z.string(),
     seq: z.number(),
     createdAt: z.number(),

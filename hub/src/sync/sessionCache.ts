@@ -1,3 +1,4 @@
+import { getSessionDebugId } from '@hopi/protocol'
 import { AgentStateSchema, MetadataSchema } from '@hopi/protocol/schemas'
 import type { ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store } from '../store'
@@ -117,6 +118,7 @@ export class SessionCache {
 
         const session: Session = {
             id: stored.id,
+            debugId: getSessionDebugId(stored.id),
             namespace: stored.namespace,
             seq: stored.seq,
             createdAt: stored.createdAt,

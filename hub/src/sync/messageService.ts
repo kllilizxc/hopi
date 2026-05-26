@@ -2,12 +2,14 @@ import type { AttachmentMetadata, DecryptedMessage } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import { EventPublisher } from './eventPublisher'
+import type { SessionDebugLogger } from './sessionDebugLogger'
 
 export class MessageService {
     constructor(
         private readonly store: Store,
         private readonly io: Server,
-        private readonly publisher: EventPublisher
+        private readonly publisher: EventPublisher,
+        private readonly sessionDebugLogger?: SessionDebugLogger
     ) {
     }
 
@@ -103,6 +105,16 @@ export class MessageService {
         }
     ): void {
         const msg = this.store.messages.addMessage(sessionId, payload.content, payload.localId ?? undefined)
+        const session = this.store.sessions.getSession(sessionId)
+        this.sessionDebugLogger?.append({
+            sessionId,
+            namespace: session?.namespace,
+            event: 'message.injected',
+            direction: 'hub-to-cli',
+            seq: msg.seq,
+            localId: msg.localId,
+            payload: msg.content
+        })
 
         const update = {
             id: msg.id,

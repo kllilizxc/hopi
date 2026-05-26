@@ -16,6 +16,7 @@ import type { SSEManager } from '../sse/sseManager'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
+import type { SessionDebugLogger } from './sessionDebugLogger'
 import { AutoRunScheduler } from './autoRunScheduler'
 import {
     RpcGateway,
@@ -79,6 +80,7 @@ export class SyncEngine {
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
     private readonly messageService: MessageService
+    private readonly sessionDebugLogger?: SessionDebugLogger
     private readonly rpcGateway: RpcGateway
     private readonly taskAutomation: TaskAutomation
     private readonly autoRunScheduler: AutoRunScheduler
@@ -93,13 +95,15 @@ export class SyncEngine {
         store: Store,
         io: Server,
         rpcRegistry: RpcRegistry,
-        sseManager: SSEManager
+        sseManager: SSEManager,
+        sessionDebugLogger?: SessionDebugLogger
     ) {
         this.store = store
+        this.sessionDebugLogger = sessionDebugLogger
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(this.store, this.eventPublisher)
         this.machineCache = new MachineCache(this.store, this.eventPublisher)
-        this.messageService = new MessageService(this.store, io, this.eventPublisher)
+        this.messageService = new MessageService(this.store, io, this.eventPublisher, this.sessionDebugLogger)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
         this.taskAutomation = new TaskAutomation(this.store, this)
         this.autoRunScheduler = new AutoRunScheduler(this.store, this)
@@ -326,7 +330,19 @@ export class SyncEngine {
     }
 
     getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+        const session = this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+        this.sessionDebugLogger?.append({
+            sessionId: session.id,
+            namespace,
+            event: 'session.created_or_loaded',
+            direction: 'hub',
+            payload: {
+                tag,
+                metadata: session.metadata,
+                agentState: session.agentState
+            }
+        })
+        return session
     }
 
     getOrCreateMachine(id: string, metadata: unknown, runnerState: unknown, namespace: string): Machine {
@@ -399,7 +415,18 @@ export class SyncEngine {
     }
 
     async deleteSession(sessionId: string): Promise<void> {
+        const session = this.getSession(sessionId)
         await this.sessionCache.deleteSession(sessionId)
+        this.sessionDebugLogger?.append({
+            sessionId,
+            namespace: session?.namespace,
+            event: 'session.deleted',
+            direction: 'hub',
+            payload: {
+                active: session?.active ?? null,
+                metadata: session?.metadata ?? null
+            }
+        })
     }
 
     async applySessionConfig(
@@ -594,6 +621,16 @@ export class SyncEngine {
         if (spawnResult.sessionId !== access.sessionId) {
             try {
                 await this.sessionCache.mergeSessions(access.sessionId, spawnResult.sessionId, namespace)
+                this.sessionDebugLogger?.append({
+                    sessionId: spawnResult.sessionId,
+                    namespace,
+                    event: 'session.merged',
+                    direction: 'hub',
+                    payload: {
+                        fromSessionId: access.sessionId,
+                        toSessionId: spawnResult.sessionId
+                    }
+                })
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to merge resumed session'
                 return { type: 'error', message, code: 'resume_failed' }

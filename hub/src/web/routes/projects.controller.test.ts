@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session } from '@hopi/protocol/types'
 import { Hono } from 'hono'
 import { Store, type StoredSession } from '../../store'
@@ -8,6 +9,7 @@ import { createProjectsRoutes } from './projects'
 function createRuntimeSession(stored: StoredSession, overrides: Partial<Session> = {}): Session {
     return {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: stored.namespace,
         seq: stored.seq,
         createdAt: stored.createdAt,

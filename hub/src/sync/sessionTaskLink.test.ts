@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session } from '@hopi/protocol/types'
 
 import { Store } from '../store'
@@ -16,6 +17,7 @@ function createSession(store: Store, options: {
     const updatedAt = options.updatedAt ?? Date.now()
     return {
         id: stored.id,
+        debugId: getSessionDebugId(stored.id),
         namespace: options.namespace,
         seq: 0,
         createdAt: updatedAt,

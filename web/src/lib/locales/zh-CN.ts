@@ -41,6 +41,8 @@ export default {
   // Sessions page
   'sessions.count': '{n} 个会话，{m} 个项目',
   'sessions.new': '新建会话',
+  'session.debugId.copy': '复制调试 ID',
+  'session.debugId.copied': '已复制调试 ID',
 
   // Projects
   'projects.title': '项目',

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
+import type { SessionDebugLogger } from '../../../sync/sessionDebugLogger'
 import type { SyncEvent } from '../../../sync/syncEngine'
 import { extractTaskToolsFromMessage } from '../../../sync/taskTools'
 import { syncTaskSubTasksFromSessionTodos } from '../../../sync/taskSubtasks'
@@ -55,10 +56,19 @@ export type SessionHandlersDeps = {
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
     onWebappEvent?: (event: SyncEvent) => void
+    sessionDebugLogger?: SessionDebugLogger
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent } = deps
+    const {
+        store,
+        resolveSessionAccess,
+        emitAccessError,
+        onSessionAlive,
+        onSessionEnd,
+        onWebappEvent,
+        sessionDebugLogger
+    } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -87,6 +97,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const session = sessionAccess.value
 
         const msg = store.messages.addMessage(sid, content, localId)
+        sessionDebugLogger?.append({
+            sessionId: sid,
+            namespace: session.namespace,
+            event: 'message.received',
+            direction: 'cli-to-hub',
+            seq: msg.seq,
+            localId: msg.localId,
+            payload: {
+                raw,
+                content: msg.content
+            }
+        })
 
         const taskToolResult = extractTaskToolsFromMessage(content)
         if (taskToolResult) {
@@ -199,6 +221,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
 
         if (result.result === 'success') {
+            sessionDebugLogger?.append({
+                sessionId: sid,
+                namespace: sessionAccess.value.namespace,
+                event: 'session.metadata_update',
+                direction: 'cli-to-hub',
+                payload: {
+                    expectedVersion,
+                    version: result.version,
+                    metadata: result.value
+                }
+            })
+
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),
@@ -246,6 +280,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
 
         if (result.result === 'success') {
+            sessionDebugLogger?.append({
+                sessionId: sid,
+                namespace: sessionAccess.value.namespace,
+                event: 'session.agent_state_update',
+                direction: 'cli-to-hub',
+                payload: {
+                    expectedVersion,
+                    version: result.version,
+                    agentState: result.value
+                }
+            })
+
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),
@@ -273,6 +319,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        sessionDebugLogger?.append({
+            sessionId: data.sid,
+            namespace: sessionAccess.value.namespace,
+            event: 'session.alive',
+            direction: 'cli-to-hub',
+            payload: data
+        })
         onSessionAlive?.(data)
     })
 
@@ -285,6 +338,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        sessionDebugLogger?.append({
+            sessionId: data.sid,
+            namespace: sessionAccess.value.namespace,
+            event: 'session.end',
+            direction: 'cli-to-hub',
+            payload: data
+        })
         onSessionEnd?.(data)
     })
 }

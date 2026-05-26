@@ -56,6 +56,7 @@ export class ApiClient {
 
         return {
             id: raw.id,
+            debugId: raw.debugId,
             namespace: raw.namespace,
             seq: raw.seq,
             createdAt: raw.createdAt,

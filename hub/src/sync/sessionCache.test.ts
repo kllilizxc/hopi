@@ -7,6 +7,26 @@ import { EventPublisher } from './eventPublisher'
 import { SessionCache } from './sessionCache'
 
 describe('SessionCache realtime scope', () => {
+    it('adds a stable debug id to refreshed sessions', () => {
+        const store = new Store(':memory:')
+        const storedSession = store.sessions.getOrCreateSession(
+            'debug-id-session',
+            { path: '/tmp/project', host: 'test' },
+            null,
+            'default'
+        )
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const cache = new SessionCache(store, publisher)
+
+        const first = cache.refreshSession(storedSession.id)
+        const second = cache.refreshSession(storedSession.id)
+
+        expect(first?.debugId).toMatch(/^S-[0-9a-f]{8}$/)
+        expect(second?.debugId).toBe(first?.debugId)
+    })
+
     it('emits projectId on project-linked session add and heartbeat updates', () => {
         const store = new Store(':memory:')
         const namespace = 'default'
