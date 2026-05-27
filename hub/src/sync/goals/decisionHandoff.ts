@@ -2,6 +2,12 @@ import type { StoredGoalDecisionTopic, StoredTask } from '../../store'
 
 const DEFAULT_DECISION_HANDOFF_MAX_CHARS = 20_000
 
+export function buildDecisionBlockedReason(topic: StoredGoalDecisionTopic): string {
+    const body = topic.body.trim()
+    const summary = body ? `${topic.title}: ${body}` : topic.title
+    return summary.length > 512 ? `${summary.slice(0, 509)}...` : summary
+}
+
 export function buildResolvedDecisionHandoffSection(topic: StoredGoalDecisionTopic): string {
     return [
         `Resolved DecisionTopic: ${topic.title}`,

@@ -3,12 +3,13 @@
  */
 
 import { io, type Socket } from 'socket.io-client'
+import axios from 'axios'
 import { stat } from 'node:fs/promises'
 import { logger } from '@/ui/logger'
 import { configuration } from '@/configuration'
 import type { Update, UpdateMachineBody } from '@hopi/protocol'
 import type { RunnerState, Machine, MachineMetadata } from './types'
-import { RunnerStateSchema, MachineMetadataSchema } from './types'
+import { RunnerStateSchema, MachineMetadataSchema, CreateMachineResponseSchema } from './types'
 import { backoff } from '@/utils/time'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
@@ -16,6 +17,7 @@ import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/
 import { applyVersionedAck } from './versionedUpdate'
 import os from 'node:os'
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
+import { apiValidationError } from '@/utils/errorUtils'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -126,6 +128,7 @@ export class ApiMachineClient {
     private socket!: Socket<ServerToRunnerEvents, RunnerToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
     private rpcHandlerManager: RpcHandlerManager
+    private connectionGeneration = 0
 
     constructor(
         private readonly token: string,
@@ -338,6 +341,72 @@ export class ApiMachineClient {
         })
     }
 
+    private async registerMachineWithServer(): Promise<void> {
+        const response = await axios.post(
+            `${configuration.apiUrl}/cli/machines`,
+            {
+                id: this.machine.id,
+                metadata: this.machine.metadata,
+                runnerState: this.machine.runnerState
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 60_000
+            }
+        )
+
+        const parsed = CreateMachineResponseSchema.safeParse(response.data)
+        if (!parsed.success) {
+            throw apiValidationError('Invalid /cli/machines response', response)
+        }
+
+        const raw = parsed.data.machine
+        this.machine.seq = raw.seq
+        this.machine.createdAt = raw.createdAt
+        this.machine.updatedAt = raw.updatedAt
+        this.machine.active = raw.active
+        this.machine.activeAt = raw.activeAt
+
+        const metadata = (() => {
+            if (raw.metadata == null) return null
+            const parsedMetadata = MachineMetadataSchema.safeParse(raw.metadata)
+            return parsedMetadata.success ? parsedMetadata.data : null
+        })()
+
+        const runnerState = (() => {
+            if (raw.runnerState == null) return null
+            const parsedRunnerState = RunnerStateSchema.safeParse(raw.runnerState)
+            return parsedRunnerState.success ? parsedRunnerState.data : null
+        })()
+
+        this.machine.metadata = metadata
+        this.machine.metadataVersion = raw.metadataVersion
+        this.machine.runnerState = runnerState
+        this.machine.runnerStateVersion = raw.runnerStateVersion
+    }
+
+    private async handleConnected(generation: number): Promise<void> {
+        await backoff(() => this.registerMachineWithServer())
+        if (generation !== this.connectionGeneration) {
+            return
+        }
+
+        this.rpcHandlerManager.onSocketConnect(this.socket)
+        this.updateRunnerState((state) => ({
+            ...(state ?? {}),
+            status: 'running',
+            pid: process.pid,
+            httpPort: this.machine.runnerState?.httpPort,
+            startedAt: Date.now()
+        })).catch((error) => {
+            logger.debug('[API MACHINE] Failed to update runner state on connect', error)
+        })
+        this.startKeepAlive()
+    }
+
     connect(): void {
         this.socket = io(`${configuration.apiUrl}/cli`, {
             transports: ['websocket'],
@@ -354,21 +423,15 @@ export class ApiMachineClient {
 
         this.socket.on('connect', () => {
             logger.debug('[API MACHINE] Connected to bot')
-            this.rpcHandlerManager.onSocketConnect(this.socket)
-            this.updateRunnerState((state) => ({
-                ...(state ?? {}),
-                status: 'running',
-                pid: process.pid,
-                httpPort: this.machine.runnerState?.httpPort,
-                startedAt: Date.now()
-            })).catch((error) => {
-                logger.debug('[API MACHINE] Failed to update runner state on connect', error)
+            const generation = ++this.connectionGeneration
+            this.handleConnected(generation).catch((error) => {
+                logger.debug('[API MACHINE] Failed to initialize machine connection', error)
             })
-            this.startKeepAlive()
         })
 
         this.socket.on('disconnect', () => {
             logger.debug('[API MACHINE] Disconnected from bot')
+            this.connectionGeneration++
             this.rpcHandlerManager.onSocketDisconnect()
             this.stopKeepAlive()
         })

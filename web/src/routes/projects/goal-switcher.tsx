@@ -30,6 +30,9 @@ function getGoalAutomationStatusKey(goal: Goal): string {
         return 'projects.goals.automationStatus.paused'
     }
     if (goal.status === 'blocked') {
+        if (goal.blockedSource === 'decision') {
+            return 'projects.goals.automationStatus.blockedByDecision'
+        }
         return 'projects.goals.automationStatus.blocked'
     }
     return 'projects.goals.automationStatus.running'

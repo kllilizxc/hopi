@@ -14,7 +14,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Quick Start', link: '/guide/quick-start' },
-      { text: 'Unified Design', link: '/2026-05-15-hopi-goal-kanban-assistant-unified-design' },
+      { text: 'Unified Design', link: '/hopi-goal-kanban-assistant-unified-design' },
       { text: 'App', link: 'https://app.hopi.run', target: '_blank' }
     ],
 
@@ -26,7 +26,7 @@ export default defineConfig({
       { text: 'Voice Assistant', link: '/guide/voice-assistant' },
       { text: 'Why HOPI', link: '/guide/why-hopi' },
       { text: 'FAQ', link: '/guide/faq' },
-      { text: 'Unified Design', link: '/2026-05-15-hopi-goal-kanban-assistant-unified-design' }
+      { text: 'Unified Design', link: '/hopi-goal-kanban-assistant-unified-design' }
     ],
 
     socialLinks: [

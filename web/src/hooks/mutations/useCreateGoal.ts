@@ -10,6 +10,7 @@ type CreateGoalInput = {
     successCriteria?: string | null
     autopilotEnabled?: boolean
     deployRequiresApproval?: boolean
+    clientRequestId?: string
 }
 
 export function useCreateGoal(api: ApiClient | null): {
@@ -29,7 +30,8 @@ export function useCreateGoal(api: ApiClient | null): {
                 description: input.description,
                 successCriteria: input.successCriteria,
                 autopilotEnabled: input.autopilotEnabled,
-                deployRequiresApproval: input.deployRequiresApproval
+                deployRequiresApproval: input.deployRequiresApproval,
+                clientRequestId: input.clientRequestId
             })
             return result.goal
         },

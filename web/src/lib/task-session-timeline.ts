@@ -79,6 +79,9 @@ function normalizeRole(value: unknown): HopiTaskRole | null {
 }
 
 function inferFallbackRole(task: Task, index: number, total: number): HopiTaskRole | null {
+    const role = normalizeRole(task.role)
+    if (role) return role
+
     const source = (task.source ?? '').trim().toLowerCase()
     if (source === 'planner') return 'planner'
     if (source === 'radar') return 'radar'
@@ -151,7 +154,7 @@ export function resolveTaskSessionSelection(
 }
 
 export function buildTaskReviewStage(task: Task, timeline: TaskSessionTimelineItem[]): TaskReviewStage | null {
-    if (task.mergeRuntime && (task.status === 'in_review' || task.status === 'blocked')) {
+    if (task.mergeRuntime && (task.status === 'review' || task.status === 'in_review' || task.status === 'blocked')) {
         return buildMergeReviewStage(task.mergeRuntime)
     }
 

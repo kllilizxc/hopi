@@ -66,11 +66,16 @@ describe('useCreateGoal', () => {
         await act(async () => {
             await result.current.createGoal({
                 projectId: goal.projectId,
-                title: goal.title
+                title: goal.title,
+                clientRequestId: 'create-goal-request-1'
             })
         })
 
         await waitFor(() => {
+            expect(api.createProjectGoal).toHaveBeenCalledWith(goal.projectId, expect.objectContaining({
+                title: goal.title,
+                clientRequestId: 'create-goal-request-1'
+            }))
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.goals(goal.projectId) })
             expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.tasksRoot(goal.projectId) })
         })

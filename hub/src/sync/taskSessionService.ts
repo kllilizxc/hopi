@@ -41,6 +41,8 @@ function dataUrlToBase64(dataUrl: string): string {
 const KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
 const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
 const MESSAGE_HISTORY_PAGE_SIZE = 200
+const CARRYOVER_MESSAGE_MAX_CHARS = 40_000
+const CARRYOVER_HISTORY_MAX_CHARS = 200_000
 
 function toRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -71,6 +73,23 @@ function formatErrorMessage(error: unknown, fallback: string): string {
 
 function normalizeText(value: string): string {
     return value.replace(/\r\n/g, '\n').trim()
+}
+
+function trimCarryoverText(value: string, maxChars: number = CARRYOVER_MESSAGE_MAX_CHARS): string {
+    if (value.length <= maxChars) {
+        return value
+    }
+
+    const marker = '\n[... characters omitted to stay under restart context limit ...]\n'
+    const available = Math.max(0, maxChars - marker.length)
+    const headChars = Math.ceil(available / 2)
+    const tailChars = Math.floor(available / 2)
+    return `${value.slice(0, headChars)}${marker}${tailChars > 0 ? value.slice(value.length - tailChars) : ''}`
+}
+
+function normalizeCarryoverText(value: string): string | null {
+    const normalized = normalizeText(value)
+    return normalized ? trimCarryoverText(normalized) : null
 }
 
 function createTaskSessionStartFailure(options: {
@@ -148,8 +167,7 @@ function collectCodexPlanText(data: Record<string, unknown>): string | null {
 
 function extractMessageText(content: unknown): string | null {
     if (typeof content === 'string') {
-        const normalized = normalizeText(content)
-        return normalized || null
+        return normalizeCarryoverText(content)
     }
 
     if (Array.isArray(content)) {
@@ -157,7 +175,7 @@ function extractMessageText(content: unknown): string | null {
             .map((item) => extractMessageText(item))
             .filter((text): text is string => Boolean(text))
         if (blocks.length === 0) return null
-        return blocks.join('\n')
+        return trimCarryoverText(blocks.join('\n'))
     }
 
     const objectContent = toRecord(content)
@@ -170,8 +188,7 @@ function extractMessageText(content: unknown): string | null {
     }
 
     if (objectContent.type === 'text' && typeof objectContent.text === 'string') {
-        const normalized = normalizeText(objectContent.text)
-        return normalized || null
+        return normalizeCarryoverText(objectContent.text)
     }
 
     if (objectContent.type === 'output') {
@@ -181,8 +198,7 @@ function extractMessageText(content: unknown): string | null {
         }
 
         if (data.type === 'summary' && typeof data.summary === 'string') {
-            const normalized = normalizeText(data.summary)
-            return normalized || null
+            return normalizeCarryoverText(data.summary)
         }
 
         if (data.type === 'assistant' || data.type === 'user') {
@@ -200,12 +216,12 @@ function extractMessageText(content: unknown): string | null {
         }
 
         if ((data.type === 'message' || data.type === 'reasoning') && typeof data.message === 'string') {
-            const normalized = normalizeText(data.message)
-            return normalized || null
+            return normalizeCarryoverText(data.message)
         }
 
         if (data.type === 'plan') {
-            return collectCodexPlanText(data)
+            const planText = collectCodexPlanText(data)
+            return planText ? trimCarryoverText(planText) : null
         }
 
         if (data.type === 'tool-call-result') {
@@ -214,7 +230,7 @@ function extractMessageText(content: unknown): string | null {
     }
 
     if (typeof objectContent.text === 'string') {
-        const normalized = normalizeText(objectContent.text)
+        const normalized = normalizeCarryoverText(objectContent.text)
         if (normalized) return normalized
     }
 
@@ -228,8 +244,7 @@ function extractMessageText(content: unknown): string | null {
         if (fromMessage) return fromMessage
     }
 
-    const fallback = normalizeText(stringifyUnknown(content))
-    return fallback || null
+    return normalizeCarryoverText(stringifyUnknown(content))
 }
 
 function getCarryoverMessages(store: Store, previousSessionId: string): StoredMessage[] {
@@ -259,9 +274,12 @@ function getCarryoverMessages(store: Store, previousSessionId: string): StoredMe
 
 function buildCarryoverHistorySection(store: Store, previousSessionId: string): string {
     const messages = getCarryoverMessages(store, previousSessionId)
-    const lines: string[] = []
+    const entriesNewestFirst: string[] = []
+    let remainingChars = CARRYOVER_HISTORY_MAX_CHARS
+    let omittedOlderMessages = 0
 
-    for (const message of messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index]
         if (message.localId?.startsWith(KICKOFF_LOCAL_ID_PREFIX) || message.localId?.startsWith(AUTO_WORKFLOW_LOCAL_ID_PREFIX)) {
             continue
         }
@@ -276,11 +294,25 @@ function buildCarryoverHistorySection(store: Store, previousSessionId: string): 
         const sourceContent = record ? record.content : message.content
         const text = extractMessageText(sourceContent)
         if (!text) continue
-        lines.push(`${roleLabel}:\n${text}`)
+
+        const entry = `${roleLabel}:\n${text}`
+        const separatorChars = entriesNewestFirst.length > 0 ? 2 : 0
+        if (entry.length + separatorChars > remainingChars) {
+            omittedOlderMessages += 1
+            continue
+        }
+
+        entriesNewestFirst.push(entry)
+        remainingChars -= entry.length + separatorChars
     }
 
-    if (lines.length === 0) {
+    if (entriesNewestFirst.length === 0) {
         return ''
+    }
+
+    const lines = entriesNewestFirst.reverse()
+    if (omittedOlderMessages > 0) {
+        lines.unshift(`[${omittedOlderMessages} older previous session message(s) omitted to keep restart context within the agent input limit.]`)
     }
 
     return `\n\nPrevious session messages:\n${lines.join('\n\n')}`
@@ -431,7 +463,7 @@ function buildInitCommandReportLines(options: {
 }
 
 function resolveWorkflowKickoff(options: {
-    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'role' | 'source' | 'subTasks' | 'workflowProfile' | 'workflowPhase' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>
     kickoff: StartSessionKickoffOptions
     agentOutputLocale?: string
 }): StartSessionKickoffOptions {
@@ -470,11 +502,27 @@ ${guidance}`,
 
 type GoalTaskRole = 'Planner' | 'Generator' | 'Evaluator' | 'Radar'
 
-function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): GoalTaskRole | null {
+function coerceSessionPermissionModeForAgent(
+    mode: z.infer<typeof PermissionModeSchema> | null | undefined,
+    agent: z.infer<typeof AgentFlavorSchema>
+): z.infer<typeof PermissionModeSchema> | null {
+    if (agent === 'codex' && mode === 'plan') {
+        return 'safe-yolo'
+    }
+    return coercePermissionModeForFlavor(mode, agent)
+}
+
+function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'role' | 'source'>): GoalTaskRole | null {
     const goalId = (task.goalId ?? '').trim()
     if (!goalId) {
         return null
     }
+
+    const explicitRole = (task.role ?? '').trim().toLowerCase()
+    if (explicitRole === 'planner') return 'Planner'
+    if (explicitRole === 'radar') return 'Radar'
+    if (explicitRole === 'evaluator') return 'Evaluator'
+    if (explicitRole === 'generator') return 'Generator'
 
     const source = (task.source ?? '').trim().toLowerCase()
     const status = (task.status ?? '').trim().toLowerCase()
@@ -540,19 +588,19 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     const exampleStatus = role === 'Generator' ? 'review' : 'done'
     const commonActions = role === 'Planner' || role === 'Radar'
         ? [
-            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting an existing .hopi/docs/goals/<goalKey>/todo.yml item, set `id` to that item id.',
+            '- create_goal_task: create a small ready task for this Goal; include a useful description and a markdown contract; when promoting an existing .hopi/docs/goals/<goalKey>/todo.yml item, set `todoRef` to that item ref.',
             '- update_goal: update Goal currentFocus/successCriteria or set active/blocked when durable; do not use paused/done/archived without explicit human instruction.',
-            '- create_decision_topic: ask one blocking human question when needed; use taskId null for a goal-level milestone checkpoint that should stop further promotion.',
+            '- create_decision_topic: ask one blocking human question when needed; set `scope` to `goal` for a milestone checkpoint that should stop further promotion, or `task` with `taskId` for a task-local blocker.',
             '- update_current_task: record handoff/evidence and finish or block this role task.'
-        ]
+            ]
         : role === 'Evaluator'
             ? [
                 '- update_current_task: accept by moving to done, or return to planning/blocked with concrete feedback.',
-                '- create_decision_topic: ask for human approval or product clarification when needed.'
+                '- create_decision_topic: ask for human approval or product clarification when needed; use explicit `scope`.'
             ]
             : [
                 '- update_current_task: move completed work to review with handoff/evidence, or block with a concrete reason.',
-                '- create_decision_topic: ask for human clarification when needed.'
+                '- create_decision_topic: ask for human clarification when needed; use explicit `scope`.'
             ]
 
     return [
@@ -560,14 +608,15 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
         '- If no HOPI state change is needed, omit the packet.',
-        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `id`, `status`, `title`, optional `tag`, optional `body`, and optional `blocked.summary`.',
-        '- Todo item status values match Kanban: planning, running, review, blocked, done. Use tag for planning substate: ready, candidate, or deferred.',
+        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goal.goalKey`, and `items[]` with stable `ref`, `status`, `title`, optional `body`, and optional `dependencyTaskList`.',
+        '- Todo item status values are candidate, planned, in_progress, in_review, merging, blocked, done. Use `candidate` for non-dispatched reservoir items; use `blocked` only as an explicit automation hold.',
         '- Task titles are user-visible text only. Do not prefix or include ids or yaml keys in `title`.',
         '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
         ...commonActions,
         ...(role === 'Planner' || role === 'Radar'
-            ? ['- create_goal_task shape: { "type": "create_goal_task", "id": "existing-todo-id-optional", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
+            ? ['- create_goal_task shape: { "type": "create_goal_task", "todoRef": "existing-todo-ref-optional", "title": "...", "description": "2-5 lines of context and expected outcome.", "priority": "high|medium|low", "contract": "## Type\\nfeature|bugfix|refactor|test|content|infra|performance\\n\\n## Context\\n...\\n\\n## Involved Files / Areas\\n- Known files: ...\\n- Likely areas: ...\\n- Unknowns: ...\\n\\n## Scope\\n...\\n\\n## Acceptance\\n- ...\\n\\n## Suggested Checks\\n- ...\\n\\n## Non-goals / Constraints\\n- ..." }']
             : []),
+        '- create_decision_topic shape: { "type": "create_decision_topic", "scope": "goal|task", "taskId": "required-for-task-scope", "title": "...", "body": "...", "blocking": true }',
         '- Finish with one fenced JSON block in this shape; add create_goal_task actions before update_current_task when needed:',
         'HOPI_ACTIONS:',
         '```json',
@@ -580,7 +629,7 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
     ].join('\n')
 }
 
-function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): string {
+function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'role' | 'source'>): string {
     const role = getGoalTaskRole(task)
     if (!role) {
         return ''
@@ -593,9 +642,10 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Role: Planner',
             '',
             'Context strategy:',
-            '- Read .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.md, and the current Goal kanban snapshot.',
-            '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
-            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: running`, keep its stable `id`, and set `tag: promoted`; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
+            '- Read .hopi/preference.md, .hopi/docs/index.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/design.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.yml, .hopi/docs/goals/<goalKey>/events.jsonl, and the current Goal kanban snapshot.',
+            '- Keep docs maintenance durable: update repo docs when strategy, decisions, design rationale, or todo state changes.',
+            '- Update design.md before creating, splitting, replacing, reordering, or retiring substantial engineering tasks.',
+            '- When promoting todo work into kanban, keep the matching .hopi/docs/goals/<goalKey>/todo.yml item on a canonical execution lane and preserve its stable `ref`; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
             '',
             'Task creation quality bar:',
             '- Create tasks that a Generator can execute without re-planning the whole Goal.',
@@ -626,7 +676,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
             '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
-            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its stable `id`; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
+            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its stable `ref`; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
             '',
             'Allowed transitions:',
             '- Record evidence and move accepted work to done; HOPI will request the existing worktree merge flow before closing accepted work.',
@@ -643,11 +693,11 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Role: Radar',
             '',
             'Context strategy:',
-            '- Read .hopi/docs/*, recent task outcomes, TODO/FIXME scan output, and code/documentation drift signals.',
+            '- Read .hopi/docs/*, including goal design.md files, recent task outcomes, TODO/FIXME scan output, and code/documentation drift signals.',
             '- Keep findings curated; Radar is a maintenance signal, not a dumping ground.',
             '',
             'Allowed transitions:',
-            '- Update .hopi/docs/tech-debt.md and .hopi/docs/goals/<goalKey>/todo.yml with durable findings.',
+            '- Update .hopi/docs/goals/<goalKey>/todo.yml with durable candidate findings.',
             '- Create goal tasks only for small, verifiable, high-confidence maintenance tasks.',
             '- Record evidence and mark this Radar task done or blocked.',
             buildGoalActionPacketSection(role)
@@ -660,7 +710,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
         'Role: Generator',
         '',
         'Context strategy:',
-        '- Read the Task Contract, Goal doc, relevant decisions, linked files/search results, current git status, and latest Planner handoff.',
+        '- Read the Task Contract, Goal doc, design.md, relevant decisions, linked files/search results, current git status, and latest Planner handoff.',
         '- Update durable behavior or architecture docs when lasting product knowledge changes; keep linked todo work promoted and do not mark it done before Evaluator acceptance.',
         '',
         'Allowed transitions:',
@@ -672,7 +722,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
 }
 
 function buildTaskKickoffSummary(
-    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'source' | 'subTasks' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>,
+    task: Pick<StoredTask, 'id' | 'title' | 'description' | 'status' | 'role' | 'source' | 'subTasks' | 'goalId' | 'goalTodoRef' | 'contract' | 'handoff' | 'evidence'>,
     options?: { agentOutputLocale?: string }
 ): string {
     const taskId = (task.id ?? '').trim()
@@ -1587,11 +1637,11 @@ async function startSessionFromTaskInternal(options: {
         ?? projectDefaultModel
         ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
 
-    const taskPermissionMode = coercePermissionModeForFlavor(
+    const taskPermissionMode = coerceSessionPermissionModeForAgent(
         task.permissionMode as z.infer<typeof PermissionModeSchema> | null,
         agent
     )
-    const projectPermissionMode = coercePermissionModeForFlavor(
+    const projectPermissionMode = coerceSessionPermissionModeForAgent(
         project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null,
         agent
     )

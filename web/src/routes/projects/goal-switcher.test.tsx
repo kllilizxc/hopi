@@ -108,6 +108,22 @@ describe('GoalSwitcher', () => {
         expect(screen.getByRole('button', { name: 'Pause automation' })).toBeInTheDocument()
     })
 
+    it('shows decision-blocked automation status for a goal-level blocking decision', () => {
+        renderWithProviders(
+            <GoalSwitcher
+                goals={[{ ...baseGoal, status: 'blocked' as const, blockedSource: 'decision' }]}
+                selectedGoalId="goal-1"
+                onSelectGoal={vi.fn()}
+                onToggleGoalAutomationPause={vi.fn()}
+                onCreateGoal={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('Blocked by decision')).toBeInTheDocument()
+        expect(screen.queryByText('Blocked')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Pause automation' })).toBeInTheDocument()
+    })
+
     it('shows done status and reopens a completed goal', () => {
         const onReopenGoal = vi.fn()
         renderWithProviders(

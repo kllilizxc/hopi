@@ -37,6 +37,12 @@ function estimateBase64Bytes(base64: string): number {
     return Math.floor((len * 3) / 4) - padding
 }
 
+function isMissingSessionRpcError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.startsWith('RPC handler not registered:')
+        || message.startsWith('RPC socket disconnected:')
+}
+
 export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -179,12 +185,19 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = requireSessionFromParam(c, engine)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
 
-        await engine.abortSession(sessionResult.sessionId)
+        try {
+            await engine.abortSession(sessionResult.sessionId)
+        } catch (error) {
+            if (!sessionResult.session.active && isMissingSessionRpcError(error)) {
+                return c.json({ ok: true })
+            }
+            throw error
+        }
         return c.json({ ok: true })
     })
 

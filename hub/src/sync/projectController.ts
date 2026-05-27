@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto'
 import type { AgentFlavor, ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store, StoredGoal, StoredProject, StoredSession, StoredTask, StoredWorkspace } from '../store'
 import { readGoalTodo } from './goals/goalTodo'
+import { readGoalDecisionTopicsWithLegacyBackfill } from './goals/goalDecisions'
 import type { SyncEngine } from './syncEngine'
 
 const CONTROLLER_EVENT_LOCAL_ID_PREFIX = 'controller:event:'
@@ -341,8 +342,13 @@ function buildGoalSummary(store: Store, project: StoredProject, goal: StoredGoal
     const countText = counts.size > 0
         ? Array.from(counts.entries()).map(([key, count]) => `${key}: ${count}`).join(', ')
         : 'no todo items'
-    const waitingTopics = store.goalDecisionTopics
-        .listByGoalAndNamespace(goal.id, namespace)
+    const waitingTopics = readGoalDecisionTopicsWithLegacyBackfill({
+        store,
+        namespace,
+        project,
+        goal,
+        defaultWorkspace: workspace
+    })
         .filter((topic) => topic.status === 'waiting')
     const topicText = waitingTopics.length > 0
         ? `; waiting decisions: ${waitingTopics.map((topic) => `${topic.title}${topic.blocking ? ' (blocking)' : ''}`).join('; ')}`
@@ -384,13 +390,17 @@ function getRequestedActiveGoal(options: {
 
 function buildGoalDocsSummary(goal: StoredGoal | null): string {
     if (!goal) {
-        return '- No current goal selected. When a goal exists, start from .hopi/docs/goals/<goalKey>/index.md and .hopi/docs/goals/<goalKey>/todo.yml.'
+        return '- No current goal selected. When a goal exists, start from .hopi/docs/goals/<goalKey>/goal.md, design.md, todo.yml, decisions.yml, and events.jsonl.'
     }
 
     return [
         `- ${goal.title} (${goal.goalKey})`,
-        `  - index: .hopi/docs/goals/${goal.goalKey}/index.md`,
-        `  - todo: .hopi/docs/goals/${goal.goalKey}/todo.yml`
+        `  - goal: .hopi/docs/goals/${goal.goalKey}/goal.md`,
+        `  - design: .hopi/docs/goals/${goal.goalKey}/design.md`,
+        `  - todo: .hopi/docs/goals/${goal.goalKey}/todo.yml`,
+        `  - decisions: .hopi/docs/goals/${goal.goalKey}/decisions.yml`,
+        `  - events: .hopi/docs/goals/${goal.goalKey}/events.jsonl`,
+        '  - preference: .hopi/preference.md'
     ].join('\n')
 }
 
@@ -408,7 +418,7 @@ function buildProjectControllerBriefingPrompt(options: {
     return [
         `Goal Assistant briefing request for project "${options.project.name}".`,
         '',
-        'Review the current project state and send the user one concise personal-assistant greeting.',
+        'Review the current Goal state and send the user one concise Goal CTO assistant greeting.',
         '',
         'Start only from this current goal docs:',
         buildGoalDocsSummary(options.goal),
@@ -417,8 +427,9 @@ function buildProjectControllerBriefingPrompt(options: {
         goalLine,
         '',
         'Rules:',
-        '- Do not edit files, implement code, or run shell/tool actions that mutate the repo.',
-        '- Stay in an operator-console role: explain current state, blockers, likely next lane/planner action, and what user input is needed.',
+        '- Do not edit source files, implement code, spawn coding subagents, or run shell/tool actions that mutate the repo.',
+        '- Use official HOPI commands for kanban mutations: inspect_goal_state, inspect_task_history, request_task_lane, start_or_resume_task, retry_task_merge, request_planning, answer_decision_topic, read_preference, write_preference.',
+        '- Act as a Goal-scoped CTO assistant: explain current state, derived blockers, likely next lane/planner action, and what user input is needed.',
         '- Focus only on the current goal above. Do not inspect or summarize other goals unless the user asks.',
         '- Mention only useful status: what changed, what is blocked or waiting for a decision, and the best next action.',
         '- Keep it short and natural, like a project assistant greeting the user after they came back.',
@@ -429,13 +440,27 @@ function buildProjectControllerBriefingPrompt(options: {
 function hasVisibleGoalTasks(options: {
     store: Store
     namespace: string
-    projectId: string
+    project: StoredProject
     goalId: string
 }): boolean {
-    return options.store.tasks.listTasksByProjectAndNamespace(options.projectId, options.namespace, {
+    const storedTasks = options.store.tasks.listTasksByProjectAndNamespace(options.project.id, options.namespace, {
         goalId: options.goalId,
         includeArchived: false
-    }).length > 0
+    })
+    if (storedTasks.length > 0) {
+        return true
+    }
+
+    const goal = options.store.goals.getGoalByNamespace(options.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id || goal.archivedAt !== null) {
+        return false
+    }
+    const todo = readGoalTodo({
+        project: options.project,
+        goal,
+        defaultWorkspace: getDefaultWorkspace(options.store, options.project)
+    })
+    return todo.sections.length > 0
 }
 
 export function getProjectControllerSession(options: {
@@ -612,7 +637,7 @@ export async function maybeRefreshProjectControllerBriefing(options: {
     if (!hasVisibleGoalTasks({
         store: options.store,
         namespace: options.namespace,
-        projectId: project.id,
+        project,
         goalId: briefingGoalId
     })) {
         return { ok: true, queued: false, reason: 'empty_goal', sessionId: null }

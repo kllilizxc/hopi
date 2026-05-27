@@ -72,6 +72,7 @@ export default {
   'projects.goals.automationStatus.running': 'Running',
   'projects.goals.automationStatus.paused': 'Paused',
   'projects.goals.automationStatus.blocked': 'Blocked',
+  'projects.goals.automationStatus.blockedByDecision': 'Blocked by decision',
   'projects.goals.automationStatus.done': 'Done',
   'projects.goals.done.title': 'Mark goal done',
   'projects.goals.done.description': 'Mark “{title}” done and pause its automation?',
@@ -105,7 +106,6 @@ export default {
   'projects.todo.kind.promoted': 'Promoted',
   'projects.todo.kind.in_review': 'In review',
   'projects.todo.kind.blocked': 'Blocked',
-  'projects.todo.kind.deferred': 'Deferred',
   'projects.todo.kind.done': 'Done',
   'projects.todo.kind.unknown': 'Other',
 
@@ -139,6 +139,8 @@ export default {
   'projects.tasks.createFailed': 'Task create failed',
   'projects.tasks.moveFailed': 'Move failed',
   'projects.tasks.blocked': 'Blocked',
+  'projects.tasks.blockedByDecision': 'Blocked by decision',
+  'projects.tasks.dependencies': 'Depends on',
   'projects.tasks.generated': 'Auto-generated',
   'projects.tasks.subtasksProgress': 'Subtasks {completed}/{total}',
   'projects.tasks.subtasks.expand': 'Expand subtasks',
@@ -325,7 +327,7 @@ export default {
   'projects.controller.openFailed': 'Failed to open Goal Assistant',
   'projects.controller.unavailable': 'Goal Assistant unavailable',
   'projects.controller.emptyGreetingTitle': 'Goal Assistant is ready.',
-  'projects.controller.emptyGreetingBody': 'This goal can be discussed before tasks exist. Ask for clarification, add planner mail, or review current goal state here.',
+  'projects.controller.emptyGreetingBody': 'This goal can be discussed before tasks exist. Ask for clarification, create a planner request, or review current goal state here.',
 
   'projects.create.title': 'Create project',
   'projects.create.description': 'Projects group tasks and bind one or more workspaces.',

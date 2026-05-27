@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProper
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { DEFAULT_AGENT_FLAVOR } from '@hopi/protocol'
 import { productStorageKey } from '@hopi/protocol/brand'
-import type { Task, TaskPriority } from '@/types/api'
+import type { Task, TaskDependency, TaskPriority } from '@/types/api'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
@@ -208,10 +208,11 @@ function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
     if (!Array.isArray(task.subTasks)) return []
     return task.subTasks.filter((item: unknown): item is KanbanTaskSubTask => {
         if (!item || typeof item !== 'object') return false
-        if (typeof item.id !== 'string') return false
-        if (typeof item.content !== 'string') return false
-        if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return false
-        if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') return false
+        const subTask = item as Record<string, unknown>
+        if (typeof subTask.id !== 'string') return false
+        if (typeof subTask.content !== 'string') return false
+        if (subTask.status !== 'pending' && subTask.status !== 'in_progress' && subTask.status !== 'completed') return false
+        if (subTask.priority !== 'high' && subTask.priority !== 'medium' && subTask.priority !== 'low') return false
         return true
     })
 }
@@ -229,6 +230,12 @@ function getTaskSubTaskProgress(subTasks: KanbanTaskSubTask[]): { completed: num
     }
 
     return { completed, total: subTasks.length }
+}
+
+function getTaskDependencies(task: Task): TaskDependency[] {
+    return Array.isArray(task.dependencyTaskList)
+        ? task.dependencyTaskList.filter((dependency) => dependency.ref.trim())
+        : []
 }
 
 function sortTasksInLane(tasks: Task[]): Task[] {
@@ -280,8 +287,12 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
     const usesProjectDefaultAgent = !props.task.agentFlavor
     const subTasks = useMemo(() => getTaskSubTasks(props.task), [props.task.subTasks])
     const subTaskProgress = useMemo(() => getTaskSubTaskProgress(subTasks), [subTasks])
+    const dependencies = useMemo(() => getTaskDependencies(props.task), [props.task.dependencyTaskList])
     const mergeRuntimeTag = getTaskMergeRuntimeTag(t, props.task)
     const blockedSummary = buildTaskBlockedStatusSummary(props.task)
+    const blockedTagLabelKey = props.task.blockedSource === 'decision'
+        ? 'projects.tasks.blockedByDecision'
+        : 'projects.tasks.blocked'
     const taskTag = typeof props.task.tag === 'string' && props.task.tag.trim()
         ? props.task.tag.trim()
         : null
@@ -344,7 +355,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                                 </Tag>
                             ) : null}
                             {taskTag ? (
-                                <Tag size="xs" variant={taskTag === 'ready' ? 'success' : taskTag === 'deferred' ? 'warning' : 'default'}>
+                                <Tag size="xs" variant={taskTag === 'ready' ? 'success' : 'default'}>
                                     {taskTag}
                                 </Tag>
                             ) : null}
@@ -368,7 +379,7 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                             ) : null}
                             {blockedSummary ? (
                                 <Tag size="xs" variant="error">
-                                    {t('projects.tasks.blocked')}
+                                    {t(blockedTagLabelKey)}
                                 </Tag>
                             ) : null}
                             {isGeneratedPending ? (
@@ -380,6 +391,29 @@ const KanbanTaskCard = memo(function KanbanTaskCard(props: KanbanTaskCardProps) 
                         {blockedSummary?.detail ? (
                             <div className="mt-2 rounded-md bg-[var(--app-badge-error-bg)] px-2 py-1.5 text-[11px] leading-snug text-[var(--app-badge-error-text)] shadow-[inset_0_0_0_1px_var(--app-badge-error-border)]">
                                 {blockedSummary.detail}
+                            </div>
+                        ) : null}
+                        {dependencies.length > 0 ? (
+                            <div
+                                data-testid={`task-dependencies-${props.task.id}`}
+                                className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] leading-snug text-[var(--app-hint)]"
+                            >
+                                <span className="font-medium text-[var(--app-muted-fg)]">
+                                    {t('projects.tasks.dependencies')}
+                                </span>
+                                {dependencies.map((dependency) => {
+                                    const label = dependency.title?.trim() || dependency.ref
+                                    return (
+                                        <Tag
+                                            key={dependency.ref}
+                                            size="xs"
+                                            variant={dependency.status === 'done' || dependency.status === 'finished' ? 'success' : 'default'}
+                                            title={dependency.ref}
+                                        >
+                                            {label}
+                                        </Tag>
+                                    )
+                                })}
                             </div>
                         ) : null}
                         {isGeneratedPending ? (

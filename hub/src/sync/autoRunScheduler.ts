@@ -2,11 +2,12 @@ import { normalizeAutomationBackstopPolicy, normalizeAutomationLaneLimits } from
 import { HopiTaskRoleSchema } from '@hopi/protocol/schemas'
 import type { SyncEvent } from '@hopi/protocol/types'
 import type { AutomationLane } from '@hopi/protocol/types'
-import { buildTaskSessionStartFailureToast } from '@hopi/protocol/task-session-start'
+import { buildTaskSessionStartFailureToast, type TaskSessionStartFailure } from '@hopi/protocol/task-session-start'
 import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../store'
 import { buildTaskInitRuntime } from '../utils/taskActionRuntime'
 import type { SyncEngine } from './syncEngine'
 import { buildResolvedDecisionHandoff } from './goals/decisionHandoff'
+import { readGoalDecisionTopicsWithLegacyBackfill } from './goals/goalDecisions'
 import { bootstrapGoalDocs } from './goals/goalDocs'
 import { createGoalTodoTaskId, readGoalTodo } from './goals/goalTodo'
 import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
@@ -30,6 +31,7 @@ type PlannerBackstopSignal = {
 }
 
 const GOAL_RADAR_INTERVAL_MS = 24 * 60 * 60 * 1000
+const RUNNER_OFFLINE_RETRY_MESSAGE = 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
 const ACTIVE_GOAL_STATUSES = new Set(['planning', 'active'])
 const OPEN_GOAL_TASK_STATUSES = new Set(['planning', 'running', 'review', 'blocked', 'planned', 'in_progress', 'in_review'])
 const AUTOMATION_LANE_PRIORITY: Record<AutomationLane, number> = {
@@ -62,8 +64,17 @@ function toRecord(value: unknown): Record<string, unknown> | null {
         : null
 }
 
-function getTaskAutomationLane(task: Pick<StoredTask, 'status' | 'source'>): AutomationLane {
+function getTaskAutomationLane(task: Pick<StoredTask, 'status' | 'role' | 'source'>): AutomationLane {
     if (task.status === 'review' || task.status === 'in_review') {
+        return 'evaluator'
+    }
+    if (task.role === 'planner') {
+        return 'planner'
+    }
+    if (task.role === 'radar') {
+        return 'radar'
+    }
+    if (task.role === 'evaluator') {
         return 'evaluator'
     }
     if (task.source === 'planner') {
@@ -134,11 +145,38 @@ function isTaskWaitingForRunnerRecovery(task: Pick<StoredTask, 'initRuntime'>): 
         && task.initRuntime.failure?.retry?.action === 'wait_then_retry_start'
 }
 
+function buildRunnerOfflineRecoveryFailure(task: Pick<StoredTask, 'initRuntime'>): TaskSessionStartFailure {
+    if (task.initRuntime?.failure?.code === 'runner_offline') {
+        return task.initRuntime.failure
+    }
+
+    return {
+        code: 'runner_offline',
+        message: RUNNER_OFFLINE_RETRY_MESSAGE,
+        blockedReason: null,
+        retry: {
+            count: task.initRuntime?.retryCount ?? 0,
+            action: 'wait_then_retry_start',
+            available: true
+        }
+    }
+}
+
+function isRecoverableSchedulerRunnerOfflineBlock(task: Pick<StoredTask, 'status' | 'archivedAt' | 'activeSessionId' | 'blockedSource' | 'blockedReason' | 'initRuntime'>): boolean {
+    if (task.status !== 'blocked') return false
+    if (task.archivedAt) return false
+    if (task.activeSessionId) return false
+    if (task.blockedSource !== 'scheduler') return false
+    if (task.initRuntime?.failure?.code === 'runner_offline') return true
+    return task.blockedReason?.trim().startsWith(RUNNER_OFFLINE_RETRY_MESSAGE) === true
+}
+
 function isTaskAutoRunnable(task: {
     id: string
     status: string
     archivedAt: number | null
     activeSessionId: string | null
+    role: string | null
     source: string | null
     goalId: string | null
     goalTodoRef: string | null
@@ -215,9 +253,10 @@ function getTaskAutopilotPolicy(options: {
     namespace: string
 }): TaskAutopilotPolicy {
     if (!options.task.goalId) {
+        const isProjectBootstrap = options.task.source === 'project_init'
         return {
-            enabled: options.project.autoRunEnabled,
-            allowBeforeReadiness: options.task.source === 'project_init'
+            enabled: options.project.autoRunEnabled || isProjectBootstrap,
+            allowBeforeReadiness: isProjectBootstrap
         }
     }
 
@@ -299,6 +338,26 @@ function isReadyPlanningTag(tag: string | null | undefined): boolean {
     return tag === undefined || tag === 'ready'
 }
 
+function hasTaskScopedBlockingDecision(
+    topics: StoredGoalDecisionTopic[],
+    taskKeys: Array<string | null | undefined>
+): boolean {
+    const keys = new Set(taskKeys
+        .filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+        .map((key) => key.trim()))
+    if (keys.size === 0) {
+        return false
+    }
+
+    return topics.some((topic) => (
+        topic.scope === 'task'
+        && topic.blocking
+        && topic.status === 'waiting'
+        && topic.taskId !== null
+        && keys.has(topic.taskId)
+    ))
+}
+
 function isPlanningTaskReadyForAutomation(task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source'>, options: {
     namespace: string
     project: StoredProject
@@ -311,12 +370,23 @@ function isPlanningTaskReadyForAutomation(task: Pick<StoredTask, 'id' | 'goalId'
     if (!goal || goal.projectId !== options.project.id) {
         return false
     }
+    const defaultWorkspace = getDefaultWorkspaceForProject(options.store, options.project)
     const tag = getTaskGoalTodoTag(task, buildGoalTodoTagIndex({
         project: options.project,
         goal,
-        defaultWorkspace: getDefaultWorkspaceForProject(options.store, options.project)
+        defaultWorkspace
     }))
-    return isReadyPlanningTag(tag)
+    if (!isReadyPlanningTag(tag)) {
+        return false
+    }
+    const topics = readGoalDecisionTopicsWithLegacyBackfill({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        goal,
+        defaultWorkspace
+    })
+    return !hasTaskScopedBlockingDecision(topics, [task.id, task.goalTodoRef])
 }
 
 function getTaskCompletedAt(task: StoredTask): number | null {
@@ -404,7 +474,7 @@ function buildPlannerLoopContract(options: {
             `- Completed Planner refills since baseline: ${options.backstop.completedPlannerRefills}.`,
             ...options.backstop.reasons.map((reason) => `- Trigger: ${reason}`),
             '- This is not an automatic stop. You must make the milestone assessment explicit before creating more work.',
-            '- Prefer creating a blocking goal-level DecisionTopic now unless you can justify one clearly bounded, high-value next batch.'
+            '- Prefer creating a blocking DecisionTopic with `scope: "goal"` now unless you can justify one clearly bounded, high-value next batch.'
         ]
         : []
     return [
@@ -416,7 +486,7 @@ function buildPlannerLoopContract(options: {
         '',
         '- Before filling the lane, judge whether continuing this Goal is still clearly higher-value than a human milestone review.',
         '- Stop and ask for a milestone review when the Goal success criteria look materially satisfied, remaining candidates are mostly speculative/cleanup, the next valuable step requires a product or priority choice, or more architecture work should be validated against real content first.',
-        '- For a milestone stop, create exactly one blocking goal-level DecisionTopic with taskId null, set the Goal status to blocked with a concise currentFocus, finish this Planner task, and do not promote new generator tasks.',
+        '- For a milestone stop, create exactly one blocking DecisionTopic with `scope: "goal"`, set the Goal status to blocked with a concise currentFocus, finish this Planner task, and do not promote new generator tasks.',
         '- Time or task-count limits are only backstops; use this assessment every Planner refill even when no backstop has fired.',
         ...backstopLines,
         '',
@@ -430,9 +500,10 @@ function buildPlannerLoopContract(options: {
         '## Acceptance',
         '',
         `- Read and update .hopi/docs/goals/${options.goal.goalKey}/goal.md when strategy or status changed.`,
+        `- Read and update .hopi/docs/goals/${options.goal.goalKey}/design.md before creating or reshaping substantial engineering tasks.`,
         `- Read and curate .hopi/docs/goals/${options.goal.goalKey}/todo.yml; promote only a small ready batch into kanban.`,
-        '- Update .hopi/docs/decisions.md when human answers have lasting impact.',
-        '- Create blocking DecisionTopics for unclear product direction, milestone review, or risky priority choices, one question at a time.',
+        `- Update .hopi/docs/goals/${options.goal.goalKey}/decisions.yml when human answers have lasting impact for this Goal.`,
+        '- Create scoped blocking DecisionTopics for unclear product direction, milestone review, or risky priority choices, one question at a time.',
         '- Create goal-scoped tasks with lightweight contracts using the final HOPI_ACTIONS packet.',
         '- Leave final Goal done/archive to explicit user actions; milestone review is allowed and should block the Goal rather than marking it done.',
         '- Do not mark the Goal paused, done, or archived just because the current iteration looks complete.',
@@ -441,8 +512,9 @@ function buildPlannerLoopContract(options: {
         '',
         '## Suggested Checks',
         '',
+        '- Confirm design.md explains the current task graph shape, assumptions, and any resolved decision impact.',
         '- Confirm active kanban work is not overfilled beyond the fill target.',
-        '- Confirm todo.yml items use stable ids, Kanban status values planning/running/review/blocked/done, and planning tags ready/candidate/deferred rather than an uncurated dump.',
+        '- Confirm todo.yml items use stable refs and canonical statuses candidate/planned/in_progress/in_review/merging/blocked/done; blocked is an automation hold, not a separate board lane.',
         '',
         '## Non-goals / Constraints',
         '',
@@ -460,9 +532,9 @@ function buildRadarContract(goal: StoredGoal): string {
         '',
         '## Acceptance',
         '',
-        `- Scan .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/tech-debt.md, .hopi/docs/goals/${goal.goalKey}/goal.md, .hopi/docs/goals/${goal.goalKey}/todo.yml, and .hopi/docs/goals/${goal.goalKey}/decisions.md for drift.`,
+        `- Scan .hopi/preference.md, .hopi/docs/index.md, .hopi/docs/goals/${goal.goalKey}/goal.md, .hopi/docs/goals/${goal.goalKey}/design.md, .hopi/docs/goals/${goal.goalKey}/todo.yml, .hopi/docs/goals/${goal.goalKey}/decisions.yml, and .hopi/docs/goals/${goal.goalKey}/events.jsonl for drift.`,
         '- Scan recent code signals such as TODO/FIXME comments, stale docs references, repeated failures, and obvious technical debt.',
-        '- Update .hopi/docs/tech-debt.md only with curated, durable debt worth tracking.',
+        `- Add durable findings to .hopi/docs/goals/${goal.goalKey}/todo.yml as candidate reservoir items; request planning for graph-shaping work instead of creating hidden work.`,
         `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml with candidate work only when it is actionable and scoped.`,
         '- Create goal-scoped tasks only for small, verifiable, high-confidence maintenance work.',
         '',
@@ -631,6 +703,166 @@ export class AutoRunScheduler {
         })
     }
 
+    private materializeReadyGoalTodoTaskOverlays(namespace: string, project: StoredProject): StoredTask[] {
+        const defaultWorkspace = this.getDefaultWorkspace(project)
+        const materialized: StoredTask[] = []
+        const goals = this.store.goals.listGoalsByProjectAndNamespace(project.id, namespace, {
+            includeArchived: false
+        })
+
+        for (const goal of goals) {
+            if (isGoalAutomationPaused(goal)) {
+                continue
+            }
+            if (!project.autoRunEnabled && !isGoalAutomationEnabled(goal)) {
+                continue
+            }
+
+            const todo = readGoalTodo({
+                project,
+                goal,
+                defaultWorkspace
+            })
+            if (todo.sections.length === 0) {
+                continue
+            }
+            const decisionTopics = readGoalDecisionTopicsWithLegacyBackfill({
+                store: this.store,
+                namespace,
+                project,
+                goal,
+                defaultWorkspace
+            })
+
+            const existingTasks = this.store.tasks.listTasksByProjectAndNamespace(project.id, namespace, {
+                goalId: goal.id,
+                includeArchived: true
+            })
+            const existingByKey = new Map<string, StoredTask>()
+            for (const task of existingTasks) {
+                existingByKey.set(task.id, task)
+                if (task.goalTodoRef) {
+                    existingByKey.set(task.goalTodoRef, task)
+                }
+            }
+
+            todo.sections.forEach((section, index) => {
+                if (section.status !== 'planning' || !isReadyPlanningTag(section.tag)) {
+                    return
+                }
+
+                const taskId = section.taskId ?? section.id
+                if (hasTaskScopedBlockingDecision(decisionTopics, [taskId, section.id, section.taskId])) {
+                    return
+                }
+                const existing = existingByKey.get(taskId) ?? existingByKey.get(section.id)
+                if (existing && !existing.archivedAt) {
+                    return
+                }
+                if (existing?.archivedAt) {
+                    const restored = this.store.tasks.updateTaskByNamespace(existing.id, namespace, {
+                        archivedAt: null,
+                        goalTodoRef: section.id,
+                        title: section.title,
+                        description: section.body || existing.description,
+                        status: 'planning',
+                        blockedReason: null,
+                        blockedSource: null,
+                        blockedSessionId: null
+                    })
+                    if (restored) {
+                        existingByKey.set(restored.id, restored)
+                        if (restored.goalTodoRef) {
+                            existingByKey.set(restored.goalTodoRef, restored)
+                        }
+                        materialized.push(restored)
+                    }
+                    return
+                }
+                if (this.store.tasks.getTaskByNamespace(taskId, namespace)) {
+                    return
+                }
+
+                const created = this.store.tasks.createTask({
+                    id: taskId,
+                    projectId: project.id,
+                    goalId: goal.id,
+                    goalTodoRef: section.id,
+                    title: section.title,
+                    description: section.body || null,
+                    status: 'planning',
+                    priority: null,
+                    sortKey: (todo.updatedAt ?? Date.now()) + index,
+                    workspaceId: defaultWorkspace?.id ?? null,
+                    ...getProjectDefaultTaskRuntimeSettings(project, { autonomous: true }),
+                    workflowProfile: 'default',
+                    workflowPhase: null,
+                    source: 'manual'
+                })
+                existingByKey.set(created.id, created)
+                if (created.goalTodoRef) {
+                    existingByKey.set(created.goalTodoRef, created)
+                }
+                materialized.push(created)
+            })
+        }
+
+        return materialized
+    }
+
+    private recoverSchedulerRunnerOfflineBlocks(namespace: string, project: StoredProject, tasks: StoredTask[]): StoredTask[] {
+        const recovered: StoredTask[] = []
+        for (const task of tasks) {
+            if (!isRecoverableSchedulerRunnerOfflineBlock(task)) {
+                continue
+            }
+
+            const policy = getTaskAutopilotPolicy({
+                task,
+                project,
+                store: this.store,
+                namespace
+            })
+            if (!policy.enabled) {
+                continue
+            }
+
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, {
+                status: 'planning',
+                blockedReason: null,
+                blockedSource: null,
+                blockedSessionId: null,
+                initRuntime: buildTaskInitRuntime({
+                    current: task.initRuntime,
+                    activeSessionId: task.activeSessionId,
+                    status: 'waiting',
+                    failure: buildRunnerOfflineRecoveryFailure(task),
+                    failureFingerprint: 'start:runner_offline',
+                    latestNote: 'Runner 当前离线。HOPI 会在 machine runner 恢复后自动重试。'
+                })
+            })
+            if (!updated) {
+                continue
+            }
+
+            syncTaskStateToGoalTodo({
+                store: this.store,
+                namespace,
+                task: updated,
+                project
+            })
+            this.engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace,
+                data: { taskId: updated.id }
+            })
+            recovered.push(updated)
+        }
+        return recovered
+    }
+
     private ensurePlannerLoopTask(options: {
         project: StoredProject
         goal: StoredGoal
@@ -682,7 +914,13 @@ export class AutoRunScheduler {
             return null
         }
 
-        const topics = this.store.goalDecisionTopics.listByGoalAndNamespace(options.goal.id, options.project.namespace)
+        const topics = readGoalDecisionTopicsWithLegacyBackfill({
+            store: this.store,
+            namespace: options.project.namespace,
+            project: options.project,
+            goal: options.goal,
+            defaultWorkspace: options.defaultWorkspace
+        })
         const handoff = buildResolvedDecisionHandoff(topics)
         const backstop = buildPlannerBackstopSignal({
             goal: options.goal,
@@ -843,11 +1081,22 @@ export class AutoRunScheduler {
             if (!project || project.archivedAt) {
                 return
             }
+            const materializedTodoTasks = this.materializeReadyGoalTodoTaskOverlays(namespace, project)
+            for (const task of materializedTodoTasks) {
+                this.emitTaskAdded(namespace, task)
+            }
             const autopilotGoals = this.ensureGoalAutopilotTasks(namespace, project)
             const hasEnabledGoalAutomation = this.store.goals
                 .listGoalsByProjectAndNamespace(project.id, namespace)
                 .some(isGoalAutomationEnabled)
-            if (!project.autoRunEnabled && !hasEnabledGoalAutomation && autopilotGoals.length === 0) {
+            let projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            const recoveredRunnerOfflineBlocks = this.recoverSchedulerRunnerOfflineBlocks(namespace, project, projectTasks)
+            if (recoveredRunnerOfflineBlocks.length > 0) {
+                projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
+            }
+            const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: 200 })
+            const hasProjectBootstrapCandidate = planned.some((task) => task.source === 'project_init')
+            if (!project.autoRunEnabled && !hasEnabledGoalAutomation && autopilotGoals.length === 0 && !hasProjectBootstrapCandidate) {
                 return
             }
 
@@ -856,8 +1105,6 @@ export class AutoRunScheduler {
             const laneLimits = normalizeAutomationLaneLimits(project.automationLaneLimits)
             const runningByLane = countRunningSessionsByLane(this.engine.getSessionsByNamespace(namespace), projectId)
             const startedByLane = createLaneCounts()
-            const projectTasks = this.store.tasks.listTasksByProjectAndNamespace(projectId, namespace)
-            const planned = this.store.tasks.listPlannedTasksByProjectAndNamespace(projectId, namespace, { limit: 200 })
             const review = projectTasks.filter((task) => task.status === 'review' || task.status === 'in_review')
             const candidates = sortAutomationCandidates([...review, ...planned])
             if (candidates.length === 0) {

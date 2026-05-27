@@ -8,6 +8,9 @@ import { notifyProjectController } from '../projectController'
 import type { SyncEngine } from '../syncEngine'
 import { getProjectDefaultTaskRuntimeSettings } from '../projectTaskDefaults'
 import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState, type GoalTodoStatus, type GoalTodoUpdateKind } from './goalTodo'
+import { appendGoalEvent } from './goalEvents'
+import { createGoalDecisionTopicInDocs } from './goalDecisions'
+import { buildDecisionBlockedReason } from './decisionHandoff'
 
 const taskStatusSchema = z.enum(['planning', 'running', 'review', 'done', 'blocked', 'planned', 'in_progress', 'in_review', 'finished'])
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
@@ -49,16 +52,38 @@ const goalActionPacketSchema = z.object({
         }),
         z.object({
             type: z.literal('create_decision_topic'),
+            scope: z.enum(['goal', 'task']),
             taskId: z.string().min(1).nullable().optional(),
             title: z.string().trim().min(1).max(255),
             body: z.string().max(20_000),
             blocking: z.boolean().optional()
         })
     ])).min(1).max(20)
+}).superRefine((packet, ctx) => {
+    packet.actions.forEach((action, index) => {
+        if (action.type !== 'create_decision_topic') {
+            return
+        }
+        if (action.scope === 'task' && !action.taskId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['actions', index, 'taskId'],
+                message: 'Task-scoped decision topics require taskId'
+            })
+        }
+        if (action.scope === 'goal' && action.taskId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['actions', index, 'taskId'],
+                message: 'Goal-scoped decision topics must not include taskId'
+            })
+        }
+    })
 })
 
 type GoalActionPacket = z.infer<typeof goalActionPacketSchema>
 type GoalActionTaskStatus = z.infer<typeof taskStatusSchema> | undefined
+type CanonicalLane = 'planned' | 'in_progress' | 'in_review' | 'merging' | 'done'
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -247,6 +272,7 @@ function normalizeActionPacketInput(raw: unknown): unknown {
             if (type === 'create_decision_topic') {
                 return {
                     ...item,
+                    scope: getAlias(item, 'scope', 'scope'),
                     taskId: getAlias(item, 'taskId', 'task_id'),
                     body: buildDecisionTopicBody(item)
                 }
@@ -546,6 +572,50 @@ function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorksp
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
+function getTaskLane(task: StoredTask): CanonicalLane {
+    const status = task.status.trim().toLowerCase()
+    if (task.worktreeMergedAt || task.mergeRuntime?.status === 'succeeded' || status === 'done' || status === 'finished') {
+        return 'done'
+    }
+    if (task.mergeRuntime) {
+        return 'merging'
+    }
+    if (status === 'review' || status === 'in_review') return 'in_review'
+    if (status === 'running' || status === 'in_progress') return 'in_progress'
+    if (status === 'blocked') {
+        if (task.previewRuntime?.status === 'blocked' || task.initRuntime?.status === 'blocked' || task.activeSessionId) return 'in_progress'
+        return 'planned'
+    }
+    return 'planned'
+}
+
+function appendHopiActionsGoalEvent(options: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    sessionId: string
+    action: string
+    entity: { type: 'goal' | 'task' | 'decision_topic'; id: string }
+    before?: Record<string, unknown> | null
+    after?: Record<string, unknown> | null
+    reason?: string | null
+}): void {
+    appendGoalEvent({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace,
+        action: options.action,
+        entity: options.entity,
+        before: options.before,
+        after: options.after,
+        reason: options.reason,
+        source: {
+            kind: 'hopi_actions',
+            sessionId: options.sessionId
+        }
+    })
+}
+
 function findGoalTodoTitle(options: {
     project: StoredProject
     goal: StoredGoal
@@ -606,6 +676,31 @@ function syncGoalTodoRef(options: {
     })
 }
 
+function isDecisionTaskTargetInGoal(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    taskId: string
+}): boolean {
+    const linkedTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (linkedTask) {
+        return linkedTask.projectId === options.project.id && linkedTask.goalId === options.goal.id
+    }
+
+    const todo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    return todo.sections.some((section) => (
+        section.id === options.taskId
+        || section.taskId === options.taskId
+        || section.todoRef === options.taskId
+    ))
+}
+
 function getGoalTodoStatusTagForKind(kind: GoalTodoUpdateKind): { status: GoalTodoStatus; tag: string | null } {
     switch (kind) {
         case 'planning':
@@ -631,11 +726,41 @@ function getGoalTodoKindForTaskStatus(status: GoalActionTaskStatus): GoalTodoUpd
     return 'running'
 }
 
-function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): 'planner' | 'generator' | 'evaluator' | 'radar' | null {
+function shouldDeferAcceptedWorktreeGoalTodoSync(options: {
+    engine: SyncEngine
+    namespace: string
+    project: StoredProject
+    task: StoredTask
+    status: GoalActionTaskStatus
+}): boolean {
+    if (options.status !== 'done' && options.status !== 'finished') {
+        return false
+    }
+    if (options.project.defaultSessionType !== 'worktree') {
+        return false
+    }
+    if (
+        options.task.archivedAt
+        || options.task.worktreeMergedAt
+        || options.task.worktreeMergeCommit
+        || !options.task.activeSessionId
+    ) {
+        return false
+    }
+
+    const session = options.engine.getSessionByNamespace(options.task.activeSessionId, options.namespace)
+        ?? options.engine.getSession(options.task.activeSessionId)
+    return Boolean(session?.metadata?.worktree)
+}
+
+function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'role' | 'source'>): 'planner' | 'generator' | 'evaluator' | 'radar' | null {
     if (!task.goalId) return null
 
     const status = (task.status ?? '').trim().toLowerCase()
     if (status === 'review' || status === 'in_review') return 'evaluator'
+
+    const role = (task.role ?? '').trim().toLowerCase()
+    if (role === 'planner' || role === 'radar' || role === 'evaluator' || role === 'generator') return role
 
     const source = (task.source ?? '').trim().toLowerCase()
     if (source === 'planner') return 'planner'
@@ -646,7 +771,7 @@ function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'sou
 
 function normalizeUpdateCurrentTaskStatusForRole(
     status: GoalActionTaskStatus,
-    task: Pick<StoredTask, 'goalId' | 'status' | 'source'>
+    task: Pick<StoredTask, 'goalId' | 'status' | 'role' | 'source'>
 ): GoalActionTaskStatus {
     if (status !== 'finished' && status !== 'done') {
         return status
@@ -657,7 +782,7 @@ function normalizeUpdateCurrentTaskStatusForRole(
 
 function getUpdateCurrentTaskSourceForRole(
     status: GoalActionTaskStatus,
-    task: Pick<StoredTask, 'goalId' | 'status' | 'source'>
+    task: Pick<StoredTask, 'goalId' | 'status' | 'role' | 'source'>
 ): string | null | undefined {
     const role = getGoalTaskActionRole(task)
     if (role !== 'evaluator') {
@@ -778,6 +903,23 @@ export function applyGoalActionPacketFromSession(options: {
                 namespace: options.namespace,
                 data: { taskId: created.id }
             })
+            appendHopiActionsGoalEvent({
+                project,
+                goal,
+                defaultWorkspace,
+                sessionId: options.sessionId,
+                action: 'task_created',
+                entity: { type: 'task', id: created.id },
+                after: {
+                    lane: getTaskLane(created),
+                    status: created.status,
+                    title: created.title,
+                    role: created.role,
+                    source: created.source,
+                    goalTodoRef: created.goalTodoRef
+                },
+                reason: action.description ?? action.contract ?? null
+            })
             touchedProject = true
             continue
         }
@@ -805,7 +947,16 @@ export function applyGoalActionPacketFromSession(options: {
                 finishedAt: statusChangingToFinished ? Date.now() : undefined
             })
             if (updated) {
-                if (updated.goalTodoRef) {
+                if (
+                    updated.goalTodoRef
+                    && !shouldDeferAcceptedWorktreeGoalTodoSync({
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        project,
+                        task: updated,
+                        status
+                    })
+                ) {
                     syncGoalTodoRef({
                         store: options.store,
                         namespace: options.namespace,
@@ -818,6 +969,24 @@ export function applyGoalActionPacketFromSession(options: {
                     engine: options.engine,
                     namespace: options.namespace,
                     task: updated
+                })
+                appendHopiActionsGoalEvent({
+                    project,
+                    goal,
+                    defaultWorkspace,
+                    sessionId: options.sessionId,
+                    action: getTaskLane(latest) === getTaskLane(updated) ? 'task_updated' : 'task_lane_changed',
+                    entity: { type: 'task', id: updated.id },
+                    before: {
+                        lane: getTaskLane(latest),
+                        status: latest.status
+                    },
+                    after: {
+                        lane: getTaskLane(updated),
+                        status: updated.status,
+                        title: updated.title
+                    },
+                    reason: action.handoff ?? action.evidence ?? null
                 })
                 touchedProject = true
             }
@@ -833,30 +1002,59 @@ export function applyGoalActionPacketFromSession(options: {
                 deployRequiresApproval: action.deployRequiresApproval
             })
             if (updatedGoal) {
+                appendHopiActionsGoalEvent({
+                    project,
+                    goal,
+                    defaultWorkspace,
+                    sessionId: options.sessionId,
+                    action: 'goal_updated',
+                    entity: { type: 'goal', id: updatedGoal.id },
+                    before: {
+                        status: goal.status,
+                        currentFocus: goal.currentFocus,
+                        successCriteria: goal.successCriteria
+                    },
+                    after: {
+                        status: updatedGoal.status,
+                        currentFocus: updatedGoal.currentFocus,
+                        successCriteria: updatedGoal.successCriteria
+                    },
+                    reason: action.currentFocus ?? action.successCriteria ?? null
+                })
                 touchedProject = true
             }
             continue
         }
 
         if (action.type === 'create_decision_topic') {
-            const taskId = action.taskId === null ? null : action.taskId ?? current.id
+            const taskId = action.scope === 'task' ? action.taskId! : null
             if (taskId) {
-                const linkedTask = options.store.tasks.getTaskByNamespace(taskId, options.namespace)
-                if (!linkedTask || linkedTask.projectId !== current.projectId || linkedTask.goalId !== current.goalId) {
+                if (!isDecisionTaskTargetInGoal({
+                    store: options.store,
+                    namespace: options.namespace,
+                    project,
+                    goal,
+                    defaultWorkspace,
+                    taskId
+                })) {
                     continue
                 }
             }
 
-            const topic = options.store.goalDecisionTopics.create({
+            const topic = createGoalDecisionTopicInDocs({
                 id: randomUUID(),
-                projectId: current.projectId,
-                goalId: current.goalId,
-                namespace: options.namespace,
+                project,
+                goal,
+                defaultWorkspace,
+                scope: action.scope,
                 taskId,
                 title: action.title,
                 body: action.body,
                 blocking: action.blocking ?? true
             })
+            if (!topic) {
+                continue
+            }
             touchedProject = true
             notifyProjectController({
                 store: options.store,
@@ -869,35 +1067,63 @@ export function applyGoalActionPacketFromSession(options: {
                 title: topic.title,
                 body: topic.body
             })
+            appendHopiActionsGoalEvent({
+                project,
+                goal,
+                defaultWorkspace,
+                sessionId: options.sessionId,
+                action: 'decision_topic_created',
+                entity: { type: 'decision_topic', id: topic.id },
+                after: {
+                    status: topic.status,
+                    scope: topic.scope,
+                    blocking: topic.blocking,
+                    taskId: topic.taskId
+                },
+                reason: topic.body
+            })
 
-            if (topic.blocking && topic.taskId) {
+            if (topic.blocking && topic.scope === 'task' && topic.taskId) {
                 const linkedTask = options.store.tasks.getTaskByNamespace(topic.taskId, options.namespace)
-                if (linkedTask && linkedTask.status !== 'finished' && linkedTask.status !== 'done' && linkedTask.status !== 'blocked') {
-                    const blocked = options.store.tasks.updateTaskByNamespace(linkedTask.id, options.namespace, {
+                if (linkedTask && linkedTask.status !== 'finished' && linkedTask.status !== 'done') {
+                    const blockedTask = options.store.tasks.updateTaskByNamespace(linkedTask.id, options.namespace, {
                         status: 'blocked',
-                        blockedReason: topic.body,
-                        blockedSource: 'decision_topic',
-                        blockedSessionId: options.sessionId
+                        blockedReason: buildDecisionBlockedReason(topic),
+                        blockedSource: 'decision',
+                        blockedSessionId: null
                     })
-                    if (blocked) {
+                    if (blockedTask) {
                         syncGoalTodoRef({
                             store: options.store,
                             namespace: options.namespace,
                             project,
-                            task: blocked,
+                            task: blockedTask,
                             kind: 'blocked'
                         })
-                        emitTaskUpdated({
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task: blocked
-                        })
                     }
+                    emitTaskUpdated({
+                        engine: options.engine,
+                        namespace: options.namespace,
+                        task: blockedTask ?? linkedTask
+                    })
                 }
-            } else if (topic.blocking) {
-                options.store.goals.updateGoalByNamespace(goal.id, options.namespace, {
+            } else if (topic.blocking && topic.scope === 'goal') {
+                const blockedGoal = options.store.goals.updateGoalByNamespace(goal.id, options.namespace, {
                     status: 'blocked'
                 })
+                if (blockedGoal) {
+                    appendHopiActionsGoalEvent({
+                        project,
+                        goal,
+                        defaultWorkspace,
+                        sessionId: options.sessionId,
+                        action: 'goal_updated',
+                        entity: { type: 'goal', id: blockedGoal.id },
+                        before: { status: goal.status },
+                        after: { status: blockedGoal.status },
+                        reason: topic.body
+                    })
+                }
             }
         }
     }

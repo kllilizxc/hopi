@@ -3,10 +3,19 @@ import { buildUniqueGoalKey } from '@hopi/protocol'
 import { GoalStatusSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
-import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHandoff'
+import type { Store, StoredGoal, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../../store'
+import { buildDecisionBlockedReason, prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHandoff'
+import {
+    createGoalDecisionTopicInDocs,
+    findGoalDecisionTopicLocation,
+    readGoalDecisionTopics,
+    readGoalDecisionTopicsWithLegacyBackfill,
+    resolveGoalDecisionTopicInDocs
+} from '../../sync/goals/goalDecisions'
+import { executeGoalAssistantCommand } from '../../sync/goals/goalAssistantCommands'
 import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
 import { buildGoalDocsImportPreview, importGoalDocs } from '../../sync/goals/goalDocsImport'
+import { appendGoalEvent } from '../../sync/goals/goalEvents'
 import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState } from '../../sync/goals/goalTodo'
 import { syncTaskStateToGoalTodo } from '../../sync/goals/goalTodoTaskSync'
 import { notifyProjectController } from '../../sync/projectController'
@@ -19,7 +28,8 @@ const createGoalSchema = z.object({
     description: z.string().max(20_000).nullable().optional(),
     successCriteria: z.string().max(20_000).nullable().optional(),
     autopilotEnabled: z.boolean().optional(),
-    deployRequiresApproval: z.boolean().optional()
+    deployRequiresApproval: z.boolean().optional(),
+    clientRequestId: z.string().trim().min(1).max(128).optional()
 })
 
 const updateGoalSchema = z.object({
@@ -33,10 +43,26 @@ const updateGoalSchema = z.object({
 })
 
 const createTopicSchema = z.object({
+    scope: z.enum(['goal', 'task']),
     taskId: z.string().min(1).nullable().optional(),
     title: z.string().trim().min(1).max(255),
     body: z.string().max(20_000),
     blocking: z.boolean().optional()
+}).superRefine((topic, ctx) => {
+    if (topic.scope === 'task' && !topic.taskId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['taskId'],
+            message: 'Task-scoped decision topics require taskId'
+        })
+    }
+    if (topic.scope === 'goal' && topic.taskId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['taskId'],
+            message: 'Goal-scoped decision topics must not include taskId'
+        })
+    }
 })
 
 const resolveTopicSchema = z.object({
@@ -104,11 +130,13 @@ function buildPlannerSeedTaskContract(goal: {
         '## Acceptance',
         '',
         `- Read and update .hopi/docs/goals/${goal.goalKey}/goal.md.`,
-        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml as structured YAML with planning items tagged ready/candidate/deferred.`,
+        `- Read and update .hopi/docs/goals/${goal.goalKey}/design.md.`,
+        '- Update the design doc before creating or reshaping engineering tasks.',
+        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml as structured YAML using canonical statuses candidate/planned/in_progress/in_review/merging/blocked/done; blocked is an automation hold, not a separate board lane.`,
         '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough, usually 2-3 independent tasks when the lane is empty.',
         '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
-        '- If product intent is unclear, create one blocking DecisionTopic with a concrete question and stop.',
-        '- Finish with a HOPI_ACTIONS JSON packet that creates planning/ready kanban tasks or a blocking DecisionTopic.',
+        '- If product intent is unclear, create one goal-scoped blocking DecisionTopic with a concrete question and stop.',
+        '- Finish with a HOPI_ACTIONS JSON packet that creates planning/ready kanban tasks or a scoped blocking DecisionTopic.',
         '- For each create_goal_task, write a concise description and a lightweight markdown contract with Type, Context, Involved Files / Areas, Scope, Acceptance, Suggested Checks, and Non-goals / Constraints.',
         '- Include verified files when known; otherwise name likely areas and unknowns instead of inventing paths.',
         '- Use update_current_task inside HOPI_ACTIONS to record handoff/evidence before marking this planning task done.',
@@ -137,6 +165,78 @@ function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorksp
     return project.defaultWorkspaceId
         ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function findGoalScopedBlockingDecision(topics: Array<{ scope: string; status: string; blocking: boolean }>): StoredGoalDecisionTopic | null {
+    return topics.find((topic): topic is StoredGoalDecisionTopic => (
+        topic.scope === 'goal'
+        && topic.status === 'waiting'
+        && topic.blocking
+    )) ?? null
+}
+
+function buildGoalResponse(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+}): StoredGoal & {
+    blockedSource: string | null
+    blockedReason: string | null
+    blockedAt: number | null
+} {
+    if (options.goal.status !== 'blocked') {
+        return {
+            ...options.goal,
+            blockedSource: null,
+            blockedReason: null,
+            blockedAt: null
+        }
+    }
+
+    const topics = readGoalDecisionTopicsWithLegacyBackfill({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    const blocker = findGoalScopedBlockingDecision(topics)
+    return {
+        ...options.goal,
+        blockedSource: blocker ? 'decision' : null,
+        blockedReason: blocker ? buildDecisionBlockedReason(blocker) : null,
+        blockedAt: blocker?.updatedAt ?? null
+    }
+}
+
+function findDecisionTaskTarget(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    taskId: string
+}): { task: StoredTask | null } | null {
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (stored) {
+        return stored.projectId === options.project.id && stored.goalId === options.goal.id
+            ? { task: stored }
+            : null
+    }
+
+    const todo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    const matchingSection = todo.sections.find((section) => (
+        section.id === options.taskId
+        || section.taskId === options.taskId
+        || section.todoRef === options.taskId
+    ))
+    return matchingSection ? { task: null } : null
 }
 
 function ensurePlannerSeedTask(options: {
@@ -187,6 +287,7 @@ function ensurePlannerSeedTask(options: {
         workspaceId: defaultWorkspace?.id ?? null,
         ...getProjectDefaultTaskRuntimeSettings(options.project, { autonomous: true }),
         workflowProfile: 'default',
+        role: 'planner',
         source: 'planner',
         contract: buildPlannerSeedTaskContract(options.goal),
         subTasks: [
@@ -235,12 +336,13 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Project not found' }, 404)
         }
 
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
         const engine = options.getSyncEngine()
         const imported = importGoalDocs({
             store: options.store,
             project,
             namespace,
-            defaultWorkspace: getDefaultWorkspace(options.store, project)
+            defaultWorkspace
         })
         const goals = options.store.goals.listGoalsByProjectAndNamespace(projectId, namespace)
         let repaired = false
@@ -269,7 +371,15 @@ export function createGoalsRoutes(options: {
                 namespace
             })
         }
-        return c.json({ goals })
+        return c.json({
+            goals: goals.map((goal) => buildGoalResponse({
+                store: options.store,
+                namespace,
+                project,
+                goal,
+                defaultWorkspace
+            }))
+        })
     })
 
     app.get('/projects/:projectId/goals/:goalId/todo', (c) => {
@@ -353,20 +463,60 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
+        const clientRequestId = parsed.data.clientRequestId?.trim() || null
+        if (clientRequestId) {
+            const existing = options.store.goals.getGoalByClientRequestIdAndNamespace(projectId, namespace, clientRequestId)
+            if (existing) {
+                const seedTask = ensurePlannerSeedTask({
+                    store: options.store,
+                    project,
+                    goal: existing,
+                    namespace
+                })
+                const engine = options.getSyncEngine()
+                if (seedTask) {
+                    emitTaskAdded({
+                        engine,
+                        projectId,
+                        namespace,
+                        taskId: seedTask.id
+                    })
+                    emitProjectUpdated({
+                        engine,
+                        projectId,
+                        namespace
+                    })
+                }
+                return c.json({ goal: existing })
+            }
+        }
+
         const goalKey = buildUniqueGoalKey(parsed.data.title, (candidate) => (
             Boolean(options.store.goals.getGoalByGoalKeyAndNamespace(projectId, namespace, candidate))
         ))
-        const goal = options.store.goals.createGoal({
-            id: randomUUID(),
-            projectId,
-            namespace,
-            goalKey,
-            title: parsed.data.title,
-            description: parsed.data.description ?? null,
-            successCriteria: parsed.data.successCriteria ?? null,
-            autopilotEnabled: parsed.data.autopilotEnabled ?? true,
-            deployRequiresApproval: parsed.data.deployRequiresApproval ?? true
-        })
+        let goal: StoredGoal
+        try {
+            goal = options.store.goals.createGoal({
+                id: randomUUID(),
+                projectId,
+                namespace,
+                goalKey,
+                clientRequestId,
+                title: parsed.data.title,
+                description: parsed.data.description ?? null,
+                successCriteria: parsed.data.successCriteria ?? null,
+                autopilotEnabled: parsed.data.autopilotEnabled ?? true,
+                deployRequiresApproval: parsed.data.deployRequiresApproval ?? true
+            })
+        } catch (error) {
+            const existing = clientRequestId
+                ? options.store.goals.getGoalByClientRequestIdAndNamespace(projectId, namespace, clientRequestId)
+                : null
+            if (!existing) {
+                throw error
+            }
+            goal = existing
+        }
         const plannerTask = ensurePlannerSeedTask({
             store: options.store,
             project,
@@ -485,8 +635,18 @@ export function createGoalsRoutes(options: {
         if (!goal) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        const project = options.store.projects.getProjectByNamespace(goal.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
 
-        const topics = options.store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        const topics = readGoalDecisionTopicsWithLegacyBackfill({
+            store: options.store,
+            namespace,
+            project,
+            goal,
+            defaultWorkspace: getDefaultWorkspace(options.store, project)
+        })
         return c.json({ topics })
     })
 
@@ -508,65 +668,86 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        if (parsed.data.taskId) {
-            const task = options.store.tasks.getTaskByNamespace(parsed.data.taskId, namespace)
-            if (!task || task.projectId !== goal.projectId || task.goalId !== goalId) {
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
+        const taskTarget = parsed.data.scope === 'task' && parsed.data.taskId
+            ? findDecisionTaskTarget({
+                store: options.store,
+                namespace,
+                project,
+                goal,
+                defaultWorkspace,
+                taskId: parsed.data.taskId
+            })
+            : null
+        if (parsed.data.scope === 'task' && parsed.data.taskId) {
+            if (!taskTarget) {
                 return c.json({ error: 'Task not found' }, 404)
             }
         }
+        const taskId = parsed.data.scope === 'task' ? parsed.data.taskId! : null
 
-        const topic = options.store.goalDecisionTopics.create({
+        const topic = createGoalDecisionTopicInDocs({
             id: randomUUID(),
-            projectId: goal.projectId,
-            goalId,
-            namespace,
-            taskId: parsed.data.taskId ?? null,
+            project,
+            goal,
+            defaultWorkspace,
+            scope: parsed.data.scope,
+            taskId,
             title: parsed.data.title,
             body: parsed.data.body,
             blocking: parsed.data.blocking ?? true
         })
+        if (!topic) {
+            return c.json({ error: 'Project has no workspace' }, 400)
+        }
 
         const engine = options.getSyncEngine()
-        if (topic.blocking && topic.taskId) {
-            const task = options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
-            if (task && task.status !== 'done' && task.status !== 'finished' && task.status !== 'blocked') {
+        if (topic.blocking && topic.scope === 'task' && topic.taskId) {
+            const task = taskTarget?.task ?? options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
+            if (task && task.status !== 'done' && task.status !== 'finished') {
                 const blockedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
                     status: 'blocked',
-                    blockedReason: parsed.data.body,
-                    blockedSource: 'decision_topic',
+                    blockedReason: buildDecisionBlockedReason(topic),
+                    blockedSource: 'decision',
                     blockedSessionId: null
                 })
                 if (blockedTask) {
-                    if (blockedTask.goalId && blockedTask.goalTodoRef) {
-                        upsertGoalTodoTaskState({
-                            project,
-                            goal,
-                            defaultWorkspace: getDefaultWorkspace(options.store, project),
-                            taskId: blockedTask.goalTodoRef,
-                            status: 'blocked',
-                            tag: 'unknown',
-                            title: blockedTask.title,
-                            body: blockedTask.description,
-                            blocked: {
-                                kind: 'decision_topic',
-                                summary: parsed.data.body,
-                                updatedAt: Date.now()
-                            }
-                        })
-                    }
-                    emitTaskUpdated({
-                        engine,
-                        projectId: blockedTask.projectId,
+                    syncTaskStateToGoalTodo({
+                        store: options.store,
                         namespace,
-                        taskId: blockedTask.id
+                        task: blockedTask,
+                        project,
+                        defaultWorkspace
                     })
                 }
+                emitTaskUpdated({
+                    engine,
+                    projectId: task.projectId,
+                    namespace,
+                    taskId: task.id
+                })
             }
-        } else if (topic.blocking) {
+        } else if (topic.blocking && topic.scope === 'goal') {
             options.store.goals.updateGoalByNamespace(goal.id, namespace, {
                 status: 'blocked'
             })
         }
+
+        appendGoalEvent({
+            project,
+            goal,
+            defaultWorkspace: getDefaultWorkspace(options.store, project),
+            action: 'decision_topic_created',
+            entity: { type: 'decision_topic', id: topic.id },
+            after: {
+                status: topic.status,
+                scope: topic.scope,
+                blocking: topic.blocking,
+                taskId: topic.taskId
+            },
+            reason: topic.body,
+            source: { kind: 'api_route', id: 'goals.topics.create' }
+        })
 
         notifyProjectController({
             store: options.store,
@@ -589,6 +770,20 @@ export function createGoalsRoutes(options: {
         return c.json({ topic })
     })
 
+    app.post('/goals/:goalId/assistant-commands', async (c) => {
+        const namespace = c.get('namespace')
+        const goalId = c.req.param('goalId')
+        const json = await c.req.json().catch(() => null)
+        const result = await executeGoalAssistantCommand({
+            store: options.store,
+            engine: options.getSyncEngine(),
+            namespace,
+            goalId,
+            rawCommand: json
+        })
+        return c.json(result.body, result.status)
+    })
+
     app.post('/goal-topics/:topicId/resolve', async (c) => {
         const namespace = c.get('namespace')
         const topicId = c.req.param('topicId')
@@ -598,20 +793,41 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        const topic = options.store.goalDecisionTopics.resolveByNamespace(topicId, namespace, parsed.data.resolution)
+        const location = findGoalDecisionTopicLocation({
+            store: options.store,
+            namespace,
+            topicId
+        })
+        if (!location) {
+            return c.json({ error: 'Topic not found' }, 404)
+        }
+        const current = location.topic
+        const topic = resolveGoalDecisionTopicInDocs({
+            project: location.project,
+            goal: location.goal,
+            defaultWorkspace: location.defaultWorkspace,
+            topicId,
+            resolution: parsed.data.resolution
+        })
         if (!topic) {
             return c.json({ error: 'Topic not found' }, 404)
         }
 
         const engine = options.getSyncEngine()
-        const remainingBlockingGoalTopics = topic.blocking
-            ? options.store.goalDecisionTopics
-                .listByGoalAndNamespace(topic.goalId, namespace)
+        const remainingBlockingTopics = topic.blocking
+            ? readGoalDecisionTopics({
+                project: location.project,
+                goal: location.goal,
+                defaultWorkspace: location.defaultWorkspace
+            })
                 .filter((candidate) => candidate.blocking && candidate.status === 'waiting')
             : []
-        if (topic.blocking && topic.taskId) {
-            const stillBlocked = remainingBlockingGoalTopics
+        const remainingBlockingGoalTopics = remainingBlockingTopics
+            .filter((candidate) => candidate.scope === 'goal')
+        if (topic.blocking && topic.scope === 'task' && topic.taskId) {
+            const stillBlocked = remainingBlockingTopics
                 .some((candidate) => (
+                    candidate.scope === 'task' &&
                     candidate.taskId === topic.taskId &&
                     candidate.blocking &&
                     candidate.status === 'waiting'
@@ -621,7 +837,10 @@ export function createGoalsRoutes(options: {
                 if (task) {
                     const plannedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
                         status: task.status === 'blocked' ? 'planning' : task.status,
-                        handoff: prependTaskHandoffDecisionContext(task, topic)
+                        handoff: prependTaskHandoffDecisionContext(task, topic),
+                        blockedReason: null,
+                        blockedSource: null,
+                        blockedSessionId: null
                     })
                     if (plannedTask) {
                         if (task.status === 'blocked' && plannedTask.goalId && plannedTask.goalTodoRef) {
@@ -651,7 +870,7 @@ export function createGoalsRoutes(options: {
                 }
             }
         }
-        if (topic.blocking && remainingBlockingGoalTopics.length === 0) {
+        if (topic.blocking && topic.scope === 'goal' && remainingBlockingGoalTopics.length === 0) {
             const goal = options.store.goals.getGoalByNamespace(topic.goalId, namespace)
             if (goal?.status === 'blocked') {
                 options.store.goals.updateGoalByNamespace(goal.id, namespace, {
@@ -664,6 +883,27 @@ export function createGoalsRoutes(options: {
             engine,
             projectId: topic.projectId,
             namespace
+        })
+
+        appendGoalEvent({
+            project: location.project,
+            goal: location.goal,
+            defaultWorkspace: location.defaultWorkspace,
+            action: 'decision_topic_resolved',
+            entity: { type: 'decision_topic', id: topic.id },
+            before: {
+                status: current.status,
+                scope: current.scope,
+                taskId: current.taskId
+            },
+            after: {
+                status: topic.status,
+                scope: topic.scope,
+                taskId: topic.taskId,
+                resolution: topic.resolution
+            },
+            reason: parsed.data.resolution,
+            source: { kind: 'api_route', id: 'goal-topics.resolve' }
         })
 
         return c.json({ topic })

@@ -25,6 +25,7 @@ export class GoalDecisionTopicStore {
         projectId: string
         goalId: string
         namespace: string
+        scope?: StoredGoalDecisionTopic['scope']
         taskId?: string | null
         title: string
         body: string

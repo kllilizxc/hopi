@@ -701,7 +701,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         db.close()
     })
@@ -733,7 +733,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         db.close()
     })
@@ -767,6 +767,7 @@ describe('Store schema migration safety', () => {
         expect(projectColumns).toContain('agent_output_language')
         const goalColumns = (db.prepare('PRAGMA table_info(goals)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(goalColumns).toContain('automation_paused_at')
+        expect(goalColumns).toContain('client_request_id')
 
         const taskForeignKeys = db.prepare('PRAGMA foreign_key_list(tasks)').all() as Array<{
             table: string
@@ -782,7 +783,7 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         const project = store.projects.createProject({
             id: 'goal-project',
@@ -950,7 +951,7 @@ describe('Store schema migration safety', () => {
 
         const migratedDb = (migratedStore as unknown as { db: Database }).db
         const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
         migratedDb.close()
     })
 
@@ -1086,7 +1087,7 @@ describe('Store schema migration safety', () => {
 
         const migratedDb = (migratedStore as unknown as { db: Database }).db
         const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
         migratedDb.close()
     })
 
@@ -1112,7 +1113,7 @@ describe('Store schema migration safety', () => {
         expect(store.goals.getGoalByGoalKeyAndNamespace('p-goal-key', 'default', 'portable-goal')?.id).toBe('g1')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         db.close()
     })

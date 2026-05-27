@@ -8,27 +8,23 @@ describe('goal todo yaml', () => {
     it('parses goal-scoped yaml items by goalKey', () => {
         const parsed = parseGoalTodoYaml([
             'version: 1',
-            'goals:',
-            '  - goalKey: mobile-remote-control',
-            '    goalId: goal-mobile',
-            '    title: Mobile remote control',
-            '    items:',
-            '      - ref: reconnect-indicator',
-            '        status: ready',
-            '        title: Add reconnect indicator',
-            '      - ref: resume-affordance',
-            '        status: candidate',
-            '        title: Improve resume affordance',
-            '  - goalKey: another-goal',
-            '    items:',
-            '      - ref: ignore',
-            '        status: ready',
-            '        title: Ignore this item'
+            'goal:',
+            '  goalKey: mobile-remote-control',
+            '  title: Mobile remote control',
+            'items:',
+            '  - ref: reconnect-indicator',
+            '    status: planned',
+            '    title: Add reconnect indicator',
+            '  - ref: resume-affordance',
+            '    status: candidate',
+            '    title: Improve resume affordance'
         ].join('\n'), {
             goalId: 'local-db-id',
             goalKey: 'mobile-remote-control'
         })
 
+        expect(parsed.rawYaml).toContain('goal:')
+        expect(parsed.rawYaml).not.toContain('goals:')
         expect(parsed.sections.map((section) => section.title)).toEqual([
             'Add reconnect indicator',
             'Improve resume affordance'
@@ -40,14 +36,13 @@ describe('goal todo yaml', () => {
     it('moves yaml items through promoted and done states', () => {
         const yaml = [
             'version: 1',
-            'goals:',
-            '  - goalKey: ts',
-            '    goalId: goal-ts',
-            '    title: Fix TS',
-            '    items:',
-            '      - ref: ts-ready-1',
-            '        status: ready',
-            '        title: Fix battle legacy types'
+            'goal:',
+            '  goalKey: ts',
+            '  title: Fix TS',
+            'items:',
+            '  - ref: ts-ready-1',
+            '    status: planned',
+            '    title: Fix battle legacy types'
         ].join('\n')
 
         const promoted = updateGoalTodoYaml(yaml, {
@@ -58,8 +53,12 @@ describe('goal todo yaml', () => {
             title: 'Fix battle legacy types',
             kind: 'promoted'
         })
-        expect(promoted).toContain('status: running')
-        expect(promoted).toContain('tag: promoted')
+        expect(promoted).toContain('goal:')
+        expect(promoted).not.toContain('goals:')
+        expect(promoted).toContain('ref: ts-ready-1')
+        expect(promoted).not.toContain('id: ts-ready-1')
+        expect(promoted).toContain('status: in_progress')
+        expect(promoted).not.toContain('tag:')
         expect(promoted).not.toContain('taskId:')
 
         const done = updateGoalTodoYaml(promoted, {
@@ -82,7 +81,7 @@ describe('goal todo yaml', () => {
     })
 
     it('inserts a yaml item when no existing todo item matches', () => {
-        const updated = updateGoalTodoYaml('version: 1\ngoals: []\n', {
+        const updated = updateGoalTodoYaml('version: 1\ngoal:\n  goalKey: ts\n  title: Fix TS\nitems: []\n', {
             goalId: 'goal-ts',
             goalKey: 'ts',
             goalTitle: 'Fix TS',
@@ -92,6 +91,11 @@ describe('goal todo yaml', () => {
             kind: 'promoted'
         })
 
+        expect(updated).toContain('goal:')
+        expect(updated).not.toContain('goals:')
+        expect(updated).toContain('ref: ts-ready-7')
+        expect(updated).not.toContain('id: ts-ready-7')
+        expect(updated).toContain('status: in_progress')
         const parsed = parseGoalTodoYaml(updated, { goalId: 'goal-ts', goalKey: 'ts' })
         expect(parsed.sections[0]).toMatchObject({
             kind: 'promoted',
@@ -101,6 +105,59 @@ describe('goal todo yaml', () => {
             taskId: 'ts-ready-7',
             todoRef: 'ts-ready-7'
         })
+    })
+
+    it('refreshes goal metadata when writing an existing goal todo file', () => {
+        const updated = updateGoalTodoYaml([
+            'version: 1',
+            'goal:',
+            '  goalKey: deck-manager',
+            '  goalId: old-imported-goal-id',
+            '  title: Old title',
+            'items:',
+            '  - ref: deck-model',
+            '    status: candidate',
+            '    title: Define deck model'
+        ].join('\n'), {
+            goalId: 'current-db-goal-id',
+            goalKey: 'deck-manager',
+            goalTitle: 'Deck Manager',
+            todoRef: 'deck-model',
+            taskId: 'deck-model',
+            title: 'Define deck model',
+            kind: 'planning'
+        })
+
+        expect(updated).toContain('goalId: current-db-goal-id')
+        expect(updated).toContain('title: Deck Manager')
+        expect(updated).not.toContain('old-imported-goal-id')
+        expect(updated).not.toContain('Old title')
+    })
+
+    it('normalizes legacy deferred todo items into candidate reservoir items', () => {
+        const parsed = parseGoalTodoYaml([
+            'version: 1',
+            'goal:',
+            '  goalKey: deck-manager',
+            'items:',
+            '  - ref: later-pass',
+            '    status: deferred',
+            '    title: Parked follow-up',
+            '  - ref: tagged-deferred',
+            '    status: planned',
+            '    tag: deferred',
+            '    title: Legacy tagged follow-up'
+        ].join('\n'), {
+            goalId: 'goal-deck',
+            goalKey: 'deck-manager'
+        })
+
+        expect(parsed.sections.map((section) => section.kind)).toEqual(['candidate', 'candidate'])
+        expect(parsed.sections.map((section) => section.status)).toEqual(['planning', 'planning'])
+        expect(parsed.sections.map((section) => section.tag)).toEqual(['candidate', 'candidate'])
+        expect(parsed.rawYaml).toContain('status: candidate')
+        expect(parsed.rawYaml).not.toContain('status: deferred')
+        expect(parsed.rawYaml).not.toContain('tag: deferred')
     })
 
     it('converts legacy markdown into yaml', () => {
@@ -222,9 +279,12 @@ describe('goal todo yaml', () => {
         expect(updated).toBe(true)
         expect(existsSync(todoPath)).toBe(true)
         const todo = readFileSync(todoPath, 'utf8')
-        expect(todo).toContain('id: restore-docs')
-        expect(todo).toContain('status: running')
-        expect(todo).toContain('tag: promoted')
+        expect(todo).toContain('goal:')
+        expect(todo).not.toContain('goals:')
+        expect(todo).toContain('ref: restore-docs')
+        expect(todo).not.toContain('id: restore-docs')
+        expect(todo).toContain('status: in_progress')
+        expect(todo).not.toContain('tag:')
         expect(todo).not.toContain('taskId:')
     })
 })

@@ -9,6 +9,9 @@ import { Store } from '../store'
 import { TaskAutomation } from './taskAutomation'
 import type { SyncEngine } from './syncEngine'
 import { autoMergeAcceptedTask } from './taskAutoMerge'
+import { readGoalEvents } from './goals/goalEvents'
+import { readGoalDecisionTopics } from './goals/goalDecisions'
+import { upsertGoalTodoTaskState } from './goals/goalTodo'
 
 const createdPaths: string[] = []
 const MERGE_BASE = '1111111111111111111111111111111111111111'
@@ -46,6 +49,22 @@ function createTempWorkspace(): string {
     const path = mkdtempSync(join(tmpdir(), 'hopi-task-automation-'))
     createdPaths.push(path)
     return path
+}
+
+function readStoredGoalDecisionTopics(store: Store, options: {
+    namespace: string
+    projectId: string
+    goalId: string
+}) {
+    const project = store.projects.getProjectByNamespace(options.projectId, options.namespace)
+    const goal = store.goals.getGoalByNamespace(options.goalId, options.namespace)
+    if (!project || !goal) {
+        return []
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    return readGoalDecisionTopics({ project, goal, defaultWorkspace })
 }
 
 function createLinkedSession(store: Store, options: {
@@ -657,12 +676,20 @@ describe('TaskAutomation', () => {
         const projectId = 'project-goal-checkpoint-actions'
         const goalId = 'goal-checkpoint-actions'
         const taskId = 'planner-task-checkpoint-actions'
+        const workspaceId = 'workspace-goal-checkpoint-actions'
+        const workspacePath = createTempWorkspace()
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId: 'machine-1',
-            name: 'Goal checkpoint project'
+            name: 'Goal checkpoint project',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -715,6 +742,7 @@ describe('TaskAutomation', () => {
                             actions: [
                                 {
                                     type: 'create_decision_topic',
+                                    scope: 'goal',
                                     taskId: null,
                                     title: 'Milestone review',
                                     body: 'Is this architecture stage sufficient before adding real content?',
@@ -741,13 +769,250 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        const topics = readStoredGoalDecisionTopics(store, { namespace, projectId, goalId })
         expect(topics).toHaveLength(1)
+        expect(store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)).toEqual([])
         expect(topics[0]?.taskId).toBeNull()
+        expect(topics[0]?.scope).toBe('goal')
         expect(topics[0]?.blocking).toBe(true)
         expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('done')
         expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
+    })
+
+    it('marks task-scoped blocking decision topics on the task and records a server event', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-task-decision-actions'
+        const goalId = 'goal-task-decision-actions'
+        const taskId = 'generator-task-decision-actions'
+        const workspaceId = 'workspace-task-decision-actions'
+        const workspacePath = createTempWorkspace()
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Goal task decision project',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build task decision flow',
+            status: 'active'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Implement task decision flow',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'manual',
+            goalTodoRef: 'task-decision-flow',
+            workspaceId
+        })
+
+        const realtimeEvents: SyncEvent[] = []
+        const engine = {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(event: SyncEvent) {
+                realtimeEvents.push(event)
+            }
+        } as unknown as SyncEngine
+
+        const automation = new TaskAutomation(store, engine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: [
+                        'HOPI_ACTIONS:',
+                        '```json',
+                        JSON.stringify({
+                            actions: [
+                                {
+                                    type: 'create_decision_topic',
+                                    scope: 'task',
+                                    taskId,
+                                    title: 'Choose retry behavior',
+                                    body: 'Should this task retry automatically after the API recovers?',
+                                    blocking: true
+                                }
+                            ]
+                        }),
+                        '```'
+                    ].join('\n')
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const topics = readStoredGoalDecisionTopics(store, { namespace, projectId, goalId })
+        expect(topics).toHaveLength(1)
+        expect(store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)).toEqual([])
+        expect(topics[0]?.taskId).toBe(taskId)
+        expect(topics[0]?.scope).toBe('task')
+        expect(topics[0]?.blocking).toBe(true)
+
+        const task = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(task?.status).toBe('blocked')
+        expect(task?.blockedSource).toBe('decision')
+        expect(task?.blockedReason).toBe('Choose retry behavior: Should this task retry automatically after the API recovers?')
+
+        const project = store.projects.getProjectByNamespace(projectId, namespace)
+        const goal = store.goals.getGoalByNamespace(goalId, namespace)
+        const defaultWorkspace = store.workspaces.getWorkspace(workspaceId)
+        expect(project).toBeTruthy()
+        expect(goal).toBeTruthy()
+        const events = project && goal
+            ? readGoalEvents({ project, goal, defaultWorkspace })
+            : []
+        expect(events.some((event) => (
+            event.action === 'decision_topic_created'
+            && event.entity.type === 'decision_topic'
+            && event.entity.id === topics[0]?.id
+            && event.source?.kind === 'hopi_actions'
+        ))).toBe(true)
+        expect(realtimeEvents.some((event) => event.type === 'project-updated')).toBe(true)
+    })
+
+    it('creates task-scoped decision topics for yaml-only todo refs from action packets', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-yaml-decision-actions'
+        const goalId = 'goal-yaml-decision-actions'
+        const plannerTaskId = 'planner-task-yaml-decision-actions'
+        const yamlTaskId = 'yaml-only-decision-target'
+        const workspaceId = 'workspace-yaml-decision-actions'
+        const workspacePath = createTempWorkspace()
+
+        const project = store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Yaml decision actions project',
+            defaultWorkspaceId: workspaceId
+        })
+        const defaultWorkspace = store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Build yaml decision flow',
+            status: 'active'
+        })
+        upsertGoalTodoTaskState({
+            project,
+            goal,
+            defaultWorkspace,
+            taskId: yamlTaskId,
+            status: 'planning',
+            tag: 'candidate',
+            title: 'Yaml-only decision target'
+        })
+
+        const { sessionId, session } = createLinkedSession(store, {
+            namespace,
+            projectId,
+            taskId: plannerTaskId,
+            thinking: false
+        })
+
+        store.tasks.createTask({
+            id: plannerTaskId,
+            projectId,
+            goalId,
+            title: 'Plan yaml decision flow',
+            status: 'running',
+            activeSessionId: sessionId,
+            source: 'planner',
+            workspaceId
+        })
+
+        const automation = new TaskAutomation(store, {
+            getSession(id: string) {
+                return id === sessionId ? session : undefined
+            },
+            handleRealtimeEvent(_event: SyncEvent) {
+            }
+        } as unknown as SyncEngine)
+        automation.handleEvent({ type: 'session-added', sessionId })
+
+        const assistantMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: [
+                        'HOPI_ACTIONS:',
+                        '```json',
+                        JSON.stringify({
+                            actions: [
+                                {
+                                    type: 'create_decision_topic',
+                                    scope: 'task',
+                                    taskId: yamlTaskId,
+                                    title: 'Choose yaml target behavior',
+                                    body: 'Should this candidate stay parked or become ready?',
+                                    blocking: true
+                                }
+                            ]
+                        }),
+                        '```'
+                    ].join('\n')
+                }
+            }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, assistantMsg))
+
+        const readyMsg = store.messages.addMessage(sessionId, {
+            role: 'agent',
+            content: { type: 'event', data: { type: 'ready' } }
+        })
+        automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
+
+        const topics = readStoredGoalDecisionTopics(store, { namespace, projectId, goalId })
+        expect(topics).toHaveLength(1)
+        expect(topics[0]).toMatchObject({
+            scope: 'task',
+            taskId: yamlTaskId,
+            title: 'Choose yaml target behavior',
+            blocking: true
+        })
+        expect(store.tasks.getTaskByNamespace(yamlTaskId, namespace)).toBeNull()
     })
 
     it('accepts planner decision topics that use description instead of body', () => {
@@ -756,12 +1021,20 @@ describe('TaskAutomation', () => {
         const projectId = 'project-goal-checkpoint-description'
         const goalId = 'goal-checkpoint-description'
         const taskId = 'planner-task-checkpoint-description'
+        const workspaceId = 'workspace-goal-checkpoint-description'
+        const workspacePath = createTempWorkspace()
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId: 'machine-1',
-            name: 'Goal checkpoint project'
+            name: 'Goal checkpoint project',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -810,6 +1083,7 @@ describe('TaskAutomation', () => {
                         actions: [
                             {
                                 type: 'create_decision_topic',
+                                scope: 'goal',
                                 taskId: null,
                                 title: 'Milestone review',
                                 description: 'Should we stop after the architecture pass or continue directly into the content spike?',
@@ -840,8 +1114,10 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        const topics = readStoredGoalDecisionTopics(store, { namespace, projectId, goalId })
         expect(topics).toHaveLength(1)
+        expect(store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)).toEqual([])
+        expect(topics[0]?.scope).toBe('goal')
         expect(topics[0]?.body).toBe('Should we stop after the architecture pass or continue directly into the content spike?')
         expect(store.goals.getGoalByNamespace(goalId, namespace)?.status).toBe('blocked')
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('done')
@@ -1074,8 +1350,8 @@ describe('TaskAutomation', () => {
         expect(store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
             .filter((task) => task.goalTodoRef === 'Restore archive docs through storage adapter')).toHaveLength(1)
         const promotedTodo = readFileSync(join(docsRoot, 'goals', 'todo-ref-goal', 'todo.yml'), 'utf8')
-        expect(promotedTodo).toContain('status: planning')
-        expect(promotedTodo).toContain('tag: ready')
+        expect(promotedTodo).toContain('status: planned')
+        expect(promotedTodo).not.toContain('tag:')
         expect(promotedTodo).not.toContain('taskId:')
 
         const evaluatorSession = createLinkedSession(store, {
@@ -1325,9 +1601,9 @@ describe('TaskAutomation', () => {
         automation.handleEvent(toMessageReceivedEvent(reviewSession.sessionId, reviewReady))
 
         const todo = readFileSync(join(docsRoot, 'goals', 'runtime-status-goal', 'todo.yml'), 'utf8')
-        expect(todo).toContain('id: review-ref')
-        expect(todo).toContain('status: review')
-        expect(todo).toContain('tag: in_review')
+        expect(todo).toContain('ref: review-ref')
+        expect(todo).toContain('status: in_review')
+        expect(todo).not.toContain('tag:')
         expect(todo).not.toContain('taskId:')
     })
 
@@ -1458,9 +1734,9 @@ describe('TaskAutomation', () => {
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('blocked')
         const todo = readFileSync(join(goalDir, 'todo.yml'), 'utf8')
-        expect(todo).toContain('id: block-ref')
-        expect(todo).toContain('status: blocked')
-        expect(todo).toContain('tag: unknown')
+        expect(todo).toContain('ref: block-ref')
+        expect(todo).toContain('status: planned')
+        expect(todo).not.toContain('tag:')
         expect(todo).toContain('summary: Agent session exited unexpectedly')
         expect(controllerMessages).toHaveLength(1)
         expect(controllerMessages[0]?.sessionId).toBe(controllerSession.id)
@@ -1909,20 +2185,22 @@ describe('TaskAutomation', () => {
         const taskId = 'generator-task-auto-merge'
         const workspacePath = createTempWorkspace()
         const docsRoot = join(workspacePath, '.hopi', 'docs')
-        mkdirSync(docsRoot, { recursive: true })
-        writeFileSync(join(docsRoot, 'todo.yml'), [
+        const goalTodoPath = join(docsRoot, 'goals', 'auto-merge-goal', 'todo.yml')
+        mkdirSync(join(docsRoot, 'goals', 'auto-merge-goal'), { recursive: true })
+        const initialGoalTodo = [
             'version: 1',
             'goals:',
             '  - goalKey: auto-merge-goal',
             `    goalId: ${goalId}`,
             '    title: Auto merge goal',
             '    items:',
-            '      - ref: map-traversal',
-            '        status: promoted',
+            '      - id: map-traversal',
+            '        status: review',
+            '        tag: in_review',
             '        title: Implement map traversal',
-            '        taskId: generator-task-auto-merge',
             ''
-        ].join('\n'), 'utf8')
+        ].join('\n')
+        writeFileSync(goalTodoPath, initialGoalTodo, 'utf8')
 
         store.projects.createProject({
             id: projectId,
@@ -1986,6 +2264,7 @@ describe('TaskAutomation', () => {
                 }
             },
             async gitMergeWorktreeState() {
+                expect(readFileSync(goalTodoPath, 'utf8')).toBe(initialGoalTodo)
                 return {
                     success: true,
                     sourceBranch: 'task-branch',
@@ -2099,8 +2378,8 @@ describe('TaskAutomation', () => {
         expect(mergeCalls).toBe(1)
         expect(cleanupCalls).toBe(1)
         expect(archiveCalls).toBe(1)
-        const doneTodo = readFileSync(join(docsRoot, 'goals', 'auto-merge-goal', 'todo.yml'), 'utf8')
-        expect(doneTodo).toContain('id: map-traversal')
+        const doneTodo = readFileSync(goalTodoPath, 'utf8')
+        expect(doneTodo).toContain('ref: map-traversal')
         expect(doneTodo).toContain('status: done')
         expect(doneTodo).not.toContain('taskId:')
     })
@@ -2232,7 +2511,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('blocked')
+        expect(accepted?.status).toBe('review')
         expect(accepted?.finishedAt).toBeNull()
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
@@ -3500,7 +3779,7 @@ describe('TaskAutomation', () => {
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('blocked')
+        expect(accepted?.status).toBe('review')
         expect(accepted?.finishedAt).toBeNull()
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
@@ -4045,12 +4324,20 @@ describe('TaskAutomation', () => {
         const projectId = 'project-goal-decision-actions'
         const goalId = 'goal-decision-1'
         const taskId = 'planner-task-decision-1'
+        const workspaceId = 'workspace-goal-decision-actions'
+        const workspacePath = createTempWorkspace()
 
         store.projects.createProject({
             id: projectId,
             namespace,
             machineId: 'machine-1',
-            name: 'Goal decision action project'
+            name: 'Goal decision action project',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -4109,6 +4396,7 @@ describe('TaskAutomation', () => {
                                 },
                                 {
                                     type: 'create_decision_topic',
+                                    scope: 'goal',
                                     goalId,
                                     title: 'Choose final story navigation entry',
                                     question: 'Should story content enter from MainMenu, Expedition exit, or a debug-only button?',
@@ -4136,8 +4424,10 @@ describe('TaskAutomation', () => {
         })
         automation.handleEvent(toMessageReceivedEvent(sessionId, readyMsg))
 
-        const topics = store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        const topics = readStoredGoalDecisionTopics(store, { namespace, projectId, goalId })
         expect(topics).toHaveLength(1)
+        expect(store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)).toEqual([])
+        expect(topics[0]?.scope).toBe('goal')
         expect(topics[0]?.title).toBe('Choose final story navigation entry')
         expect(topics[0]?.body).toContain('Should story content enter from MainMenu, Expedition exit, or a debug-only button?')
         expect(topics[0]?.body).toContain('The next implementation task needs a stable entry point before UI wiring continues.')

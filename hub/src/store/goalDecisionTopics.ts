@@ -6,6 +6,7 @@ type DbGoalDecisionTopicRow = {
     id: string
     project_id: string
     goal_id: string
+    scope?: StoredGoalDecisionTopic['scope'] | null
     task_id: string | null
     namespace: string
     title: string
@@ -18,10 +19,12 @@ type DbGoalDecisionTopicRow = {
 }
 
 function toStoredGoalDecisionTopic(row: DbGoalDecisionTopicRow): StoredGoalDecisionTopic {
+    const scope = row.scope === 'task' || (!row.scope && row.task_id) ? 'task' : 'goal'
     return {
         id: row.id,
         projectId: row.project_id,
         goalId: row.goal_id,
+        scope,
         taskId: row.task_id,
         title: row.title,
         body: row.body,
@@ -68,6 +71,7 @@ export function createGoalDecisionTopic(
         projectId: string
         goalId: string
         namespace: string
+        scope?: StoredGoalDecisionTopic['scope']
         taskId?: string | null
         title: string
         body: string
@@ -77,16 +81,17 @@ export function createGoalDecisionTopic(
     const now = Date.now()
     db.prepare(`
         INSERT INTO goal_decision_topics (
-            id, project_id, goal_id, task_id, namespace, title, body,
+            id, project_id, goal_id, scope, task_id, namespace, title, body,
             status, blocking, resolution, created_at, updated_at
         ) VALUES (
-            @id, @project_id, @goal_id, @task_id, @namespace, @title, @body,
+            @id, @project_id, @goal_id, @scope, @task_id, @namespace, @title, @body,
             @status, @blocking, NULL, @created_at, @updated_at
         )
     `).run({
         id: topic.id,
         project_id: topic.projectId,
         goal_id: topic.goalId,
+        scope: topic.scope ?? (topic.taskId ? 'task' : 'goal'),
         task_id: topic.taskId ?? null,
         namespace: topic.namespace,
         title: topic.title,

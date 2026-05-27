@@ -1,11 +1,13 @@
 # HOPI File-Native Kanban Assistant Design
 
 Date: 2026-05-25
-Status: accepted design
+Status: archived, merged into canonical design
 
-Supersedes the control-plane direction in:
+Canonical design now lives in:
 
-- `docs/2026-05-15-hopi-goal-kanban-assistant-unified-design.md`
+- `docs/hopi-goal-kanban-assistant-unified-design.md`
+
+This document is retained as historical context only. If it conflicts with the canonical design, the canonical design wins.
 
 ## Summary
 

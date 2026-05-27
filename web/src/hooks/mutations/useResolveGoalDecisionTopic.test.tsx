@@ -28,11 +28,13 @@ function createWrapper(queryClient: QueryClient) {
 
 function createTopic(overrides: Partial<GoalDecisionTopic> = {}): GoalDecisionTopic {
     const now = 1_700_000_000_000
+    const taskId = overrides.taskId !== undefined ? overrides.taskId : 'task-1'
     return {
         id: overrides.id ?? 'topic-1',
         projectId: overrides.projectId ?? 'project-1',
         goalId: overrides.goalId ?? 'goal-1',
-        taskId: overrides.taskId ?? 'task-1',
+        scope: overrides.scope ?? (taskId ? 'task' : 'goal'),
+        taskId,
         title: overrides.title ?? 'Clarify rollout',
         body: overrides.body ?? 'Should deployment require approval?',
         status: overrides.status ?? 'resolved',

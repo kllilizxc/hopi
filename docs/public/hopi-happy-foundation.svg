@@ -1,0 +1,36 @@
+<svg width="1280" height="560" viewBox="0 0 1280 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HOPI builds on Happy session foundations</title>
+  <desc id="desc">Diagram showing Happy-derived session and remote-control foundations underneath HOPI-specific goal Kanban and multi-agent orchestration work.</desc>
+  <rect width="1280" height="560" rx="28" fill="#F8F7F1"/>
+  <text x="64" y="72" fill="#171717" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">From Happy-style remote sessions to HOPI goal orchestration</text>
+  <text x="64" y="106" fill="#5B5B55" font-family="Inter, Arial, sans-serif" font-size="17">HOPI reuses the session/remote-control foundation, then adds an autonomous workflow control plane above it.</text>
+
+  <rect x="76" y="150" width="1128" height="126" rx="20" fill="#F1F4EA" stroke="#C8D0B5" stroke-width="2"/>
+  <text x="112" y="193" fill="#1B2319" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">Foundation inspired by Happy</text>
+  <text x="112" y="224" fill="#526046" font-family="Inter, Arial, sans-serif" font-size="16">Native local sessions, remote UI, live sync, permission approvals, session resume, phone/browser supervision</text>
+
+  <rect x="112" y="304" width="240" height="88" rx="15" fill="#FFFFFF" stroke="#C8D0B5"/>
+  <text x="141" y="341" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Session Runtime</text>
+  <text x="141" y="366" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Claude Code / Codex / Gemini</text>
+
+  <rect x="392" y="304" width="240" height="88" rx="15" fill="#FFFFFF" stroke="#C8D0B5"/>
+  <text x="421" y="341" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Remote Link</text>
+  <text x="421" y="366" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Socket.IO, SSE, approvals</text>
+
+  <rect x="672" y="304" width="240" height="88" rx="15" fill="#FFFFFF" stroke="#C8D0B5"/>
+  <text x="701" y="341" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Web / Phone UI</text>
+  <text x="701" y="366" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Messages, terminal, files, diff</text>
+
+  <path d="M352 348H392" stroke="#75805C" stroke-width="3" stroke-linecap="round"/>
+  <path d="M632 348H672" stroke="#75805C" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="76" y="430" width="1128" height="86" rx="20" fill="#EAF4F7" stroke="#B8CDD5" stroke-width="2"/>
+  <text x="112" y="466" fill="#12242A" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">HOPI-specific layer</text>
+  <text x="112" y="493" fill="#415A62" font-family="Inter, Arial, sans-serif" font-size="16">Goal docs, executable Kanban, multi-agent scheduler, decision blockers, review/merge gates, workflow and write traces</text>
+
+  <rect x="953" y="288" width="201" height="121" rx="18" fill="#FFF8EF" stroke="#D7C0A2" stroke-width="2"/>
+  <text x="983" y="326" fill="#2C1F10" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700">What changed</text>
+  <text x="983" y="354" fill="#5F5246" font-family="Inter, Arial, sans-serif" font-size="14">Sessions are no longer</text>
+  <text x="983" y="374" fill="#5F5246" font-family="Inter, Arial, sans-serif" font-size="14">the workflow source</text>
+  <text x="983" y="394" fill="#5F5246" font-family="Inter, Arial, sans-serif" font-size="14">of truth.</text>
+</svg>

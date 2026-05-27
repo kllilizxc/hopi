@@ -12,12 +12,16 @@ import {
 
 export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
 export type GoalTodoTag = string | null
-export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
+export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'done' | 'unknown'
 
 export type GoalTodoBlocked = {
     kind: string | null
     summary: string | null
     updatedAt: number | null
+}
+
+export type GoalTodoDependency = {
+    ref: string
 }
 
 export type GoalTodoSection = {
@@ -30,6 +34,7 @@ export type GoalTodoSection = {
     taskId: string | null
     todoRef: string | null
     blocked: GoalTodoBlocked | null
+    dependencyTaskList: GoalTodoDependency[]
 }
 
 export type GoalTodoResponse = {
@@ -56,6 +61,7 @@ type GoalTodoYamlItem = {
     taskId?: string | null
     body?: string | null
     blocked?: GoalTodoBlocked | null
+    dependencyTaskList?: GoalTodoDependency[]
     [key: string]: unknown
 }
 
@@ -73,12 +79,18 @@ type GoalTodoYamlDocument = {
 }
 
 const yamlItemStatusSchema = z.enum(['planning', 'running', 'review', 'blocked', 'done'])
-const legacyYamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review', 'deferred'])
+const legacyYamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review'])
 const yamlBlockedSchema = z.object({
     kind: z.string().trim().min(1).nullable().optional(),
     summary: z.string().trim().min(1).nullable().optional(),
     updatedAt: z.number().nullable().optional()
 }).passthrough()
+const yamlDependencySchema = z.union([
+    z.string().trim().min(1),
+    z.object({
+        ref: z.string().trim().min(1).optional()
+    }).passthrough()
+])
 const yamlItemSchema = z.object({
     id: z.string().trim().min(1).optional(),
     ref: z.string().trim().min(1).nullable().optional(),
@@ -88,6 +100,7 @@ const yamlItemSchema = z.object({
     taskId: z.string().trim().min(1).nullable().optional(),
     body: z.string().nullable().optional(),
     blocked: yamlBlockedSchema.nullable().optional(),
+    dependencyTaskList: z.array(yamlDependencySchema).optional(),
     notes: z.string().nullable().optional(),
     description: z.string().nullable().optional()
 }).passthrough()
@@ -97,8 +110,15 @@ const yamlGoalSchema = z.object({
     title: z.string().trim().min(1).nullable().optional(),
     items: z.array(yamlItemSchema).optional()
 }).passthrough()
+const yamlRootGoalSchema = z.object({
+    goalKey: z.string().trim().min(1).nullable().optional(),
+    goalId: z.string().trim().min(1).nullable().optional(),
+    title: z.string().trim().min(1).nullable().optional()
+}).passthrough()
 const yamlDocumentSchema = z.object({
     version: z.union([z.literal(1), z.number()]).optional(),
+    goal: yamlRootGoalSchema.nullable().optional(),
+    items: z.array(yamlItemSchema).optional(),
     goals: z.array(yamlGoalSchema).optional()
 }).passthrough()
 
@@ -110,12 +130,25 @@ function normalizeKey(value: string | null | undefined): string {
     return (value ?? '').trim().toLowerCase()
 }
 
+function normalizeReservoirTag(value: string | null): string | null {
+    return value === 'deferred' ? 'candidate' : value
+}
+
 function normalizeStatusAndTag(value: unknown, rawTag: unknown): { status: GoalTodoStatus; tag: string | null; kind: GoalTodoSectionKind } {
-    const normalizedTag = cleanNullableString(rawTag)
+    const normalizedTag = normalizeReservoirTag(cleanNullableString(rawTag))
     if (typeof value !== 'string') {
         return { status: 'planning', tag: normalizedTag ?? 'candidate', kind: 'candidate' }
     }
     const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === 'planned') {
+        return { status: 'planning', tag: normalizedTag ?? 'ready', kind: normalizedTag === 'candidate' ? 'candidate' : 'ready' }
+    }
+    if (normalized === 'in_progress') {
+        return { status: 'running', tag: normalizedTag ?? 'promoted', kind: 'promoted' }
+    }
+    if (normalized === 'in_review' || normalized === 'merging') {
+        return { status: 'review', tag: normalizedTag ?? normalized, kind: 'in_review' }
+    }
     const statusParsed = yamlItemStatusSchema.safeParse(normalized)
     if (statusParsed.success) {
         return {
@@ -132,6 +165,9 @@ function normalizeStatusAndTag(value: unknown, rawTag: unknown): { status: GoalT
             : normalized === 'completed' || normalized === 'complete'
                 ? 'done'
                 : normalized
+    if (legacyNormalized === 'deferred') {
+        return { status: 'planning', tag: 'candidate', kind: 'candidate' }
+    }
     const legacyParsed = legacyYamlItemStatusSchema.safeParse(legacyNormalized)
     if (legacyParsed.success) {
         const mapped = mapLegacyKindToStatusTag(legacyParsed.data)
@@ -162,7 +198,7 @@ function defaultTagForStatus(status: GoalTodoStatus): string | null {
 
 function kindFromStatusTag(status: GoalTodoStatus, tag: string | null | undefined): GoalTodoSectionKind {
     if (status === 'planning') {
-        if (tag === 'ready' || tag === 'deferred') return tag
+        if (tag === 'ready') return 'ready'
         return 'candidate'
     }
     if (status === 'running') return 'promoted'
@@ -179,7 +215,6 @@ function mapLegacyKindToStatusTag(kind: Exclude<GoalTodoSectionKind, 'blocked' |
     switch (kind) {
         case 'ready':
         case 'candidate':
-        case 'deferred':
             return { status: 'planning', tag: kind }
         case 'promoted':
             return { status: 'running', tag: 'promoted' }
@@ -197,6 +232,7 @@ function normalizeStatus(value: unknown): GoalTodoSectionKind {
     if (normalized === 'active') return 'promoted'
     if (normalized === 'inreview') return 'in_review'
     if (normalized === 'completed' || normalized === 'complete') return 'done'
+    if (normalized === 'deferred') return 'candidate'
     const parsed = yamlItemStatusSchema.safeParse(normalized)
     if (parsed.success) return kindFromStatusTag(parsed.data, null)
     if (normalized === 'done') return 'done'
@@ -207,6 +243,38 @@ function normalizeStatus(value: unknown): GoalTodoSectionKind {
 
 function cleanNullableString(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizeYamlItem(item: z.infer<typeof yamlItemSchema>): GoalTodoYamlItem {
+    const rawId = cleanNullableString(item.id)
+        ?? cleanNullableString(item.ref)
+        ?? cleanNullableString(item.taskId)
+        ?? cleanNullableString(item.title)
+        ?? 'todo'
+    const statusAndTag = normalizeStatusAndTag(item.status ?? 'planning', item.tag)
+    const blocked = normalizeBlocked(item.blocked)
+    return {
+        ...item,
+        id: rawId,
+        ref: cleanNullableString(item.ref),
+        status: statusAndTag.status,
+        tag: statusAndTag.tag,
+        title: cleanNullableString(item.title) ?? rawId,
+        taskId: cleanNullableString(item.taskId),
+        body: cleanNullableString(item.body ?? item.notes ?? item.description),
+        blocked,
+        dependencyTaskList: normalizeDependencyTaskList(item.dependencyTaskList)
+    }
+}
+
+function normalizeYamlGoal(goal: z.infer<typeof yamlGoalSchema>): GoalTodoYamlGoal {
+    return {
+        ...goal,
+        goalKey: cleanNullableString(goal.goalKey),
+        goalId: cleanNullableString(goal.goalId),
+        title: cleanNullableString(goal.title),
+        items: (goal.items ?? []).map(normalizeYamlItem)
+    }
 }
 
 function getCanonicalGoalTodoYamlPath(defaultWorkspace: StoredWorkspace | null, scope: GoalTodoScope): string | null {
@@ -235,34 +303,17 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
         if (!result.success) {
             return { version: 1, goals: [] }
         }
+        const goals: GoalTodoYamlGoal[] = []
+        if (result.data.goal || result.data.items) {
+            goals.push(normalizeYamlGoal({
+                ...(result.data.goal ?? {}),
+                items: result.data.items ?? []
+            }))
+        }
+        goals.push(...(result.data.goals ?? []).map(normalizeYamlGoal))
         return {
             version: 1,
-            goals: (result.data.goals ?? []).map((goal) => ({
-                ...goal,
-                goalKey: cleanNullableString(goal.goalKey),
-                goalId: cleanNullableString(goal.goalId),
-                title: cleanNullableString(goal.title),
-                items: (goal.items ?? []).map((item) => {
-                    const rawId = cleanNullableString(item.id)
-                        ?? cleanNullableString(item.ref)
-                        ?? cleanNullableString(item.taskId)
-                        ?? cleanNullableString(item.title)
-                        ?? 'todo'
-                    const statusAndTag = normalizeStatusAndTag(item.status ?? 'planning', item.tag)
-                    const blocked = normalizeBlocked(item.blocked)
-                    return {
-                        ...item,
-                        id: rawId,
-                        ref: cleanNullableString(item.ref),
-                        status: statusAndTag.status,
-                        tag: statusAndTag.tag,
-                        title: cleanNullableString(item.title) ?? rawId,
-                        taskId: cleanNullableString(item.taskId),
-                        body: cleanNullableString(item.body ?? item.notes ?? item.description),
-                        blocked
-                    }
-                })
-            }))
+            goals
         }
     } catch {
         return { version: 1, goals: [] }
@@ -285,23 +336,81 @@ function normalizeBlocked(value: unknown): GoalTodoBlocked | null {
     return { kind, summary, updatedAt }
 }
 
+function normalizeDependencyTaskList(value: unknown): GoalTodoDependency[] {
+    if (!Array.isArray(value)) {
+        return []
+    }
+    const dependencies: GoalTodoDependency[] = []
+    const seen = new Set<string>()
+    for (const entry of value) {
+        const ref = typeof entry === 'string'
+            ? cleanNullableString(entry)
+            : entry && typeof entry === 'object' && !Array.isArray(entry)
+                ? cleanNullableString((entry as { ref?: unknown }).ref)
+                : null
+        if (!ref || seen.has(ref)) {
+            continue
+        }
+        dependencies.push({ ref })
+        seen.add(ref)
+    }
+    return dependencies
+}
+
 function cleanYamlItem(item: GoalTodoYamlItem): Record<string, unknown> {
     const next: Record<string, unknown> = {
-        id: item.id,
-        status: item.status,
+        ref: item.id,
+        status: yamlStatusFromGoalTodoStatus(item.status, item.tag),
         title: item.title
     }
-    if (item.tag) next.tag = item.tag
     if (item.body) next.body = item.body
+    if (item.dependencyTaskList && item.dependencyTaskList.length > 0) {
+        next.dependencyTaskList = item.dependencyTaskList.map((dependency) => ({ ref: dependency.ref }))
+    }
     if (item.blocked) next.blocked = item.blocked
     for (const [key, value] of Object.entries(item)) {
-        if (['id', 'ref', 'status', 'tag', 'title', 'taskId', 'body', 'blocked', 'notes', 'description'].includes(key)) continue
+        if (['id', 'ref', 'status', 'tag', 'title', 'taskId', 'body', 'blocked', 'dependencyTaskList', 'notes', 'description'].includes(key)) continue
         if (value !== undefined && value !== null) next[key] = value
     }
     return next
 }
 
+function yamlStatusFromGoalTodoStatus(status: GoalTodoStatus, tag?: string | null): string {
+    switch (status) {
+        case 'planning':
+            if (tag === 'candidate') return 'candidate'
+            return 'planned'
+        case 'running':
+            return 'in_progress'
+        case 'review':
+            return tag === 'merging' ? 'merging' : 'in_review'
+        case 'blocked':
+            if (tag === 'candidate') return 'candidate'
+            return 'planned'
+        case 'done':
+            return 'done'
+        case 'unknown':
+            return 'candidate'
+    }
+}
+
 function stringifyYamlDocument(document: GoalTodoYamlDocument): string {
+    if (document.goals.length === 1) {
+        const goal = document.goals[0]!
+        const serializable: Record<string, unknown> = {
+            version: 1
+        }
+        const goalMeta: Record<string, unknown> = {}
+        if (goal.goalKey) goalMeta.goalKey = goal.goalKey
+        if (goal.goalId) goalMeta.goalId = goal.goalId
+        if (goal.title) goalMeta.title = goal.title
+        if (Object.keys(goalMeta).length > 0) {
+            serializable.goal = goalMeta
+        }
+        serializable.items = goal.items.map(cleanYamlItem)
+        return YAML.stringify(serializable, { lineWidth: 0 }).trimEnd() + '\n'
+    }
+
     const serializable = {
         version: 1,
         goals: document.goals.map((goal) => {
@@ -329,7 +438,8 @@ function sectionFromYamlItem(item: GoalTodoYamlItem): GoalTodoSection | null {
         body: item.body?.trim() ?? '',
         taskId: item.taskId?.trim() || id,
         todoRef: id,
-        blocked: item.blocked ?? null
+        blocked: item.blocked ?? null,
+        dependencyTaskList: item.dependencyTaskList ?? []
     }
 }
 
@@ -420,6 +530,11 @@ export function updateGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
 }): string {
     const document = parseYamlDocument(rawYaml)
     const goal = findOrCreateYamlGoal(document, input)
+    goal.goalKey = input.goalKey?.trim() || goal.goalKey || input.goalId
+    goal.goalId = input.goalId
+    if (input.goalTitle?.trim()) {
+        goal.title = input.goalTitle.trim()
+    }
     const todoRef = input.todoRef.trim()
     const taskTitle = input.title?.trim() || todoRef
     const statusTag = statusTagFromUpdateKind(input.kind)
@@ -451,7 +566,7 @@ function classifyLegacyKind(text: string): GoalTodoSectionKind {
     if (/\bin[_\s-]?review\b/.test(normalized)) return 'in_review'
     if (/\bblocked\b/.test(normalized)) return 'blocked'
     if (/\bdone\b|\bcompleted\b/.test(normalized)) return 'done'
-    if (/\bdeferred\b|not ready|later|parked/.test(normalized)) return 'deferred'
+    if (/\bdeferred\b|not ready|later|parked/.test(normalized)) return 'candidate'
     if (/\bready\b/.test(normalized)) return 'ready'
     if (/\bcandidate\b|\breservoir\b|\bbacklog\b/.test(normalized)) return 'candidate'
     return 'unknown'
@@ -493,7 +608,8 @@ function sectionFromLegacyTodo(input: {
         body: input.body,
         taskId: input.taskId ?? id,
         todoRef: id,
-        blocked: null
+        blocked: null,
+        dependencyTaskList: []
     }
 }
 

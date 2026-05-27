@@ -153,6 +153,7 @@ export type StoredGoalDecisionTopic = {
     id: string
     projectId: string
     goalId: string
+    scope: 'goal' | 'task'
     taskId: string | null
     title: string
     body: string
@@ -379,6 +380,7 @@ export type StoredTask = {
     model: string | null
     modelMode: string | null
     attachments: unknown | null
+    role: string | null
     source: string | null
     sourceTaskId: string | null
     workflowProfile: string

@@ -52,7 +52,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 29
+const SCHEMA_VERSION: number = 32
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -452,6 +452,7 @@ export class Store {
                 project_id TEXT NOT NULL,
                 namespace TEXT NOT NULL DEFAULT 'default',
                 goal_key TEXT NOT NULL,
+                client_request_id TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL DEFAULT 'planning',
@@ -489,6 +490,7 @@ export class Store {
                 model TEXT,
                 model_mode TEXT,
                 attachments TEXT,
+                role TEXT,
                 source TEXT,
                 source_task_id TEXT,
                 workflow_profile TEXT,
@@ -524,6 +526,7 @@ export class Store {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 goal_id TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'goal',
                 task_id TEXT,
                 namespace TEXT NOT NULL DEFAULT 'default',
                 title TEXT NOT NULL,
@@ -945,6 +948,15 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 29) {
             this.migrateFromV28ToV29()
+        }
+        if (SCHEMA_VERSION >= 30) {
+            this.migrateFromV29ToV30()
+        }
+        if (SCHEMA_VERSION >= 31) {
+            this.migrateFromV30ToV31()
+        }
+        if (SCHEMA_VERSION >= 32) {
+            this.migrateFromV31ToV32()
         }
     }
 
@@ -1448,6 +1460,7 @@ export class Store {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 goal_id TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'goal',
                 task_id TEXT,
                 namespace TEXT NOT NULL DEFAULT 'default',
                 title TEXT NOT NULL,
@@ -1762,6 +1775,24 @@ export class Store {
         }
     }
 
+    private migrateFromV29ToV30(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v29 to v30 migration.')
+        }
+        if (!taskColumns.has('role')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN role TEXT')
+        }
+    }
+
+    private migrateFromV30ToV31(): void {
+        this.ensureGoalClientRequestIdColumnAndIndex()
+    }
+
+    private migrateFromV31ToV32(): void {
+        this.ensureGoalDecisionTopicScopeColumn()
+    }
+
     private ensureGoalKeyColumnAndIndex(): void {
         const goalColumns = this.getColumnNames('goals')
         if (goalColumns.size === 0) {
@@ -1801,6 +1832,30 @@ export class Store {
         }
 
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_project_namespace_goal_key ON goals(project_id, namespace, goal_key)')
+    }
+
+    private ensureGoalClientRequestIdColumnAndIndex(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for client request id migration.')
+        }
+
+        if (!goalColumns.has('client_request_id')) {
+            this.db.exec('ALTER TABLE goals ADD COLUMN client_request_id TEXT')
+        }
+
+        this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_project_namespace_client_request ON goals(project_id, namespace, client_request_id) WHERE client_request_id IS NOT NULL')
+    }
+
+    private ensureGoalDecisionTopicScopeColumn(): void {
+        const topicColumns = this.getColumnNames('goal_decision_topics')
+        if (topicColumns.size === 0) {
+            throw new Error('SQLite schema missing goal_decision_topics table for scope migration.')
+        }
+        if (!topicColumns.has('scope')) {
+            this.db.exec("ALTER TABLE goal_decision_topics ADD COLUMN scope TEXT NOT NULL DEFAULT 'goal'")
+            this.db.exec("UPDATE goal_decision_topics SET scope = 'task' WHERE task_id IS NOT NULL")
+        }
     }
 
     private getMachineColumnNames(): Set<string> {

@@ -10,6 +10,7 @@ import type {
     FileSearchResponse,
     GitCommandResponse,
     Goal,
+    GoalAssistantCommandResponse,
     GoalDecisionTopicResponse,
     GoalDecisionTopicsResponse,
     GoalResponse,
@@ -381,6 +382,7 @@ export class ApiClient {
         successCriteria?: string | null
         autopilotEnabled?: boolean
         deployRequiresApproval?: boolean
+        clientRequestId?: string
     }): Promise<GoalResponse> {
         return await this.request<GoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals`, {
             method: 'POST',
@@ -437,6 +439,13 @@ export class ApiClient {
         resolution: string
     }): Promise<GoalDecisionTopicResponse> {
         return await this.request<GoalDecisionTopicResponse>(`/api/goal-topics/${encodeURIComponent(topicId)}/resolve`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async executeGoalAssistantCommand(goalId: string, payload: Record<string, unknown>): Promise<GoalAssistantCommandResponse> {
+        return await this.request<GoalAssistantCommandResponse>(`/api/goals/${encodeURIComponent(goalId)}/assistant-commands`, {
             method: 'POST',
             body: JSON.stringify(payload)
         })
@@ -505,7 +514,8 @@ export class ApiClient {
         contract?: string | null
         handoff?: string | null
         evidence?: string | null
-        source?: 'manual' | 'planner' | 'radar' | 'evaluator'
+        role?: 'planner' | 'generator' | 'evaluator' | 'merger' | 'radar' | null
+        source?: 'manual' | 'system' | 'cto_assistant' | 'planner' | 'radar' | 'evaluator'
         subTasks?: Array<{
             id: string
             content: string
@@ -531,7 +541,8 @@ export class ApiClient {
         blockedReason?: string | null
         blockedSource?: string | null
         blockedSessionId?: string | null
-        source?: 'manual' | 'planner' | 'radar' | 'evaluator'
+        role?: 'planner' | 'generator' | 'evaluator' | 'merger' | 'radar' | null
+        source?: 'manual' | 'system' | 'cto_assistant' | 'planner' | 'radar' | 'evaluator'
         priority?: 'high' | 'medium' | 'low' | null
         workspaceId?: string | null
         agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null

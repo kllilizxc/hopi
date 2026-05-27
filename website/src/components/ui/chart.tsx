@@ -176,7 +176,7 @@ function ChartTooltipContent({
       )}
     >
       {!nestLabel ? tooltipLabel : null}
-      <div className="grid gap-1.5">
+      <div className="block">
         {payload
           .filter(item => item.type !== "none")
           .map((item, index) => {
@@ -188,7 +188,7 @@ function ChartTooltipContent({
               <div
                 key={item.dataKey}
                 className={cn(
-                  "[&>svg]:text-muted-foreground flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5",
+                  "[&>svg]:text-muted-foreground flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5 mb-[8px]",
                   indicator === "dot" && "items-center"
                 )}
               >
@@ -226,7 +226,7 @@ function ChartTooltipContent({
                         nestLabel ? "items-end" : "items-center"
                       )}
                     >
-                      <div className="grid gap-1.5">
+                      <div className="block">
                         {nestLabel ? tooltipLabel : null}
                         <span className="text-muted-foreground">
                           {itemConfig?.label || item.name}

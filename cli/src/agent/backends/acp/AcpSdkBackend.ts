@@ -177,7 +177,8 @@ export class AcpSdkBackend implements AgentBackend {
         } finally {
             await this.waitForSessionUpdateQuiet(
                 AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
-                AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS
+                AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS,
+                { waitFromNow: true }
             );
             this.messageHandler?.flushText();
             try {
@@ -282,22 +283,32 @@ export class AcpSdkBackend implements AgentBackend {
         this.messageHandler?.handleUpdate(update);
     }
 
-    private async waitForSessionUpdateQuiet(quietMs: number, timeoutMs: number): Promise<void> {
+    private async waitForSessionUpdateQuiet(
+        quietMs: number,
+        timeoutMs: number,
+        options: { waitFromNow?: boolean } = {}
+    ): Promise<void> {
         if (quietMs <= 0 || timeoutMs <= 0) {
             return;
         }
 
         const deadline = Date.now() + timeoutMs;
+        const earliestReturnAt = options.waitFromNow ? Date.now() + quietMs : 0;
 
         while (Date.now() < deadline) {
-            const elapsedSinceUpdate = Date.now() - this.lastSessionUpdateAt;
-            if (elapsedSinceUpdate >= quietMs) {
+            const now = Date.now();
+            const elapsedSinceUpdate = now - this.lastSessionUpdateAt;
+            if (elapsedSinceUpdate >= quietMs && now >= earliestReturnAt) {
                 return;
             }
 
-            const remainingToQuiet = quietMs - elapsedSinceUpdate;
-            const remainingBudget = deadline - Date.now();
-            const waitMs = Math.max(1, Math.min(remainingToQuiet, remainingBudget));
+            const remainingToQuiet = Math.max(0, quietMs - elapsedSinceUpdate);
+            const remainingToEarliestReturn = Math.max(0, earliestReturnAt - now);
+            const remainingBudget = deadline - now;
+            const waitTargets = [remainingBudget];
+            if (remainingToQuiet > 0) waitTargets.push(remainingToQuiet);
+            if (remainingToEarliestReturn > 0) waitTargets.push(remainingToEarliestReturn);
+            const waitMs = Math.max(1, Math.min(...waitTargets));
             await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
         }
     }

@@ -1,7 +1,7 @@
 import { DEFAULT_AGENT_FLAVOR, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, resolvePermissionModeForFlavor } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import type { MergeWorkflow } from '@hopi/protocol/actions'
-import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskSourceSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
+import { AgentFlavorSchema, ModelModeSchema, ModelNameSchema, PermissionModeSchema, TaskRoleSchema, TaskSourceSchema, TaskStatusSchema, TaskWorkflowPhaseSchema, TodoItemSchema } from '@hopi/protocol/schemas'
 import {
     PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH,
     PRODUCT_ENV,
@@ -12,10 +12,11 @@ import {
     PRODUCT_PREVIEW_SCRIPT_RELATIVE_PATH
 } from '@hopi/protocol/brand'
 import { getTaskSessionStartFailureHttpStatus } from '@hopi/protocol/task-session-start'
+import type { TaskDependency, TaskStatus } from '@hopi/protocol/types'
 import { Hono } from 'hono'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { Store, StoredProject, StoredTask, StoredWorkspace } from '../../store'
+import type { Store, StoredGoalDecisionTopic, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import {
     buildApprovalPendingActionRuntimeNote,
     buildQueuedActionRuntimeNote,
@@ -56,7 +57,9 @@ import {
     upsertGoalTodoTaskState,
     type GoalTodoStatus
 } from '../../sync/goals/goalTodo'
+import { readGoalDecisionTopicsWithLegacyBackfill } from '../../sync/goals/goalDecisions'
 import { syncTaskStateToGoalTodo } from '../../sync/goals/goalTodoTaskSync'
+import { buildDecisionBlockedReason } from '../../sync/goals/decisionHandoff'
 import { notifyProjectControllerTaskBlockedTransition } from '../../sync/projectController'
 import type { WebAppEnv } from '../middleware/auth'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'
@@ -299,7 +302,7 @@ function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTas
 } {
     if (status === 'blocked') {
         return {
-            status: 'blocked',
+            status: 'review',
             finishedAt: null
         }
     }
@@ -2223,6 +2226,7 @@ const createTaskSchema = z.object({
     contract: z.string().max(200_000).nullable().optional(),
     handoff: z.string().max(200_000).nullable().optional(),
     evidence: z.string().max(200_000).nullable().optional(),
+    role: TaskRoleSchema.nullable().optional(),
     source: TaskSourceSchema.optional()
 })
 
@@ -2235,6 +2239,7 @@ const updateTaskSchema = z.object({
     blockedReason: z.string().min(1).max(512).nullable().optional(),
     blockedSource: z.string().min(1).max(64).nullable().optional(),
     blockedSessionId: z.string().min(1).max(128).nullable().optional(),
+    role: TaskRoleSchema.nullable().optional(),
     source: TaskSourceSchema.optional(),
     priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
     workspaceId: z.string().min(1).nullable().optional(),
@@ -2307,6 +2312,10 @@ function defaultTagForGoalStatus(status: GoalTodoStatus): string | null {
     }
 }
 
+function goalTodoStatusToTaskStatus(status: GoalTodoStatus): TaskStatus | null {
+    return status === 'unknown' ? null : status
+}
+
 function getDefaultWorkspaceForProject(store: Store, project: StoredProject): StoredWorkspace | null {
     if (project.defaultWorkspaceId) {
         const workspace = store.workspaces.getWorkspace(project.defaultWorkspaceId)
@@ -2316,16 +2325,8 @@ function getDefaultWorkspaceForProject(store: Store, project: StoredProject): St
 }
 
 function hasBlockedTaskActionRuntime(task: StoredTask): boolean {
-    return task.mergeRuntime?.status === 'blocked'
-        || task.previewRuntime?.status === 'blocked'
+    return task.previewRuntime?.status === 'blocked'
         || task.initRuntime?.status === 'blocked'
-}
-
-function shouldRepairBlockedActionRuntimeTask(task: StoredTask): boolean {
-    const status = normalizeGoalTaskStatus(task.status)
-    return status !== 'blocked'
-        && status !== 'done'
-        && hasBlockedTaskActionRuntime(task)
 }
 
 function repairGoalTodoOverlayState(options: {
@@ -2343,16 +2344,6 @@ function repairGoalTodoOverlayState(options: {
     if (!task.goalTodoRef && !task.archivedAt) {
         const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
             goalTodoRef: task.id
-        })
-        if (updated) {
-            task = updated
-        }
-    }
-
-    if (shouldRepairBlockedActionRuntimeTask(task)) {
-        const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
-            status: 'blocked',
-            finishedAt: null
         })
         if (updated) {
             task = updated
@@ -2382,6 +2373,26 @@ function repairGoalTodoOverlayState(options: {
     }
 
     return { task, todoChanged }
+}
+
+function findTaskScopedBlockingDecision(
+    topics: StoredGoalDecisionTopic[],
+    taskKeys: Array<string | null | undefined>
+): StoredGoalDecisionTopic | null {
+    const keys = new Set(taskKeys
+        .filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+        .map((key) => key.trim()))
+    if (keys.size === 0) {
+        return null
+    }
+
+    return topics.find((topic) => (
+        topic.scope === 'task'
+        && topic.blocking
+        && topic.status === 'waiting'
+        && topic.taskId !== null
+        && keys.has(topic.taskId)
+    )) ?? null
 }
 
 function buildGoalTodoTaskProjection(options: {
@@ -2436,6 +2447,14 @@ function buildGoalTodoTaskProjection(options: {
             overlayByKey.set(task.goalTodoRef, task)
         }
     }
+    const todoSectionByRef = new Map(todo.sections.map((section) => [section.id, section]))
+    const decisionTopics = readGoalDecisionTopicsWithLegacyBackfill({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        goal,
+        defaultWorkspace
+    })
 
     const baseTime = todo.updatedAt ?? Date.now()
     const projected = todo.sections.flatMap((section, index) => {
@@ -2444,8 +2463,22 @@ function buildGoalTodoTaskProjection(options: {
             return []
         }
         const status = section.status === 'unknown' ? 'planning' : section.status
-        const blockedReason = status === 'blocked'
-            ? section.blocked?.summary ?? overlay?.blockedReason ?? null
+        const decisionBlocker = findTaskScopedBlockingDecision(decisionTopics, [
+            section.id,
+            section.taskId,
+            overlay?.id,
+            overlay?.goalTodoRef
+        ])
+        const projectedStatus = decisionBlocker && status !== 'done' ? 'blocked' : status
+        const blockedReason = projectedStatus === 'blocked'
+            ? decisionBlocker
+                ? buildDecisionBlockedReason(decisionBlocker)
+                : section.blocked?.summary ?? overlay?.blockedReason ?? null
+            : null
+        const blockedSource = projectedStatus === 'blocked'
+            ? decisionBlocker
+                ? 'decision'
+                : section.blocked?.kind ?? overlay?.blockedSource ?? null
             : null
         return [{
             id: overlay?.id ?? section.id,
@@ -2454,12 +2487,12 @@ function buildGoalTodoTaskProjection(options: {
             goalTodoRef: section.id,
             title: section.title,
             description: section.body || overlay?.description || null,
-            status,
+            status: projectedStatus,
             tag: section.tag,
             blockedReason,
-            blockedAt: status === 'blocked' ? section.blocked?.updatedAt ?? overlay?.blockedAt ?? null : null,
-            blockedSource: status === 'blocked' ? section.blocked?.kind ?? overlay?.blockedSource ?? null : null,
-            blockedSessionId: status === 'blocked' ? overlay?.blockedSessionId ?? null : null,
+            blockedAt: projectedStatus === 'blocked' ? decisionBlocker?.updatedAt ?? section.blocked?.updatedAt ?? overlay?.blockedAt ?? null : null,
+            blockedSource,
+            blockedSessionId: projectedStatus === 'blocked' ? overlay?.blockedSessionId ?? null : null,
             priority: overlay?.priority ?? null,
             sortKey: overlay?.sortKey ?? baseTime - index,
             activeSessionId: overlay?.activeSessionId ?? null,
@@ -2469,6 +2502,7 @@ function buildGoalTodoTaskProjection(options: {
             model: overlay?.model ?? options.project.defaultModel,
             modelMode: overlay?.modelMode ?? options.project.defaultModelMode,
             attachments: overlay?.attachments ?? null,
+            role: overlay?.role ?? null,
             source: overlay?.source ?? 'manual',
             sourceTaskId: overlay?.sourceTaskId ?? null,
             workflowProfile: overlay?.workflowProfile ?? 'default',
@@ -2481,6 +2515,19 @@ function buildGoalTodoTaskProjection(options: {
             mergeRuntime: overlay?.mergeRuntime ?? null,
             previewRuntime: overlay?.previewRuntime ?? null,
             initRuntime: overlay?.initRuntime ?? null,
+            dependencyTaskList: section.dependencyTaskList.map((dependency): TaskDependency => {
+                const dependencySection = todoSectionByRef.get(dependency.ref) ?? null
+                const dependencyOverlay = overlayByKey.get(dependency.ref) ?? null
+                const dependencyStatus = dependencySection
+                    ? goalTodoStatusToTaskStatus(dependencySection.status)
+                    : (dependencyOverlay?.status as TaskStatus | null | undefined) ?? null
+                return {
+                    ref: dependency.ref,
+                    taskId: dependencyOverlay?.id ?? dependencySection?.taskId ?? dependencySection?.id ?? null,
+                    title: dependencySection?.title ?? dependencyOverlay?.title ?? null,
+                    status: dependencyStatus
+                }
+            }),
             contract: overlay?.contract ?? null,
             handoff: overlay?.handoff ?? null,
             evidence: overlay?.evidence ?? null,
@@ -2493,7 +2540,7 @@ function buildGoalTodoTaskProjection(options: {
     return projected
 }
 
-type GoalTodoProjectedTask = StoredTask & { tag?: string | null }
+type GoalTodoProjectedTask = StoredTask & { tag?: string | null; dependencyTaskList?: TaskDependency[] }
 
 function findGoalTodoTaskProjectionById(options: {
     store: Store
@@ -4492,6 +4539,7 @@ export function createTasksRoutes(options: {
             contract: parsed.data.contract ?? null,
             handoff: parsed.data.handoff ?? null,
             evidence: parsed.data.evidence ?? null,
+            role: parsed.data.role ?? null,
             source: parsed.data.source ?? 'manual'
         })
 
@@ -4634,6 +4682,7 @@ export function createTasksRoutes(options: {
             blockedReason: parsed.data.blockedReason,
             blockedSource: parsed.data.blockedSource,
             blockedSessionId: parsed.data.blockedSessionId,
+            role: parsed.data.role,
             source: parsed.data.source,
             priority: parsed.data.priority,
             workspaceId: parsed.data.workspaceId,

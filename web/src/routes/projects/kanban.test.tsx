@@ -61,6 +61,11 @@ function createTask(overrides: Partial<Task> = {}): Task {
         title: overrides.title ?? 'Inspect repository state',
         description: overrides.description ?? null,
         status: overrides.status ?? 'done',
+        tag: overrides.tag ?? null,
+        blockedReason: overrides.blockedReason ?? null,
+        blockedAt: overrides.blockedAt ?? null,
+        blockedSource: overrides.blockedSource ?? null,
+        blockedSessionId: overrides.blockedSessionId ?? null,
         priority: overrides.priority ?? null,
         sortKey: overrides.sortKey ?? 1,
         activeSessionId: overrides.activeSessionId ?? null,
@@ -92,6 +97,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         mergeRuntime: overrides.mergeRuntime ?? null,
         previewRuntime: overrides.previewRuntime ?? null,
         initRuntime: overrides.initRuntime ?? null,
+        dependencyTaskList: overrides.dependencyTaskList ?? [],
         createdAt: overrides.createdAt ?? 1,
         updatedAt: overrides.updatedAt ?? 2,
         finishedAt: overrides.finishedAt ?? null,
@@ -185,5 +191,74 @@ describe('ProjectKanbanBoard', () => {
         const mergingColumn = document.querySelector('[data-kanban-column-status="merging"]')
         expect(mergingColumn).not.toBeNull()
         expect(mergingColumn?.textContent).toContain('Repair merge conflict')
+    })
+
+    it('renders goal todo dependencies on task cards', () => {
+        mocks.tasks = [createTask({
+            id: 'integrate-flow',
+            title: 'Integrate expedition deck flow',
+            status: 'planning',
+            dependencyTaskList: [
+                {
+                    ref: 'define-library',
+                    taskId: 'define-library',
+                    title: 'Define deck library ownership',
+                    status: 'done'
+                },
+                {
+                    ref: 'validate-services',
+                    taskId: null,
+                    title: null,
+                    status: null
+                }
+            ]
+        })]
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        const dependencyList = screen.getByTestId('task-dependencies-integrate-flow')
+        expect(dependencyList).toHaveTextContent('Depends on')
+        expect(dependencyList).toHaveTextContent('Define deck library ownership')
+        expect(dependencyList).toHaveTextContent('validate-services')
+    })
+
+    it('labels decision-blocked candidates without treating every candidate as blocked', () => {
+        mocks.tasks = [
+            createTask({
+                id: 'candidate-open-choice',
+                title: 'Choose final story entry',
+                status: 'blocked',
+                tag: 'candidate',
+                blockedSource: 'decision',
+                blockedReason: 'Choose story entry: Use MainMenu or a debug button?'
+            }),
+            createTask({
+                id: 'candidate-unblocked',
+                title: 'Optional polish pass',
+                status: 'planning',
+                tag: 'candidate'
+            })
+        ]
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('Blocked by decision')).toBeInTheDocument()
+        expect(screen.getByText('Choose story entry: Use MainMenu or a debug button?')).toBeInTheDocument()
+        const unblockedCard = screen.getByText('Optional polish pass').closest('[data-kanban-task-id]')
+        expect(unblockedCard).not.toBeNull()
+        expect(unblockedCard!).toHaveTextContent('candidate')
+        expect(unblockedCard!).not.toHaveTextContent('Blocked by decision')
     })
 })

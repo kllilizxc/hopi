@@ -296,7 +296,7 @@ export function SessionList(props: {
     }, [groups])
 
     return (
-        <div className="mx-auto w-full max-w-content flex flex-col">
+        <div className="mx-auto w-full flex flex-col">
             {renderHeader ? (
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">

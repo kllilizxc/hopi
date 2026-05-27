@@ -62,7 +62,7 @@ docs/*
 !docs/index.md
 !docs/package.json
 !docs/task-tools-sync-implementation.md
-!docs/2026-05-15-hopi-goal-kanban-assistant-unified-design.md
+!docs/hopi-goal-kanban-assistant-unified-design.md
 .agent-debugo
 *.cjs
 .hopi

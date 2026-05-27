@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_FLAVOR, coercePermissionModeForFlavor, resolveAutonomousPermissionModeForFlavor } from '@hopi/protocol'
+import type { PermissionMode } from '@hopi/protocol'
 import type { StoredProject } from '../store'
 
 export function getProjectDefaultTaskRuntimeSettings(project: StoredProject, options?: { autonomous?: boolean }): {
@@ -8,7 +9,7 @@ export function getProjectDefaultTaskRuntimeSettings(project: StoredProject, opt
     modelMode: null
 } {
     const flavor = project.defaultAgentFlavor ?? DEFAULT_AGENT_FLAVOR
-    const permissionMode = coercePermissionModeForFlavor(project.defaultPermissionMode, flavor)
+    const permissionMode = coercePermissionModeForFlavor(project.defaultPermissionMode as PermissionMode | null, flavor)
         ?? (options?.autonomous ? resolveAutonomousPermissionModeForFlavor(flavor) : null)
     return {
         agentFlavor: null,

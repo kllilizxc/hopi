@@ -37,6 +37,7 @@ export type {
     TaskActionRuntimeCoreStatus,
     TaskActionRuntimeEnvelope,
     TaskAttachment,
+    TaskDependency,
     TaskPriority,
     TaskSessionStartFailure,
     TaskWorkflowPhase,
@@ -125,7 +126,12 @@ export type GoalsResponse = { goals: Goal[] }
 export type GoalResponse = { goal: Goal }
 export type GoalDecisionTopicsResponse = { topics: GoalDecisionTopic[] }
 export type GoalDecisionTopicResponse = { topic: GoalDecisionTopic }
-export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
+export type GoalAssistantCommandResponse = {
+    ok?: boolean
+    commandId?: string
+    [key: string]: unknown
+}
+export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'done' | 'unknown'
 export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
 export type GoalTodoSection = {
     id: string
@@ -141,6 +147,9 @@ export type GoalTodoSection = {
         summary: string | null
         updatedAt: number | null
     } | null
+    dependencyTaskList: Array<{
+        ref: string
+    }>
 }
 export type GoalTodoResponse = {
     exists: boolean

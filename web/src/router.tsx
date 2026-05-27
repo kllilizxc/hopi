@@ -63,16 +63,16 @@ function SessionsPage() {
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
 
     return (
-        <div className="relative flex h-full min-h-0 overflow-hidden">
+        <div className="relative flex h-full min-h-0 overflow-hidden w-full lg:max-w-7xl lg:mx-auto">
             <div
-                className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-1 lg:w-auto lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto ${
+                className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-none lg:w-72 lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto ${
                     isSessionsIndex
                         ? 'translate-x-0'
                         : '-translate-x-full pointer-events-none'
                 }`}
             >
-                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
+                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] w-full lg:max-w-72 lg:flex-none">
+                    <div className="mx-auto w-full flex items-center justify-between px-3 py-2">
                         <div className="text-xs text-[var(--app-hint)]">
                             {t('sessions.count', { n: sessions.length, m: projectCount })}
                         </div>
@@ -99,9 +99,9 @@ function SessionsPage() {
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
+                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left w-full lg:max-w-72 lg:flex-none">
                     {error ? (
-                        <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="mx-auto w-full px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
                         </div>
                     ) : null}
@@ -122,7 +122,7 @@ function SessionsPage() {
             </div>
 
             <div
-                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-none lg:w-full lg:max-w-content lg:translate-x-0 lg:pointer-events-auto ${
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-1 lg:w-full lg:max-w-5xl lg:mx-auto lg:translate-x-0 lg:pointer-events-auto ${
                     isSessionsIndex
                         ? 'translate-x-full pointer-events-none'
                         : 'translate-x-0'

@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 import { getSessionDebugId } from '@hopi/protocol'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Session } from '@hopi/protocol/types'
 import { Hono } from 'hono'
 import { Store, type StoredSession } from '../../store'
@@ -39,9 +42,26 @@ function createTestApp(store: Store, engine: SyncEngine): Hono {
     return app
 }
 
-function seedProject(store: Store, options?: { defaultAgentFlavor?: 'claude' | 'codex' | null }): { projectId: string; workspacePath: string } {
+const tempDirs: string[] = []
+
+function createTempWorkspace(): string {
+    const path = mkdtempSync(join(tmpdir(), 'hopi-controller-'))
+    tempDirs.push(path)
+    return path
+}
+
+afterEach(() => {
+    for (const path of tempDirs.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+    }
+})
+
+function seedProject(store: Store, options?: {
+    defaultAgentFlavor?: 'claude' | 'codex' | null
+    workspacePath?: string
+}): { projectId: string; workspacePath: string } {
     const projectId = 'project-controller'
-    const workspacePath = '/tmp/hopi-controller-workspace'
+    const workspacePath = options?.workspacePath ?? '/tmp/hopi-controller-workspace'
     store.projects.createProject({
         id: projectId,
         namespace: 'default',
@@ -56,6 +76,18 @@ function seedProject(store: Store, options?: { defaultAgentFlavor?: 'claude' | '
     })
     store.projects.updateProject(projectId, 'default', { defaultWorkspaceId: workspace.id })
     return { projectId, workspacePath }
+}
+
+function writeGoalTodo(workspacePath: string, goalKey: string, items: string[]): void {
+    const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', goalKey)
+    mkdirSync(goalDir, { recursive: true })
+    writeFileSync(join(goalDir, 'todo.yml'), [
+        'version: 1',
+        'goal:',
+        `  goalKey: ${goalKey}`,
+        'items:',
+        ...items
+    ].join('\n'), 'utf8')
 }
 
 function seedGoalTask(store: Store, projectId: string, goalId: string, id: string): void {
@@ -309,12 +341,16 @@ describe('project controller session routes', () => {
         const body = await response.json() as { queued: boolean; sessionId: string }
         expect(body.queued).toBe(true)
         expect(controller.sentMessages).toHaveLength(1)
-        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/index.md')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/goal.md')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/design.md')
         expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/todo.yml')
-        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/index.md')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/decisions.yml')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/ship-controller/events.jsonl')
+        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/goal.md')
+        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/design.md')
         expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/todo.yml')
         expect(controller.sentMessages[0]?.text).toContain('Focus only on the current goal above')
-        expect(controller.sentMessages[0]?.text).toContain('Stay in an operator-console role')
+        expect(controller.sentMessages[0]?.text).toContain('Use official HOPI commands')
 
         const stored = store.sessions.getSessionByNamespace(body.sessionId, 'default')
         expect(stored?.metadata).toMatchObject({
@@ -351,6 +387,41 @@ describe('project controller session routes', () => {
         expect(body).toMatchObject({ queued: false, reason: 'empty_goal', sessionId: null })
         expect(controller.spawnCalls).toEqual([])
         expect(controller.sentMessages).toEqual([])
+    })
+
+    it('queues a controller briefing for a goal that only has todo.yml tasks', async () => {
+        const store = new Store(':memory:')
+        const workspacePath = createTempWorkspace()
+        const { projectId } = seedProject(store, { workspacePath })
+        store.goals.createGoal({
+            id: 'goal-todo-only',
+            projectId,
+            namespace: 'default',
+            goalKey: 'todo-only-goal',
+            title: 'Todo Only Goal',
+            status: 'active'
+        })
+        writeGoalTodo(workspacePath, 'todo-only-goal', [
+            '  - ref: todo-only-task',
+            '    status: planned',
+            '    title: Implement todo-only task'
+        ])
+        const controller = createControllerEngine(store)
+        const app = createTestApp(store, controller.engine)
+
+        const response = await app.request(`/api/projects/${projectId}/controller-briefing`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ goalId: 'goal-todo-only' })
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { queued: boolean; reason: string; sessionId: string | null }
+        expect(body).toMatchObject({ queued: true, reason: 'queued' })
+        expect(typeof body.sessionId).toBe('string')
+        expect(controller.spawnCalls).toHaveLength(1)
+        expect(controller.sentMessages).toHaveLength(1)
+        expect(controller.sentMessages[0]?.text).toContain('planning/ready: 1')
     })
 
     it('does not reuse one goal briefing cooldown for a different current goal', async () => {
@@ -395,10 +466,14 @@ describe('project controller session routes', () => {
         expect(controller.sentMessages).toHaveLength(2)
         expect(controller.sentMessages[0]?.sessionId).not.toBe(controller.sentMessages[1]?.sessionId)
         expect(controller.spawnCalls).toHaveLength(2)
-        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/goal-one/index.md')
-        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/goal-two/index.md')
-        expect(controller.sentMessages[1]?.text).toContain('.hopi/docs/goals/goal-two/index.md')
-        expect(controller.sentMessages[1]?.text).not.toContain('.hopi/docs/goals/goal-one/index.md')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/goal-one/goal.md')
+        expect(controller.sentMessages[0]?.text).toContain('.hopi/docs/goals/goal-one/design.md')
+        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/goal-two/goal.md')
+        expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/goal-two/design.md')
+        expect(controller.sentMessages[1]?.text).toContain('.hopi/docs/goals/goal-two/goal.md')
+        expect(controller.sentMessages[1]?.text).toContain('.hopi/docs/goals/goal-two/design.md')
+        expect(controller.sentMessages[1]?.text).not.toContain('.hopi/docs/goals/goal-one/goal.md')
+        expect(controller.sentMessages[1]?.text).not.toContain('.hopi/docs/goals/goal-one/design.md')
     })
 
     it('does not reuse a legacy project-level controller for a goal controller', async () => {

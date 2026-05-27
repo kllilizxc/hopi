@@ -41,3 +41,6 @@ NPM_CONFIG_CACHE = "/tmp/codex-npm-cache"
 
 [mcp_servers.chrome-devtools-live.tools.new_page]
 approval_mode = "approve"
+
+[shell_environment_policy]
+inherit = "all"

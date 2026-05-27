@@ -3,6 +3,7 @@ import type { Database } from 'bun:sqlite'
 import type { StoredGoal } from './types'
 import {
     createGoal,
+    getGoalByClientRequestIdAndNamespace,
     getGoalByGoalKeyAndNamespace,
     getGoalByNamespace,
     listGoalsByProjectAndNamespace,
@@ -25,11 +26,16 @@ export class GoalStore {
         return getGoalByGoalKeyAndNamespace(this.db, projectId, namespace, goalKey)
     }
 
+    getGoalByClientRequestIdAndNamespace(projectId: string, namespace: string, clientRequestId: string): StoredGoal | null {
+        return getGoalByClientRequestIdAndNamespace(this.db, projectId, namespace, clientRequestId)
+    }
+
     createGoal(goal: {
         id: string
         projectId: string
         namespace: string
         goalKey?: string
+        clientRequestId?: string | null
         title: string
         description?: string | null
         status?: StoredGoal['status']

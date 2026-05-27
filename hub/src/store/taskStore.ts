@@ -69,16 +69,18 @@ export class TaskStore {
         model?: string | null
         modelMode?: string | null
         attachments?: unknown
+        role?: string | null
         source?: string | null
         sourceTaskId?: string | null
         workflowProfile?: string | null
         workflowPhase?: string | null
         subTasks?: unknown
-        subTasksUpdatedAt?: number | null
-        worktreeMergedAt?: number | null
-        worktreeMergeCommit?: string | null
-        mergeRuntime?: TaskMergeRuntime | null
-        previewRuntime?: TaskPreviewRuntime | null
+            subTasksUpdatedAt?: number | null
+            worktreeMergedAt?: number | null
+            worktreeMergeCommit?: string | null
+            mergedDiffSnapshot?: unknown
+            mergeRuntime?: TaskMergeRuntime | null
+            previewRuntime?: TaskPreviewRuntime | null
         initRuntime?: TaskInitRuntime | null
         contract?: string | null
         handoff?: string | null
@@ -109,6 +111,7 @@ export class TaskStore {
             permissionMode?: string | null
             model?: string | null
             modelMode?: string | null
+            role?: string | null
             source?: string | null
             workflowProfile?: string
             workflowPhase?: string | null

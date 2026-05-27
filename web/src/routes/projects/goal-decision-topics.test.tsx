@@ -35,11 +35,13 @@ vi.mock('@/hooks/mutations/useResolveGoalDecisionTopic', () => ({
 
 function createTopic(overrides: Partial<GoalDecisionTopic> = {}): GoalDecisionTopic {
     const now = 1_700_000_000_000
+    const taskId = overrides.taskId !== undefined ? overrides.taskId : 'task-123456789'
     return {
         id: overrides.id ?? 'topic-1',
         projectId: overrides.projectId ?? 'project-1',
         goalId: overrides.goalId ?? 'goal-1',
-        taskId: overrides.taskId ?? 'task-123456789',
+        scope: overrides.scope ?? (taskId ? 'task' : 'goal'),
+        taskId,
         title: overrides.title ?? 'Choose final story navigation entry',
         body: overrides.body ?? 'Pick MainMenu, Hub scene, Expedition exit, or debug-only button.',
         status: overrides.status ?? 'waiting',

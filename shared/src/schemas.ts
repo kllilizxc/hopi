@@ -320,6 +320,9 @@ export const GoalSchema = z.object({
     title: z.string().trim().min(1),
     description: z.string().nullable().optional(),
     status: GoalStatusSchema,
+    blockedSource: z.string().nullable().optional(),
+    blockedReason: z.string().nullable().optional(),
+    blockedAt: z.number().nullable().optional(),
     successCriteria: z.string().nullable().optional(),
     autopilotEnabled: z.boolean(),
     automationPausedAt: z.number().nullable().optional(),
@@ -333,11 +336,14 @@ export type Goal = z.infer<typeof GoalSchema>
 
 export const GoalDecisionTopicStatusSchema = z.enum(['waiting', 'resolved'])
 export type GoalDecisionTopicStatus = z.infer<typeof GoalDecisionTopicStatusSchema>
+export const GoalDecisionTopicScopeSchema = z.enum(['goal', 'task'])
+export type GoalDecisionTopicScope = z.infer<typeof GoalDecisionTopicScopeSchema>
 
 export const GoalDecisionTopicSchema = z.object({
     id: z.string(),
     projectId: z.string(),
     goalId: z.string(),
+    scope: GoalDecisionTopicScopeSchema,
     taskId: z.string().nullable().optional(),
     title: z.string().trim().min(1),
     body: z.string(),
@@ -437,7 +443,10 @@ export type TaskPriority = z.infer<typeof TaskPrioritySchema>
 export const TaskWorkflowPhaseSchema = z.string().min(1).max(64).regex(/^[a-z0-9_.-]+$/i)
 export type TaskWorkflowPhase = z.infer<typeof TaskWorkflowPhaseSchema>
 
-export const TaskSourceSchema = z.enum(['manual', 'improvements_scan', 'project_init', 'planner', 'radar', 'evaluator'])
+export const TaskRoleSchema = z.enum(['planner', 'generator', 'evaluator', 'merger', 'radar'])
+export type TaskRole = z.infer<typeof TaskRoleSchema>
+
+export const TaskSourceSchema = z.enum(['manual', 'system', 'cto_assistant', 'improvements_scan', 'project_init', 'planner', 'radar', 'evaluator'])
 export type TaskSource = z.infer<typeof TaskSourceSchema>
 
 export const GitFileStatusSchema = z.object({
@@ -544,6 +553,14 @@ export type TaskInitRuntimeStatus = z.infer<typeof TaskInitRuntimeStatusSchema>
 export const TaskInitRuntimeSchema = createTaskActionRuntimeSchema(TASK_INIT_RUNTIME_STATUSES)
 export type TaskInitRuntime = z.infer<typeof TaskInitRuntimeSchema>
 
+export const TaskDependencySchema = z.object({
+    ref: z.string().trim().min(1),
+    taskId: z.string().trim().min(1).nullable().optional(),
+    title: z.string().trim().min(1).nullable().optional(),
+    status: TaskStatusSchema.nullable().optional()
+})
+export type TaskDependency = z.infer<typeof TaskDependencySchema>
+
 export const TaskSchema = z.object({
     id: z.string(),
     projectId: z.string(),
@@ -566,6 +583,7 @@ export const TaskSchema = z.object({
     model: ModelNameSchema.nullable().optional(),
     modelMode: ModelModeSchema.nullable().optional(),
     attachments: z.array(TaskAttachmentSchema).nullable().optional(),
+    role: TaskRoleSchema.nullable().optional(),
     source: TaskSourceSchema.nullable().optional(),
     sourceTaskId: z.string().nullable().optional(),
     contract: z.string().nullable().optional(),
@@ -581,6 +599,7 @@ export const TaskSchema = z.object({
     mergeRuntime: TaskMergeRuntimeSchema.nullable().optional(),
     previewRuntime: TaskPreviewRuntimeSchema.nullable().optional(),
     initRuntime: TaskInitRuntimeSchema.nullable().optional(),
+    dependencyTaskList: z.array(TaskDependencySchema).optional(),
     createdAt: z.number(),
     updatedAt: z.number(),
     finishedAt: z.number().nullable().optional(),

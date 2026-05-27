@@ -525,6 +525,7 @@ export default function ProjectsPage() {
         successCriteria: string | null
         autopilotEnabled: boolean
         deployRequiresApproval: boolean
+        clientRequestId: string
     }): Promise<boolean> => {
         if (!selectedProjectId) return false
         try {
@@ -534,7 +535,8 @@ export default function ProjectsPage() {
                 description: input.description,
                 successCriteria: input.successCriteria,
                 autopilotEnabled: input.autopilotEnabled,
-                deployRequiresApproval: input.deployRequiresApproval
+                deployRequiresApproval: input.deployRequiresApproval,
+                clientRequestId: input.clientRequestId
             })
             selectGoal(created.id)
             setCreateGoalOpen(false)

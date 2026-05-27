@@ -457,7 +457,9 @@ export function buildTaskBlockedStatusSummary(task: Task | null | undefined): Ta
                 ? 'Init 受阻'
                 : source === 'evaluator'
                     ? 'Review 受阻'
-                    : '任务受阻'
+                    : source === 'decision'
+                        ? 'Decision 受阻'
+                        : '任务受阻'
 
     return {
         title,

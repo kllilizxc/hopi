@@ -72,6 +72,7 @@ export default {
   'projects.goals.automationStatus.running': '运行中',
   'projects.goals.automationStatus.paused': '已暂停',
   'projects.goals.automationStatus.blocked': '已阻塞',
+  'projects.goals.automationStatus.blockedByDecision': '被决策阻塞',
   'projects.goals.automationStatus.done': '已完成',
   'projects.goals.done.title': '标记目标完成',
   'projects.goals.done.description': '将“{title}”标记为完成并暂停自动化？',
@@ -105,7 +106,6 @@ export default {
   'projects.todo.kind.promoted': 'Promoted',
   'projects.todo.kind.in_review': 'Review 中',
   'projects.todo.kind.blocked': '受阻',
-  'projects.todo.kind.deferred': 'Deferred',
   'projects.todo.kind.done': 'Done',
   'projects.todo.kind.unknown': '其他',
 
@@ -139,6 +139,8 @@ export default {
   'projects.tasks.createFailed': '创建任务失败',
   'projects.tasks.moveFailed': '移动失败',
   'projects.tasks.blocked': '受阻',
+  'projects.tasks.blockedByDecision': '被决策阻塞',
+  'projects.tasks.dependencies': '依赖',
   'projects.tasks.generated': '自动生成',
   'projects.tasks.subtasksProgress': '子任务 {completed}/{total}',
   'projects.tasks.subtasks.expand': '展开子任务',
@@ -325,7 +327,7 @@ export default {
   'projects.controller.openFailed': '打开 Goal 助手失败',
   'projects.controller.unavailable': 'Goal 助手不可用',
   'projects.controller.emptyGreetingTitle': 'Goal 助手已就绪。',
-  'projects.controller.emptyGreetingBody': '这个 Goal 即使还没有任务，也可以先在这里澄清方向、补充 planner mail，或查看当前 Goal 状态。',
+  'projects.controller.emptyGreetingBody': '这个 Goal 即使还没有任务，也可以先在这里澄清方向、创建规划请求，或查看当前 Goal 状态。',
 
   'projects.create.title': '创建项目',
   'projects.create.description': '项目用于管理任务，并绑定一个或多个工作区目录。',

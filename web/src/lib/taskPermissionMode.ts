@@ -1,10 +1,20 @@
 import { coercePermissionModeForFlavor, getPermissionModeLabel, getPermissionModeOptionsForFlavor, getPermissionModeTone } from '@hopi/protocol'
+import type { PermissionModeTone } from '@hopi/protocol'
 import type { AgentFlavor, PermissionMode } from '@/types/api'
 
 const TASK_PLAN_MODE_FLAVORS: ReadonlySet<AgentFlavor> = new Set(['codex'])
 
-export function getTaskPermissionModeOptionsForFlavor(flavor?: AgentFlavor | null) {
-    const baseOptions = getPermissionModeOptionsForFlavor(flavor)
+export type TaskPermissionModeOption = {
+    mode: PermissionMode
+    label: string
+    tone: PermissionModeTone
+}
+
+export function getTaskPermissionModeOptionsForFlavor(flavor?: AgentFlavor | null): TaskPermissionModeOption[] {
+    const baseOptions = getPermissionModeOptionsForFlavor(flavor).map((option) => ({
+        ...option,
+        mode: option.mode as PermissionMode
+    }))
 
     if (!flavor || !TASK_PLAN_MODE_FLAVORS.has(flavor) || baseOptions.some((option) => option.mode === 'plan')) {
         return baseOptions

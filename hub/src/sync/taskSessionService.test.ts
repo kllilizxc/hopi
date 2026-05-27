@@ -234,7 +234,8 @@ describe('startSessionFromTask', () => {
                 '',
                 '## Acceptance',
                 '',
-                '- Update .hopi/docs/goals/goal-1/goal.md.'
+                '- Update .hopi/docs/goals/goal-1/goal.md.',
+                '- Update .hopi/docs/goals/goal-1/design.md.'
             ].join('\n')
         })
 
@@ -295,6 +296,8 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('Task Contract:')
         expect(kickoffText).toContain('Use the brainstorming protocol to clarify this Goal before implementation.')
         expect(kickoffText).toContain('.hopi/docs/goals/goal-1/goal.md')
+        expect(kickoffText).toContain('.hopi/docs/goals/<goalKey>/design.md')
+        expect(kickoffText).toContain('Update design.md before creating, splitting, replacing, reordering, or retiring substantial engineering tasks')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('Allowed transitions:')
         expect(kickoffText).toContain('Task creation quality bar:')
@@ -2024,6 +2027,7 @@ describe('startSessionFromTask', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('docs maintenance')
+        expect(kickoffText).toContain('design.md')
     })
 
     it('lets planner goal tasks inherit project-configured Claude bypassPermissions mode', async () => {
@@ -3340,6 +3344,103 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(kickoffText).toContain('history message 1')
         expect(kickoffText).toContain('history message 205')
+    })
+
+    it('caps carryover history so restarted task kickoff stays below the agent input limit', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-capped-history'
+        const taskId = 'task-capped-history'
+        const machineId = 'machine-capped-history'
+        const workspaceId = 'workspace-capped-history'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-session-capped-history',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+        store.messages.addMessage(previousSession.id, {
+            role: 'user',
+            content: { type: 'text', text: 'small older context' }
+        })
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: { type: 'codex', data: { type: 'tool-call-result', output: 'x'.repeat(700_000) } }
+        })
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: { type: 'codex', data: { type: 'message', message: 'latest useful assistant context' } }
+        })
+
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            title: 'Task',
+            status: 'running',
+            workspaceId,
+            activeSessionId: previousSession.id
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-capped-history',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(kickoffText.length).toBeLessThan(250_000)
+        expect(kickoffText).toContain('Previous session messages:')
+        expect(kickoffText).toContain('latest useful assistant context')
+        expect(kickoffText).toContain('characters omitted')
     })
 
     it('uses task permission mode before project defaults when starting session', async () => {

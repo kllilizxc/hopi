@@ -1,0 +1,56 @@
+<svg width="1280" height="600" viewBox="0 0 1280 600" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HOPI multi-agent pipeline</title>
+  <desc id="desc">Diagram showing planner, generator, reviewer, merger, radar, assistant, and scheduler responsibilities in HOPI.</desc>
+  <rect width="1280" height="600" rx="28" fill="#F8F7F1"/>
+  <text x="64" y="72" fill="#171717" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Multi-agent collaboration has explicit roles and gates</text>
+  <text x="64" y="106" fill="#5B5B55" font-family="Inter, Arial, sans-serif" font-size="17">Agents do not all share the same authority. HOPI separates planning, implementation, review, merge, discovery, and operator assistance.</text>
+
+  <rect x="74" y="165" width="1132" height="272" rx="24" fill="#FFFFFF" stroke="#DADAD2" stroke-width="2"/>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="112" y="225" width="132" height="96" rx="16" fill="#EEF6F8" stroke="#B8CDD5"/>
+    <text x="141" y="263" fill="#222" font-size="17" font-weight="700">Planner</text>
+    <text x="132" y="289" fill="#666" font-size="13">design first</text>
+
+    <rect x="286" y="225" width="132" height="96" rx="16" fill="#F0F5EC" stroke="#C5D0B9"/>
+    <text x="309" y="263" fill="#222" font-size="17" font-weight="700">Generator</text>
+    <text x="306" y="289" fill="#666" font-size="13">code changes</text>
+
+    <rect x="460" y="225" width="132" height="96" rx="16" fill="#F4F0F8" stroke="#CCBFD9"/>
+    <text x="491" y="263" fill="#222" font-size="17" font-weight="700">Reviewer</text>
+    <text x="483" y="289" fill="#666" font-size="13">acceptance</text>
+
+    <rect x="634" y="225" width="132" height="96" rx="16" fill="#FFF5EA" stroke="#DFC29D"/>
+    <text x="668" y="263" fill="#222" font-size="17" font-weight="700">Merger</text>
+    <text x="669" y="289" fill="#666" font-size="13">merge gate</text>
+
+    <rect x="808" y="225" width="132" height="96" rx="16" fill="#F4F2EA" stroke="#CEC8B8"/>
+    <text x="850" y="263" fill="#222" font-size="17" font-weight="700">Radar</text>
+    <text x="831" y="289" fill="#666" font-size="13">follow-ups</text>
+
+    <rect x="982" y="225" width="132" height="96" rx="16" fill="#EEF1EA" stroke="#C7CDBD"/>
+    <text x="1010" y="263" fill="#222" font-size="17" font-weight="700">Assistant</text>
+    <text x="1008" y="289" fill="#666" font-size="13">operator</text>
+  </g>
+
+  <path d="M244 273H286" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M418 273H460" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M592 273H634" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M766 273H808" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M940 273H982" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="288" y="366" width="704" height="46" rx="14" fill="#EEF6F8" stroke="#B8CDD5"/>
+  <text x="344" y="395" fill="#10242A" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700">Scheduler decides eligibility: dependencies, decisions, lane capacity, runner state</text>
+
+  <rect x="118" y="480" width="312" height="70" rx="16" fill="#FFFFFF" stroke="#DADAD2"/>
+  <text x="146" y="512" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Planning authority</text>
+  <text x="146" y="536" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Only Planner reshapes engineering graph</text>
+
+  <rect x="484" y="480" width="312" height="70" rx="16" fill="#FFFFFF" stroke="#DADAD2"/>
+  <text x="512" y="512" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Execution authority</text>
+  <text x="512" y="536" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Workers implement, review, and merge</text>
+
+  <rect x="850" y="480" width="312" height="70" rx="16" fill="#FFFFFF" stroke="#DADAD2"/>
+  <text x="878" y="512" fill="#222" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Operator authority</text>
+  <text x="878" y="536" fill="#666" font-family="Inter, Arial, sans-serif" font-size="14">Assistant explains and routes interventions</text>
+</svg>

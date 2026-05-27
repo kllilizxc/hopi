@@ -245,12 +245,13 @@ export function createProjectsRoutes(options: {
 
         const createdWorkspaces: StoredWorkspace[] = []
         try {
-            for (const workspace of normalizedWorkspaces) {
+            for (const [index, workspace] of normalizedWorkspaces.entries()) {
                 createdWorkspaces.push(options.store.workspaces.createWorkspace({
                     id: randomUUID(),
                     projectId,
                     path: workspace.path,
-                    label: workspace.label
+                    label: workspace.label,
+                    sort: index
                 }))
             }
         } catch (error) {

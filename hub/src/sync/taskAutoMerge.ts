@@ -202,13 +202,14 @@ function updateMergeRuntime(options: {
     startedAt?: number | null
     completedAt?: number | null
     forceReviewStatus?: boolean
+    syncGoalTodo?: boolean
 }): StoredTask | null {
-    const taskStatus = options.status === 'blocked'
-        ? 'blocked'
-        : options.forceReviewStatus
-            ? 'review'
+    const taskStatus = options.forceReviewStatus
+        ? 'review'
+        : options.status === 'blocked'
+            ? 'blocked'
             : undefined
-    const finishedAt = options.status === 'blocked' || options.forceReviewStatus
+    const finishedAt = options.forceReviewStatus || options.status === 'blocked'
         ? null
         : undefined
     const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
@@ -227,11 +228,13 @@ function updateMergeRuntime(options: {
         })
     })
     if (updated) {
-        syncTaskStateToGoalTodo({
-            store: options.store,
-            namespace: options.namespace,
-            task: updated
-        })
+        if (options.syncGoalTodo !== false) {
+            syncTaskStateToGoalTodo({
+                store: options.store,
+                namespace: options.namespace,
+                task: updated
+            })
+        }
         notifyProjectControllerTaskBlockedTransition({
             store: options.store,
             engine: options.engine,
@@ -586,7 +589,8 @@ async function askAgentToRepairAutoMergeConflict(options: {
         blockedReason: null,
         retryCount: options.repairAttempt,
         completedAt: null,
-        forceReviewStatus: true
+        forceReviewStatus: true,
+        syncGoalTodo: false
     }) ?? options.task
 
     const sendMessage = options.engine.sendMessage
@@ -776,7 +780,8 @@ export async function autoMergeAcceptedTask(options: {
         latestNote: 'Auto-merge started after evaluator acceptance.',
         startedAt: Date.now(),
         completedAt: null,
-        forceReviewStatus: true
+        forceReviewStatus: true,
+        syncGoalTodo: false
     }) ?? task
 
     const mergeWorkflowLoad = await loadMergeWorkflowFromSession({

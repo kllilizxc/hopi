@@ -8,6 +8,7 @@ type DbGoalRow = {
     project_id: string
     namespace: string
     goal_key: string
+    client_request_id: string | null
     title: string
     description: string | null
     status: StoredGoal['status']
@@ -89,6 +90,23 @@ export function getGoalByGoalKeyAndNamespace(
     return row ? toStoredGoal(row) : null
 }
 
+export function getGoalByClientRequestIdAndNamespace(
+    db: Database,
+    projectId: string,
+    namespace: string,
+    clientRequestId: string
+): StoredGoal | null {
+    const normalized = clientRequestId.trim()
+    if (!normalized) return null
+    const row = db.prepare(`
+        SELECT *
+        FROM goals
+        WHERE project_id = ? AND namespace = ? AND client_request_id = ?
+        LIMIT 1
+    `).get(projectId, namespace, normalized) as DbGoalRow | undefined
+    return row ? toStoredGoal(row) : null
+}
+
 export function createGoal(
     db: Database,
     goal: {
@@ -96,6 +114,7 @@ export function createGoal(
         projectId: string
         namespace: string
         goalKey?: string
+        clientRequestId?: string | null
         title: string
         description?: string | null
         status?: StoredGoal['status']
@@ -109,11 +128,11 @@ export function createGoal(
     const now = Date.now()
     db.prepare(`
         INSERT INTO goals (
-            id, project_id, namespace, goal_key, title, description, status,
+            id, project_id, namespace, goal_key, client_request_id, title, description, status,
             success_criteria, autopilot_enabled, automation_paused_at, deploy_requires_approval, current_focus,
             created_at, updated_at, archived_at
         ) VALUES (
-            @id, @project_id, @namespace, @goal_key, @title, @description, @status,
+            @id, @project_id, @namespace, @goal_key, @client_request_id, @title, @description, @status,
             @success_criteria, @autopilot_enabled, @automation_paused_at, @deploy_requires_approval, @current_focus,
             @created_at, @updated_at, NULL
         )
@@ -122,6 +141,7 @@ export function createGoal(
         project_id: goal.projectId,
         namespace: goal.namespace,
         goal_key: normalizeGoalKey(goal.goalKey ?? goal.title),
+        client_request_id: goal.clientRequestId?.trim() || null,
         title: goal.title,
         description: goal.description ?? null,
         status: goal.status ?? 'planning',
