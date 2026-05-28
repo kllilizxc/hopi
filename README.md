@@ -1,6 +1,6 @@
 # HOPI
 
-> 说明：这只是我给自己提效的一个实验项目，目前还在开发中，可能出现文档不完善或缺乏运行说明的情况。
+> Note：This is currently only a experimental project to boost my own productivity, and is still in dev, so there may be issues like incomplete documents and unfriendly UX
 
 HOPI is a local-first autonomous development system for keeping AI coding agents working beyond a single chat session.
 
