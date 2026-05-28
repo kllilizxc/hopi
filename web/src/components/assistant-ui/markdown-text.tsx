@@ -1,4 +1,10 @@
-import type { ComponentPropsWithoutRef } from 'react'
+import {
+    Children,
+    isValidElement,
+    type ComponentPropsWithoutRef,
+    type ReactElement,
+    type ReactNode,
+} from 'react'
 import {
     MarkdownTextPrimitive,
     unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
@@ -12,14 +18,15 @@ import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { CopyIcon, CheckIcon } from '@/components/icons'
 
 export const MARKDOWN_PLUGINS = [remarkGfm]
+export const MARKDOWN_ROOT_CLASS_NAME = 'aui-md min-w-0 max-w-full break-words text-base leading-relaxed [overflow-wrap:anywhere]'
 
 function CodeHeader(props: CodeHeaderProps) {
     const { copied, copy } = useCopyToClipboard()
     const language = props.language && props.language !== 'unknown' ? props.language : ''
 
     return (
-        <div className="aui-md-codeheader flex items-center justify-between rounded-t-md bg-[var(--app-code-bg)] px-2 py-1">
-            <div className="min-w-0 flex-1 pr-2 text-xs font-mono text-[var(--app-hint)]">
+        <div className="aui-md-codeheader mt-3 flex min-w-0 max-w-full items-center justify-between overflow-hidden rounded-t-md bg-[var(--app-code-bg)] px-3 py-1.5">
+            <div className="min-w-0 flex-1 truncate pr-2 text-xs font-mono text-[var(--app-hint)]">
                 {language}
             </div>
             <button
@@ -38,11 +45,11 @@ function Pre(props: ComponentPropsWithoutRef<'pre'>) {
     const { className, ...rest } = props
 
     return (
-        <div className="aui-md-pre-wrapper min-w-0 w-full max-w-full overflow-x-auto overflow-y-hidden">
+        <div className="aui-md-pre-wrapper my-3 min-w-0 w-full max-w-full overflow-x-hidden overflow-y-hidden">
             <pre
                 {...rest}
                 className={cn(
-                    'aui-md-pre m-0 w-max min-w-full rounded-b-md rounded-t-none bg-[var(--app-code-bg)] p-2 text-sm',
+                    'aui-md-pre m-0 w-full min-w-0 whitespace-pre-wrap break-words rounded-md bg-[var(--app-code-bg)] p-3 text-[13px] leading-relaxed [overflow-wrap:anywhere]',
                     className
                 )}
             />
@@ -57,7 +64,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         return (
             <code
                 {...props}
-                className={cn('aui-md-codeblockcode font-mono', props.className)}
+                className={cn('aui-md-codeblockcode whitespace-pre-wrap break-words font-mono [overflow-wrap:anywhere]', props.className)}
             />
         )
     }
@@ -66,7 +73,7 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         <code
             {...props}
             className={cn(
-                'aui-md-code break-words rounded bg-[var(--app-inline-code-bg)] px-[0.3em] py-[0.1em] font-mono text-[0.9em]',
+                'aui-md-code break-words rounded bg-[var(--app-inline-code-bg)] px-[0.3em] py-[0.1em] font-mono text-[0.9em] [overflow-wrap:anywhere]',
                 props.className
             )}
         />
@@ -80,13 +87,13 @@ function A(props: ComponentPropsWithoutRef<'a'>) {
         <a
             {...props}
             rel={rel}
-            className={cn('aui-md-a text-[var(--app-link)] underline', props.className)}
+            className={cn('aui-md-a break-words text-[var(--app-link)] underline [overflow-wrap:anywhere]', props.className)}
         />
     )
 }
 
 function Paragraph(props: ComponentPropsWithoutRef<'p'>) {
-    return <p {...props} className={cn('aui-md-p leading-relaxed', props.className)} />
+    return <p {...props} className={cn('aui-md-p my-2 min-w-0 leading-relaxed [overflow-wrap:anywhere]', props.className)} />
 }
 
 function Blockquote(props: ComponentPropsWithoutRef<'blockquote'>) {
@@ -94,7 +101,7 @@ function Blockquote(props: ComponentPropsWithoutRef<'blockquote'>) {
         <blockquote
             {...props}
             className={cn(
-                'aui-md-blockquote border-l-4 border-[var(--app-hint)] pl-3 opacity-85',
+                'aui-md-blockquote shadow-[inset_4px_0_0_var(--app-hint)] pl-3 opacity-85',
                 props.className
             )}
         />
@@ -102,27 +109,119 @@ function Blockquote(props: ComponentPropsWithoutRef<'blockquote'>) {
 }
 
 function UnorderedList(props: ComponentPropsWithoutRef<'ul'>) {
-    return <ul {...props} className={cn('aui-md-ul list-disc pl-6', props.className)} />
+    return <ul {...props} className={cn('aui-md-ul my-2.5 list-disc space-y-1.5 pl-5 leading-relaxed [overflow-wrap:anywhere]', props.className)} />
 }
 
 function OrderedList(props: ComponentPropsWithoutRef<'ol'>) {
-    return <ol {...props} className={cn('aui-md-ol list-decimal pl-6', props.className)} />
+    return <ol {...props} className={cn('aui-md-ol my-2.5 list-decimal space-y-1.5 pl-5 leading-relaxed [overflow-wrap:anywhere]', props.className)} />
+}
+
+function parseTodoListItem(children: ReactNode): {
+    isTodoListItem: boolean
+    isDone: boolean
+    content: ReactNode[]
+} {
+    const nodes = Children.toArray(children)
+    let checkboxIndex = -1
+    let checkbox: ReactElement<{ checked?: boolean; defaultChecked?: boolean }> | null = null
+
+    for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i]
+        if (!isValidElement(node) || node.type !== 'input') {
+            continue
+        }
+
+        const props = node.props as { type?: string; checked?: boolean; defaultChecked?: boolean }
+        if (props.type === 'checkbox') {
+            checkboxIndex = i
+            checkbox = node as ReactElement<{ checked?: boolean; defaultChecked?: boolean }>
+            break
+        }
+    }
+
+    if (checkboxIndex < 0 || checkbox === null) {
+        return {
+            isTodoListItem: false,
+            isDone: false,
+            content: nodes,
+        }
+    }
+
+    const isDone = Boolean(checkbox.props.checked ?? checkbox.props.defaultChecked)
+
+    const content = nodes
+        .filter((_, index) => index !== checkboxIndex)
+        .map(node => {
+            if (typeof node === 'string') {
+                const text = node.replace(/^[\t\r\n ]+/, '')
+                return text
+            }
+            return node
+        })
+        .filter(node => !(typeof node === 'string' && node.length === 0))
+
+    return {
+        isTodoListItem: true,
+        isDone,
+        content,
+    }
 }
 
 function ListItem(props: ComponentPropsWithoutRef<'li'>) {
-    return <li {...props} className={cn('aui-md-li', props.className)} />
+    const { className, children, ...rest } = props
+    const parsed = parseTodoListItem(children)
+
+    if (!parsed.isTodoListItem) {
+        return <li {...rest} className={cn('aui-md-li min-w-0 pl-1 [overflow-wrap:anywhere]', className)}>{children}</li>
+    }
+
+    return (
+        <li
+            {...rest}
+            className={cn(
+                'aui-md-li aui-md-task-list-item flex min-w-0 list-none items-start gap-2 pl-0 [overflow-wrap:anywhere]',
+                className
+            )}
+        >
+            <span
+                aria-hidden="true"
+                className={cn(
+                    'aui-md-task-check h-4 w-4 rounded border text-[10px] leading-none shrink-0 mt-1 inline-flex items-center justify-center transition-all',
+                    parsed.isDone
+                        ? 'border-[var(--app-link)] bg-[var(--app-link)] text-[var(--app-button-text)]'
+                        : 'border-[var(--app-border)] bg-transparent text-transparent'
+                )}
+            >
+                {parsed.isDone ? <CheckIcon className="h-3 w-3" /> : null}
+            </span>
+            <span className={cn('aui-md-task-text min-w-0', parsed.isDone ? 'opacity-75 line-through' : null)}>
+                {parsed.content}
+            </span>
+        </li>
+    )
 }
 
 function Hr(props: ComponentPropsWithoutRef<'hr'>) {
-    return <hr {...props} className={cn('aui-md-hr border-[var(--app-divider)]', props.className)} />
+    const { className, style, ...rest } = props
+    return (
+        <hr
+            {...rest}
+            style={{ ...style, border: 0 }}
+            className={cn('aui-md-hr h-px bg-[var(--app-divider)]', className)}
+        />
+    )
 }
 
 function Table(props: ComponentPropsWithoutRef<'table'>) {
-    const { className, ...rest } = props
+    const { className, style, ...rest } = props
 
     return (
         <div className="aui-md-table-wrapper max-w-full overflow-x-auto">
-            <table {...rest} className={cn('aui-md-table w-full border-collapse', className)} />
+            <table
+                {...rest}
+                style={{ ...style, borderCollapse: 'separate', borderSpacing: 0 }}
+                className={cn('aui-md-table w-full', className)}
+            />
         </div>
     )
 }
@@ -144,7 +243,7 @@ function Th(props: ComponentPropsWithoutRef<'th'>) {
         <th
             {...props}
             className={cn(
-                'aui-md-th border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-1 text-left font-semibold',
+                'aui-md-th app-shadow-border bg-[var(--app-subtle-bg)] px-2 py-1 text-left font-semibold',
                 props.className
             )}
         />
@@ -152,31 +251,31 @@ function Th(props: ComponentPropsWithoutRef<'th'>) {
 }
 
 function Td(props: ComponentPropsWithoutRef<'td'>) {
-    return <td {...props} className={cn('aui-md-td border border-[var(--app-border)] px-2 py-1', props.className)} />
+    return <td {...props} className={cn('aui-md-td app-shadow-border px-2 py-1', props.className)} />
 }
 
 function H1(props: ComponentPropsWithoutRef<'h1'>) {
-    return <h1 {...props} className={cn('aui-md-h1 mt-3 text-base font-semibold', props.className)} />
+    return <h1 {...props} className={cn('aui-md-h1 mb-2 mt-5 text-lg font-semibold leading-snug', props.className)} />
 }
 
 function H2(props: ComponentPropsWithoutRef<'h2'>) {
-    return <h2 {...props} className={cn('aui-md-h2 mt-3 text-base font-semibold', props.className)} />
+    return <h2 {...props} className={cn('aui-md-h2 mb-1.5 mt-4 text-base font-semibold leading-snug', props.className)} />
 }
 
 function H3(props: ComponentPropsWithoutRef<'h3'>) {
-    return <h3 {...props} className={cn('aui-md-h3 mt-2 text-base font-semibold', props.className)} />
+    return <h3 {...props} className={cn('aui-md-h3 mb-1.5 mt-4 text-base font-semibold leading-snug', props.className)} />
 }
 
 function H4(props: ComponentPropsWithoutRef<'h4'>) {
-    return <h4 {...props} className={cn('aui-md-h4 mt-2 text-base font-semibold', props.className)} />
+    return <h4 {...props} className={cn('aui-md-h4 mb-1 mt-3 text-base font-semibold leading-snug', props.className)} />
 }
 
 function H5(props: ComponentPropsWithoutRef<'h5'>) {
-    return <h5 {...props} className={cn('aui-md-h5 mt-2 text-base font-semibold', props.className)} />
+    return <h5 {...props} className={cn('aui-md-h5 mb-1 mt-3 text-sm font-semibold leading-snug', props.className)} />
 }
 
 function H6(props: ComponentPropsWithoutRef<'h6'>) {
-    return <h6 {...props} className={cn('aui-md-h6 mt-2 text-base font-semibold', props.className)} />
+    return <h6 {...props} className={cn('aui-md-h6 mb-1 mt-3 text-sm font-semibold leading-snug', props.className)} />
 }
 
 function Strong(props: ComponentPropsWithoutRef<'strong'>) {
@@ -225,7 +324,7 @@ export function MarkdownText() {
         <MarkdownTextPrimitive
             remarkPlugins={MARKDOWN_PLUGINS}
             components={defaultComponents}
-            className={cn('aui-md min-w-0 max-w-full break-words text-base')}
+            className={cn(MARKDOWN_ROOT_CLASS_NAME)}
         />
     )
 }

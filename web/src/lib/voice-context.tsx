@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 import type { ConversationStatus, StatusCallback } from '@/realtime/types'
 import { startRealtimeSession, stopRealtimeSession, voiceHooks } from '@/realtime'
 import { getElevenLabsCodeFromPreference } from '@/lib/languages'
+import { productStorageKey } from '@hopi/protocol/brand'
 
 interface VoiceContextValue {
     status: ConversationStatus
@@ -16,6 +17,7 @@ interface VoiceContextValue {
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null)
+const VOICE_LANG_STORAGE_KEY = productStorageKey('voice-lang')
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
     const [status, setStatusInternal] = useState<ConversationStatus>('disconnected')
@@ -41,7 +43,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         const initialContext = voiceHooks.onVoiceStarted(sessionId)
 
         // Read voice language preference from localStorage
-        const voiceLang = localStorage.getItem('hapi-voice-lang')
+        const voiceLang = localStorage.getItem(VOICE_LANG_STORAGE_KEY)
         const elevenLabsLang = getElevenLabsCodeFromPreference(voiceLang)
 
         await startRealtimeSession(sessionId, initialContext, elevenLabsLang)

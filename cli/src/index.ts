@@ -1,5 +1,11 @@
 #!/usr/bin/env bun
 
-import { runCli } from './commands/runCli'
+async function main(): Promise<void> {
+    const { runCli } = await import('./commands/runCli')
 
-void runCli()
+    await runCli()
+}
+
+void main()
+
+export {}

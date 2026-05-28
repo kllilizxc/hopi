@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+    color-scheme: light;
+
+    /* Core Colors - HSL for vibrance and control */
+    --h-indigo: 239;
+    --h-emerald: 160;
+
+    --prototype-bg: hsl(255, 60%, 99%); /* #F5F3FF */
+    --prototype-bg-soft: hsl(255, 60%, 98%);
+    --prototype-surface: hsla(0, 0%, 100%, 0.72);
+    --prototype-surface-strong: hsl(0, 0%, 100%);
+    --prototype-surface-mist: hsla(0, 0%, 100%, 0.42);
+    --prototype-surface-mist-strong: hsla(0, 0%, 100%, 0.62);
+    --prototype-surface-core: hsla(0, 0%, 100%, 0.85); /* Increased opacity for light mode visibility */
+    --prototype-surface-core-strong: hsla(0, 0%, 100%, 0.95);
+
+    --prototype-line: hsla(240, 5%, 84%, 1); /* slate-300 for better visibility */
+    --prototype-line-strong: hsla(240, 5%, 65%, 1); /* slate-400 */
+    --prototype-line-glass: hsla(0, 0%, 100%, 0.72);
+
+    --prototype-ink: hsl(248, 47%, 20%); /* #1E1B4B */
+    --prototype-ink-soft: hsl(248, 47%, 28%);
+    --prototype-muted: hsl(240, 5%, 34%); /* slate-600 */
+    --prototype-muted-strong: hsl(240, 5%, 26%); /* slate-700 */
+
+    --prototype-accent: hsl(239, 84%, 67%); /* #6366F1 - Indigo 500 */
+    --prototype-accent-soft: hsl(239, 84%, 87%); /* #818CF8 - Indigo 400 */
+    --prototype-accent-glow: hsla(239, 84%, 67%, 0.16);
+
+    --prototype-warning: #c98a2b;
+    --prototype-warning-soft: rgba(201, 138, 43, 0.08);
+    --prototype-danger: #c4513c;
+    --prototype-danger-soft: rgba(196, 81, 60, 0.08);
+    --prototype-success: #10B981; /* Emerald CTA */
+
+    /* Shadows - Layered for premium feel */
+    --prototype-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --prototype-shadow:
+        0 4px 6px -1px rgba(30, 27, 75, 0.04),
+        0 20px 40px -4px rgba(30, 27, 75, 0.08);
+    --prototype-shadow-lg:
+        0 10px 15px -3px rgba(30, 27, 75, 0.04),
+        0 24px 64px -6px rgba(30, 27, 75, 0.12);
+
+    /* Glass Effect */
+    --prototype-glass-panel:
+        radial-gradient(circle at top right, hsla(239, 84%, 67%, 0.08), transparent 40%),
+        linear-gradient(180deg, hsla(0, 0%, 100%, 0.88) 0%, hsla(0, 0%, 100%, 0.68) 100%);
+
+    /* Typography */
+    font-family: "Plus Jakarta Sans", "Inter", "Outfit", "SF Pro Display", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    color: var(--prototype-ink);
+    background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), transparent 28%),
+        radial-gradient(circle at 78% 10%, rgba(99, 102, 241, 0.08), transparent 24%),
+        radial-gradient(circle at 22% 32%, rgba(129, 140, 248, 0.05), transparent 30%),
+        linear-gradient(180deg, hsl(255, 60%, 99%) 0%, hsl(255, 60%, 97%) 34%, hsl(255, 60%, 95%) 100%);
+}
+
+.prototype-glyph {
+    width: 16px;
+}

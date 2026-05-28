@@ -2,7 +2,61 @@ import type { ChatBlock, ToolCallBlock, ToolPermission } from '@/chat/types'
 import type { TracedMessage } from '@/chat/tracer'
 import { createCliOutputBlock, isCliOutputText, mergeCliOutputBlocks } from '@/chat/reducerCliOutput'
 import { parseMessageAsEvent } from '@/chat/reducerEvents'
-import { ensureToolBlock, extractTitleFromChangeTitleInput, isChangeTitleToolName, type PermissionEntry } from '@/chat/reducerTools'
+import { ensureToolBlock, type PermissionEntry } from '@/chat/reducerTools'
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') return null
+    return value as Record<string, unknown>
+}
+
+function appendDelta(previous: string | null, delta: string): string {
+    if (previous === null || previous.length === 0) {
+        return delta
+    }
+    if (previous.endsWith(delta)) {
+        return previous
+    }
+    return `${previous}${delta}`
+}
+
+function mergeToolResult(previous: unknown, next: unknown, isPartial: boolean): unknown {
+    if (isPartial && typeof previous === 'string' && typeof next === 'string') {
+        return appendDelta(previous, next)
+    }
+
+    const prevRecord = asRecord(previous)
+    const nextRecord = asRecord(next)
+    if (!nextRecord) {
+        return next
+    }
+
+    const merged: Record<string, unknown> = {
+        ...(prevRecord ?? {}),
+        ...nextRecord
+    }
+
+    const prevOutput = typeof prevRecord?.output === 'string' ? prevRecord.output : null
+    const nextOutput = typeof nextRecord.output === 'string' ? nextRecord.output : null
+    const nextDelta = typeof nextRecord.delta === 'string' ? nextRecord.delta : null
+
+    if (isPartial && nextOutput === null && nextDelta !== null) {
+        merged.output = appendDelta(prevOutput, nextDelta)
+    }
+
+    if (!isPartial) {
+        if (typeof merged.output !== 'string' && typeof prevRecord?.output === 'string') {
+            merged.output = prevRecord.output
+        }
+        if (typeof merged.stdout !== 'string' && typeof prevRecord?.stdout === 'string') {
+            merged.stdout = prevRecord.stdout
+        }
+        if (typeof merged.stderr !== 'string' && typeof prevRecord?.stderr === 'string') {
+            merged.stderr = prevRecord.stderr
+        }
+    }
+
+    return merged
+}
 
 export function reduceTimeline(
     messages: TracedMessage[],
@@ -10,8 +64,6 @@ export function reduceTimeline(
         permissionsById: Map<string, PermissionEntry>
         groups: Map<string, TracedMessage[]>
         consumedGroupIds: Set<string>
-        titleChangesByToolUseId: Map<string, string>
-        emittedTitleChangeToolUseIds: Set<string>
     }
 ): { blocks: ChatBlock[]; toolBlocksById: Map<string, ToolCallBlock>; hasReadyEvent: boolean } {
     const blocks: ChatBlock[] = []
@@ -122,21 +174,6 @@ export function reduceTimeline(
                 }
 
                 if (c.type === 'tool-call') {
-                    if (isChangeTitleToolName(c.name)) {
-                        const title = context.titleChangesByToolUseId.get(c.id) ?? extractTitleFromChangeTitleInput(c.input)
-                        if (title && !context.emittedTitleChangeToolUseIds.has(c.id)) {
-                            context.emittedTitleChangeToolUseIds.add(c.id)
-                            blocks.push({
-                                kind: 'agent-event',
-                                id: `${msg.id}:${idx}`,
-                                createdAt: msg.createdAt,
-                                event: { type: 'title-changed', title },
-                                meta: msg.meta
-                            })
-                        }
-                        continue
-                    }
-
                     const permission = context.permissionsById.get(c.id)?.permission
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
@@ -167,21 +204,6 @@ export function reduceTimeline(
                 }
 
                 if (c.type === 'tool-result') {
-                    const title = context.titleChangesByToolUseId.get(c.tool_use_id) ?? null
-                    if (title) {
-                        if (!context.emittedTitleChangeToolUseIds.has(c.tool_use_id)) {
-                            context.emittedTitleChangeToolUseIds.add(c.tool_use_id)
-                            blocks.push({
-                                kind: 'agent-event',
-                                id: `${msg.id}:${idx}`,
-                                createdAt: msg.createdAt,
-                                event: { type: 'title-changed', title },
-                                meta: msg.meta
-                            })
-                        }
-                        continue
-                    }
-
                     const permissionEntry = context.permissionsById.get(c.tool_use_id)
                     const permissionFromResult = c.permissions ? ({
                         id: c.tool_use_id,
@@ -214,7 +236,16 @@ export function reduceTimeline(
                         permission
                     })
 
-                    block.tool.result = c.content
+                    block.tool.result = mergeToolResult(block.tool.result, c.content, Boolean(c.is_partial))
+                    if (c.is_partial) {
+                        block.tool.state = 'running'
+                        block.tool.completedAt = null
+                        if (block.tool.startedAt === null) {
+                            block.tool.startedAt = msg.createdAt
+                        }
+                        continue
+                    }
+
                     block.tool.completedAt = msg.createdAt
                     block.tool.state = c.is_error ? 'error' : 'completed'
                     continue

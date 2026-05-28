@@ -10,6 +10,7 @@ import {
     useMatchRoute,
     useNavigate,
     useParams,
+    useSearch,
 } from '@tanstack/react-router'
 import { App } from '@/App'
 import { SessionChat } from '@/components/SessionChat'
@@ -30,69 +31,19 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
+import { IconButton } from '@/components/ui/icon-button'
+import { BackIcon, PlusIcon, SettingsIcon } from '@/assets/icons'
+import ProjectsPage, {
+    ProjectAssistantPage,
+    ProjectOverviewPage,
+    ProjectSettingsPage,
+    ProjectsIndexPage,
+    TaskWorkbenchRoute,
+} from '@/routes/projects'
 import FilesPage from '@/routes/sessions/files'
 import FilePage from '@/routes/sessions/file'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsPage from '@/routes/settings'
-
-function BackIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <polyline points="15 18 9 12 15 6" />
-        </svg>
-    )
-}
-
-function PlusIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-    )
-}
-
-function SettingsIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-    )
-}
 
 function SessionsPage() {
     const { api } = useAppContext()
@@ -112,39 +63,45 @@ function SessionsPage() {
     const isSessionsIndex = pathname === '/sessions' || pathname === '/sessions/'
 
     return (
-        <div className="flex h-full min-h-0">
+        <div className="relative flex h-full min-h-0 overflow-hidden w-full lg:max-w-7xl lg:mx-auto">
             <div
-                className={`${isSessionsIndex ? 'flex' : 'hidden lg:flex'} w-full lg:w-[420px] xl:w-[480px] shrink-0 flex-col bg-[var(--app-bg)] lg:border-r lg:border-[var(--app-divider)]`}
+                className={`absolute inset-0 z-10 min-w-0 w-full flex flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-none lg:w-72 lg:translate-x-0 lg:border-r lg:border-[var(--app-divider)] lg:pointer-events-auto ${
+                    isSessionsIndex
+                        ? 'translate-x-0'
+                        : '-translate-x-full pointer-events-none'
+                }`}
             >
-                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                    <div className="mx-auto w-full max-w-content flex items-center justify-between px-3 py-2">
+                <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)] w-full lg:max-w-72 lg:flex-none">
+                    <div className="mx-auto w-full flex items-center justify-between px-3 py-2">
                         <div className="text-xs text-[var(--app-hint)]">
                             {t('sessions.count', { n: sessions.length, m: projectCount })}
                         </div>
                         <div className="flex items-center gap-2">
-                            <button
+                            <IconButton
                                 type="button"
+                                variant="subtle"
                                 onClick={() => navigate({ to: '/settings' })}
-                                className="p-1.5 rounded-full text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] transition-colors"
                                 title={t('settings.title')}
+                                className="text-[var(--app-hint)]"
                             >
                                 <SettingsIcon className="h-5 w-5" />
-                            </button>
-                            <button
+                            </IconButton>
+                            <IconButton
                                 type="button"
+                                variant="accent"
                                 onClick={() => navigate({ to: '/sessions/new' })}
-                                className="session-list-new-button p-1.5 rounded-full text-[var(--app-link)] transition-colors"
+                                className="session-list-new-button"
                                 title={t('sessions.new')}
                             >
                                 <PlusIcon className="h-5 w-5" />
-                            </button>
+                            </IconButton>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
+                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left w-full lg:max-w-72 lg:flex-none">
                     {error ? (
-                        <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="mx-auto w-full px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
                         </div>
                     ) : null}
@@ -164,7 +121,13 @@ function SessionsPage() {
                 </div>
             </div>
 
-            <div className={`${isSessionsIndex ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
+            <div
+                className={`absolute inset-0 z-20 min-w-0 flex flex-1 flex-col bg-[var(--app-bg)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:flex-1 lg:w-full lg:max-w-5xl lg:mx-auto lg:translate-x-0 lg:pointer-events-auto ${
+                    isSessionsIndex
+                        ? 'translate-x-full pointer-events-none'
+                        : 'translate-x-0'
+                }`}
+            >
                 <div className="flex-1 min-h-0">
                     <Outlet />
                 </div>
@@ -330,6 +293,7 @@ function NewSessionPage() {
     const { api } = useAppContext()
     const navigate = useNavigate()
     const goBack = useAppGoBack()
+    const { t } = useTranslation()
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true)
 
@@ -352,15 +316,18 @@ function NewSessionPage() {
 
     return (
         <div className="flex-1 overflow-y-auto">
-            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="flex items-center gap-2 app-shadow-divider-b bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
                 {!isTelegramApp() && (
-                    <button
+                    <IconButton
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        aria-label={t('projects.actions.back')}
+                        title={t('projects.actions.back')}
                     >
                         <BackIcon />
-                    </button>
+                    </IconButton>
                 )}
                 <div className="flex-1 font-semibold">Create Session</div>
             </div>
@@ -389,7 +356,115 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
-    component: () => <Navigate to="/sessions" replace />,
+    component: () => <Navigate to="/projects" replace />,
+})
+
+const projectsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/projects',
+    component: ProjectsPage,
+})
+
+const projectsIndexRoute = createRoute({
+    getParentRoute: () => projectsRoute,
+    path: '/',
+    component: ProjectsIndexPage,
+})
+
+const projectDetailRoute = createRoute({
+    getParentRoute: () => projectsRoute,
+    path: '$projectId',
+    component: () => <Outlet />,
+})
+
+const projectDetailIndexRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: '/',
+    component: ProjectOverviewPage,
+})
+
+const projectTaskRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'tasks/$taskId',
+    component: TaskWorkbenchRoute,
+})
+
+const projectSettingsRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'settings',
+    component: ProjectSettingsPage,
+})
+
+const projectAssistantRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'assistant',
+    validateSearch: (search: Record<string, unknown>): { goalId?: string } => ({
+        goalId: typeof search.goalId === 'string' && search.goalId.trim().length > 0
+            ? search.goalId
+            : undefined
+    }),
+    component: ProjectAssistantPage,
+})
+
+function ProjectControllerRedirectPage() {
+    const { projectId } = useParams({ from: '/projects/$projectId/controller' })
+    const search = useSearch({ from: '/projects/$projectId/controller' })
+
+    return (
+        <Navigate
+            to="/projects/$projectId/assistant"
+            params={{ projectId }}
+            search={search.goalId ? { goalId: search.goalId } : {}}
+            replace
+        />
+    )
+}
+
+const projectControllerRoute = createRoute({
+    getParentRoute: () => projectDetailRoute,
+    path: 'controller',
+    validateSearch: (search: Record<string, unknown>): { goalId?: string } => ({
+        goalId: typeof search.goalId === 'string' && search.goalId.trim().length > 0
+            ? search.goalId
+            : undefined
+    }),
+    component: ProjectControllerRedirectPage,
+})
+
+const projectTaskIndexRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: '/',
+    component: () => null,
+})
+
+const projectTaskPanelRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'task',
+    component: () => null,
+})
+
+const projectTaskChatRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'chat',
+    component: () => null,
+})
+
+const projectTaskTerminalRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'terminal',
+    component: () => null,
+})
+
+const projectTaskDiffsRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'diffs',
+    component: () => null,
+})
+
+const projectTaskFilesRoute = createRoute({
+    getParentRoute: () => projectTaskRoute,
+    path: 'files',
+    component: () => null,
 })
 
 const sessionsRoute = createRoute({
@@ -482,6 +557,23 @@ const settingsRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
     indexRoute,
+    projectsRoute.addChildren([
+        projectsIndexRoute,
+        projectDetailRoute.addChildren([
+            projectDetailIndexRoute,
+            projectAssistantRoute,
+            projectControllerRoute,
+            projectSettingsRoute,
+            projectTaskRoute.addChildren([
+                projectTaskIndexRoute,
+                projectTaskPanelRoute,
+                projectTaskChatRoute,
+                projectTaskTerminalRoute,
+                projectTaskDiffsRoute,
+                projectTaskFilesRoute,
+            ]),
+        ])
+    ]),
     sessionsRoute.addChildren([
         sessionsIndexRoute,
         newSessionRoute,

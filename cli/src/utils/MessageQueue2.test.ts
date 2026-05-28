@@ -404,6 +404,7 @@ describe('MessageQueue2', () => {
             message: 'isolated',
             mode: { type: 'A' },
             modeHash: 'A',
+            localKey: null,
             isolate: true
         });
         

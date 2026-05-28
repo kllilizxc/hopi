@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { ApiClient } from '@/api/client'
+import { ApiError, type ApiClient } from '@/api/client'
 
 type VisibilityState = 'visible' | 'hidden'
 
@@ -8,6 +8,15 @@ function getVisibilityState(): VisibilityState {
         return 'hidden'
     }
     return document.visibilityState === 'visible' ? 'visible' : 'hidden'
+}
+
+function isMissingVisibilitySubscription(error: unknown): boolean {
+    if (!(error instanceof ApiError) || error.status !== 404) {
+        return false
+    }
+    return error.code === 'Subscription not found'
+        || error.message.includes('Subscription not found')
+        || Boolean(error.body?.includes('Subscription not found'))
 }
 
 export function useVisibilityReporter(options: {
@@ -20,6 +29,7 @@ export function useVisibilityReporter(options: {
     const pendingStateRef = useRef<VisibilityState | null>(null)
     const inFlightRef = useRef(false)
     const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const missingSubscriptionRef = useRef<string | null>(null)
 
     const clearRetry = () => {
         if (retryTimerRef.current) {
@@ -37,6 +47,7 @@ export function useVisibilityReporter(options: {
             lastStateRef.current = null
             lastSubscriptionRef.current = options.subscriptionId ?? null
             pendingStateRef.current = null
+            missingSubscriptionRef.current = null
             clearRetry()
             return
         }
@@ -47,6 +58,7 @@ export function useVisibilityReporter(options: {
             lastSubscriptionRef.current = subscriptionId
             lastStateRef.current = null
             pendingStateRef.current = null
+            missingSubscriptionRef.current = null
             clearRetry()
         }
 
@@ -56,6 +68,10 @@ export function useVisibilityReporter(options: {
             }
             const desired = pendingStateRef.current
             if (!desired) {
+                return
+            }
+            if (missingSubscriptionRef.current === subscriptionId) {
+                pendingStateRef.current = null
                 return
             }
             if (inFlightRef.current) {
@@ -86,6 +102,12 @@ export function useVisibilityReporter(options: {
                 if (lastSubscriptionRef.current !== activeSubscription) {
                     return
                 }
+                if (isMissingVisibilitySubscription(error)) {
+                    missingSubscriptionRef.current = activeSubscription
+                    pendingStateRef.current = null
+                    clearRetry()
+                    return
+                }
                 hadError = true
                 console.error('Failed to update visibility:', error)
                 if (!retryTimerRef.current) {
@@ -106,6 +128,9 @@ export function useVisibilityReporter(options: {
         }
 
         const report = () => {
+            if (missingSubscriptionRef.current === subscriptionId) {
+                return
+            }
             const state = getVisibilityState()
             pendingStateRef.current = state
             flush()

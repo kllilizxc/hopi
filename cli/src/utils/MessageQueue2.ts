@@ -4,6 +4,7 @@ interface QueueItem<T> {
     message: string;
     mode: T;
     modeHash: string;
+    localKey: string | null;
     isolate?: boolean; // If true, this message must be processed alone
 }
 
@@ -37,7 +38,7 @@ export class MessageQueue2<T> {
     /**
      * Push a message to the queue with a mode.
      */
-    push(message: string, mode: T): void {
+    push(message: string, mode: T, localKey?: string | null): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -49,6 +50,7 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
+            localKey: localKey ?? null,
             isolate: false
         });
 
@@ -72,7 +74,7 @@ export class MessageQueue2<T> {
      * Push a message immediately without batching delay.
      * Does not clear the queue or enforce isolation.
      */
-    pushImmediate(message: string, mode: T): void {
+    pushImmediate(message: string, mode: T, localKey?: string | null): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -84,6 +86,7 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
+            localKey: localKey ?? null,
             isolate: false
         });
 
@@ -108,7 +111,7 @@ export class MessageQueue2<T> {
      * Clears any pending messages and ensures this message is never batched with others.
      * Used for special commands that require dedicated processing.
      */
-    pushIsolateAndClear(message: string, mode: T): void {
+    pushIsolateAndClear(message: string, mode: T, localKey?: string | null): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -123,6 +126,7 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
+            localKey: localKey ?? null,
             isolate: true
         });
 
@@ -145,7 +149,7 @@ export class MessageQueue2<T> {
     /**
      * Push a message to the beginning of the queue with a mode.
      */
-    unshift(message: string, mode: T): void {
+    unshift(message: string, mode: T, localKey?: string | null): void {
         if (this.closed) {
             throw new Error('Cannot unshift to closed queue');
         }
@@ -157,6 +161,7 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
+            localKey: localKey ?? null,
             isolate: false
         });
 
@@ -221,7 +226,7 @@ export class MessageQueue2<T> {
      * Wait for messages and return all messages with the same mode as a single string
      * Returns { message: string, mode: T } or null if aborted/closed
      */
-    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string } | null> {
+    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string, localKey: string | null } | null> {
         // If we have messages, return them immediately
         if (this.queue.length > 0) {
             return this.collectBatch();
@@ -245,7 +250,7 @@ export class MessageQueue2<T> {
     /**
      * Collect a batch of messages with the same mode, respecting isolation requirements
      */
-    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean } | null {
+    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean, localKey: string | null } | null {
         if (this.queue.length === 0) {
             return null;
         }
@@ -255,11 +260,15 @@ export class MessageQueue2<T> {
         let mode = firstItem.mode;
         let isolate = firstItem.isolate ?? false;
         const targetModeHash = firstItem.modeHash;
+        let lastLocalKey: string | null = firstItem.localKey ?? null;
 
         // If the first message requires isolation, only process it alone
         if (firstItem.isolate) {
             const item = this.queue.shift()!;
             sameModeMessages.push(item.message);
+            if (item.localKey) {
+                lastLocalKey = item.localKey;
+            }
             logger.debug(`[MessageQueue2] Collected isolated message with mode hash: ${targetModeHash}`);
         } else {
             // Collect all messages with the same mode until we hit an isolated message
@@ -268,6 +277,9 @@ export class MessageQueue2<T> {
                 !this.queue[0].isolate) {
                 const item = this.queue.shift()!;
                 sameModeMessages.push(item.message);
+                if (item.localKey) {
+                    lastLocalKey = item.localKey;
+                }
             }
             logger.debug(`[MessageQueue2] Collected batch of ${sameModeMessages.length} messages with mode hash: ${targetModeHash}`);
         }
@@ -279,7 +291,8 @@ export class MessageQueue2<T> {
             message: combinedMessage,
             mode,
             hash: targetModeHash,
-            isolate
+            isolate,
+            localKey: lastLocalKey
         };
     }
 

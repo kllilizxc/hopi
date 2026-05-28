@@ -1,9 +1,80 @@
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import { getTelegramWebApp } from './useTelegram'
+import { productStorageKey } from '@hopi/protocol/brand'
 
+export type Appearance = 'auto' | 'light' | 'dark'
+export type ThemePreset = 'graphite' | 'soft' | 'contrast'
 type ColorScheme = 'light' | 'dark'
 
-function getColorScheme(): ColorScheme {
+type ThemeSnapshot = {
+    appearance: Appearance
+    colorScheme: ColorScheme
+    preset: ThemePreset
+}
+
+const APPEARANCE_STORAGE_KEY = productStorageKey('appearance')
+const PRESET_STORAGE_KEY = productStorageKey('theme-preset')
+
+function isBrowser(): boolean {
+    return typeof window !== 'undefined' && typeof document !== 'undefined'
+}
+
+function safeGetItem(key: string): string | null {
+    if (!isBrowser()) {
+        return null
+    }
+    try {
+        return localStorage.getItem(key)
+    } catch {
+        return null
+    }
+}
+
+function safeSetItem(key: string, value: string): void {
+    if (!isBrowser()) {
+        return
+    }
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Ignore storage errors
+    }
+}
+
+function safeRemoveItem(key: string): void {
+    if (!isBrowser()) {
+        return
+    }
+    try {
+        localStorage.removeItem(key)
+    } catch {
+        // Ignore storage errors
+    }
+}
+
+function parseAppearance(raw: string | null): Appearance {
+    if (raw === 'light' || raw === 'dark' || raw === 'auto') {
+        return raw
+    }
+    return 'auto'
+}
+
+function parsePreset(raw: string | null): ThemePreset {
+    if (raw === 'graphite' || raw === 'soft' || raw === 'contrast') {
+        return raw
+    }
+    return 'graphite'
+}
+
+function getStoredAppearance(): Appearance {
+    return parseAppearance(safeGetItem(APPEARANCE_STORAGE_KEY))
+}
+
+function getStoredPreset(): ThemePreset {
+    return parsePreset(safeGetItem(PRESET_STORAGE_KEY))
+}
+
+function getEnvironmentColorScheme(): ColorScheme {
     const tg = getTelegramWebApp()
     if (tg?.colorScheme) {
         return tg.colorScheme === 'dark' ? 'dark' : 'light'
@@ -18,60 +89,130 @@ function getColorScheme(): ColorScheme {
 }
 
 function isIOS(): boolean {
+    if (typeof navigator === 'undefined') {
+        return false
+    }
     return /iPad|iPhone|iPod/.test(navigator.userAgent)
 }
 
 function applyTheme(scheme: ColorScheme): void {
+    if (!isBrowser()) {
+        return
+    }
     document.documentElement.setAttribute('data-theme', scheme)
 }
 
+function applyPreset(preset: ThemePreset): void {
+    if (!isBrowser()) {
+        return
+    }
+    document.documentElement.setAttribute('data-theme-preset', preset)
+}
+
 function applyPlatform(): void {
+    if (!isBrowser()) {
+        return
+    }
     if (isIOS()) {
         document.documentElement.classList.add('ios')
     }
 }
 
 // External store for theme state
-let currentScheme: ColorScheme = getColorScheme()
+let currentSnapshot: ThemeSnapshot = (() => {
+    const appearance = getStoredAppearance()
+    const colorScheme: ColorScheme = appearance === 'auto' ? getEnvironmentColorScheme() : appearance
+    const preset = getStoredPreset()
+    return { appearance, colorScheme, preset }
+})()
 const listeners = new Set<() => void>()
 
 // Apply theme immediately at module load (before React renders)
-applyTheme(currentScheme)
+applyPlatform()
+applyTheme(currentSnapshot.colorScheme)
+applyPreset(currentSnapshot.preset)
 
 function subscribe(callback: () => void): () => void {
     listeners.add(callback)
     return () => listeners.delete(callback)
 }
 
-function getSnapshot(): ColorScheme {
-    return currentScheme
+function getSnapshot(): ThemeSnapshot {
+    return currentSnapshot
 }
 
-function updateScheme(): void {
-    const newScheme = getColorScheme()
-    if (newScheme !== currentScheme) {
-        currentScheme = newScheme
-        applyTheme(newScheme)
-        listeners.forEach((cb) => cb())
+function notifyIfChanged(next: ThemeSnapshot): void {
+    if (
+        next.appearance === currentSnapshot.appearance
+        && next.colorScheme === currentSnapshot.colorScheme
+        && next.preset === currentSnapshot.preset
+    ) {
+        return
+    }
+    currentSnapshot = next
+    applyTheme(next.colorScheme)
+    applyPreset(next.preset)
+    listeners.forEach((cb) => cb())
+}
+
+function refreshFromSources(): void {
+    const appearance = getStoredAppearance()
+    const colorScheme: ColorScheme = appearance === 'auto' ? getEnvironmentColorScheme() : appearance
+    const preset = getStoredPreset()
+    notifyIfChanged({ appearance, colorScheme, preset })
+}
+
+function setStoredAppearance(appearance: Appearance): void {
+    if (appearance === 'auto') {
+        safeRemoveItem(APPEARANCE_STORAGE_KEY)
+    } else {
+        safeSetItem(APPEARANCE_STORAGE_KEY, appearance)
+    }
+}
+
+function setStoredPreset(preset: ThemePreset): void {
+    if (preset === 'graphite') {
+        safeRemoveItem(PRESET_STORAGE_KEY)
+    } else {
+        safeSetItem(PRESET_STORAGE_KEY, preset)
     }
 }
 
 // Track if theme listeners have been set up
 let listenersInitialized = false
 
-export function useTheme(): { colorScheme: ColorScheme; isDark: boolean } {
-    const colorScheme = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+export function useTheme(): {
+    appearance: Appearance
+    colorScheme: ColorScheme
+    preset: ThemePreset
+    isDark: boolean
+    setAppearance: (appearance: Appearance) => void
+    setPreset: (preset: ThemePreset) => void
+} {
+    const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    const setAppearance = useCallback((appearance: Appearance) => {
+        setStoredAppearance(appearance)
+        refreshFromSources()
+    }, [])
+    const setPreset = useCallback((preset: ThemePreset) => {
+        setStoredPreset(preset)
+        refreshFromSources()
+    }, [])
 
     return {
-        colorScheme,
-        isDark: colorScheme === 'dark',
+        appearance: snapshot.appearance,
+        colorScheme: snapshot.colorScheme,
+        preset: snapshot.preset,
+        isDark: snapshot.colorScheme === 'dark',
+        setAppearance,
+        setPreset,
     }
 }
 
 // Call this once at app startup to ensure theme is applied and listeners attached
 export function initializeTheme(): void {
-    currentScheme = getColorScheme()
-    applyTheme(currentScheme)
+    applyPlatform()
+    refreshFromSources()
 
     // Set up listeners only once (after SDK may have loaded)
     if (!listenersInitialized) {
@@ -79,11 +220,22 @@ export function initializeTheme(): void {
         const tg = getTelegramWebApp()
         if (tg?.onEvent) {
             // Telegram theme changes
-            tg.onEvent('themeChanged', updateScheme)
+            tg.onEvent('themeChanged', refreshFromSources)
         } else if (typeof window !== 'undefined' && window.matchMedia) {
             // Browser system preference changes
             const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-            mediaQuery.addEventListener('change', updateScheme)
+            mediaQuery.addEventListener('change', refreshFromSources)
+        }
+
+        // Sync across tabs/windows (best-effort).
+        if (typeof window !== 'undefined') {
+            const onStorage = (event: StorageEvent) => {
+                if (event.key !== APPEARANCE_STORAGE_KEY && event.key !== PRESET_STORAGE_KEY) {
+                    return
+                }
+                refreshFromSources()
+            }
+            window.addEventListener('storage', onStorage)
         }
     }
 }

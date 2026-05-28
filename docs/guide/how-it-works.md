@@ -1,6 +1,6 @@
 # How it Works
 
-HAPI consists of three interconnected components that work together to provide remote AI agent control.
+HOPI consists of three interconnected components that work together to provide remote AI agent control.
 
 ## Architecture Overview
 
@@ -10,7 +10,7 @@ HAPI consists of three interconnected components that work together to provide r
 │                                                                            │
 │   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐       │
 │   │              │         │              │         │              │       │
-│   │   HAPI CLI   │◄───────►│  HAPI Hub    │◄───────►│   Web App    │       │
+│   │   HOPI CLI   │◄───────►│  HOPI Hub    │◄───────►│   Web App    │       │
 │   │              │ Socket  │              │   SSE   │  (embedded)  │       │
 │   │  + AI Agent  │   .IO   │  + SQLite    │         │              │       │
 │   │              │         │  + REST API  │         │              │       │
@@ -45,25 +45,25 @@ HAPI consists of three interconnected components that work together to provide r
 
 ## Components
 
-### HAPI CLI
+### HOPI CLI
 
 The CLI is a wrapper around AI coding agents (Claude Code, Codex, Gemini, OpenCode). It:
 
 - Starts and manages coding sessions
-- Registers sessions with the HAPI hub
+- Registers sessions with the HOPI hub
 - Relays messages and permission requests
 - Provides MCP (Model Context Protocol) tools
 
 **Key Commands:**
 ```bash
-hapi              # Start Claude Code session
-hapi codex        # Start OpenAI Codex session
-hapi gemini       # Start Google Gemini session
-hapi opencode     # Start OpenCode session
-hapi runner start # Run background service for remote session spawning
+hopi              # Start Claude Code session
+hopi codex        # Start OpenAI Codex session
+hopi gemini       # Start Google Gemini session
+hopi opencode     # Start OpenCode session
+hopi runner start # Run background service for remote session spawning
 ```
 
-### HAPI Hub
+### HOPI Hub
 
 The hub is the central service that connects everything:
 
@@ -88,7 +88,7 @@ A React-based PWA that provides the mobile interface:
 ### Starting a Session
 
 ```
-1. User runs `hapi` in terminal
+1. User runs `hopi` in terminal
          │
          ▼
 2. CLI starts Claude Code (or other agent)
@@ -170,7 +170,7 @@ For remote access outside your local network:
 
 ## Seamless Handoff
 
-HAPI's defining feature is the ability to seamlessly hand off control between local terminal and remote devices without losing session state.
+HOPI's defining feature is the ability to seamlessly hand off control between local terminal and remote devices without losing session state.
 
 ### Local Mode
 

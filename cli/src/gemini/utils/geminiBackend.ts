@@ -41,6 +41,7 @@ export function createGeminiBackend(opts: {
     return new AcpSdkBackend({
         command: 'gemini',
         args,
-        env: filterEnv(env)
+        env: filterEnv(env),
+        cwd: opts.cwd
     });
 }

@@ -26,6 +26,7 @@ import { getDefaultClaudeCodePath, logDebug, streamToStdin } from './utils'
 import { withBunRuntimeEnv } from '@/utils/bunRuntime'
 import { killProcessByChildProcess } from '@/utils/process'
 import { stripNewlinesForWindowsShellArg } from '@/utils/shellEscape'
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites'
 import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { appendMcpConfigArg } from '../utils/mcpConfig'
@@ -342,14 +343,24 @@ export function query(config: {
     const spawnEnv = withBunRuntimeEnv(process.env, { allowBunBeBun: false })
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')}`)
 
-    const child = spawn(spawnCommand, spawnArgs, {
-        cwd,
+    const resolvedCwd = cwd ?? process.cwd()
+    const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+        workspaceRoot: resolvedCwd,
+        command: spawnCommand,
+        args: spawnArgs,
+        cwd: resolvedCwd,
+        env: spawnEnv,
+        shell: false
+    })
+
+    const child = spawn(wrapped.command, wrapped.args, {
+        cwd: wrapped.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         signal: config.options?.abort,
-        env: spawnEnv,
+        env: wrapped.env,
         // Use shell: false with absolute path from getDefaultClaudeCodePath()
         // This avoids cmd.exe resolution issues on Windows
-        shell: false
+        shell: wrapped.shell
     }) as ChildProcessWithoutNullStreams
 
     // Handle stdin

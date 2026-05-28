@@ -15,7 +15,7 @@ import { getToolName } from "./getToolName";
 import { EnhancedMode, PermissionMode } from "../loop";
 import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
-import { isObject } from "@hapi/protocol";
+import { isObject } from "@hopi/protocol";
 import {
     BasePermissionHandler,
     type PendingPermissionRequest,
@@ -161,6 +161,50 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
     handleModeChange(mode: PermissionMode) {
         this.permissionMode = mode;
         this.session.setPermissionMode(mode);
+        this.reconcileAutoApprovals();
+    }
+
+    handleSessionModeChange(mode: PermissionMode) {
+        this.permissionMode = mode;
+        this.reconcileAutoApprovals();
+    }
+
+    reconcileAutoApprovals(): void {
+        if (this.pendingRequests.size === 0) {
+            return;
+        }
+
+        for (const [id, pending] of Array.from(this.pendingRequests.entries())) {
+            if (isQuestionToolName(pending.toolName)) {
+                continue;
+            }
+
+            if (pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode') {
+                continue;
+            }
+
+            const descriptor = getToolDescriptor(pending.toolName);
+            const shouldAutoApprove = this.permissionMode === 'bypassPermissions'
+                || (this.permissionMode === 'acceptEdits' && descriptor.edit);
+
+            if (!shouldAutoApprove) {
+                continue;
+            }
+
+            this.pendingRequests.delete(id);
+            pending.resolve({
+                behavior: 'allow',
+                updatedInput: (pending.input as Record<string, unknown>) || {}
+            });
+
+            this.finalizeRequest(id, {
+                status: 'approved',
+                mode: this.permissionMode,
+                decision: 'approved'
+            });
+
+            logger.debug(`[Claude] Auto-approved pending ${pending.toolName} (${id}) mode=${this.permissionMode}`);
+        }
     }
 
     /**
@@ -254,6 +298,7 @@ export class PermissionHandler extends BasePermissionHandler<PermissionResponse,
             : { behavior: 'deny', message: response.reason || `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.` };
 
         pending.resolve(result);
+        this.reconcileAutoApprovals();
         return completion;
     }
 

@@ -5,8 +5,9 @@ import {
     ModelModeSchema,
     PermissionModeSchema,
     TodosSchema
-} from '@hapi/protocol/schemas'
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+} from '@hopi/protocol/schemas'
+import { SESSION_DEBUG_ID_PATTERN } from '@hopi/protocol/session-debug'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import { z } from 'zod'
 import { UsageSchema } from '@/claude/types'
 
@@ -19,7 +20,7 @@ export type {
     CodexPermissionMode,
     Metadata,
     Session
-} from '@hapi/protocol/types'
+} from '@hopi/protocol/types'
 export type SessionPermissionMode = PermissionMode
 export type SessionModelMode = ModelMode
 
@@ -76,6 +77,7 @@ export type CliMessagesResponse = z.infer<typeof CliMessagesResponseSchema>
 export const CreateSessionResponseSchema = z.object({
     session: z.object({
         id: z.string(),
+        debugId: z.string().regex(SESSION_DEBUG_ID_PATTERN),
         namespace: z.string(),
         seq: z.number(),
         createdAt: z.number(),

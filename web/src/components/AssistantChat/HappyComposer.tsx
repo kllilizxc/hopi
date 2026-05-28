@@ -1,4 +1,4 @@
-import { getPermissionModeOptionsForFlavor, MODEL_MODE_LABELS, MODEL_MODES } from '@hapi/protocol'
+import { getPermissionModeOptionsForFlavor, MODEL_MODE_LABELS, MODEL_MODES } from '@hopi/protocol'
 import { ComposerPrimitive, useAssistantApi, useAssistantState } from '@assistant-ui/react'
 import {
     type ChangeEvent as ReactChangeEvent,
@@ -6,6 +6,7 @@ import {
     type FormEvent as ReactFormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
     type SyntheticEvent as ReactSyntheticEvent,
+    memo,
     useCallback,
     useEffect,
     useMemo,
@@ -35,8 +36,19 @@ export interface TextInputState {
 }
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
+// Keep unsent drafts isolated per task/session scope to avoid leaking text across tasks.
+const composerDraftByScope = new Map<string, string>()
 
-export function HappyComposer(props: {
+function setDraftForScope(scope: string, text: string): void {
+    if (text.trim().length > 0) {
+        composerDraftByScope.set(scope, text)
+    } else {
+        composerDraftByScope.delete(scope)
+    }
+}
+
+export const HappyComposer = memo(function HappyComposer(props: {
+    draftScope: string
     disabled?: boolean
     permissionMode?: PermissionMode
     modelMode?: ModelMode
@@ -61,6 +73,7 @@ export function HappyComposer(props: {
 }) {
     const { t } = useTranslation()
     const {
+        draftScope,
         disabled = false,
         permissionMode: rawPermissionMode,
         modelMode: rawModelMode,
@@ -120,6 +133,8 @@ export function HappyComposer(props: {
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const prevControlledByUser = useRef(controlledByUser)
+    const prevDraftScopeRef = useRef<string | null>(null)
+    const composerTextRef = useRef(composerText)
 
     useEffect(() => {
         setInputState((prev) => {
@@ -129,6 +144,10 @@ export function HappyComposer(props: {
             const newPos = composerText.length
             return { text: composerText, selection: { start: newPos, end: newPos } }
         })
+    }, [composerText])
+
+    useEffect(() => {
+        composerTextRef.current = composerText
     }, [composerText])
 
     // Track one-time "continue" hint after switching from local to remote.
@@ -141,6 +160,35 @@ export function HappyComposer(props: {
         }
         prevControlledByUser.current = controlledByUser
     }, [controlledByUser])
+
+    useEffect(() => {
+        const previousScope = prevDraftScopeRef.current
+        if (previousScope === draftScope) {
+            return
+        }
+
+        if (previousScope) {
+            setDraftForScope(previousScope, composerTextRef.current)
+        }
+
+        prevDraftScopeRef.current = draftScope
+
+        const nextText = composerDraftByScope.get(draftScope) ?? ''
+        if (nextText !== composerTextRef.current) {
+            api.composer().setText(nextText)
+            const cursor = nextText.length
+            setInputState({
+                text: nextText,
+                selection: { start: cursor, end: cursor }
+            })
+        }
+    }, [api, draftScope])
+
+    useEffect(() => {
+        return () => {
+            setDraftForScope(draftScope, composerTextRef.current)
+        }
+    }, [draftScope])
 
     const { haptic: platformHaptic, isTouch } = usePlatform()
     const { isStandalone, isIOS } = usePWAInstall()
@@ -342,15 +390,28 @@ export function HappyComposer(props: {
             start: e.target.selectionStart,
             end: e.target.selectionEnd
         }
-        setInputState({ text: e.target.value, selection })
+        const newText = e.target.value
+        setInputState(prev => {
+            // Skip update if text and selection haven't changed
+            if (prev.text === newText && prev.selection.start === selection.start && prev.selection.end === selection.end) {
+                return prev
+            }
+            return { text: newText, selection }
+        })
     }, [])
 
     const handleSelect = useCallback((e: ReactSyntheticEvent<HTMLTextAreaElement>) => {
         const target = e.target as HTMLTextAreaElement
-        setInputState(prev => ({
-            ...prev,
-            selection: { start: target.selectionStart, end: target.selectionEnd }
-        }))
+        setInputState(prev => {
+            // Skip update if selection hasn't changed
+            if (prev.selection.start === target.selectionStart && prev.selection.end === target.selectionEnd) {
+                return prev
+            }
+            return {
+                ...prev,
+                selection: { start: target.selectionStart, end: target.selectionEnd }
+            }
+        })
     }, [])
 
     const handlePaste = useCallback(async (e: ReactClipboardEvent<HTMLTextAreaElement>) => {
@@ -431,10 +492,10 @@ export function HappyComposer(props: {
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div
-                                            className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                                            className={`flex h-4 w-4 items-center justify-center rounded-full ${
                                                 permissionMode === option.mode
-                                                    ? 'border-[var(--app-link)]'
-                                                    : 'border-[var(--app-hint)]'
+                                                    ? 'shadow-[inset_0_0_0_2px_var(--app-link)]'
+                                                    : 'shadow-[inset_0_0_0_2px_var(--app-hint)]'
                                             }`}
                                         >
                                             {permissionMode === option.mode && (
@@ -472,10 +533,10 @@ export function HappyComposer(props: {
                                         onMouseDown={(e) => e.preventDefault()}
                                     >
                                         <div
-                                            className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                                            className={`flex h-4 w-4 items-center justify-center rounded-full ${
                                                 modelMode === mode
-                                                    ? 'border-[var(--app-link)]'
-                                                    : 'border-[var(--app-hint)]'
+                                                    ? 'shadow-[inset_0_0_0_2px_var(--app-link)]'
+                                                    : 'shadow-[inset_0_0_0_2px_var(--app-hint)]'
                                             }`}
                                         >
                                             {modelMode === mode && (
@@ -521,7 +582,8 @@ export function HappyComposer(props: {
         permissionModeOptions,
         handlePermissionChange,
         handleModelChange,
-        handleSuggestionSelect
+        handleSuggestionSelect,
+        t
     ])
 
     return (
@@ -541,7 +603,7 @@ export function HappyComposer(props: {
                         voiceStatus={voiceStatus}
                     />
 
-                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)]">
+                    <div className="overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] app-shadow-border transition-shadow focus-within:ring-2 focus-within:ring-[var(--app-link)]">
                         {attachments.length > 0 ? (
                             <div className="flex flex-wrap gap-2 px-4 pt-3">
                                 <ComposerPrimitive.Attachments components={{ Attachment: AttachmentItem }} />
@@ -593,4 +655,4 @@ export function HappyComposer(props: {
             </div>
         </div>
     )
-}
+})

@@ -1,4 +1,5 @@
 import { request } from 'node:http';
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand';
 
 function logError(message: string, error?: unknown): void {
     const detail = error instanceof Error ? error.message : (error ? String(error) : '');
@@ -101,7 +102,7 @@ export async function runSessionHookForwarder(args: string[]): Promise<void> {
                 headers: {
                     'Content-Type': 'application/json',
                     'Content-Length': body.length,
-                    'x-hapi-hook-token': token
+                    [PRODUCT_HEADERS.HOOK_TOKEN]: token
                 }
             }, (res) => {
                 if (res.statusCode && res.statusCode >= 400) {

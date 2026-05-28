@@ -1,22 +1,22 @@
 {
-  "name": "@twsxtd/hapi",
+  "name": "@twsxtd/hopi",
   "version": "0.15.3",
   "description": "App for agentic coding - access coding agent anywhere",
   "author": "Kirill Dubovitskiy & weishu",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "homepage": "https://github.com/tiann/hapi",
-  "bugs": "https://github.com/tiann/hapi/issues",
+  "homepage": "https://github.com/tiann/hopi",
+  "bugs": "https://github.com/tiann/hopi/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tiann/hapi.git",
+    "url": "git+https://github.com/tiann/hopi.git",
     "directory": "cli"
   },
   "bin": {
-    "hapi": "bin/hapi.cjs"
+    "hopi": "bin/hopi.cjs"
   },
   "files": [
-    "bin/hapi.cjs",
+    "bin/hopi.cjs",
     "NOTICE"
   ],
   "imports": {
@@ -26,14 +26,14 @@
     }
   },
   "optionalDependencies": {
-    "@twsxtd/hapi-darwin-arm64": "0.15.3",
-    "@twsxtd/hapi-darwin-x64": "0.15.3",
-    "@twsxtd/hapi-linux-arm64": "0.15.3",
-    "@twsxtd/hapi-linux-x64": "0.15.3",
-    "@twsxtd/hapi-win32-x64": "0.15.3"
+    "@twsxtd/hopi-darwin-arm64": "0.15.3",
+    "@twsxtd/hopi-darwin-x64": "0.15.3",
+    "@twsxtd/hopi-linux-arm64": "0.15.3",
+    "@twsxtd/hopi-linux-x64": "0.15.3",
+    "@twsxtd/hopi-win32-x64": "0.15.3"
   },
   "scripts": {
-    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(__dirname,'bin','hapi.cjs'),0o755)}catch(e){}\"",
+    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(__dirname,'bin','hopi.cjs'),0o755)}catch(e){}\"",
     "typecheck": "tsc --noEmit",
     "build:exe": "bun run scripts/build-executable.ts",
     "build:exe:all": "bun run scripts/build-executable.ts --all",
@@ -51,7 +51,7 @@
     "release-all": "bun run scripts/release-all.ts"
   },
   "dependencies": {
-    "@hapi/protocol": "workspace:*",
+    "@hopi/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@types/cross-spawn": "^6.0.6",
     "@types/ps-list": "^6.2.1",

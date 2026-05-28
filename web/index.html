@@ -15,7 +15,7 @@
         <!-- iOS PWA Meta Tags -->
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="HAPI" />
+        <meta name="apple-mobile-web-app-title" content="HOPI" />
         <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
 
         <!-- Favicon -->
@@ -31,11 +31,56 @@
             @media (prefers-color-scheme: dark) {
                 html { background: #1c1c1e; color-scheme: dark }
             }
+
+            :root {
+                --boot-loader-bg: rgba(255, 255, 255, 0.95);
+                --boot-loader-fg: #374151;
+                --boot-loader-border: rgba(0, 0, 0, 0.10);
+            }
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --boot-loader-bg: rgba(31, 41, 55, 0.95);
+                    --boot-loader-fg: #e5e7eb;
+                    --boot-loader-border: rgba(255, 255, 255, 0.12);
+                }
+            }
+            #boot-loader {
+                position: fixed;
+                right: calc(16px + env(safe-area-inset-right));
+                bottom: calc(16px + env(safe-area-inset-bottom));
+                z-index: 9999;
+                pointer-events: none;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 10px;
+                border-radius: 9999px;
+                border: 1px solid var(--boot-loader-border);
+                background: var(--boot-loader-bg);
+                color: var(--boot-loader-fg);
+                backdrop-filter: blur(6px);
+                -webkit-backdrop-filter: blur(6px);
+                box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+                font: 500 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
+            }
+            #boot-loader .spinner {
+                width: 14px;
+                height: 14px;
+                border-radius: 9999px;
+                border: 2px solid currentColor;
+                border-top-color: transparent;
+                animation: boot-spin 1s linear infinite;
+                opacity: 0.9;
+            }
+            @keyframes boot-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
         </style>
         <script>
             (function () {
                 try {
-                    var raw = localStorage.getItem('hapi-font-scale')
+                    var raw = localStorage.getItem('hopi-font-scale')
                     var scale = Number(raw)
                     if (scale === 0.8 || scale === 0.9 || scale === 1 || scale === 1.1 || scale === 1.2) {
                         document.documentElement.style.setProperty('--app-font-scale', String(scale))
@@ -51,10 +96,15 @@
             }
         </script>
 
-        <title>HAPI</title>
+        <title>HOPI</title>
     </head>
     <body>
-        <div id="root"></div>
+        <div id="root">
+            <div id="boot-loader" role="status" aria-live="polite">
+                <div class="spinner"></div>
+                <div class="label">Loading…</div>
+            </div>
+        </div>
         <script type="module" src="/src/main.tsx"></script>
     </body>
 </html>

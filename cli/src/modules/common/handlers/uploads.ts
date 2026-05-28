@@ -4,7 +4,7 @@ import { join, resolve, sep } from 'path'
 import { rmSync } from 'node:fs'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { getErrorMessage, rpcError } from '../rpcResponses'
-import { getHapiBlobsDir } from '@/constants/uploadPaths'
+import { getHopiBlobsDir } from '@/constants/uploadPaths'
 
 interface UploadFileRequest {
     sessionId?: string
@@ -74,7 +74,7 @@ async function getOrCreateUploadDir(sessionId?: string): Promise<string> {
     const safeKey = sanitizeFilename(sessionKey)
     const creation = (async () => {
         try {
-            const blobsDir = getHapiBlobsDir()
+            const blobsDir = getHopiBlobsDir()
             await mkdir(blobsDir, { recursive: true })
             const dir = await mkdtemp(join(blobsDir, `${safeKey}-`))
             if (uploadDirCleanupRequested.has(sessionKey)) {
@@ -153,7 +153,7 @@ function isPathWithinUploadDir(path: string, sessionId?: string): boolean {
     }
 
     const safeKey = sanitizeFilename(sessionKey)
-    const resolvedPrefix = resolve(getHapiBlobsDir(), `${safeKey}-`)
+    const resolvedPrefix = resolve(getHopiBlobsDir(), `${safeKey}-`)
     return resolvedPath.startsWith(resolvedPrefix)
 }
 

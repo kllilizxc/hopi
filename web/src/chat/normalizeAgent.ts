@@ -1,5 +1,10 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
-import { asNumber, asString, isObject } from '@hapi/protocol'
+import { asNumber, asString, isObject } from '@hopi/protocol'
+import { withCodexPlanUpdateMeta } from '@hopi/protocol/chat'
+
+function asBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null
+}
 
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
@@ -29,6 +34,59 @@ function normalizeToolResultPermissions(value: unknown): ToolResultPermission | 
 function normalizeAgentEvent(value: unknown): AgentEvent | null {
     if (!isObject(value) || typeof value.type !== 'string') return null
     return value as AgentEvent
+}
+
+type PlanStatus = 'pending' | 'in_progress' | 'completed'
+
+type PlanEntry = {
+    content: string
+    status: PlanStatus
+}
+
+function normalizePlanStatus(value: unknown): PlanStatus | null {
+    if (typeof value !== 'string') return null
+    const normalized = value.toLowerCase().replace(/[\s_-]/g, '')
+    if (normalized === 'pending') return 'pending'
+    if (normalized === 'inprogress') return 'in_progress'
+    if (normalized === 'completed') return 'completed'
+    return null
+}
+
+function normalizePlanEntries(value: unknown): PlanEntry[] {
+    if (!Array.isArray(value)) return []
+
+    const entries: PlanEntry[] = []
+    for (const item of value) {
+        if (!isObject(item)) continue
+
+        const content = asString(item.content ?? item.step ?? item.text)?.trim()
+        const status = normalizePlanStatus(item.status)
+        if (!content || !status) continue
+
+        entries.push({ content, status })
+    }
+
+    return entries
+}
+
+function formatPlanText(entries: PlanEntry[], explanation?: string): string {
+    const lines: string[] = []
+
+    if (explanation) {
+        lines.push(explanation)
+    }
+
+    if (entries.length > 0) {
+        if (lines.length > 0) {
+            lines.push('')
+        }
+        for (const entry of entries) {
+            const checkbox = entry.status === 'completed' ? 'x' : ' '
+            lines.push(`- [${checkbox}] ${entry.content}`)
+        }
+    }
+
+    return lines.join('\n')
 }
 
 function normalizeAssistantOutput(
@@ -195,7 +253,7 @@ export function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
-        // Skip meta/compact-summary messages (parity with hapi-app)
+        // Skip meta/compact-summary messages (parity with hopi-app)
         if (data.isMeta) return null
         if (data.isCompactSummary) return null
 
@@ -324,6 +382,23 @@ export function normalizeAgentRecord(
             }
         }
 
+        if (data.type === 'plan') {
+            const entries = normalizePlanEntries(data.entries)
+            const explanation = asString(data.explanation) ?? undefined
+            const text = formatPlanText(entries, explanation)
+            if (!text) return null
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
+                meta: withCodexPlanUpdateMeta(meta)
+            }
+        }
+
         if (data.type === 'tool-call' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
             return {
@@ -347,6 +422,8 @@ export function normalizeAgentRecord(
 
         if (data.type === 'tool-call-result' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
+            const isError = asBoolean(data.is_error) ?? false
+            const isPartial = asBoolean(data.is_partial ?? data.partial) ?? false
             return {
                 id: messageId,
                 localId,
@@ -357,7 +434,8 @@ export function normalizeAgentRecord(
                     type: 'tool-result',
                     tool_use_id: data.callId,
                     content: data.output,
-                    is_error: false,
+                    is_error: isError,
+                    is_partial: isPartial,
                     uuid,
                     parentUUID: null
                 }],

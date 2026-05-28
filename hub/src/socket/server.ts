@@ -2,13 +2,17 @@ import { Server as Engine } from '@socket.io/bun-engine'
 import { Server, type DefaultEventsMap } from 'socket.io'
 import { jwtVerify } from 'jose'
 import { z } from 'zod'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { configuration } from '../configuration'
 import { constantTimeEquals } from '../utils/crypto'
 import { parseAccessToken } from '../utils/accessToken'
+import { createCorsOriginChecker } from '../utils/corsOrigins'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
 import { RpcRegistry } from './rpcRegistry'
+import type { SessionDebugLogger } from '../sync/sessionDebugLogger'
 import type { SyncEvent } from '../sync/syncEngine'
 import { TerminalRegistry } from './terminalRegistry'
 import type { CliSocketWithData, SocketData, SocketServer } from './socketTypes'
@@ -36,9 +40,17 @@ export type SocketServerDeps = {
     corsOrigins?: string[]
     getSession?: (sessionId: string) => { active: boolean; namespace: string } | null
     onWebappEvent?: (event: SyncEvent) => void
-    onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
+    onSessionAlive?: (payload: {
+        sid: string
+        time: number
+        thinking?: boolean
+        mode?: 'local' | 'remote'
+        permissionMode?: PermissionMode
+        modelMode?: ModelMode
+    }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
+    sessionDebugLogger?: SessionDebugLogger
 }
 
 export function createSocketServer(deps: SocketServerDeps): {
@@ -47,7 +59,9 @@ export function createSocketServer(deps: SocketServerDeps): {
     rpcRegistry: RpcRegistry
 } {
     const corsOrigins = deps.corsOrigins ?? configuration.corsOrigins
+    const isOriginAllowed = createCorsOriginChecker(corsOrigins)
     const allowAllOrigins = corsOrigins.includes('*')
+
     const corsOriginOption = allowAllOrigins ? '*' : corsOrigins
     const corsOptions = {
         origin: corsOriginOption,
@@ -64,7 +78,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         cors: corsOptions,
         allowRequest: async (req) => {
             const origin = req.headers.get('origin')
-            if (!origin || allowAllOrigins || corsOrigins.includes(origin)) {
+            if (isOriginAllowed(origin)) {
                 return
             }
             throw 'Origin not allowed'
@@ -73,8 +87,8 @@ export function createSocketServer(deps: SocketServerDeps): {
     io.bind(engine)
 
     const rpcRegistry = new RpcRegistry()
-    const idleTimeoutMs = resolveEnvNumber('HAPI_TERMINAL_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS)
-    const maxTerminals = resolveEnvNumber('HAPI_TERMINAL_MAX_TERMINALS', DEFAULT_MAX_TERMINALS)
+    const idleTimeoutMs = resolveEnvNumber(PRODUCT_ENV.TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
+    const maxTerminals = resolveEnvNumber(PRODUCT_ENV.TERMINAL_MAX_TERMINALS, DEFAULT_MAX_TERMINALS)
     const maxTerminalsPerSocket = maxTerminals
     const maxTerminalsPerSession = maxTerminals
     const cliNs = io.of('/cli')
@@ -113,7 +127,8 @@ export function createSocketServer(deps: SocketServerDeps): {
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
         onMachineAlive: deps.onMachineAlive,
-        onWebappEvent: deps.onWebappEvent
+        onWebappEvent: deps.onWebappEvent,
+        sessionDebugLogger: deps.sessionDebugLogger
     }))
 
     terminalNs.use(async (socket, next) => {

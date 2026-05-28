@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { SSEManager } from '../../sse/sseManager'
+import { SSE_EVENT_CATEGORIES, type SSEEventCategory, type SSEManager } from '../../sse/sseManager'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { VisibilityState } from '../../visibility/visibilityTracker'
 import type { VisibilityTracker } from '../../visibility/visibilityTracker'
@@ -27,6 +27,33 @@ function parseVisibility(value: string | undefined): VisibilityState {
     return value === 'visible' ? 'visible' : 'hidden'
 }
 
+function parseInclude(value: string | undefined): SSEEventCategory[] | null | 'invalid' {
+    if (!value) {
+        return null
+    }
+
+    const parts = value.split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+
+    if (parts.length === 0) {
+        return null
+    }
+
+    const allowed = new Set<string>(SSE_EVENT_CATEGORIES)
+    const include: SSEEventCategory[] = []
+    for (const part of parts) {
+        if (!allowed.has(part)) {
+            return 'invalid'
+        }
+        if (!include.includes(part as SSEEventCategory)) {
+            include.push(part as SSEEventCategory)
+        }
+    }
+
+    return include
+}
+
 const visibilitySchema = z.object({
     subscriptionId: z.string().min(1),
     visibility: z.enum(['visible', 'hidden'])
@@ -47,8 +74,13 @@ export function createEventsRoutes(
 
         const query = c.req.query()
         const all = parseBoolean(query.all)
+        const include = parseInclude(query.include)
+        if (include === 'invalid') {
+            return c.json({ error: 'Invalid include' }, 400)
+        }
         const sessionId = parseOptionalId(query.sessionId)
         const machineId = parseOptionalId(query.machineId)
+        const projectId = parseOptionalId(query.projectId)
         const subscriptionId = randomUUID()
         const visibility = parseVisibility(query.visibility)
         const namespace = c.get('namespace')
@@ -84,6 +116,8 @@ export function createEventsRoutes(
                 all,
                 sessionId: resolvedSessionId,
                 machineId,
+                projectId,
+                include,
                 visibility,
                 send: (event) => stream.writeSSE({ data: JSON.stringify(event) }),
                 sendHeartbeat: async () => {

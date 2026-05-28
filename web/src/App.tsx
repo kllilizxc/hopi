@@ -3,8 +3,10 @@ import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-r
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
 import { initializeTheme } from '@/hooks/useTheme'
+import { initializeMotionPreference } from '@/hooks/useMotionPreference'
 import { useAuth } from '@/hooks/useAuth'
 import { useAuthSource } from '@/hooks/useAuthSource'
+import type { ApiClient } from '@/api/client'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { useSSE } from '@/hooks/useSSE'
 import { useSyncingState } from '@/hooks/useSyncingState'
@@ -12,7 +14,8 @@ import { usePushNotifications } from '@/hooks/usePushNotifications'
 import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider } from '@/lib/app-context'
-import { fetchLatestMessages } from '@/lib/message-window-store'
+import { buildAppEventSubscription } from '@/lib/app-event-subscription'
+import { fetchLatestMessages, getActiveMessageWindowSessionIds } from '@/lib/message-window-store'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useTranslation } from '@/lib/use-translation'
 import { VoiceProvider } from '@/lib/voice-context'
@@ -22,10 +25,12 @@ import { InstallPrompt } from '@/components/InstallPrompt'
 import { OfflineBanner } from '@/components/OfflineBanner'
 import { SyncingBanner } from '@/components/SyncingBanner'
 import { ReconnectingBanner } from '@/components/ReconnectingBanner'
+import { ReconnectingOverlay } from '@/components/ReconnectingOverlay'
 import { VoiceErrorBanner } from '@/components/VoiceErrorBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
-import { ToastProvider, useToast } from '@/lib/toast-context'
+import { useToast } from '@/lib/toast-context'
+import { readSelectedProjectGoalId, SELECTED_GOAL_CHANGED_EVENT } from '@/routes/projects/selected-goal-storage'
 import type { SyncEvent } from '@/types/api'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
@@ -33,11 +38,7 @@ type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
 const REQUIRE_SERVER_URL = requireHubUrlForLogin()
 
 export function App() {
-    return (
-        <ToastProvider>
-            <AppInner />
-        </ToastProvider>
-    )
+    return <AppInner />
 }
 
 function AppInner() {
@@ -56,6 +57,7 @@ function AppInner() {
         tg?.ready()
         tg?.expand()
         initializeTheme()
+        initializeMotionPreference()
     }, [])
 
     useEffect(() => {
@@ -99,7 +101,7 @@ function AppInner() {
         const backButton = tg?.BackButton
         if (!backButton) return
 
-        if (pathname === '/' || pathname === '/sessions') {
+        if (pathname === '/' || pathname === '/projects' || pathname === '/sessions') {
             backButton.offClick(goBack)
             backButton.hide()
             return
@@ -113,15 +115,68 @@ function AppInner() {
         }
     }, [goBack, pathname])
     const queryClient = useQueryClient()
-    const sessionMatch = matchRoute({ to: '/sessions/$sessionId' })
+    const sessionMatch = matchRoute({ to: '/sessions/$sessionId', fuzzy: true })
     const selectedSessionId = sessionMatch && sessionMatch.sessionId !== 'new' ? sessionMatch.sessionId : null
+    const projectMatch = matchRoute({ to: '/projects/$projectId', fuzzy: true })
+    const selectedProjectId = projectMatch ? projectMatch.projectId : null
     const { isSyncing, startSync, endSync } = useSyncingState()
     const [sseDisconnected, setSseDisconnected] = useState(false)
     const syncTokenRef = useRef(0)
     const isFirstConnectRef = useRef(true)
+    const hasLoadedOnceRef = useRef(false)
     const baseUrlRef = useRef(baseUrl)
     const pushPromptedRef = useRef(false)
+    const cachedTokenRef = useRef<string | null>(null)
+    const cachedApiRef = useRef<ApiClient | null>(null)
+    const controllerBriefingCheckedAtRef = useRef<Map<string, number>>(new Map())
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
+
+    useEffect(() => {
+        if (!api || !selectedProjectId) {
+            return
+        }
+
+        const trigger = () => {
+            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+                return
+            }
+            const now = Date.now()
+            const goalId = readSelectedProjectGoalId(selectedProjectId)
+            const briefingKey = `${selectedProjectId}:${goalId ?? 'default'}`
+            const lastCheckedAt = controllerBriefingCheckedAtRef.current.get(briefingKey) ?? 0
+            if (now - lastCheckedAt < 10 * 60 * 1000) {
+                return
+            }
+            controllerBriefingCheckedAtRef.current.set(briefingKey, now)
+            void api.maybeRefreshProjectControllerBriefing(selectedProjectId, { goalId }).catch(() => {})
+        }
+
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                trigger()
+            }
+        }
+
+        const onSelectedGoalChanged = (event: Event) => {
+            if (!(event instanceof CustomEvent)) return
+            if (event.detail?.projectId === selectedProjectId) {
+                trigger()
+            }
+        }
+
+        trigger()
+        window.addEventListener('click', trigger, { passive: true })
+        window.addEventListener('keyup', trigger)
+        window.addEventListener(SELECTED_GOAL_CHANGED_EVENT, onSelectedGoalChanged)
+        document.addEventListener('visibilitychange', onVisibilityChange)
+
+        return () => {
+            window.removeEventListener('click', trigger)
+            window.removeEventListener('keyup', trigger)
+            window.removeEventListener(SELECTED_GOAL_CHANGED_EVENT, onSelectedGoalChanged)
+            document.removeEventListener('visibilitychange', onVisibilityChange)
+        }
+    }, [api, selectedProjectId])
 
     useEffect(() => {
         if (baseUrlRef.current === baseUrl) {
@@ -129,6 +184,7 @@ function AppInner() {
         }
         baseUrlRef.current = baseUrl
         isFirstConnectRef.current = true
+        hasLoadedOnceRef.current = false
         syncTokenRef.current = 0
         queryClient.clear()
     }, [baseUrl, queryClient])
@@ -196,14 +252,23 @@ function AppInner() {
         }
         const invalidations = [
             queryClient.invalidateQueries({ queryKey: queryKeys.sessions }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
+            queryClient.invalidateQueries({ queryKey: ['project'] }),
+            queryClient.invalidateQueries({ queryKey: ['workspaces'] }),
+            queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+            queryClient.invalidateQueries({ queryKey: ['task'] }),
             ...(selectedSessionId ? [
                 queryClient.invalidateQueries({ queryKey: queryKeys.session(selectedSessionId) })
             ] : [])
         ]
-        const refreshMessages = (selectedSessionId && api)
-            ? fetchLatestMessages(api, selectedSessionId)
-            : Promise.resolve()
-        Promise.all([...invalidations, refreshMessages])
+        const messageWindowSessionIds = new Set(getActiveMessageWindowSessionIds())
+        if (selectedSessionId) {
+            messageWindowSessionIds.add(selectedSessionId)
+        }
+        const refreshMessages = api
+            ? Array.from(messageWindowSessionIds).map((sessionId) => fetchLatestMessages(api, sessionId))
+            : []
+        Promise.all([...invalidations, ...refreshMessages])
             .catch((error) => {
                 console.error('Failed to invalidate queries on SSE connect:', error)
             })
@@ -232,12 +297,10 @@ function AppInner() {
         })
     }, [addToast])
 
-    const eventSubscription = useMemo(() => {
-        if (selectedSessionId) {
-            return { sessionId: selectedSessionId }
-        }
-        return { all: true }
-    }, [selectedSessionId])
+    const eventSubscription = useMemo(
+        () => buildAppEventSubscription({ pathname, selectedProjectId, selectedSessionId }),
+        [pathname, selectedProjectId, selectedSessionId]
+    )
 
     const { subscriptionId } = useSSE({
         enabled: Boolean(api && token),
@@ -256,8 +319,9 @@ function AppInner() {
         enabled: Boolean(api && token)
     })
 
-    // Loading auth source
-    if (isAuthSourceLoading) {
+    // Guard: avoid a 1-render mismatch when baseUrl changes.
+    // (The effect below will clear query + reset refs.)
+    if (baseUrlRef.current !== baseUrl) {
         return (
             <div className="h-full flex items-center justify-center p-4">
                 <LoadingState label={t('loading')} className="text-sm" />
@@ -265,48 +329,30 @@ function AppInner() {
         )
     }
 
+    // Mark that we've successfully loaded once and cache token/api.
+    // Keep this BEFORE early returns so a persisted session token can render immediately.
+    if (token && api) {
+        hasLoadedOnceRef.current = true
+        cachedTokenRef.current = token
+        cachedApiRef.current = api
+    }
+
+    const hasLoadedOnce = hasLoadedOnceRef.current
+
+    // Loading auth source - only show full screen loading on first load
+    if (isAuthSourceLoading) {
+        if (!hasLoadedOnce) {
+            return (
+                <div className="h-full flex items-center justify-center p-4">
+                    <LoadingState label={t('loading')} className="text-sm" />
+                </div>
+            )
+        }
+    }
+
     // No auth source (browser environment, not logged in)
     if (!authSource) {
-        return (
-            <LoginPrompt
-                onLogin={setAccessToken}
-                baseUrl={baseUrl}
-                serverUrl={serverUrl}
-                setServerUrl={setServerUrl}
-                clearServerUrl={clearServerUrl}
-                requireServerUrl={REQUIRE_SERVER_URL}
-            />
-        )
-    }
-
-    if (needsBinding) {
-        return (
-            <LoginPrompt
-                mode="bind"
-                onBind={bind}
-                baseUrl={baseUrl}
-                serverUrl={serverUrl}
-                setServerUrl={setServerUrl}
-                clearServerUrl={clearServerUrl}
-                requireServerUrl={REQUIRE_SERVER_URL}
-                error={authError ?? undefined}
-            />
-        )
-    }
-
-    // Authenticating (also covers the gap before useAuth effect starts)
-    if (isAuthLoading || (authSource && !token && !authError)) {
-        return (
-            <div className="h-full flex items-center justify-center p-4">
-                <LoadingState label={t('authorizing')} className="text-sm" />
-            </div>
-        )
-    }
-
-    // Auth error
-    if (authError || !token || !api) {
-        // If using access token and auth failed, show login again
-        if (authSource.type === 'accessToken') {
+        if (!hasLoadedOnce) {
             return (
                 <LoginPrompt
                     onLogin={setAccessToken}
@@ -315,30 +361,105 @@ function AppInner() {
                     setServerUrl={setServerUrl}
                     clearServerUrl={clearServerUrl}
                     requireServerUrl={REQUIRE_SERVER_URL}
-                    error={authError ?? t('login.error.authFailed')}
                 />
             )
         }
-
-        // Telegram auth failed
-        return (
-            <div className="p-4 space-y-3">
-                <div className="text-base font-semibold">{t('login.title')}</div>
-                <div className="text-sm text-red-600">
-                    {authError ?? t('login.error.authFailed')}
-                </div>
-                <div className="text-xs text-[var(--app-hint)]">
-                    Open this page from Telegram using the bot's "Open App" button (not "Open in browser").
-                </div>
-            </div>
-        )
     }
 
+    if (needsBinding) {
+        if (!hasLoadedOnce) {
+            return (
+                <LoginPrompt
+                    mode="bind"
+                    onBind={bind}
+                    baseUrl={baseUrl}
+                    serverUrl={serverUrl}
+                    setServerUrl={setServerUrl}
+                    clearServerUrl={clearServerUrl}
+                    requireServerUrl={REQUIRE_SERVER_URL}
+                    error={authError ?? undefined}
+                />
+            )
+        }
+    }
+
+    // Authenticating (also covers the gap before useAuth effect starts)
+    // Only show full screen loading on first load, otherwise show overlay
+    if (isAuthLoading || (authSource && !token && !authError)) {
+        if (!hasLoadedOnce) {
+            return (
+                <div className="h-full flex items-center justify-center p-4">
+                    <LoadingState label={t('authorizing')} className="text-sm" />
+                </div>
+            )
+        }
+    }
+
+    // Auth error
+    if (authError || !token || !api) {
+        // If using access token and auth failed, show login again
+        if (authSource?.type === 'accessToken') {
+            if (!hasLoadedOnce) {
+                return (
+                    <LoginPrompt
+                        onLogin={setAccessToken}
+                        baseUrl={baseUrl}
+                        serverUrl={serverUrl}
+                        setServerUrl={setServerUrl}
+                        clearServerUrl={clearServerUrl}
+                        requireServerUrl={REQUIRE_SERVER_URL}
+                        error={authError ?? t('login.error.authFailed')}
+                    />
+                )
+            }
+        }
+
+        // Telegram auth failed
+        if (!hasLoadedOnce) {
+            return (
+                <div className="p-4 space-y-3">
+                    <div className="text-base font-semibold">{t('login.title')}</div>
+                    <div className="text-sm text-red-600">
+                        {authError ?? t('login.error.authFailed')}
+                    </div>
+                    <div className="text-xs text-[var(--app-hint)]">
+                        Open this page from Telegram using the bot's "Open App" button (not "Open in browser").
+                    </div>
+                </div>
+            )
+        }
+    }
+
+    // Use cached values during reconnection
+    const effectiveToken = token ?? cachedTokenRef.current
+    const effectiveApi = api ?? cachedApiRef.current
+
+
+    // Show reconnecting overlay if we're reconnecting after initial load
+    const isReconnecting = hasLoadedOnce && (
+        isAuthSourceLoading ||
+        isAuthLoading ||
+        (authSource && !token && !authError) ||
+        sseDisconnected
+    )
+
+    const reconnectLabel = isAuthLoading || (authSource && !token && !authError)
+        ? t('authorizing')
+        : sseDisconnected
+            ? null
+            : isAuthSourceLoading
+                ? t('loading')
+                : null
+
     return (
-        <AppContextProvider value={{ api, token, baseUrl }}>
+        <AppContextProvider value={{ api: effectiveApi!, token: effectiveToken!, baseUrl }}>
             <VoiceProvider>
                 <SyncingBanner isSyncing={isSyncing} />
-                <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing} />
+                <ReconnectingBanner isReconnecting={sseDisconnected && !isSyncing && !isReconnecting} />
+                <ReconnectingOverlay
+                    isReconnecting={isReconnecting}
+                    label={reconnectLabel}
+                />
                 <VoiceErrorBanner />
                 <OfflineBanner />
                 <div className="h-full flex flex-col">

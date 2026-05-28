@@ -1,102 +1,41 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { memo, type ReactNode, useMemo } from 'react'
+import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import type { Session } from '@/types/api'
-import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
-import { useSessionActions } from '@/hooks/mutations/useSessionActions'
-import { SessionActionMenu } from '@/components/SessionActionMenu'
-import { RenameSessionDialog } from '@/components/RenameSessionDialog'
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { getSessionDisplayTitle } from '@/lib/displayNames'
 import { useTranslation } from '@/lib/use-translation'
+import { BackIcon, DiffIcon, FilesIcon, TaskIcon } from '@/assets/icons'
+import { SessionDebugIdButton } from '@/components/SessionDebugIdButton'
+import { IconButton } from '@/components/ui/icon-button'
 
-function getSessionTitle(session: Session): string {
-    if (session.metadata?.name) {
-        return session.metadata.name
-    }
-    if (session.metadata?.summary?.text) {
-        return session.metadata.summary.text
-    }
-    if (session.metadata?.path) {
-        const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
-    }
-    return session.id.slice(0, 8)
-}
-
-function FilesIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-        </svg>
-    )
-}
-
-function MoreVerticalIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className={props.className}
-        >
-            <circle cx="12" cy="5" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="12" cy="19" r="2" />
-        </svg>
-    )
-}
-
-export function SessionHeader(props: {
+type SessionHeaderProps = {
     session: Session
     onBack: () => void
+    showBack?: boolean
     onViewFiles?: () => void
-    api: ApiClient | null
+    onViewDiffs?: () => void
     onSessionDeleted?: () => void
-}) {
+    extra?: ReactNode
+}
+
+function SessionHeaderImpl(props: SessionHeaderProps) {
     const { t } = useTranslation()
-    const { session, api, onSessionDeleted } = props
-    const title = useMemo(() => getSessionTitle(session), [session])
+    const navigate = useNavigate()
+    const matchRoute = useMatchRoute()
+    const { session } = props
+    const title = useMemo(() => getSessionDisplayTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
 
-    const [menuOpen, setMenuOpen] = useState(false)
-    const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
-    const menuId = useId()
-    const menuAnchorRef = useRef<HTMLButtonElement | null>(null)
-    const [renameOpen, setRenameOpen] = useState(false)
-    const [archiveOpen, setArchiveOpen] = useState(false)
-    const [deleteOpen, setDeleteOpen] = useState(false)
+    const taskRouteMatch = matchRoute({ to: '/projects/$projectId/tasks/$taskId', fuzzy: true })
+    const taskParamsFromRoute = taskRouteMatch
+        ? { projectId: taskRouteMatch.projectId, taskId: taskRouteMatch.taskId }
+        : null
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
-        api,
-        session.id,
-        session.metadata?.flavor ?? null
-    )
+    const taskParamsFromMetadata = session.metadata?.projectId && session.metadata?.taskId
+        ? { projectId: session.metadata.projectId, taskId: session.metadata.taskId }
+        : null
 
-    const handleDelete = async () => {
-        await deleteSession()
-        onSessionDeleted?.()
-    }
-
-    const handleMenuToggle = () => {
-        if (!menuOpen && menuAnchorRef.current) {
-            const rect = menuAnchorRef.current.getBoundingClientRect()
-            setMenuAnchorPoint({ x: rect.right, y: rect.bottom })
-        }
-        setMenuOpen((open) => !open)
-    }
+    const taskLink = taskParamsFromRoute ?? taskParamsFromMetadata
 
     // In Telegram, don't render header (Telegram provides its own)
     if (isTelegramApp()) {
@@ -108,29 +47,15 @@ export function SessionHeader(props: {
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
                     {/* Back button */}
-                    <button
-                        type="button"
-                        onClick={props.onBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="20"
-                            height="20"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        >
-                            <polyline points="15 18 9 12 15 6" />
-                        </svg>
-                    </button>
+                    {props.showBack !== false ? (
+                        <IconButton type="button" onClick={props.onBack}>
+                            <BackIcon />
+                        </IconButton>
+                    ) : null}
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">
+                        <div className="truncate font-semibold" title={title}>
                             {title}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)]">
@@ -138,6 +63,7 @@ export function SessionHeader(props: {
                                 <span aria-hidden="true">❖</span>
                                 {session.metadata?.flavor?.trim() || 'unknown'}
                             </span>
+                            <SessionDebugIdButton debugId={session.debugId} />
                             <span>
                                 {t('session.item.modelMode')}: {session.modelMode || 'default'}
                             </span>
@@ -148,74 +74,63 @@ export function SessionHeader(props: {
                     </div>
 
                     {props.onViewFiles ? (
-                        <button
-                            type="button"
-                            onClick={props.onViewFiles}
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            title={t('session.title')}
-                        >
+                        <IconButton type="button" onClick={props.onViewFiles} title={t('session.title')}>
                             <FilesIcon />
-                        </button>
+                        </IconButton>
                     ) : null}
 
-                    <button
-                        type="button"
-                        onClick={handleMenuToggle}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        ref={menuAnchorRef}
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen}
-                        aria-controls={menuOpen ? menuId : undefined}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        title={t('session.more')}
-                    >
-                        <MoreVerticalIcon />
-                    </button>
+                    {props.onViewDiffs ? (
+                        <IconButton type="button" onClick={props.onViewDiffs} title={t('projects.workbench.tab.diffs')}>
+                            <DiffIcon />
+                        </IconButton>
+                    ) : null}
+
+                    {taskLink ? (
+                        <IconButton
+                            type="button"
+                            onClick={() => navigate({
+                                to: '/projects/$projectId/tasks/$taskId/task',
+                                params: { projectId: taskLink.projectId, taskId: taskLink.taskId }
+                            })}
+                            aria-label={t('projects.workbench.tab.task')}
+                            title={t('projects.workbench.tab.task')}
+                        >
+                            <TaskIcon />
+                        </IconButton>
+                    ) : null}
                 </div>
+                {props.extra ? (
+                    <div className="mx-auto w-full max-w-content px-3 pb-3">
+                        {props.extra}
+                    </div>
+                ) : null}
             </div>
-
-            <SessionActionMenu
-                isOpen={menuOpen}
-                onClose={() => setMenuOpen(false)}
-                sessionActive={session.active}
-                onRename={() => setRenameOpen(true)}
-                onArchive={() => setArchiveOpen(true)}
-                onDelete={() => setDeleteOpen(true)}
-                anchorPoint={menuAnchorPoint}
-                menuId={menuId}
-            />
-
-            <RenameSessionDialog
-                isOpen={renameOpen}
-                onClose={() => setRenameOpen(false)}
-                currentName={title}
-                onRename={renameSession}
-                isPending={isPending}
-            />
-
-            <ConfirmDialog
-                isOpen={archiveOpen}
-                onClose={() => setArchiveOpen(false)}
-                title={t('dialog.archive.title')}
-                description={t('dialog.archive.description', { name: title })}
-                confirmLabel={t('dialog.archive.confirm')}
-                confirmingLabel={t('dialog.archive.confirming')}
-                onConfirm={archiveSession}
-                isPending={isPending}
-                destructive
-            />
-
-            <ConfirmDialog
-                isOpen={deleteOpen}
-                onClose={() => setDeleteOpen(false)}
-                title={t('dialog.delete.title')}
-                description={t('dialog.delete.description', { name: title })}
-                confirmLabel={t('dialog.delete.confirm')}
-                confirmingLabel={t('dialog.delete.confirming')}
-                onConfirm={handleDelete}
-                isPending={isPending}
-                destructive
-            />
         </>
     )
 }
+
+function areSessionHeaderPropsEqual(prev: SessionHeaderProps, next: SessionHeaderProps): boolean {
+    if (prev.onBack !== next.onBack || prev.showBack !== next.showBack || prev.onViewFiles !== next.onViewFiles || prev.onViewDiffs !== next.onViewDiffs || prev.onSessionDeleted !== next.onSessionDeleted || prev.extra !== next.extra) {
+        return false
+    }
+
+    const prevSession = prev.session
+    const nextSession = next.session
+
+    if (prevSession.id !== nextSession.id || prevSession.debugId !== nextSession.debugId || prevSession.modelMode !== nextSession.modelMode) {
+        return false
+    }
+
+    const prevMetadata = prevSession.metadata
+    const nextMetadata = nextSession.metadata
+
+    return prevMetadata?.name === nextMetadata?.name
+        && prevMetadata?.summary?.text === nextMetadata?.summary?.text
+        && prevMetadata?.path === nextMetadata?.path
+        && prevMetadata?.flavor === nextMetadata?.flavor
+        && prevMetadata?.worktree?.branch === nextMetadata?.worktree?.branch
+        && prevMetadata?.projectId === nextMetadata?.projectId
+        && prevMetadata?.taskId === nextMetadata?.taskId
+}
+
+export const SessionHeader = memo(SessionHeaderImpl, areSessionHeaderPropsEqual)

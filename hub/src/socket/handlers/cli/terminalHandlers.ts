@@ -3,7 +3,7 @@ import {
     TerminalExitPayloadSchema,
     TerminalOutputPayloadSchema,
     TerminalReadyPayloadSchema
-} from '@hapi/protocol'
+} from '@hopi/protocol'
 import type { StoredSession } from '../../../store'
 import type { TerminalRegistry } from '../../terminalRegistry'
 import type { CliSocketWithData, SocketServer } from '../../socketTypes'

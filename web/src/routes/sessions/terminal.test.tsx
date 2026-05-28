@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { I18nProvider } from '@/lib/i18n-context'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { renderWithProviders } from '@/test/renderWithProviders'
 import TerminalPage from './terminal'
 
 const writeMock = vi.fn()
@@ -53,14 +53,6 @@ vi.mock('@/components/Terminal/TerminalView', () => ({
     TerminalView: () => <div data-testid="terminal-view" />
 }))
 
-function renderWithProviders() {
-    return render(
-        <I18nProvider>
-            <TerminalPage />
-        </I18nProvider>
-    )
-}
-
 describe('TerminalPage paste behavior', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -73,7 +65,7 @@ describe('TerminalPage paste behavior', () => {
             value: { readText }
         })
 
-        renderWithProviders()
+        renderWithProviders(<TerminalPage />)
         fireEvent.click(screen.getAllByRole('button', { name: 'Paste' })[0])
 
         await waitFor(() => {
@@ -92,7 +84,7 @@ describe('TerminalPage paste behavior', () => {
             value: { readText }
         })
 
-        renderWithProviders()
+        renderWithProviders(<TerminalPage />)
         fireEvent.click(screen.getAllByRole('button', { name: 'Paste' })[0])
 
         expect(await screen.findByText('Paste input')).toBeInTheDocument()

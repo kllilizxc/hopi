@@ -1,6 +1,6 @@
 # Installation
 
-Install the HAPI CLI and set up the hub.
+Install the HOPI CLI and set up the hub.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ opencode --version
 
 ## Architecture
 
-HAPI has three components:
+HOPI has three components:
 
 | Component | Role | Required |
 |-----------|------|----------|
@@ -57,26 +57,26 @@ HAPI has three components:
               └───────────┘
 ```
 
-- **CLI**: Start a session with `hapi`. The CLI wraps your AI agent and syncs with the hub.
-- **Hub**: Run `hapi hub`. Stores sessions, handles permissions, enables remote access.
-- **Runner**: Run `hapi runner start`. Lets you spawn sessions from phone/web without keeping a terminal open.
+- **CLI**: Start a session with `hopi`. The CLI wraps your AI agent and syncs with the hub.
+- **Hub**: Run `hopi hub`. Stores sessions, handles permissions, enables remote access.
+- **Runner**: Run `hopi runner start`. Lets you spawn sessions from phone/web without keeping a terminal open.
 
 ### Typical workflows
 
-**Local only**: `hapi hub` → `hapi` → work in terminal
+**Local only**: `hopi hub` → `hopi` → work in terminal
 
-**Remote access**: `hapi hub --relay` → `hapi runner start` → control from phone/web
+**Remote access**: `hopi hub --relay` → `hopi runner start` → control from phone/web
 
 ## Install the CLI
 
 ```bash
-npm install -g @twsxtd/hapi
+npm install -g @twsxtd/hopi
 ```
 
 Or with Homebrew:
 
 ```bash
-brew install tiann/tap/hapi
+brew install tiann/tap/hopi
 ```
 
 ## Other install options
@@ -85,19 +85,19 @@ brew install tiann/tap/hapi
 <summary>npx (no install)</summary>
 
 ```bash
-npx @twsxtd/hapi
+npx @twsxtd/hopi
 ```
 </details>
 
 <details>
 <summary>Prebuilt binary</summary>
 
-Download the latest release from [GitHub Releases](https://github.com/tiann/hapi/releases).
+Download the latest release from [GitHub Releases](https://github.com/tiann/hopi/releases).
 
 ```bash
-xattr -d com.apple.quarantine ./hapi
-chmod +x ./hapi
-sudo mv ./hapi /usr/local/bin/
+xattr -d com.apple.quarantine ./hopi
+chmod +x ./hopi
+sudo mv ./hopi /usr/local/bin/
 ```
 </details>
 
@@ -105,12 +105,12 @@ sudo mv ./hapi /usr/local/bin/
 <summary>Build from source</summary>
 
 ```bash
-git clone https://github.com/tiann/hapi.git
-cd hapi
+git clone https://github.com/tiann/hopi.git
+cd hopi
 bun install
 bun build:single-exe
 
-./cli/dist/hapi
+./cli/dist/hopi
 ```
 </details>
 
@@ -124,42 +124,42 @@ The hub can be deployed on:
 ### Default: Public Relay (recommended)
 
 ```bash
-hapi hub --relay
+hopi hub --relay
 ```
 
 The terminal displays a URL and QR code. Scan to access from anywhere.
 
-`hapi server` remains supported as an alias.
+`hopi server` remains supported as an alias.
 
 - **End-to-end encrypted** with WireGuard + TLS
 - No configuration needed
 - Works behind NAT, firewalls, and any network
 
-> **Tip:** The relay uses UDP by default. If you experience connectivity issues, set `HAPI_RELAY_FORCE_TCP=true` to force TCP mode.
+> **Tip:** The relay uses UDP by default. If you experience connectivity issues, set `HOPI_RELAY_FORCE_TCP=true` to force TCP mode.
 
 ### Local Only
 
 ```bash
-hapi hub
+hopi hub
 # or
-hapi hub --no-relay
+hopi hub --no-relay
 ```
 
 The hub listens on `http://localhost:3006` by default.
 
-On first run, HAPI:
+On first run, HOPI:
 
-1. Creates `~/.hapi/`
+1. Creates `~/.hopi/`
 2. Generates a secure access token
-3. Prints the token and saves it to `~/.hapi/settings.json`
+3. Prints the token and saves it to `~/.hopi/settings.json`
 
 <details>
 <summary>Config files</summary>
 
 ```
-~/.hapi/
+~/.hopi/
 ├── settings.json      # Main configuration
-├── hapi.db           # SQLite database (hub)
+├── hopi.db           # SQLite database (hub)
 ├── runner.state.json  # Runner process state
 └── logs/             # Log files
 ```
@@ -171,17 +171,17 @@ On first run, HAPI:
 | Variable | Default | settings.json | Description |
 |----------|---------|---------------|-------------|
 | `CLI_API_TOKEN` | Auto-generated | `cliApiToken` | Shared secret for authentication |
-| `HAPI_API_URL` | `http://localhost:3006` | `apiUrl` | Hub URL for CLI connections |
-| `HAPI_LISTEN_HOST` | `127.0.0.1` | `listenHost` | Hub HTTP bind address |
-| `HAPI_LISTEN_PORT` | `3006` | `listenPort` | Hub HTTP port |
-| `HAPI_PUBLIC_URL` | - | `publicUrl` | Public URL for external access |
+| `HOPI_API_URL` | `http://localhost:3006` | `apiUrl` | Hub URL for CLI connections |
+| `HOPI_LISTEN_HOST` | `127.0.0.1` | `listenHost` | Hub HTTP bind address |
+| `HOPI_LISTEN_PORT` | `3006` | `listenPort` | Hub HTTP port |
+| `HOPI_PUBLIC_URL` | - | `publicUrl` | Public URL for external access |
 | `CORS_ORIGINS` | - | `corsOrigins` | Allowed CORS origins (comma-separated) |
 | `TELEGRAM_BOT_TOKEN` | - | `telegramBotToken` | Telegram Bot API token |
 | `TELEGRAM_NOTIFICATION` | `true` | `telegramNotification` | Enable Telegram notifications |
-| `HAPI_RELAY_FORCE_TCP` | `false` | - | Force TCP mode for relay |
-| `VAPID_SUBJECT` | `mailto:admin@hapi.run` | - | Web Push contact info |
-| `HAPI_HOME` | `~/.hapi` | - | Config directory path |
-| `DB_PATH` | `~/.hapi/hapi.db` | - | Database file path |
+| `HOPI_RELAY_FORCE_TCP` | `false` | - | Force TCP mode for relay |
+| `VAPID_SUBJECT` | `mailto:admin@hopi.run` | - | Web Push contact info |
+| `HOPI_HOME` | `~/.hopi` | - | Config directory path |
+| `DB_PATH` | `~/.hopi/hopi.db` | - | Database file path |
 | `ELEVENLABS_API_KEY` | - | - | ElevenLabs API key for voice |
 | `ELEVENLABS_AGENT_ID` | Auto-created | - | Custom ElevenLabs agent ID |
 </details>
@@ -195,40 +195,40 @@ When ENV values are set and not present in settings.json, they are automatically
 
 ```json
 {
-  "$schema": "https://hapi.run/docs/schemas/settings.schema.json",
+  "$schema": "https://hopi.run/docs/schemas/settings.schema.json",
   "listenHost": "0.0.0.0",
   "listenPort": 3006,
   "publicUrl": "https://your-domain.com"
 }
 ```
 
-JSON Schema: [settings.schema.json](https://hapi.run/schemas/settings.schema.json)
+JSON Schema: [settings.schema.json](https://hopi.run/schemas/settings.schema.json)
 </details>
 
 ## CLI setup
 
-If the hub is not on localhost, set these before running `hapi`:
+If the hub is not on localhost, set these before running `hopi`:
 
 ```bash
-export HAPI_API_URL="http://your-hub:3006"
+export HOPI_API_URL="http://your-hub:3006"
 export CLI_API_TOKEN="your-token-here"
 ```
 
 Or use interactive login:
 
 ```bash
-hapi auth login
+hopi auth login
 ```
 
 Authentication commands:
 
 ```bash
-hapi auth status
-hapi auth login
-hapi auth logout
+hopi auth status
+hopi auth login
+hopi auth logout
 ```
 
-Each machine gets a unique ID stored in `~/.hapi/settings.json`. This allows:
+Each machine gets a unique ID stored in `~/.hopi/settings.json`. This allows:
 
 - Multiple machines to connect to one hub
 - Remote session spawning on specific machines
@@ -245,7 +245,7 @@ If you prefer not to use the public relay (e.g., for lower latency or self-manag
 
 https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 
-> **Note:** Cloudflare Quick Tunnels (TryCloudflare) are not supported because they [do not support SSE](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/), which HAPI uses for real-time updates. Use a Named Tunnel instead.
+> **Note:** Cloudflare Quick Tunnels (TryCloudflare) are not supported because they [do not support SSE](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/), which HOPI uses for real-time updates. Use a Named Tunnel instead.
 
 **Named tunnel setup:**
 
@@ -253,11 +253,11 @@ https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 # Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 
 # Create and configure a named tunnel
-cloudflared tunnel create hapi
-cloudflared tunnel route dns hapi hapi.yourdomain.com
+cloudflared tunnel create hopi
+cloudflared tunnel route dns hopi hopi.yourdomain.com
 
 # Run the tunnel
-cloudflared tunnel --protocol http2 run hapi
+cloudflared tunnel --protocol http2 run hopi
 ```
 
 > **Tip:** Use `--protocol http2` instead of QUIC (the default) to avoid potential timeout issues with long-lived connections.
@@ -271,7 +271,7 @@ https://tailscale.com/download
 
 ```bash
 sudo tailscale up
-hapi hub
+hopi hub
 ```
 
 Access via your Tailscale IP:
@@ -290,7 +290,7 @@ Use HTTPS (via Nginx, Caddy, etc.) for production.
 
 **Self-signed certificates (HTTPS)**
 
-If `HAPI_API_URL` is set to an `https://...` URL with a self-signed (or otherwise untrusted) certificate, the CLI may fail with:
+If `HOPI_API_URL` is set to an `https://...` URL with a self-signed (or otherwise untrusted) certificate, the CLI may fail with:
 
 ```
 Error: self signed certificate
@@ -324,16 +324,16 @@ Enable Telegram notifications and Mini App access:
 
 ```bash
 export TELEGRAM_BOT_TOKEN="your-bot-token"
-export HAPI_PUBLIC_URL="https://your-public-url"
+export HOPI_PUBLIC_URL="https://your-public-url"
 
-hapi hub
+hopi hub
 ```
 
 Then message your bot with `/start`, open the app, and enter your `CLI_API_TOKEN`.
 
 **Troubleshooting:**
 
-- If binding fails, verify `HAPI_PUBLIC_URL` is accessible from the internet
+- If binding fails, verify `HOPI_PUBLIC_URL` is accessible from the internet
 - Telegram Mini App requires HTTPS (not HTTP)
 
 ### Runner setup
@@ -341,10 +341,10 @@ Then message your bot with `/start`, open the app, and enter your `CLI_API_TOKEN
 Run a background service for remote session spawning:
 
 ```bash
-hapi runner start
-hapi runner status
-hapi runner logs
-hapi runner stop
+hopi runner start
+hopi runner status
+hopi runner logs
+hopi runner stop
 ```
 
 With the runner running:
@@ -359,14 +359,14 @@ With the runner running:
 If you prefer pm2 for process management:
 
 ```bash
-pm2 start "hapi runner start --foreground" --name hapi-runner
+pm2 start "hopi runner start --foreground" --name hopi-runner
 pm2 save
 ```
 </details>
 
 ### Background service deployment
 
-Keep HAPI running persistently so it survives terminal closes, system restarts, and continues running in the background.
+Keep HOPI running persistently so it survives terminal closes, system restarts, and continues running in the background.
 
 <details>
 <summary>Quick: nohup</summary>
@@ -375,24 +375,24 @@ Simple one-liner for quick background runs:
 
 ```bash
 # Hub
-nohup hapi hub --relay > ~/.hapi/logs/hub.log 2>&1 &
+nohup hopi hub --relay > ~/.hopi/logs/hub.log 2>&1 &
 
 # Runner
-nohup hapi runner start --foreground > ~/.hapi/logs/runner.log 2>&1 &
+nohup hopi runner start --foreground > ~/.hopi/logs/runner.log 2>&1 &
 ```
 
 View logs:
 
 ```bash
-tail -f ~/.hapi/logs/hub.log
-tail -f ~/.hapi/logs/runner.log
+tail -f ~/.hopi/logs/hub.log
+tail -f ~/.hopi/logs/runner.log
 ```
 
 Stop processes:
 
 ```bash
-pkill -f "hapi hub"
-pkill -f "hapi runner"
+pkill -f "hopi hub"
+pkill -f "hopi runner"
 ```
 </details>
 
@@ -406,13 +406,13 @@ pm2 provides process management with auto-restart on crashes and system reboot.
 npm install -g pm2
 
 # Start hub and runner
-pm2 start "hapi hub --relay" --name hapi-hub
-pm2 start "hapi runner start --foreground" --name hapi-runner
+pm2 start "hopi hub --relay" --name hopi-hub
+pm2 start "hopi runner start --foreground" --name hopi-runner
 
 # View status and logs
 pm2 status
-pm2 logs hapi-hub
-pm2 logs hapi-runner
+pm2 logs hopi-hub
+pm2 logs hopi-runner
 
 # Auto-restart on system reboot
 pm2 startup    # Follow the printed instructions
@@ -425,7 +425,7 @@ pm2 save       # Save current process list
 
 Create plist files for automatic startup on macOS.
 
-**Hub** (`~/Library/LaunchAgents/com.hapi.hub.plist`):
+**Hub** (`~/Library/LaunchAgents/com.hopi.hub.plist`):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -433,10 +433,10 @@ Create plist files for automatic startup on macOS.
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hapi.hub</string>
+    <string>com.hopi.hub</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/hapi</string>
+        <string>/usr/local/bin/hopi</string>
         <string>hub</string>
         <string>--relay</string>
     </array>
@@ -445,14 +445,14 @@ Create plist files for automatic startup on macOS.
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/YOUR_USERNAME/.hapi/logs/hub.log</string>
+    <string>/Users/YOUR_USERNAME/.hopi/logs/hub.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOUR_USERNAME/.hapi/logs/hub.log</string>
+    <string>/Users/YOUR_USERNAME/.hopi/logs/hub.log</string>
 </dict>
 </plist>
 ```
 
-**Runner** (`~/Library/LaunchAgents/com.hapi.runner.plist`):
+**Runner** (`~/Library/LaunchAgents/com.hopi.runner.plist`):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -460,10 +460,10 @@ Create plist files for automatic startup on macOS.
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hapi.runner</string>
+    <string>com.hopi.runner</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/hapi</string>
+        <string>/usr/local/bin/hopi</string>
         <string>runner</string>
         <string>start</string>
         <string>--foreground</string>
@@ -473,9 +473,9 @@ Create plist files for automatic startup on macOS.
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/YOUR_USERNAME/.hapi/logs/runner.log</string>
+    <string>/Users/YOUR_USERNAME/.hopi/logs/runner.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOUR_USERNAME/.hapi/logs/runner.log</string>
+    <string>/Users/YOUR_USERNAME/.hopi/logs/runner.log</string>
 </dict>
 </plist>
 ```
@@ -484,19 +484,19 @@ Load/unload services:
 
 ```bash
 # Load (start)
-launchctl load ~/Library/LaunchAgents/com.hapi.hub.plist
-launchctl load ~/Library/LaunchAgents/com.hapi.runner.plist
+launchctl load ~/Library/LaunchAgents/com.hopi.hub.plist
+launchctl load ~/Library/LaunchAgents/com.hopi.runner.plist
 
 # Unload (stop)
-launchctl unload ~/Library/LaunchAgents/com.hapi.hub.plist
-launchctl unload ~/Library/LaunchAgents/com.hapi.runner.plist
+launchctl unload ~/Library/LaunchAgents/com.hopi.hub.plist
+launchctl unload ~/Library/LaunchAgents/com.hopi.runner.plist
 ```
 
 > **macOS sleep note:** macOS may suspend background processes when the display sleeps. Use `caffeinate` to prevent this:
 > ```bash
-> caffeinate -dimsu hapi hub --relay
+> caffeinate -dimsu hopi hub --relay
 > ```
-> Or run `caffeinate -dimsu` in a separate terminal while HAPI is running.
+> Or run `caffeinate -dimsu` in a separate terminal while HOPI is running.
 </details>
 
 <details>
@@ -504,16 +504,16 @@ launchctl unload ~/Library/LaunchAgents/com.hapi.runner.plist
 
 Create user-level systemd services for automatic startup.
 
-**Hub** (`~/.config/systemd/user/hapi-hub.service`):
+**Hub** (`~/.config/systemd/user/hopi-hub.service`):
 
 ```ini
 [Unit]
-Description=HAPI Hub
+Description=HOPI Hub
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hapi hub --relay
+ExecStart=/usr/local/bin/hopi hub --relay
 Restart=always
 RestartSec=5
 
@@ -521,16 +521,16 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-**Runner** (`~/.config/systemd/user/hapi-runner.service`):
+**Runner** (`~/.config/systemd/user/hopi-runner.service`):
 
 ```ini
 [Unit]
-Description=HAPI Runner
-After=network.target hapi-hub.service
+Description=HOPI Runner
+After=network.target hopi-hub.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hapi runner start --foreground
+ExecStart=/usr/local/bin/hopi runner start --foreground
 Restart=always
 RestartSec=5
 
@@ -545,16 +545,16 @@ Enable and start:
 systemctl --user daemon-reload
 
 # Enable (auto-start on login)
-systemctl --user enable hapi-hub
-systemctl --user enable hapi-runner
+systemctl --user enable hopi-hub
+systemctl --user enable hopi-runner
 
 # Start now
-systemctl --user start hapi-hub
-systemctl --user start hapi-runner
+systemctl --user start hopi-hub
+systemctl --user start hopi-runner
 
 # View status/logs
-systemctl --user status hapi-hub
-journalctl --user -u hapi-hub -f
+systemctl --user status hopi-hub
+journalctl --user -u hopi-hub -f
 ```
 
 > **Persist after logout:** To keep services running even when not logged in:
@@ -572,7 +572,7 @@ Enable voice control:
 
 ```bash
 export ELEVENLABS_API_KEY="your-api-key"
-hapi hub --relay
+hopi hub --relay
 ```
 
 See [Voice Assistant](./voice-assistant.md) for usage details.

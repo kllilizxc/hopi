@@ -11,7 +11,7 @@ import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
-import type { ClaudePermissionMode } from "@hapi/protocol/types";
+import type { ClaudePermissionMode } from "@hopi/protocol/types";
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -23,6 +23,72 @@ interface PermissionsField {
     result: 'approved' | 'denied';
     mode?: ClaudePermissionMode;
     allowedTools?: string[];
+}
+
+function hasTextInClaudeAssistantContent(content: unknown): boolean {
+    if (typeof content === 'string') {
+        return content.trim().length > 0;
+    }
+
+    if (!Array.isArray(content)) {
+        return false;
+    }
+
+    return content.some((part) => {
+        if (!part || typeof part !== 'object') {
+            return false;
+        }
+        const record = part as { type?: unknown; text?: unknown };
+        if (record.type !== 'text') {
+            return false;
+        }
+        return typeof record.text === 'string' && record.text.trim().length > 0;
+    });
+}
+
+function isAssistantTextClaudeMessage(body: unknown): boolean {
+    if (!body || typeof body !== 'object') {
+        return false;
+    }
+
+    const record = body as {
+        type?: unknown
+        summary?: unknown
+        message?: unknown
+    };
+
+    if (record.type === 'summary') {
+        return typeof record.summary === 'string' && record.summary.trim().length > 0;
+    }
+
+    if (record.type !== 'assistant') {
+        return false;
+    }
+
+    const message = record.message;
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    return hasTextInClaudeAssistantContent((message as { content?: unknown }).content);
+}
+
+function buildUnexpectedExitMessage(error: unknown): string {
+    const detail = error instanceof Error
+        ? error.message.trim()
+        : typeof error === 'string'
+            ? error.trim()
+            : '';
+
+    if (!detail) {
+        return 'Process exited unexpectedly';
+    }
+
+    if (/^process exited unexpectedly\b/iu.test(detail)) {
+        return detail;
+    }
+
+    return `Process exited unexpectedly: ${detail}`;
 }
 
 class ClaudeRemoteLauncher extends RemoteLauncherBase {
@@ -86,12 +152,37 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
 
+        // Turn correlation (ready → prompt localKey) for hub-side task automation.
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
+        const emitReadyForInFlightTurn = () => {
+            if (!turnInFlight) {
+                return;
+            }
+            session.client.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
+            turnInFlight = false;
+        };
+
+        const originalSendClaudeSessionMessage = session.client.sendClaudeSessionMessage.bind(session.client);
+        session.client.sendClaudeSessionMessage = (body: any) => {
+            if (turnInFlight && isAssistantTextClaudeMessage(body)) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendClaudeSessionMessage(body);
+        };
+
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbortRequest(),
             onSwitch: () => this.handleSwitchRequest()
         });
 
         const permissionHandler = new PermissionHandler(session);
+        session.setPermissionHandler(permissionHandler);
         this.permissionHandler = permissionHandler;
 
         const messageQueue = new OutgoingMessageQueue(
@@ -270,6 +361,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
             let pending: {
                 message: string;
                 mode: EnhancedMode;
+                hash: string;
+                isolate: boolean;
+                localKey: string | null;
             } | null = null;
 
             let previousSessionId: string | null = null;
@@ -310,6 +404,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 let p = pending;
                                 pending = null;
                                 permissionHandler.handleModeChange(p.mode.permissionMode);
+                                activeTurnLocalKey = p.localKey ?? null;
+                                activeTurnHasAssistantReply = false;
+                                turnInFlight = true;
                                 return p;
                             }
 
@@ -324,6 +421,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 modeHash = msg.hash;
                                 mode = msg.mode;
                                 permissionHandler.handleModeChange(mode.permissionMode);
+                                activeTurnLocalKey = msg.localKey ?? null;
+                                activeTurnHasAssistantReply = false;
+                                turnInFlight = true;
                                 return {
                                     message: msg.message,
                                     mode: msg.mode
@@ -349,7 +449,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         },
                         onReady: () => {
                             if (!pending && session.queue.size() === 0) {
-                                session.client.sendSessionEvent({ type: 'ready' });
+                                emitReadyForInFlightTurn();
                             }
                         },
                         signal: controller.signal,
@@ -358,16 +458,24 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     session.consumeOneTimeFlags();
 
                     if (!this.exitReason && controller.signal.aborted) {
-                        session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
+                        session.client.sendSessionEvent({ type: 'error', message: 'Aborted by user', reason: 'aborted' });
+                        emitReadyForInFlightTurn();
                     }
                 } catch (e) {
                     logger.debug('[remote]: launch error', e);
                     if (!this.exitReason) {
-                        session.client.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                        session.client.sendSessionEvent({
+                            type: 'error',
+                            message: buildUnexpectedExitMessage(e),
+                            reason: 'process-exited'
+                        });
+                        emitReadyForInFlightTurn();
                         continue;
                     }
                 } finally {
                     logger.debug('[remote]: launch finally');
+                    turnInFlight = false;
+                    session.onThinkingChange(false);
 
                     for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
                         const converted = sdkToLogConverter.generateInterruptedToolResult(toolCallId, parentToolCallId);

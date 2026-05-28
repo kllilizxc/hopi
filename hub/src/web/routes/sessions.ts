@@ -1,5 +1,5 @@
-import { getPermissionModesForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, toSessionSummary } from '@hapi/protocol'
-import { ModelModeSchema, PermissionModeSchema } from '@hapi/protocol/schemas'
+import { getPermissionModesForFlavor, isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, toSessionSummary } from '@hopi/protocol'
+import { ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine, Session } from '../../sync/syncEngine'
@@ -35,6 +35,12 @@ function estimateBase64Bytes(base64: string): number {
     if (len === 0) return 0
     const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
     return Math.floor((len * 3) / 4) - padding
+}
+
+function isMissingSessionRpcError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.startsWith('RPC handler not registered:')
+        || message.startsWith('RPC socket disconnected:')
 }
 
 export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
@@ -179,12 +185,19 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = requireSessionFromParam(c, engine)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
 
-        await engine.abortSession(sessionResult.sessionId)
+        try {
+            await engine.abortSession(sessionResult.sessionId)
+        } catch (error) {
+            if (!sessionResult.session.active && isMissingSessionRpcError(error)) {
+                return c.json({ ok: true })
+            }
+            throw error
+        }
         return c.json({ ok: true })
     })
 

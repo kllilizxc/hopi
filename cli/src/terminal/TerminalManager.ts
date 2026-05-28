@@ -1,11 +1,14 @@
 import { logger } from '@/ui/logger'
+import { isBunCompiled } from '@/projectPath'
 import type {
     TerminalErrorPayload,
     TerminalExitPayload,
     TerminalOutputPayload,
     TerminalReadyPayload
-} from '@hapi/protocol'
+} from '@hopi/protocol'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import type { TerminalSession } from './types'
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites'
 
 type TerminalRuntime = TerminalSession & {
     proc: Bun.Subprocess
@@ -26,10 +29,10 @@ type TerminalManagerOptions = {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60_000
 const DEFAULT_MAX_TERMINALS = 4
+const MIN_BUN_VERSION_FOR_PTY = [1, 3, 5] as const
 const SENSITIVE_ENV_KEYS = new Set([
     'CLI_API_TOKEN',
-    'HAPI_API_URL',
-    'HAPI_HTTP_MCP_URL',
+    PRODUCT_ENV.API_URL,
     'TELEGRAM_BOT_TOKEN',
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
@@ -54,6 +57,38 @@ function resolveShell(): string {
         return '/bin/zsh'
     }
     return '/bin/bash'
+}
+
+function parseVersionParts(version: string): [number, number, number] | null {
+    const [major, minor, patch] = version.split('.')
+    const majorNum = Number.parseInt(major, 10)
+    const minorNum = Number.parseInt(minor, 10)
+    const patchNum = Number.parseInt(patch, 10)
+    if (!Number.isFinite(majorNum) || !Number.isFinite(minorNum) || !Number.isFinite(patchNum)) {
+        return null
+    }
+    return [majorNum, minorNum, patchNum]
+}
+
+function isPtySupportedByBun(): boolean {
+    if (typeof Bun === 'undefined' || typeof Bun.version !== 'string') {
+        return false
+    }
+    const current = parseVersionParts(Bun.version)
+    if (!current) {
+        return false
+    }
+    for (let index = 0; index < MIN_BUN_VERSION_FOR_PTY.length; index += 1) {
+        const currentPart = current[index]
+        const minimumPart = MIN_BUN_VERSION_FOR_PTY[index]
+        if (currentPart > minimumPart) {
+            return true
+        }
+        if (currentPart < minimumPart) {
+            return false
+        }
+    }
+    return true
 }
 
 function buildFilteredEnv(): NodeJS.ProcessEnv {
@@ -89,8 +124,8 @@ export class TerminalManager {
         this.onOutput = options.onOutput
         this.onExit = options.onExit
         this.onError = options.onError
-        this.idleTimeoutMs = options.idleTimeoutMs ?? resolveEnvNumber('HAPI_TERMINAL_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS)
-        this.maxTerminals = options.maxTerminals ?? resolveEnvNumber('HAPI_TERMINAL_MAX_TERMINALS', DEFAULT_MAX_TERMINALS)
+        this.idleTimeoutMs = options.idleTimeoutMs ?? resolveEnvNumber(PRODUCT_ENV.TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
+        this.maxTerminals = options.maxTerminals ?? resolveEnvNumber(PRODUCT_ENV.TERMINAL_MAX_TERMINALS, DEFAULT_MAX_TERMINALS)
         this.filteredEnv = buildFilteredEnv()
     }
 
@@ -119,15 +154,28 @@ export class TerminalManager {
             this.emitError(terminalId, 'Terminal is unavailable in this runtime.')
             return
         }
+        if (!isPtySupportedByBun()) {
+            const bunVersion = typeof Bun !== 'undefined' ? Bun.version : 'unknown'
+            this.emitError(terminalId, `Terminal requires Bun >= 1.3.5 (current: ${bunVersion}).`)
+            return
+        }
 
         const sessionPath = this.getSessionPath() ?? process.cwd()
         const shell = resolveShell()
         const decoder = new TextDecoder()
 
         try {
-            const proc = Bun.spawn([shell], {
+            const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+                workspaceRoot: sessionPath,
+                command: shell,
+                args: [],
                 cwd: sessionPath,
-                env: this.filteredEnv,
+                env: this.filteredEnv
+            })
+
+            const proc = Bun.spawn([wrapped.command, ...wrapped.args], {
+                cwd: wrapped.cwd,
+                env: wrapped.env,
                 terminal: {
                     cols,
                     rows,
@@ -148,6 +196,10 @@ export class TerminalManager {
                     }
                 },
                 onExit: (subprocess, exitCode) => {
+                    const active = this.terminals.get(terminalId)
+                    if (!active || active.proc !== subprocess) {
+                        return
+                    }
                     const signal = subprocess.signalCode ?? null
                     this.onExit({
                         sessionId: this.sessionId,
@@ -155,7 +207,7 @@ export class TerminalManager {
                         code: exitCode ?? null,
                         signal
                     })
-                    this.cleanup(terminalId)
+                    this.cleanupRuntime(active, false)
                 }
             })
 
@@ -166,7 +218,20 @@ export class TerminalManager {
                 } catch (error) {
                     logger.debug('[TERMINAL] Failed to kill process after missing terminal', { error })
                 }
-                this.emitError(terminalId, 'Failed to attach terminal.')
+                const bunVersion = typeof Bun !== 'undefined' ? Bun.version : 'unknown'
+                logger.debug('[TERMINAL] Failed to attach terminal', {
+                    bunVersion,
+                    isBunCompiled: isBunCompiled(),
+                    execPath: process.execPath,
+                    shell,
+                    sessionPath,
+                    term: process.env.TERM,
+                    shellEnv: process.env.SHELL
+                })
+                this.emitError(
+                    terminalId,
+                    `Failed to attach terminal. Bun=${bunVersion} compiled=${isBunCompiled() ? 'yes' : 'no'}.`
+                )
                 return
             }
 
@@ -243,13 +308,21 @@ export class TerminalManager {
         if (!runtime) {
             return
         }
+        this.cleanupRuntime(runtime, true)
+    }
 
-        this.terminals.delete(terminalId)
+    private cleanupRuntime(runtime: TerminalRuntime, killProcess: boolean): void {
+        const active = this.terminals.get(runtime.terminalId)
+        if (active !== runtime) {
+            return
+        }
+
+        this.terminals.delete(runtime.terminalId)
         if (runtime.idleTimer) {
             clearTimeout(runtime.idleTimer)
         }
 
-        if (!runtime.proc.killed && runtime.proc.exitCode === null) {
+        if (killProcess && !runtime.proc.killed && runtime.proc.exitCode === null) {
             try {
                 runtime.proc.kill()
             } catch (error) {

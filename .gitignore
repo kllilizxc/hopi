@@ -38,5 +38,31 @@ coverage/
 localdocs/
 execplan/
 
+# Preview runtime cache (repo-local)
+.hopi/*.hash
+.hopi/sandbox/
+
 # Generated npm bundle output (local)
 cli/npm/main/
+
+# Local scratch temp
+/.tmp/
+
+.codex
+.claude
+.roo
+.agents
+super
+.worktrees/
+docs/*
+!docs/.vitepress/
+!docs/guide/
+!docs/internal/
+!docs/public/
+!docs/index.md
+!docs/package.json
+!docs/task-tools-sync-implementation.md
+!docs/hopi-goal-kanban-assistant-unified-design.md
+.agent-debugo
+*.cjs
+.hopi

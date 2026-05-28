@@ -2,15 +2,30 @@ import type { SyncEvent } from '../sync/syncEngine'
 import type { VisibilityState } from '../visibility/visibilityTracker'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 
+export const SSE_EVENT_CATEGORIES = [
+    'messages',
+    'sessions',
+    'machines',
+    'projects',
+    'workspaces',
+    'tasks',
+    'toasts',
+] as const
+
+export type SSEEventCategory = (typeof SSE_EVENT_CATEGORIES)[number]
+
 export type SSESubscription = {
     id: string
     namespace: string
     all: boolean
+    include: SSEEventCategory[] | null
     sessionId: string | null
     machineId: string | null
+    projectId: string | null
 }
 
 type SSEConnection = SSESubscription & {
+    includeSet: ReadonlySet<SSEEventCategory> | null
     send: (event: SyncEvent) => void | Promise<void>
     sendHeartbeat: () => void | Promise<void>
 }
@@ -30,18 +45,26 @@ export class SSEManager {
         id: string
         namespace: string
         all?: boolean
+        include?: SSEEventCategory[] | null
         sessionId?: string | null
         machineId?: string | null
+        projectId?: string | null
         visibility?: VisibilityState
         send: (event: SyncEvent) => void | Promise<void>
         sendHeartbeat: () => void | Promise<void>
     }): SSESubscription {
+        const include = options.include ?? null
+        const includeSet = include ? new Set(include) : null
+
         const subscription: SSEConnection = {
             id: options.id,
             namespace: options.namespace,
             all: Boolean(options.all),
+            include,
+            includeSet,
             sessionId: options.sessionId ?? null,
             machineId: options.machineId ?? null,
+            projectId: options.projectId ?? null,
             send: options.send,
             sendHeartbeat: options.sendHeartbeat
         }
@@ -57,8 +80,10 @@ export class SSEManager {
             id: subscription.id,
             namespace: subscription.namespace,
             all: subscription.all,
+            include: subscription.include,
             sessionId: subscription.sessionId,
-            machineId: subscription.machineId
+            machineId: subscription.machineId,
+            projectId: subscription.projectId
         }
     }
 
@@ -71,6 +96,18 @@ export class SSEManager {
     }
 
     async sendToast(namespace: string, event: Extract<SyncEvent, { type: 'toast' }>): Promise<number> {
+        try {
+            const title = event.data.title?.trim() ?? ''
+            const body = event.data.body?.trim() ?? ''
+            const base = title && body ? `${title} — ${body}` : (title || body || '(empty)')
+            console.info('[Toast]', base, {
+                namespace,
+                sessionId: event.data.sessionId,
+                url: event.data.url
+            })
+        } catch {
+        }
+
         const deliveries: Array<Promise<{ id: string; ok: boolean }>> = []
         for (const connection of this.connections.values()) {
             if (connection.namespace !== namespace) {
@@ -79,12 +116,19 @@ export class SSEManager {
             if (!this.visibilityTracker.isVisibleConnection(connection.id)) {
                 continue
             }
+            if (connection.includeSet && !connection.includeSet.has('toasts')) {
+                continue
+            }
 
-            deliveries.push(
-                Promise.resolve(connection.send(event))
-                    .then(() => ({ id: connection.id, ok: true }))
-                    .catch(() => ({ id: connection.id, ok: false }))
-            )
+            try {
+                deliveries.push(
+                    Promise.resolve(connection.send(event))
+                        .then(() => ({ id: connection.id, ok: true }))
+                        .catch(() => ({ id: connection.id, ok: false }))
+                )
+            } catch {
+                deliveries.push(Promise.resolve({ id: connection.id, ok: false }))
+            }
         }
 
         if (deliveries.length === 0) {
@@ -105,14 +149,32 @@ export class SSEManager {
     }
 
     broadcast(event: SyncEvent): void {
+        if (event.type === 'toast') {
+            try {
+                const title = event.data.title?.trim() ?? ''
+                const body = event.data.body?.trim() ?? ''
+                const base = title && body ? `${title} — ${body}` : (title || body || '(empty)')
+                console.info('[Toast]', base, {
+                    namespace: event.namespace ?? '(missing-namespace)',
+                    sessionId: event.data.sessionId,
+                    url: event.data.url
+                })
+            } catch {
+            }
+        }
+
         for (const connection of this.connections.values()) {
             if (!this.shouldSend(connection, event)) {
                 continue
             }
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            try {
+                void Promise.resolve(connection.send(event)).catch(() => {
+                    this.unsubscribe(connection.id)
+                })
+            } catch {
                 this.unsubscribe(connection.id)
-            })
+            }
         }
     }
 
@@ -131,9 +193,13 @@ export class SSEManager {
 
         this.heartbeatTimer = setInterval(() => {
             for (const connection of this.connections.values()) {
-                void Promise.resolve(connection.sendHeartbeat()).catch(() => {
+                try {
+                    void Promise.resolve(connection.sendHeartbeat()).catch(() => {
+                        this.unsubscribe(connection.id)
+                    })
+                } catch {
                     this.unsubscribe(connection.id)
-                })
+                }
             }
         }, this.heartbeatMs)
     }
@@ -148,33 +214,101 @@ export class SSEManager {
     }
 
     private shouldSend(connection: SSEConnection, event: SyncEvent): boolean {
-        if (event.type !== 'connection-changed') {
-            const eventNamespace = event.namespace
-            if (!eventNamespace || eventNamespace !== connection.namespace) {
-                return false
-            }
-        }
-
-        if (event.type === 'message-received') {
-            return connection.sessionId === event.sessionId
-        }
-
         if (event.type === 'connection-changed') {
             return true
+        }
+
+        const eventNamespace = event.namespace
+        if (!eventNamespace || eventNamespace !== connection.namespace) {
+            return false
+        }
+
+        const category = getEventCategory(event)
+        if (connection.includeSet && category && !connection.includeSet.has(category)) {
+            return false
         }
 
         if (connection.all) {
             return true
         }
 
-        if ('sessionId' in event && connection.sessionId === event.sessionId) {
-            return true
+        if (category === 'messages') {
+            return Boolean(connection.sessionId && 'sessionId' in event && connection.sessionId === event.sessionId)
         }
 
-        if ('machineId' in event && connection.machineId === event.machineId) {
+        if (category === 'sessions') {
+            if (connection.sessionId && 'sessionId' in event && connection.sessionId === event.sessionId) {
+                return true
+            }
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
+        }
+
+        if (category === 'machines') {
+            return Boolean(connection.machineId && 'machineId' in event && connection.machineId === event.machineId)
+        }
+
+        if (category === 'projects') {
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
+        }
+
+        if (category === 'workspaces' || category === 'tasks') {
+            return Boolean(connection.projectId && 'projectId' in event && connection.projectId === event.projectId)
+        }
+
+        if (category === 'toasts') {
+            // Toasts are namespace-wide and do not carry a stable scope key.
             return true
         }
 
         return false
+    }
+}
+
+function getEventCategory(event: SyncEvent): SSEEventCategory | null {
+    switch (event.type) {
+        case 'message-received':
+            return 'messages'
+        case 'session-added':
+        case 'session-updated':
+        case 'session-removed':
+            return 'sessions'
+        case 'machine-updated':
+            return 'machines'
+        case 'project-added':
+        case 'project-updated':
+        case 'project-removed':
+            return 'projects'
+        case 'workspace-added':
+        case 'workspace-updated':
+        case 'workspace-removed':
+            return 'workspaces'
+        case 'task-added':
+        case 'task-updated':
+        case 'task-removed':
+            return 'tasks'
+        case 'toast':
+            return 'toasts'
+        case 'connection-changed':
+        case 'omc-program-updated':
+        case 'omc-guided-planning-updated':
+        case 'omc-plan-runtime-updated':
+        case 'omc-attempt-added':
+        case 'omc-attempt-updated':
+        case 'omc-evidence-added':
+        case 'omc-review-updated':
+        case 'omc-merge-updated':
+        case 'omc-topic-updated':
+        case 'omc-topic-turn-added':
+        case 'omc-mailbox-message-added':
+        case 'omc-work-order-updated':
+        case 'omc-work-attempt-added':
+        case 'omc-work-attempt-updated':
+        case 'omc-coordination-agent-updated':
+        case 'omc-directive-ledger-updated':
+            return null
+        default: {
+            const _exhaustive: never = event
+            return _exhaustive
+        }
     }
 }

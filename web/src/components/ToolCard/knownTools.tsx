@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { SessionMetadataSummary } from '@/types/api'
-import { isObject } from '@hapi/protocol'
+import { isObject } from '@hopi/protocol'
 import { BulbIcon, ClipboardIcon, EyeIcon, FileDiffIcon, GlobeIcon, PuzzleIcon, QuestionIcon, RocketIcon, SearchIcon, TerminalIcon, WrenchIcon } from '@/components/ToolCard/icons'
 import { basename, resolveDisplayPath } from '@/utils/path'
 import { getInputStringAny, truncate } from '@/lib/toolInputUtils'
+import { getCodexPatchPaths } from '@/components/ToolCard/codexPatchTargets'
 
 const DEFAULT_ICON_CLASS = 'h-3.5 w-3.5'
-// Tool presentation registry for `hapi/web` (aligned with `hapi-app`).
+// Tool presentation registry for `hopi/web` (aligned with `hopi-app`).
 
 export type ToolPresentation = {
     icon: ReactNode
@@ -64,6 +65,11 @@ export const knownTools: Record<string, {
             return prompt ? truncate(prompt, 120) : null
         },
         minimal: (opts) => opts.childrenCount === 0
+    },
+    ToolGroup: {
+        icon: () => <PuzzleIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => `Tool calls (${opts.childrenCount})`,
+        minimal: true
     },
     Bash: {
         icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
@@ -252,15 +258,11 @@ export const knownTools: Record<string, {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Apply changes',
         subtitle: (opts) => {
-            if (isObject(opts.input) && isObject(opts.input.changes)) {
-                const files = Object.keys(opts.input.changes)
-                if (files.length === 0) return null
-                const first = files[0]
-                const display = resolveDisplayPath(first, opts.metadata)
-                const name = basename(display)
-                return files.length > 1 ? `${name} (+${files.length - 1})` : name
-            }
-            return null
+            const files = getCodexPatchPaths(opts.input, opts.result)
+            if (files.length === 0) return null
+            const display = resolveDisplayPath(files[0], opts.metadata)
+            const name = basename(display)
+            return files.length > 1 ? `${name} (+${files.length - 1})` : name
         },
         minimal: true
     },

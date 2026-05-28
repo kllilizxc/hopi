@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppServerEventConverter } from './appServerEventConverter';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('AppServerEventConverter', () => {
     it('maps thread/started', () => {
@@ -7,6 +8,22 @@ describe('AppServerEventConverter', () => {
         const events = converter.handleNotification('thread/started', { thread: { id: 'thread-1' } });
 
         expect(events).toEqual([{ type: 'thread_started', thread_id: 'thread-1' }]);
+    });
+
+    it('maps thread/status/changed systemError to task_failed', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('turn/started', { turn: { id: 'turn-1' } });
+        const events = converter.handleNotification('thread/status/changed', {
+            threadId: 'thread-1',
+            status: { type: 'systemError' }
+        });
+
+        expect(events).toEqual([{
+            type: 'task_failed',
+            turn_id: 'turn-1',
+            error: 'Codex thread entered systemError state'
+        }]);
     });
 
     it('maps thread/resumed', () => {
@@ -30,6 +47,31 @@ describe('AppServerEventConverter', () => {
 
         const failed = converter.handleNotification('turn/completed', { turn: { id: 'turn-1' }, status: 'Failed', message: 'boom' });
         expect(failed).toEqual([{ type: 'task_failed', turn_id: 'turn-1', error: 'boom' }]);
+    });
+
+    it('maps turn/plan/updated to plan_update events', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('turn/plan/updated', {
+            turnId: 'turn-1',
+            explanation: 'Break this into phases.',
+            plan: [
+                { step: 'Inspect project structure', status: 'pending' },
+                { step: 'Implement fix', status: 'inProgress' },
+                { step: 'Run tests', status: 'completed' }
+            ]
+        });
+
+        expect(events).toEqual([{
+            type: 'plan_update',
+            turn_id: 'turn-1',
+            explanation: 'Break this into phases.',
+            plan: [
+                { content: 'Inspect project structure', status: 'pending' },
+                { content: 'Implement fix', status: 'in_progress' },
+                { content: 'Run tests', status: 'completed' }
+            ]
+        }]);
     });
 
     it('accumulates agent message deltas', () => {
@@ -71,7 +113,24 @@ describe('AppServerEventConverter', () => {
             command: 'ls'
         }]);
 
-        converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'ok' });
+        const firstDelta = converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: 'ok' });
+        expect(firstDelta).toEqual([{
+            type: 'exec_command_output_delta',
+            call_id: 'cmd-1',
+            command: 'ls',
+            output: 'ok',
+            delta: 'ok'
+        }]);
+
+        const secondDelta = converter.handleNotification('item/commandExecution/outputDelta', { itemId: 'cmd-1', delta: ' done' });
+        expect(secondDelta).toEqual([{
+            type: 'exec_command_output_delta',
+            call_id: 'cmd-1',
+            command: 'ls',
+            output: 'ok done',
+            delta: ' done'
+        }]);
+
         const completed = converter.handleNotification('item/completed', {
             item: { id: 'cmd-1', type: 'commandExecution', exitCode: 0 }
         });
@@ -80,8 +139,126 @@ describe('AppServerEventConverter', () => {
             type: 'exec_command_end',
             call_id: 'cmd-1',
             command: 'ls',
-            output: 'ok',
+            output: 'ok done',
             exit_code: 0
+        }]);
+    });
+
+    it('buffers fileChange output deltas into patch_apply_end', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: { id: 'call-1', type: 'fileChange', success: true }
+        });
+        expect(started).toEqual([{
+            type: 'patch_apply_begin',
+            call_id: 'call-1'
+        }]);
+
+        converter.handleNotification('item/fileChange/outputDelta', { itemId: 'call-1', delta: 'Success!' });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'call-1', type: 'fileChange', success: true }
+        });
+
+        expect(completed).toEqual([{
+            type: 'patch_apply_end',
+            call_id: 'call-1',
+            stdout: 'Success!',
+            success: true
+        }]);
+    });
+
+    it('maps mcpToolCall items', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            item: {
+                id: 'call-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            }
+        });
+        expect(started).toEqual([{
+            type: 'mcp_tool_call_begin',
+            call_id: 'call-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            }
+        }]);
+
+        const completed = converter.handleNotification('item/completed', {
+            item: {
+                id: 'call-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'change_title',
+                arguments: { title: 'hello' },
+                result: { ok: true }
+            }
+        });
+        expect(completed).toEqual([{
+            type: 'mcp_tool_call_end',
+            call_id: 'call-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'change_title',
+                arguments: { title: 'hello' }
+            },
+            result: { ok: true }
+        }]);
+    });
+
+    it('prefers stable mcp call id over transient item id', () => {
+        const converter = new AppServerEventConverter();
+
+        const started = converter.handleNotification('item/started', {
+            itemId: 'item-ephemeral-start',
+            item: {
+                id: 'item-ephemeral-start',
+                call_id: 'call-stable-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            }
+        });
+
+        const completed = converter.handleNotification('item/completed', {
+            itemId: 'item-ephemeral-end',
+            item: {
+                id: 'item-ephemeral-end',
+                call_id: 'call-stable-1',
+                type: 'mcpToolCall',
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] },
+                result: { ok: true }
+            }
+        });
+
+        expect(started).toEqual([{
+            type: 'mcp_tool_call_begin',
+            call_id: 'call-stable-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            }
+        }]);
+
+        expect(completed).toEqual([{
+            type: 'mcp_tool_call_end',
+            call_id: 'call-stable-1',
+            invocation: {
+                server: PRODUCT_SLUG,
+                tool: 'TodoWrite',
+                arguments: { todos: [{ id: 'todo-1', content: 'A', status: 'pending', priority: 'medium' }] }
+            },
+            result: { ok: true }
         }]);
     });
 
@@ -179,6 +356,32 @@ describe('AppServerEventConverter', () => {
         });
 
         expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+    });
+
+    it('unwraps codex/event plan_update', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/plan_update', {
+            msg: {
+                type: 'plan_update',
+                turn_id: 'turn-2',
+                explanation: 'Ship in three steps.',
+                plan: [
+                    { step: 'Open files', status: 'pending' },
+                    { step: 'Patch implementation', status: 'inProgress' }
+                ]
+            }
+        });
+
+        expect(events).toEqual([{
+            type: 'plan_update',
+            turn_id: 'turn-2',
+            explanation: 'Ship in three steps.',
+            plan: [
+                { content: 'Open files', status: 'pending' },
+                { content: 'Patch implementation', status: 'in_progress' }
+            ]
+        }]);
     });
 
     it('unwraps codex/event reasoning completion from summary text', () => {

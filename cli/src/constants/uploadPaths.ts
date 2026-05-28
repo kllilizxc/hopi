@@ -1,8 +1,9 @@
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { PRODUCT_SLUG } from '@hopi/protocol/brand'
 
-export const HAPI_BLOBS_DIR_NAME = 'hapi-blobs'
+export const HOPI_BLOBS_DIR_NAME = `${PRODUCT_SLUG}-blobs`
 
-export function getHapiBlobsDir(): string {
-    return join(tmpdir(), HAPI_BLOBS_DIR_NAME)
+export function getHopiBlobsDir(): string {
+    return join(tmpdir(), HOPI_BLOBS_DIR_NAME)
 }

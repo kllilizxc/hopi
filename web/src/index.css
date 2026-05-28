@@ -19,7 +19,7 @@
     --app-code-bg: #f6f8fa;
     --app-inline-code-bg: rgba(0, 0, 0, 0.08);
 
-    /* Diff colors (light) - from hapi-app */
+    /* Diff colors (light) - from hopi-app */
     --app-diff-added-bg: #e6ffed;
     --app-diff-added-text: #24292e;
     --app-diff-removed-bg: #ffeef0;
@@ -43,7 +43,37 @@
     --app-badge-error-text: #b91c1c;
     --app-badge-error-border: rgba(239, 68, 68, 0.3);
 
+    /* Kanban status colors (light) */
+    --app-kanban-planned: #8b5cf6; /* violet */
+    --app-kanban-planned-2: #a78bfa; /* violet */
+
+    --app-kanban-in-progress: #f59e0b; /* amber */
+    --app-kanban-in-progress-2: #fbbf24; /* amber */
+
+    --app-kanban-in-review: #06b6d4; /* cyan */
+    --app-kanban-in-review-2: #22d3ee; /* cyan */
+
+    --app-kanban-blocked: #f43f5e; /* rose */
+    --app-kanban-blocked-2: #fb7185; /* rose */
+
+    --app-kanban-finished: #22c55e; /* green */
+    --app-kanban-finished-2: #4ade80; /* green */
+
     --app-font-scale: 1;
+    --app-scrollbar-size: 6px;
+    --app-scrollbar-track: transparent;
+    --app-scrollbar-thumb: rgba(107, 114, 128, 0.45);
+    --app-scrollbar-thumb-hover: rgba(75, 85, 99, 0.65);
+    /* Viewport + motion tokens (mobile + Telegram-friendly) */
+    --app-viewport-h: var(--tg-viewport-height, 100dvh);
+    --app-viewport-stable-h: var(--tg-viewport-stable-height, 100dvh);
+    --app-motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --app-motion-duration-micro: 180ms;
+    --app-motion-duration-menu: 220ms;
+    --app-motion-duration-sheet: 260ms;
+
+    /* Ensure built-in controls (if any) match the current color scheme. */
+    color-scheme: light;
 }
 
 [data-theme="dark"] {
@@ -64,7 +94,7 @@
     --app-code-bg: #282c34;
     --app-inline-code-bg: rgba(255, 255, 255, 0.1);
 
-    /* Diff colors (dark) - from hapi-app */
+    /* Diff colors (dark) - from hopi-app */
     --app-diff-added-bg: #0d2e1f;
     --app-diff-added-text: #c9d1d9;
     --app-diff-removed-bg: #3f1b23;
@@ -87,6 +117,156 @@
     --app-badge-error-bg: rgba(248, 113, 113, 0.2);
     --app-badge-error-text: #fca5a5;
     --app-badge-error-border: rgba(248, 113, 113, 0.35);
+
+    /* Kanban status colors (dark) */
+    --app-kanban-planned: #a78bfa; /* violet */
+    --app-kanban-planned-2: #c4b5fd; /* violet */
+
+    --app-kanban-in-progress: #fbbf24; /* amber */
+    --app-kanban-in-progress-2: #fcd34d; /* amber */
+
+    --app-kanban-in-review: #22d3ee; /* cyan */
+    --app-kanban-in-review-2: #67e8f9; /* cyan */
+
+    --app-kanban-blocked: #fb7185; /* rose */
+    --app-kanban-blocked-2: #fda4af; /* rose */
+
+    --app-kanban-finished: #4ade80; /* green */
+    --app-kanban-finished-2: #86efac; /* green */
+    --app-scrollbar-thumb: rgba(156, 163, 175, 0.45);
+    --app-scrollbar-thumb-hover: rgba(209, 213, 219, 0.65);
+    color-scheme: dark;
+}
+
+/* Theme presets (derived neutrals only). Telegram base colors remain source-of-truth. */
+html[data-theme-preset="soft"] {
+    --app-border: rgba(0, 0, 0, 0.08);
+    --app-divider: rgba(0, 0, 0, 0.06);
+    --app-subtle-bg: rgba(0, 0, 0, 0.035);
+    --app-inline-code-bg: rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="dark"][data-theme-preset="soft"] {
+    --app-border: rgba(255, 255, 255, 0.08);
+    --app-divider: rgba(255, 255, 255, 0.06);
+    --app-subtle-bg: rgba(255, 255, 255, 0.035);
+    --app-inline-code-bg: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme-preset="contrast"] {
+    --app-border: rgba(0, 0, 0, 0.14);
+    --app-divider: rgba(0, 0, 0, 0.12);
+    --app-subtle-bg: rgba(0, 0, 0, 0.07);
+    --app-inline-code-bg: rgba(0, 0, 0, 0.10);
+}
+
+html[data-theme="dark"][data-theme-preset="contrast"] {
+    --app-border: rgba(255, 255, 255, 0.16);
+    --app-divider: rgba(255, 255, 255, 0.14);
+    --app-subtle-bg: rgba(255, 255, 255, 0.07);
+    --app-inline-code-bg: rgba(255, 255, 255, 0.14);
+}
+
+.app-shadow-border {
+    box-shadow: inset 0 0 0 1px var(--app-border);
+}
+
+.app-shadow-border-error {
+    box-shadow: inset 0 0 0 1px var(--app-badge-error-border);
+}
+
+.app-shadow-border-success {
+    box-shadow: inset 0 0 0 1px var(--app-badge-success-border);
+}
+
+.app-shadow-border-info {
+    box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+.app-shadow-control {
+    box-shadow:
+        0 12px 24px -22px rgba(15, 23, 42, 0.48),
+        0 2px 8px -7px rgba(15, 23, 42, 0.3);
+}
+
+html[data-theme="dark"] .app-shadow-control {
+    box-shadow:
+        0 14px 28px -22px rgba(0, 0, 0, 0.9),
+        0 2px 8px -7px rgba(255, 255, 255, 0.28);
+}
+
+.app-shadow-divider-b {
+    box-shadow: 0 1px 0 var(--app-divider);
+}
+
+.app-shadow-divider-t {
+    box-shadow: 0 -1px 0 var(--app-divider);
+}
+
+.app-shadow-divider-l {
+    box-shadow: -1px 0 0 var(--app-border);
+}
+
+.app-shadow-divider-error-b {
+    box-shadow: 0 1px 0 #dc2626;
+}
+
+.app-shadow-list-y > :not(:last-child) {
+    box-shadow: 0 1px 0 var(--app-divider);
+}
+
+.app-shadow-surface {
+    box-shadow: 0 14px 30px -26px rgba(15, 23, 42, 0.36);
+}
+
+html[data-theme="dark"] .app-shadow-surface {
+    box-shadow: 0 16px 32px -26px rgba(0, 0, 0, 0.7);
+}
+
+.app-shadow-chat-surface {
+    box-shadow:
+        -12px 0 24px -18px rgba(15, 23, 42, 0.58),
+        0 22px 42px -30px rgba(15, 23, 42, 0.62),
+        0 3px 14px -10px rgba(15, 23, 42, 0.36);
+}
+
+html[data-theme="dark"] .app-shadow-chat-surface {
+    box-shadow:
+        -14px 0 30px -18px rgba(0, 0, 0, 0.95),
+        0 24px 48px -30px rgba(0, 0, 0, 0.9),
+        0 3px 14px -10px rgba(255, 255, 255, 0.2);
+}
+
+.app-shadow-project-detail-pane {
+    box-shadow: 0 16px 30px -26px rgba(15, 23, 42, 0.46);
+}
+
+html[data-theme="dark"] .app-shadow-project-detail-pane {
+    box-shadow: 0 18px 34px -26px rgba(0, 0, 0, 0.95);
+}
+
+@media (min-width: 1024px) {
+    .app-shadow-project-detail-pane {
+        box-shadow: 14px 0 28px -24px rgba(15, 23, 42, 0.48);
+    }
+
+    html[data-theme="dark"] .app-shadow-project-detail-pane {
+        box-shadow: 14px 0 30px -24px rgba(0, 0, 0, 0.95);
+    }
+}
+
+.app-shadow-popover {
+    box-shadow:
+        0 10px 15px -3px rgba(15, 23, 42, 0.12),
+        0 4px 6px -4px rgba(15, 23, 42, 0.12),
+        inset 0 0 0 1px var(--app-border);
+}
+
+html[data-theme="dark"] .app-shadow-popover {
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.46),
+        0 4px 6px -4px rgba(0, 0, 0, 0.42),
+        inset 0 0 0 1px var(--app-border);
 }
 
 html {
@@ -97,7 +277,7 @@ html,
 body {
     height: 100vh;
     height: 100dvh;
-    height: var(--tg-viewport-stable-height, 100dvh);
+    height: var(--app-viewport-stable-h);
     overflow: hidden;
     touch-action: pan-x pan-y;
     overscroll-behavior: none;
@@ -110,15 +290,277 @@ body {
     color: var(--app-fg);
 }
 
+/* Graphite preset: subtle depth without changing Telegram-provided token values. */
+html[data-theme-preset="graphite"] body {
+    background-color: var(--app-bg);
+    background-image:
+        radial-gradient(1000px 600px at 20% -10%, rgba(0, 0, 0, 0.035), transparent 60%),
+        radial-gradient(900px 520px at 110% 10%, rgba(0, 0, 0, 0.025), transparent 55%);
+}
+
+html[data-theme="dark"][data-theme-preset="graphite"] body {
+    background-color: var(--app-bg);
+    background-image:
+        radial-gradient(1000px 600px at 20% -10%, rgba(255, 255, 255, 0.035), transparent 60%),
+        radial-gradient(900px 520px at 110% 10%, rgba(255, 255, 255, 0.02), transparent 55%);
+}
+
 #root {
     height: 100%;
 }
 
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+    width: var(--app-scrollbar-size);
+    height: var(--app-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+    background: var(--app-scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--app-scrollbar-thumb);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--app-scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* Scroll Shadow - image-mask overlays pinned to viewport edges */
+.scroll-shadow {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    isolation: isolate;
+}
+
+.scroll-shadow-viewport {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.scroll-shadow-vertical {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.scroll-shadow-horizontal {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.scroll-shadow-hide-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.scroll-shadow-hide-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+/* Edge overlays fade into the container background via mask-image. */
+.scroll-shadow-mask {
+    position: absolute;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+    background: var(--scroll-shadow-bg, var(--app-bg));
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+}
+
+.scroll-shadow-mask[data-visible="visible"] {
+    opacity: 1;
+}
+
+.scroll-shadow-mask-top,
+.scroll-shadow-mask-bottom {
+    left: 0;
+    right: 0;
+    height: var(--scroll-shadow-size, 40px);
+}
+
+.scroll-shadow-mask-top {
+    top: var(--scroll-shadow-offset, 0px);
+    -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to bottom, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+}
+
+.scroll-shadow-mask-bottom {
+    bottom: var(--scroll-shadow-offset, 0px);
+    -webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to top, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+}
+
+.scroll-shadow-mask-left,
+.scroll-shadow-mask-right {
+    top: 0;
+    bottom: 0;
+    width: var(--scroll-shadow-size, 40px);
+}
+
+.scroll-shadow-mask-left {
+    left: var(--scroll-shadow-offset, 0px);
+    -webkit-mask-image: linear-gradient(to right, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to right, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+}
+
+.scroll-shadow-mask-right {
+    right: var(--scroll-shadow-offset, 0px);
+    -webkit-mask-image: linear-gradient(to left, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+    mask-image: linear-gradient(to left, rgb(0 0 0 / 1), rgb(0 0 0 / 0));
+}
+
+.app-interactive-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    transition:
+        transform var(--app-motion-duration-micro) var(--app-motion-ease-out),
+        box-shadow var(--app-motion-duration-micro) var(--app-motion-ease-out),
+        background-color var(--app-motion-duration-micro) var(--app-motion-ease-out);
+}
+
+.app-interactive-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background: var(--app-card-hover-bg, var(--app-card-hover-tint, var(--app-subtle-bg)));
+    transition: opacity var(--app-motion-duration-micro) var(--app-motion-ease-out);
+}
+
+.app-interactive-card > * {
+    position: relative;
+    z-index: 1;
+}
+
+.app-interactive-card-selected {
+    transform: translateY(-1px);
+    box-shadow:
+        0 20px 38px -30px var(--app-card-selected-glow, var(--app-card-hover-glow, transparent)),
+        0 18px 34px -24px var(--app-card-selected-shadow-1, rgba(15, 23, 42, 0.28)),
+        0 10px 20px -18px var(--app-card-selected-shadow-2, rgba(15, 23, 42, 0.2));
+}
+
+.app-interactive-card-selected::before {
+    opacity: 0.95;
+    background: var(--app-card-selected-bg, var(--app-card-hover-bg, var(--app-card-hover-tint, var(--app-subtle-bg))));
+}
+
+html[data-theme="dark"] .app-interactive-card-selected {
+    box-shadow:
+        0 24px 42px -30px var(--app-card-selected-glow, var(--app-card-hover-glow, transparent)),
+        0 22px 40px -24px var(--app-card-selected-shadow-1, rgba(0, 0, 0, 0.6)),
+        0 12px 22px -18px var(--app-card-selected-shadow-2, rgba(0, 0, 0, 0.45));
+}
+
 @media (hover: hover) and (pointer: fine) {
+    .app-interactive-card:hover {
+        transform: translateY(-2px);
+        box-shadow:
+            0 22px 42px -30px var(--app-card-hover-glow, transparent),
+            0 18px 32px -24px var(--app-card-hover-shadow-1, rgba(15, 23, 42, 0.32)),
+            0 10px 18px -18px var(--app-card-hover-shadow-2, rgba(15, 23, 42, 0.22));
+    }
+
+    html[data-theme="dark"] .app-interactive-card:hover {
+        box-shadow:
+            0 24px 44px -30px var(--app-card-hover-glow, transparent),
+            0 22px 36px -24px var(--app-card-hover-shadow-1, rgba(0, 0, 0, 0.58)),
+            0 12px 20px -18px var(--app-card-hover-shadow-2, rgba(0, 0, 0, 0.42));
+    }
+
+    .app-interactive-card:hover::before {
+        opacity: 1;
+    }
+
+    .app-interactive-card-selected:hover {
+        box-shadow:
+            0 24px 44px -30px var(--app-card-selected-glow, var(--app-card-hover-glow, transparent)),
+            0 20px 36px -24px var(--app-card-selected-shadow-1, rgba(15, 23, 42, 0.3)),
+            0 12px 22px -18px var(--app-card-selected-shadow-2, rgba(15, 23, 42, 0.22));
+    }
+
+    html[data-theme="dark"] .app-interactive-card-selected:hover {
+        box-shadow:
+            0 26px 46px -30px var(--app-card-selected-glow, var(--app-card-hover-glow, transparent)),
+            0 24px 42px -24px var(--app-card-selected-shadow-1, rgba(0, 0, 0, 0.62)),
+            0 14px 24px -18px var(--app-card-selected-shadow-2, rgba(0, 0, 0, 0.48));
+    }
+
     .session-list-item:hover,
     .session-list-new-button:hover {
         background-color: var(--app-subtle-bg);
     }
+}
+
+.app-interactive-card:active {
+    transform: translateY(0);
+}
+
+.task-card-hover::after {
+    content: "";
+    position: absolute;
+    inset: -12%;
+    z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(14px);
+    background-image: radial-gradient(
+        circle,
+        rgba(255, 255, 255, 0.16) 0%,
+        rgba(255, 255, 255, 0.07) 45%,
+        transparent 72%
+    );
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .task-card-hover:hover::after {
+        animation: task-card-glow 820ms var(--app-motion-ease-out);
+    }
+}
+
+@keyframes task-card-glow {
+    0% {
+        opacity: 0;
+        transform: scale(0.4);
+    }
+    25% {
+        opacity: 0.45;
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.2);
+    }
+}
+
+.kanban-column {
+    background: var(--kanban-column-bg);
+    box-shadow: 0 16px 30px -26px rgba(15, 23, 42, 0.38);
+    transition:
+        width 200ms var(--app-motion-ease-out),
+        background-color var(--app-motion-duration-micro) var(--app-motion-ease-out);
 }
 
 /* Desktop-only: move the sidebar scrollbar to the left without flipping content. */
@@ -142,19 +584,29 @@ body {
 
 .aui-md-codeblock pre.shiki {
     margin: 0;
-    padding: 0.5rem;
+    padding: 0.75rem;
     background-color: transparent !important;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    line-height: 1.625;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .aui-md-codeblock pre.shiki code {
     display: block;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .aui-md-codeblock .shiki,
 .aui-md-codeblock .shiki span {
     background-color: transparent !important;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 /* Shiki dual theme colors */
@@ -174,33 +626,6 @@ html[data-theme="dark"] .shiki span {
     text-decoration: var(--shiki-dark-text-decoration) !important;
 }
 
-/* Ultrathink rainbow sparkle effect - per-letter wave animation */
-@keyframes rainbow-wave {
-  0% { color: #ff5555; }      /* red */
-  14% { color: #ffaa00; }     /* orange */
-  28% { color: #ffff55; }     /* yellow */
-  42% { color: #55ff55; }     /* green */
-  57% { color: #55ffff; }     /* cyan */
-  71% { color: #5555ff; }     /* blue */
-  85% { color: #ff55ff; }     /* magenta/pink */
-  100% { color: #ff5555; }    /* red */
-}
-
-@keyframes sparkle-wave {
-  0%, 100% {
-    filter: brightness(1);
-  }
-  50% {
-    filter: brightness(0.7);
-  }
-}
-
-.rainbow-letter {
-  display: inline-block;
-  animation: rainbow-wave 2s linear infinite, sparkle-wave 2s ease-in-out infinite;
-  font-weight: 600;
-}
-
 /* PWA install prompt animation */
 @keyframes slide-up {
   from {
@@ -214,7 +639,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-slide-up {
-  animation: slide-up 0.3s ease-out;
+  animation: slide-up var(--app-motion-duration-sheet) var(--app-motion-ease-out);
 }
 
 @keyframes menu-pop {
@@ -229,7 +654,7 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-menu-pop {
-  animation: menu-pop 0.18s ease-out;
+  animation: menu-pop var(--app-motion-duration-menu) var(--app-motion-ease-out);
 }
 
 /* Syncing spinner animation */
@@ -262,7 +687,67 @@ html[data-theme="dark"] .shiki span {
 }
 
 .animate-bounce-in {
-  animation: bounce-in 0.3s ease-out;
+  animation: bounce-in var(--app-motion-duration-micro) var(--app-motion-ease-out);
+}
+
+/* Chat assistant typing indicator - breathing dots */
+@keyframes hopi-typing-breathe {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0) scale(0.85);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-1px) scale(1);
+  }
+}
+
+.hopi-typing-dot {
+  animation: hopi-typing-breathe 1.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .hopi-typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .animate-slide-up,
+  .animate-menu-pop,
+  .animate-bounce-in {
+    animation: none;
+  }
+}
+
+/* Manual reduced motion override (Settings -> Motion). */
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+html[data-motion="reduce"] .hopi-typing-dot {
+  animation: none;
+  opacity: 0.6;
+}
+
+html[data-motion="reduce"] .animate-slide-up,
+html[data-motion="reduce"] .animate-menu-pop,
+html[data-motion="reduce"] .animate-bounce-in {
+  animation: none;
 }
 
 /* ReactQueryDevtools button - move to middle-right to avoid blocking UI */

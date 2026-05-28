@@ -3,6 +3,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { AgentSessionBase } from '@/agent/sessionBase';
 import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
+import type { CodexPermissionHandler } from './utils/permissionHandler';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
 
 type LocalLaunchFailure = {
@@ -10,12 +11,13 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-export class CodexSession extends AgentSessionBase<EnhancedMode> {
+export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode> {
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
+    private permissionHandler: CodexPermissionHandler | null = null;
 
     constructor(opts: {
         api: ApiClient;
@@ -57,8 +59,14 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         this.permissionMode = opts.permissionMode;
     }
 
+    setPermissionHandler(handler: CodexPermissionHandler | null): void {
+        this.permissionHandler = handler;
+        this.permissionHandler?.reconcileAutoApprovals();
+    }
+
     setPermissionMode = (mode: PermissionMode): void => {
         this.permissionMode = mode;
+        this.permissionHandler?.reconcileAutoApprovals();
     };
 
     recordLocalLaunchFailure = (message: string, exitReason: LocalLaunchExitReason): void => {

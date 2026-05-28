@@ -4,7 +4,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { isObject } from '@hapi/protocol';
+import { isObject } from '@hopi/protocol';
 import { logger } from '@/ui/logger';
 import { isProcessAlive, killProcess } from '@/utils/process';
 import type { CodexSessionConfig, CodexToolResponse } from './types';
@@ -13,6 +13,8 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { CodexPermissionHandler } from './utils/permissionHandler';
 import { execSync } from 'child_process';
 import { randomUUID } from 'node:crypto';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 type ElicitResponseValue = string | number | boolean | string[];
 type ElicitRequestedSchema = {
@@ -169,10 +171,12 @@ export class CodexMcpClient {
     private conversationId: string | null = null;
     private handler: ((event: any) => void) | null = null;
     private permissionHandler: CodexPermissionHandler | null = null;
+    private readonly workspaceRoot: string | null;
 
-    constructor() {
+    constructor(options?: { workspaceRoot?: string | null }) {
+        this.workspaceRoot = options?.workspaceRoot ?? null;
         this.client = new Client(
-            { name: 'hapi-codex-client', version: '1.0.0' },
+            { name: `${PRODUCT_SLUG}-codex-client`, version: '1.0.0' },
             { capabilities: { elicitation: {} } }
         );
 
@@ -214,11 +218,29 @@ export class CodexMcpClient {
         const mcpCommand = getCodexMcpCommand();
         logger.debug(`[CodexMCP] Connecting to Codex MCP server using command: codex ${mcpCommand}`);
 
-        this.transport = new StdioClientTransport({
+        const baseEnv: NodeJS.ProcessEnv = Object.keys(process.env).reduce((acc, key) => {
+            const value = process.env[key];
+            if (typeof value === 'string') acc[key] = value;
+            return acc;
+        }, {} as Record<string, string>);
+
+        const baseSpec = {
             command: 'codex',
             args: [mcpCommand],
-            env: Object.keys(process.env).reduce((acc, key) => {
-                const value = process.env[key];
+            cwd: this.workspaceRoot ?? process.cwd(),
+            env: baseEnv
+        };
+
+        const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+            workspaceRoot: this.workspaceRoot ?? process.cwd(),
+            ...baseSpec
+        });
+
+        this.transport = new StdioClientTransport({
+            command: wrapped.command,
+            args: wrapped.args,
+            env: Object.keys(wrapped.env).reduce((acc, key) => {
+                const value = wrapped.env[key];
                 if (typeof value === 'string') acc[key] = value;
                 return acc;
             }, {} as Record<string, string>)

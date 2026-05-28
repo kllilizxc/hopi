@@ -2,8 +2,9 @@ import chalk from 'chalk'
 import { authAndSetupMachineIfNeeded } from '@/ui/auth'
 import { initializeToken } from '@/ui/tokenInit'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
+import { extractErrorInfo } from '@/utils/errorUtils'
 import type { CommandDefinition } from './types'
-import type { CodexPermissionMode } from '@hapi/protocol/types'
+import type { CodexPermissionMode } from '@hopi/protocol/types'
 
 export const codexCommand: CommandDefinition = {
     name: 'codex',
@@ -57,7 +58,8 @@ export const codexCommand: CommandDefinition = {
             await authAndSetupMachineIfNeeded()
             await runCodex(options)
         } catch (error) {
-            console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
+            const { message } = extractErrorInfo(error)
+            console.error(chalk.red('Error:'), message)
             if (process.env.DEBUG) {
                 console.error(error)
             }

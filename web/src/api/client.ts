@@ -1,27 +1,56 @@
 import type {
     AttachmentMetadata,
+    AgentOutputLanguage,
+    AutomationBackstopPolicy,
+    AutomationLaneLimits,
     AuthResponse,
     DeleteUploadResponse,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    Goal,
+    GoalAssistantCommandResponse,
+    GoalDecisionTopicResponse,
+    GoalDecisionTopicsResponse,
+    GoalResponse,
+    GoalTodoResponse,
+    GoalsResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
     ModelMode,
     PermissionMode,
+    ProjectControllerSessionResponse,
+    ProjectControllerBriefingResponse,
+    ProjectAutomationVerificationResponse,
+    ProjectResponse,
+    ProjectsResponse,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
     PushVapidPublicKeyResponse,
     SlashCommandsResponse,
     SkillsResponse,
     SpawnResponse,
+    TaskResponse,
+    TaskStatus,
+    TaskPreviewResponse,
+    TaskStartSessionResponse,
+    TaskWorktreeMergeCancelResponse,
+    TaskWorktreeMergeResponse,
+    TaskWorktreeMergeStateResponse,
+    TasksResponse,
     UploadFileResponse,
     VisibilityPayload,
+    WorkflowStrategiesResponse,
+    WorkspaceResponse,
+    WorkspacesResponse,
     SessionResponse,
     SessionsResponse
 } from '@/types/api'
+import { PRODUCT_HEADERS, productStorageKey } from '@hopi/protocol/brand'
+
+const LOCALE_STORAGE_KEY = productStorageKey('lang')
 
 type ApiClientOptions = {
     baseUrl?: string
@@ -33,12 +62,48 @@ type ErrorPayload = {
     error?: unknown
 }
 
-function parseErrorCode(bodyText: string): string | undefined {
+type ParsedErrorPayload = {
+    payload?: ErrorPayload
+    code?: string
+    message?: string
+}
+
+function getStoredLocale(): string | null {
+    const storage = typeof globalThis === 'object' ? globalThis.localStorage : undefined
+    if (!storage) {
+        return null
+    }
+
+    try {
+        const raw = storage.getItem(LOCALE_STORAGE_KEY)
+        const value = raw?.trim()
+        return value && value.length > 0 ? value : null
+    } catch {
+        return null
+    }
+}
+
+function parseErrorPayload(bodyText: string): ParsedErrorPayload {
     try {
         const parsed = JSON.parse(bodyText) as ErrorPayload
-        return typeof parsed.error === 'string' ? parsed.error : undefined
+        if (typeof parsed.error === 'string') {
+            return {
+                payload: parsed,
+                code: parsed.error,
+                message: parsed.error
+            }
+        }
+        if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
+            const error = parsed.error as Record<string, unknown>
+            return {
+                payload: parsed,
+                code: typeof error.code === 'string' ? error.code : undefined,
+                message: typeof error.message === 'string' ? error.message : undefined
+            }
+        }
+        return { payload: parsed }
     } catch {
-        return undefined
+        return {}
     }
 }
 
@@ -46,13 +111,15 @@ export class ApiError extends Error {
     status: number
     code?: string
     body?: string
+    payload?: ErrorPayload
 
-    constructor(message: string, status: number, code?: string, body?: string) {
+    constructor(message: string, status: number, code?: string, body?: string, payload?: ErrorPayload) {
         super(message)
         this.name = 'ApiError'
         this.status = status
         this.code = code
         this.body = body
+        this.payload = payload
     }
 }
 
@@ -94,6 +161,12 @@ export class ApiClient {
         if (authToken) {
             headers.set('authorization', `Bearer ${authToken}`)
         }
+        if (!headers.has(PRODUCT_HEADERS.LOCALE)) {
+            const locale = getStoredLocale()
+            if (locale) {
+                headers.set(PRODUCT_HEADERS.LOCALE, locale)
+            }
+        }
         if (init?.body !== undefined && !headers.has('content-type')) {
             headers.set('content-type', 'application/json')
         }
@@ -116,7 +189,21 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            throw new Error(`HTTP ${res.status} ${res.statusText}: ${body}`)
+            const parsedError = parseErrorPayload(body)
+            const detail = parsedError.message
+                ? `: ${parsedError.message}`
+                : parsedError.code
+                    ? `: ${parsedError.code}`
+                : body
+                    ? `: ${body}`
+                    : ''
+            throw new ApiError(
+                `HTTP ${res.status} ${res.statusText}${detail}`,
+                res.status,
+                parsedError.code,
+                body || undefined,
+                parsedError.payload
+            )
         }
 
         return await res.json() as T
@@ -131,9 +218,9 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
+            const parsedError = parseErrorPayload(body)
             const detail = body ? `: ${body}` : ''
-            throw new ApiError(`Auth failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new ApiError(`Auth failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, parsedError.code, body || undefined, parsedError.payload)
         }
 
         return await res.json() as AuthResponse
@@ -148,9 +235,9 @@ export class ApiClient {
 
         if (!res.ok) {
             const body = await res.text().catch(() => '')
-            const code = parseErrorCode(body)
+            const parsedError = parseErrorPayload(body)
             const detail = body ? `: ${body}` : ''
-            throw new ApiError(`Bind failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, code, body || undefined)
+            throw new ApiError(`Bind failed: HTTP ${res.status} ${res.statusText}${detail}`, res.status, parsedError.code, body || undefined, parsedError.payload)
         }
 
         return await res.json() as AuthResponse
@@ -158,6 +245,410 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getProjects(options?: { includeArchived?: boolean }): Promise<ProjectsResponse> {
+        const params = new URLSearchParams()
+        if (options?.includeArchived) {
+            params.set('includeArchived', 'true')
+        }
+        const qs = params.toString()
+        return await this.request<ProjectsResponse>(`/api/projects${qs ? `?${qs}` : ''}`)
+    }
+
+    async getProject(projectId: string): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`)
+    }
+
+    async getProjectControllerSession(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerSessionResponse> {
+        const params = new URLSearchParams()
+        if (payload.goalId) {
+            params.set('goalId', payload.goalId)
+        }
+        const qs = params.toString()
+        return await this.request<ProjectControllerSessionResponse>(
+            `/api/projects/${encodeURIComponent(projectId)}/controller-session${qs ? `?${qs}` : ''}`
+        )
+    }
+
+    async ensureProjectControllerSession(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerSessionResponse> {
+        return await this.request<ProjectControllerSessionResponse>(`/api/projects/${encodeURIComponent(projectId)}/controller-session`, {
+            method: 'POST',
+            body: JSON.stringify({
+                goalId: payload.goalId ?? null
+            })
+        })
+    }
+
+    async maybeRefreshProjectControllerBriefing(
+        projectId: string,
+        payload: { goalId?: string | null } = {}
+    ): Promise<ProjectControllerBriefingResponse> {
+        return await this.request<ProjectControllerBriefingResponse>(`/api/projects/${encodeURIComponent(projectId)}/controller-briefing`, {
+            method: 'POST',
+            body: JSON.stringify({
+                goalId: payload.goalId ?? null
+            })
+        })
+    }
+
+    async listWorkflowStrategies(): Promise<WorkflowStrategiesResponse> {
+        return await this.request<WorkflowStrategiesResponse>('/api/workflow-strategies')
+    }
+
+    async createProject(payload: {
+        machineId: string
+        name: string
+        description?: string
+        workspaces: Array<{ path: string; label?: string }>
+        defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        defaultPermissionMode?: PermissionMode
+        defaultModel?: string
+        defaultModelMode?: ModelMode
+        defaultSessionType?: 'simple' | 'worktree'
+        worktreeTargetBranch?: string
+        worktreeAutoCommitMode?: 'off' | 'per_conversation'
+        worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits
+        automationBackstopPolicy?: AutomationBackstopPolicy
+        improvementsEnabled?: boolean
+        improvementsMaxPendingTasks?: number
+    }): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>('/api/projects', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateProject(projectId: string, patch: {
+        name?: string
+        description?: string | null
+        defaultAgentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
+        defaultPermissionMode?: PermissionMode | null
+        defaultModel?: string | null
+        defaultModelMode?: ModelMode | null
+        defaultSessionType?: 'simple' | 'worktree' | null
+        worktreeTargetBranch?: string | null
+        worktreeAutoCommitMode?: 'off' | 'per_conversation' | null
+        worktreeCleanupAfterMerge?: boolean
+        agentOutputLanguage?: AgentOutputLanguage | null
+        autoRunEnabled?: boolean
+        maxRunningSessions?: number
+        automationLaneLimits?: AutomationLaneLimits | null
+        automationBackstopPolicy?: AutomationBackstopPolicy | null
+        improvementsEnabled?: boolean
+        improvementsMaxPendingTasks?: number
+    }): Promise<ProjectResponse> {
+        return await this.request<ProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async archiveProject(projectId: string): Promise<void> {
+        await this.request(`/api/projects/${encodeURIComponent(projectId)}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async verifyProjectAutomation(projectId: string): Promise<ProjectAutomationVerificationResponse> {
+        return await this.request<ProjectAutomationVerificationResponse>(`/api/projects/${encodeURIComponent(projectId)}/verify-automation`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async listProjectGoals(projectId: string): Promise<GoalsResponse> {
+        return await this.request<GoalsResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals`)
+    }
+
+    async getGoalTodo(projectId: string, goalId: string): Promise<GoalTodoResponse> {
+        return await this.request<GoalTodoResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals/${encodeURIComponent(goalId)}/todo`)
+    }
+
+    async createProjectGoal(projectId: string, payload: {
+        title: string
+        description?: string | null
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+        clientRequestId?: string
+    }): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/projects/${encodeURIComponent(projectId)}/goals`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateGoal(goalId: string, patch: {
+        title?: string
+        description?: string | null
+        status?: Goal['status']
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+        currentFocus?: string | null
+    }): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async pauseGoalAutomation(goalId: string): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}/automation/pause`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async resumeGoalAutomation(goalId: string): Promise<GoalResponse> {
+        return await this.request<GoalResponse>(`/api/goals/${encodeURIComponent(goalId)}/automation/resume`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async listGoalDecisionTopics(goalId: string): Promise<GoalDecisionTopicsResponse> {
+        return await this.request<GoalDecisionTopicsResponse>(`/api/goals/${encodeURIComponent(goalId)}/topics`)
+    }
+
+    async createGoalDecisionTopic(goalId: string, payload: {
+        taskId?: string | null
+        title: string
+        body: string
+        blocking?: boolean
+    }): Promise<GoalDecisionTopicResponse> {
+        return await this.request<GoalDecisionTopicResponse>(`/api/goals/${encodeURIComponent(goalId)}/topics`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async resolveGoalDecisionTopic(topicId: string, payload: {
+        resolution: string
+    }): Promise<GoalDecisionTopicResponse> {
+        return await this.request<GoalDecisionTopicResponse>(`/api/goal-topics/${encodeURIComponent(topicId)}/resolve`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async executeGoalAssistantCommand(goalId: string, payload: Record<string, unknown>): Promise<GoalAssistantCommandResponse> {
+        return await this.request<GoalAssistantCommandResponse>(`/api/goals/${encodeURIComponent(goalId)}/assistant-commands`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async listProjectWorkspaces(projectId: string): Promise<WorkspacesResponse> {
+        return await this.request<WorkspacesResponse>(`/api/projects/${encodeURIComponent(projectId)}/workspaces`)
+    }
+
+    async createProjectWorkspaces(projectId: string, workspaces: Array<{ path: string; label?: string }>): Promise<WorkspacesResponse> {
+        return await this.request<WorkspacesResponse>(`/api/projects/${encodeURIComponent(projectId)}/workspaces`, {
+            method: 'POST',
+            body: JSON.stringify({ workspaces })
+        })
+    }
+
+    async updateWorkspace(workspaceId: string, patch: { path?: string; label?: string | null; sort?: number | null }): Promise<WorkspaceResponse> {
+        return await this.request<WorkspaceResponse>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async deleteWorkspace(workspaceId: string): Promise<void> {
+        await this.request(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+    }
+
+    async listProjectTasks(projectId: string, options?: { includeArchived?: boolean; goalId?: string }): Promise<TasksResponse> {
+        const params = new URLSearchParams()
+        if (options?.includeArchived) {
+            params.set('includeArchived', 'true')
+        }
+        if (options?.goalId) {
+            params.set('goalId', options.goalId)
+        }
+        const qs = params.toString()
+        return await this.request<TasksResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks${qs ? `?${qs}` : ''}`)
+    }
+
+    async createProjectTask(projectId: string, payload: {
+        title: string
+        description?: string
+        status?: TaskStatus
+        tag?: string | null
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
+        priority?: 'high' | 'medium' | 'low'
+        workspaceId?: string
+        agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        permissionMode?: PermissionMode
+        model?: string
+        modelMode?: string
+        workflowProfile: string
+        workflowPhase?: string | null
+        sortKey?: number
+        attachments?: Array<{
+            id: string
+            filename: string
+            mimeType: string
+            size: number
+            dataUrl: string
+            previewUrl?: string
+        }>
+        goalId?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
+        role?: 'planner' | 'generator' | 'evaluator' | 'merger' | 'radar' | null
+        source?: 'manual' | 'system' | 'cto_assistant' | 'planner' | 'radar' | 'evaluator'
+        subTasks?: Array<{
+            id: string
+            content: string
+            status: 'pending' | 'in_progress' | 'completed'
+            priority: 'high' | 'medium' | 'low'
+        }>
+    }): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getTask(taskId: string): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`)
+    }
+
+    async updateTask(taskId: string, patch: {
+        title?: string
+        description?: string | null
+        status?: TaskStatus
+        tag?: string | null
+        blockedReason?: string | null
+        blockedSource?: string | null
+        blockedSessionId?: string | null
+        role?: 'planner' | 'generator' | 'evaluator' | 'merger' | 'radar' | null
+        source?: 'manual' | 'system' | 'cto_assistant' | 'planner' | 'radar' | 'evaluator'
+        priority?: 'high' | 'medium' | 'low' | null
+        workspaceId?: string | null
+        agentFlavor?: 'claude' | 'codex' | 'gemini' | 'opencode' | null
+        permissionMode?: PermissionMode | null
+        model?: string | null
+        modelMode?: ModelMode | null
+        workflowProfile?: string
+        workflowPhase?: string | null
+        sortKey?: number | null
+        activeSessionId?: string | null
+        attachments?: Array<{
+            id: string
+            filename: string
+            mimeType: string
+            size: number
+            dataUrl: string
+            previewUrl?: string
+        }>
+        goalId?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
+        subTasks?: Array<{
+            id: string
+            content: string
+            status: 'pending' | 'in_progress' | 'completed'
+            priority: 'high' | 'medium' | 'low'
+        }>
+    }): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(patch)
+        })
+    }
+
+    async deleteTask(taskId: string): Promise<void> {
+        await this.request(`/api/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'DELETE'
+        })
+    }
+
+    async archiveTask(taskId: string): Promise<void> {
+        await this.request(`/api/tasks/${encodeURIComponent(taskId)}/archive`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async attachTaskSession(taskId: string, sessionId: string): Promise<TaskResponse> {
+        return await this.request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}/attach-session`, {
+            method: 'POST',
+            body: JSON.stringify({ sessionId })
+        })
+    }
+
+    async startTaskSession(taskId: string, payload?: {
+        workspaceId?: string
+        agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+        model?: string
+        yolo?: boolean
+        permissionMode?: PermissionMode
+        modelMode?: ModelMode
+    }): Promise<TaskStartSessionResponse> {
+        return await this.request<TaskStartSessionResponse>(`/api/tasks/${encodeURIComponent(taskId)}/start-session`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async startTaskPreview(taskId: string, payload?: {
+        mode?: 'auto' | 'local' | 'worktree'
+        basePort?: number
+    }): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview/start`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async getTaskPreview(taskId: string): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview`)
+    }
+
+    async stopTaskPreview(taskId: string): Promise<TaskPreviewResponse> {
+        return await this.request<TaskPreviewResponse>(`/api/tasks/${encodeURIComponent(taskId)}/preview/stop`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async mergeTaskWorktree(taskId: string, payload?: { targetBranch?: string; conflictStrategy?: 'manual' | 'agent' }): Promise<TaskWorktreeMergeResponse> {
+        return await this.request<TaskWorktreeMergeResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`, {
+            method: 'POST',
+            body: JSON.stringify(payload ?? {})
+        })
+    }
+
+    async cancelTaskWorktreeMerge(taskId: string): Promise<TaskWorktreeMergeCancelResponse> {
+        return await this.request<TaskWorktreeMergeCancelResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge/cancel`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        })
+    }
+
+    async getTaskWorktreeMergeState(taskId: string): Promise<TaskWorktreeMergeStateResponse> {
+        return await this.request<TaskWorktreeMergeStateResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merge-state`)
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {
@@ -207,19 +698,60 @@ export class ApiClient {
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-status`)
     }
 
-    async getGitDiffNumstat(sessionId: string, staged: boolean): Promise<GitCommandResponse> {
+    async getGitDiffNumstat(
+        sessionId: string,
+        stagedOrOptions?: boolean | { staged?: boolean; baseRef?: string }
+    ): Promise<GitCommandResponse> {
+        const options = typeof stagedOrOptions === 'boolean'
+            ? { staged: stagedOrOptions }
+            : (stagedOrOptions ?? {})
         const params = new URLSearchParams()
-        params.set('staged', staged ? 'true' : 'false')
+        if (options.staged !== undefined) {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-numstat?${params.toString()}`)
     }
 
-    async getGitDiffFile(sessionId: string, path: string, staged?: boolean): Promise<GitCommandResponse> {
+    async getGitDiffFile(
+        sessionId: string,
+        path: string,
+        stagedOrOptions?: boolean | { staged?: boolean; baseRef?: string }
+    ): Promise<GitCommandResponse> {
+        const options = typeof stagedOrOptions === 'boolean'
+            ? { staged: stagedOrOptions }
+            : (stagedOrOptions ?? {})
         const params = new URLSearchParams()
         params.set('path', path)
-        if (staged !== undefined) {
-            params.set('staged', staged ? 'true' : 'false')
+        if (options.staged !== undefined) {
+            params.set('staged', options.staged ? 'true' : 'false')
+        }
+        if (options.baseRef) {
+            params.set('baseRef', options.baseRef)
         }
         return await this.request<GitCommandResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/git-diff-file?${params.toString()}`)
+    }
+
+    async getTaskMergedDiffNumstat(taskId: string, options?: { baseRef?: string }): Promise<GitCommandResponse> {
+        const params = new URLSearchParams()
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
+        const qs = params.toString()
+        return await this.request<GitCommandResponse>(
+            `/api/tasks/${encodeURIComponent(taskId)}/worktree/merged-diff-numstat${qs ? `?${qs}` : ''}`
+        )
+    }
+
+    async getTaskMergedDiffFile(taskId: string, path: string, options?: { baseRef?: string }): Promise<GitCommandResponse> {
+        const params = new URLSearchParams()
+        params.set('path', path)
+        if (options?.baseRef) {
+            params.set('baseRef', options.baseRef)
+        }
+        return await this.request<GitCommandResponse>(`/api/tasks/${encodeURIComponent(taskId)}/worktree/merged-diff-file?${params.toString()}`)
     }
 
     async searchSessionFiles(sessionId: string, query: string, limit?: number): Promise<FileSearchResponse> {
@@ -366,6 +898,18 @@ export class ApiClient {
                 method: 'POST',
                 body: JSON.stringify({ paths })
             }
+        )
+    }
+
+    async listMachineDirectory(machineId: string, path?: string): Promise<ListDirectoryResponse> {
+        const params = new URLSearchParams()
+        if (path) {
+            params.set('path', path)
+        }
+
+        const qs = params.toString()
+        return await this.request<ListDirectoryResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/directory${qs ? `?${qs}` : ''}`
         )
     }
 

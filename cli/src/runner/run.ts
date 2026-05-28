@@ -17,9 +17,11 @@ import { isRetryableConnectionError } from '@/utils/errorUtils';
 
 import { cleanupRunnerState, getInstalledCliMtimeMs, isRunnerRunningCurrentlyInstalledHappyVersion, stopRunner } from './controlClient';
 import { startRunnerControlServer } from './controlServer';
-import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
-import { join } from 'path';
+import { createWorktree, removeWorktree, resolveGitRepoRoot, type WorktreeInfo } from './worktree';
+import { PreviewManager } from './previewManager';
+import { basename, dirname, join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
+import { PRODUCT_ENV, PRODUCT_SLUG, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -31,8 +33,8 @@ export async function startRunner(): Promise<void> {
   //
   // In case the setup malfunctions - our signal handlers will not properly
   // shut down. We will force exit the process with code 1.
-  let requestShutdown: (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
-  let resolvesWhenShutdownRequested = new Promise<({ source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
+  let requestShutdown: (source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
+  let resolvesWhenShutdownRequested = new Promise<({ source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
     requestShutdown = (source, errorMessage) => {
       logger.debug(`[RUNNER RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
 
@@ -126,12 +128,14 @@ export async function startRunner(): Promise<void> {
     const pidToTrackedSession = new Map<number, TrackedSession>();
 
     // Session spawning awaiter system
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    // Maps spawned child PID -> resolver for spawn result (success via webhook, error via exit/timeout)
+    const pidToAwaiter = new Map<number, (result: SpawnSessionResult) => void>();
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+    const previewManager = new PreviewManager();
 
-    // Handle webhook from HAPI session reporting itself
+    // Handle webhook from HOPI session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata) => {
       logger.debugLargeJson(`[RUNNER RUN] Session reported`, sessionMetadata);
 
@@ -157,13 +161,16 @@ export async function startRunner(): Promise<void> {
         const awaiter = pidToAwaiter.get(pid);
         if (awaiter) {
           pidToAwaiter.delete(pid);
-          awaiter(existingSession);
+          awaiter({
+            type: 'success',
+            sessionId
+          });
           logger.debug(`[RUNNER RUN] Resolved session awaiter for PID ${pid}`);
         }
       } else if (!existingSession) {
         // New session started externally
         const trackedSession: TrackedSession = {
-          startedBy: 'hapi directly - likely by user from terminal',
+          startedBy: 'hopi directly - likely by user from terminal',
           happySessionId: sessionId,
           happySessionMetadataFromLocalWebhook: sessionMetadata,
           pid
@@ -182,10 +189,58 @@ export async function startRunner(): Promise<void> {
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
       const worktreeName = options.worktreeName;
+      const worktreeTargetBranch = sessionType === 'worktree'
+        ? options.worktreeTargetBranch?.trim() || undefined
+        : undefined;
+      const normalizedWorktreeWorkspacePaths = sessionType === 'worktree'
+        ? Array.from(new Set([
+            directory,
+            ...(Array.isArray(options.worktreeWorkspacePaths) ? options.worktreeWorkspacePaths : [])
+          ]
+            .filter((path): path is string => typeof path === 'string')
+            .map((path) => path.trim())
+            .filter((path) => path.length > 0)))
+        : [];
       let directoryCreated = false;
       let spawnDirectory = directory;
-      let worktreeInfo: WorktreeInfo | null = null;
+      let primaryWorktreeInfo: WorktreeInfo | null = null;
+      let multiWorkspaceRoot: string | null = null;
+      const worktreeInfos: WorktreeInfo[] = [];
       let happyProcess: ReturnType<typeof spawnHappyCLI> | null = null;
+
+      const cleanupWorktrees = async () => {
+        for (const info of [...worktreeInfos].reverse()) {
+          const result = await removeWorktree({
+            repoRoot: info.basePath,
+            worktreePath: info.worktreePath
+          });
+          if (!result.ok) {
+            logger.debug(`[RUNNER RUN] Failed to remove worktree ${info.worktreePath}: ${result.error}`);
+          }
+        }
+
+        if (multiWorkspaceRoot) {
+          try {
+            await fs.rm(multiWorkspaceRoot, { recursive: true, force: true });
+          } catch (error) {
+            logger.debug(`[RUNNER RUN] Failed to remove multi-workspace root ${multiWorkspaceRoot}:`, error);
+          }
+        }
+      };
+      const maybeCleanupWorktree = async (reason: string) => {
+        if (worktreeInfos.length === 0 && !multiWorkspaceRoot) {
+          return;
+        }
+        const pid = happyProcess?.pid;
+        if (pid && isProcessAlive(pid)) {
+          logger.debug(`[RUNNER RUN] Skipping worktree cleanup after ${reason}; child still running`, {
+            pid,
+            worktreePath: primaryWorktreeInfo?.worktreePath ?? null
+          });
+          return;
+        }
+        await cleanupWorktrees();
+      };
 
       if (sessionType === 'simple') {
         try {
@@ -231,61 +286,92 @@ export async function startRunner(): Promise<void> {
           }
         }
       } else {
-        try {
-          await fs.access(directory);
-          logger.debug(`[RUNNER RUN] Worktree base directory exists: ${directory}`);
-        } catch (error) {
-          logger.debug(`[RUNNER RUN] Worktree base directory missing: ${directory}`);
-          return {
-            type: 'error',
-            errorMessage: `Worktree sessions require an existing Git repository. Directory not found: ${directory}`
-          };
+        for (const workspacePath of normalizedWorktreeWorkspacePaths) {
+          try {
+            await fs.access(workspacePath);
+          } catch (error) {
+            logger.debug(`[RUNNER RUN] Worktree base directory missing: ${workspacePath}`);
+            return {
+              type: 'error',
+              errorMessage: `Worktree sessions require an existing directory. Directory not found: ${workspacePath}`
+            };
+          }
         }
+        logger.debug(`[RUNNER RUN] Worktree base directories validated (${normalizedWorktreeWorkspacePaths.length})`);
       }
 
       if (sessionType === 'worktree') {
-        const worktreeResult = await createWorktree({
-          basePath: directory,
-          nameHint: worktreeName
-        });
-        if (!worktreeResult.ok) {
-          logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);
-          return {
-            type: 'error',
-            errorMessage: worktreeResult.error
-          };
-        }
-        worktreeInfo = worktreeResult.info;
-        spawnDirectory = worktreeInfo.worktreePath;
-        logger.debug(`[RUNNER RUN] Created worktree ${worktreeInfo.worktreePath} (branch ${worktreeInfo.branch})`);
-      }
+        if (normalizedWorktreeWorkspacePaths.length > 1) {
+          const primaryWorkspacePath = normalizedWorktreeWorkspacePaths[0]!;
+          let primaryRepoRoot: string;
+          try {
+            primaryRepoRoot = await resolveGitRepoRoot(primaryWorkspacePath);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              type: 'error',
+              errorMessage: `Failed to resolve Git repository for multi-workspace root: ${message}`
+            };
+          }
 
-      const cleanupWorktree = async () => {
-        if (!worktreeInfo) {
-          return;
-        }
-        const result = await removeWorktree({
-          repoRoot: worktreeInfo.basePath,
-          worktreePath: worktreeInfo.worktreePath
-        });
-        if (!result.ok) {
-          logger.debug(`[RUNNER RUN] Failed to remove worktree ${worktreeInfo.worktreePath}: ${result.error}`);
-        }
-      };
-      const maybeCleanupWorktree = async (reason: string) => {
-        if (!worktreeInfo) {
-          return;
-        }
-        const pid = happyProcess?.pid;
-        if (pid && isProcessAlive(pid)) {
-          logger.debug(`[RUNNER RUN] Skipping worktree cleanup after ${reason}; child still running`, {
-            pid,
-            worktreePath: worktreeInfo.worktreePath
+          try {
+            const multiWorkspaceParent = join(dirname(primaryRepoRoot), `${basename(primaryRepoRoot)}-worktrees`);
+            await fs.mkdir(multiWorkspaceParent, { recursive: true });
+            multiWorkspaceRoot = await fs.mkdtemp(join(multiWorkspaceParent, `${PRODUCT_SLUG}-multi-`));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              type: 'error',
+              errorMessage: `Failed to create multi-workspace root folder: ${message}`
+            };
+          }
+
+          for (let index = 0; index < normalizedWorktreeWorkspacePaths.length; index += 1) {
+            const workspacePath = normalizedWorktreeWorkspacePaths[index]!;
+            const workspaceBaseName = basename(workspacePath) || `workspace-${index + 1}`;
+            const nameHint = [workspaceBaseName, worktreeName]
+              .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+              .join('-');
+
+            const worktreeResult = await createWorktree({
+              basePath: workspacePath,
+              nameHint: nameHint || `workspace-${index + 1}`,
+              worktreeRootDir: multiWorkspaceRoot ?? undefined,
+              baseBranch: worktreeTargetBranch
+            });
+            if (!worktreeResult.ok) {
+              logger.debug(`[RUNNER RUN] Worktree creation failed for ${workspacePath}: ${worktreeResult.error}`);
+              await cleanupWorktrees();
+              return {
+                type: 'error',
+                errorMessage: worktreeResult.error
+              };
+            }
+            worktreeInfos.push(worktreeResult.info);
+          }
+
+          primaryWorktreeInfo = worktreeInfos[0] ?? null;
+          spawnDirectory = multiWorkspaceRoot ?? spawnDirectory;
+          logger.debug(`[RUNNER RUN] Created ${worktreeInfos.length} worktrees under ${multiWorkspaceRoot}`);
+        } else {
+          const worktreeResult = await createWorktree({
+            basePath: normalizedWorktreeWorkspacePaths[0] ?? directory,
+            nameHint: worktreeName,
+            baseBranch: worktreeTargetBranch
           });
-          return;
+          if (!worktreeResult.ok) {
+            logger.debug(`[RUNNER RUN] Worktree creation failed: ${worktreeResult.error}`);
+            return {
+              type: 'error',
+              errorMessage: worktreeResult.error
+            };
+          }
+          worktreeInfos.push(worktreeResult.info);
+          primaryWorktreeInfo = worktreeResult.info;
+          spawnDirectory = worktreeResult.info.worktreePath;
+          logger.debug(`[RUNNER RUN] Created worktree ${worktreeResult.info.worktreePath} (branch ${worktreeResult.info.branch})`);
         }
-        await cleanupWorktree();
-      };
+      }
 
       try {
 
@@ -295,7 +381,7 @@ export async function startRunner(): Promise<void> {
           if (options.agent === 'codex') {
 
             // Create a temporary directory for Codex
-            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'hapi-codex-'));
+            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), `${PRODUCT_SLUG}-codex-`));
 
             // Write the token to the temporary directory
             await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token);
@@ -311,14 +397,15 @@ export async function startRunner(): Promise<void> {
           }
         }
 
-        if (worktreeInfo) {
+        if (primaryWorktreeInfo) {
           extraEnv = {
             ...extraEnv,
-            HAPI_WORKTREE_BASE_PATH: worktreeInfo.basePath,
-            HAPI_WORKTREE_BRANCH: worktreeInfo.branch,
-            HAPI_WORKTREE_NAME: worktreeInfo.name,
-            HAPI_WORKTREE_PATH: worktreeInfo.worktreePath,
-            HAPI_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt)
+            [PRODUCT_ENV.WORKTREE_BASE_PATH]: primaryWorktreeInfo.basePath,
+            [PRODUCT_ENV.WORKTREE_BRANCH]: primaryWorktreeInfo.branch,
+            [PRODUCT_ENV.WORKTREE_NAME]: primaryWorktreeInfo.name,
+            [PRODUCT_ENV.WORKTREE_PATH]: primaryWorktreeInfo.worktreePath,
+            [PRODUCT_ENV.WORKTREE_CREATED_AT]: String(primaryWorktreeInfo.createdAt),
+            ...(primaryWorktreeInfo.baseCommit ? { [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: primaryWorktreeInfo.baseCommit } : {})
           };
         }
 
@@ -338,7 +425,7 @@ export async function startRunner(): Promise<void> {
                 args.push('--resume', options.resumeSessionId);
             }
         }
-        args.push('--hapi-starting-mode', 'remote', '--started-by', 'runner');
+        args.push(PRODUCT_STARTING_MODE_FLAG, 'remote', '--started-by', 'runner');
         if (options.model && agent !== 'opencode') {
           args.push('--model', options.model);
         }
@@ -348,6 +435,7 @@ export async function startRunner(): Promise<void> {
 
         // sessionId reserved for future use
         const MAX_TAIL_CHARS = 4000;
+        let stdoutTail = '';
         let stderrTail = '';
         const appendTail = (current: string, chunk: Buffer | string): string => {
           const text = chunk.toString();
@@ -356,6 +444,25 @@ export async function startRunner(): Promise<void> {
           }
           const combined = current + text;
           return combined.length > MAX_TAIL_CHARS ? combined.slice(-MAX_TAIL_CHARS) : combined;
+        };
+        const buildOutputTailSuffix = (): string => {
+          const stdoutTrimmed = stdoutTail.trim();
+          const stderrTrimmed = stderrTail.trim();
+          const parts: string[] = [];
+          if (stdoutTrimmed) {
+            parts.push(`Child stdout tail:\n${stdoutTrimmed}`);
+          }
+          if (stderrTrimmed) {
+            parts.push(`Child stderr tail:\n${stderrTrimmed}`);
+          }
+          return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : '';
+        };
+        const logStdoutTail = () => {
+          const trimmed = stdoutTail.trim();
+          if (!trimmed) {
+            return;
+          }
+          logger.debug('[RUNNER RUN] Child stdout tail', trimmed);
         };
         const logStderrTail = () => {
           const trimmed = stderrTail.trim();
@@ -378,13 +485,16 @@ export async function startRunner(): Promise<void> {
         happyProcess.stderr?.on('data', (data) => {
           stderrTail = appendTail(stderrTail, data);
         });
+        happyProcess.stdout?.on('data', (data) => {
+          stdoutTail = appendTail(stdoutTail, data);
+        });
 
         if (!happyProcess.pid) {
           logger.debug('[RUNNER RUN] Failed to spawn process - no PID returned');
           await maybeCleanupWorktree('no-pid');
           return {
             type: 'error',
-            errorMessage: 'Failed to spawn HAPI process - no PID returned'
+            errorMessage: 'Failed to spawn HOPI process - no PID returned'
           };
         }
 
@@ -401,46 +511,72 @@ export async function startRunner(): Promise<void> {
 
         pidToTrackedSession.set(pid, trackedSession);
 
-        happyProcess.on('exit', (code, signal) => {
-          logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
-          if (code !== 0 || signal) {
-            logStderrTail();
-          }
-          onChildExited(pid);
-        });
-
-        happyProcess.on('error', (error) => {
-          logger.debug(`[RUNNER RUN] Child process error:`, error);
-          onChildExited(pid);
-        });
-
         // Wait for webhook to populate session with happySessionId
         logger.debug(`[RUNNER RUN] Waiting for session webhook for PID ${pid}`);
 
-        const spawnResult = await new Promise<SpawnSessionResult>((resolve) => {
+        const spawnResultPromise = new Promise<SpawnSessionResult>((resolve) => {
+          let done = false;
+          const finish = (result: SpawnSessionResult) => {
+            if (done) {
+              return;
+            }
+            done = true;
+            resolve(result);
+          };
+
           // Set timeout for webhook
           const timeout = setTimeout(() => {
             pidToAwaiter.delete(pid);
             logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
+            logStdoutTail();
             logStderrTail();
-            resolve({
+            finish({
               type: 'error',
-              errorMessage: `Session webhook timeout for PID ${pid}`
+              errorMessage: `Session webhook timeout for PID ${pid}${buildOutputTailSuffix()}`
             });
             // 15 second timeout - I have seen timeouts on 10 seconds
             // even though session was still created successfully in ~2 more seconds
           }, 15_000);
 
-          // Register awaiter
-          pidToAwaiter.set(pid, (completedSession) => {
+          pidToAwaiter.set(pid, (result) => {
             clearTimeout(timeout);
-            logger.debug(`[RUNNER RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
-            resolve({
-              type: 'success',
-              sessionId: completedSession.happySessionId!
-            });
+            finish(result);
           });
         });
+
+        happyProcess.on('exit', (code, signal) => {
+          logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
+          if (code !== 0 || signal) {
+            logStdoutTail();
+            logStderrTail();
+          }
+
+          const awaiter = pidToAwaiter.get(pid);
+          if (awaiter) {
+            pidToAwaiter.delete(pid);
+            awaiter({
+              type: 'error',
+              errorMessage: `Session exited before webhook for PID ${pid} (code ${code ?? 'null'}, signal ${signal ?? 'null'})${buildOutputTailSuffix()}`
+            });
+          }
+
+          onChildExited(pid);
+        });
+
+        happyProcess.on('error', (error) => {
+          logger.debug(`[RUNNER RUN] Child process error:`, error);
+          const awaiter = pidToAwaiter.get(pid);
+          if (awaiter) {
+            pidToAwaiter.delete(pid);
+            awaiter({
+              type: 'error',
+              errorMessage: `Child process error before webhook for PID ${pid}: ${error instanceof Error ? error.message : String(error)}${buildOutputTailSuffix()}`
+            });
+          }
+          onChildExited(pid);
+        });
+
+        const spawnResult = await spawnResultPromise;
         if (spawnResult.type !== 'success') {
           await maybeCleanupWorktree('spawn-error');
         }
@@ -503,7 +639,7 @@ export async function startRunner(): Promise<void> {
       getChildren: getCurrentChildren,
       stopSession,
       spawnSession,
-      requestShutdown: () => requestShutdown('hapi-cli'),
+      requestShutdown: () => requestShutdown('hopi-cli'),
       onHappySessionWebhook
     });
 
@@ -559,7 +695,10 @@ export async function startRunner(): Promise<void> {
     apiMachine.setRPCHandlers({
       spawnSession,
       stopSession,
-      requestShutdown: () => requestShutdown('hapi-app')
+      startPreview: (options) => previewManager.start(options),
+      getPreviewStatus: () => previewManager.getState(),
+      stopPreview: (options) => previewManager.stop(options),
+      requestShutdown: () => requestShutdown('hopi-app')
     });
 
     // Connect to server
@@ -570,7 +709,7 @@ export async function startRunner(): Promise<void> {
     // 2. Check if runner needs update
     // 3. If outdated, restart with latest version
     // 4. Write heartbeat
-    const heartbeatIntervalMs = parseInt(process.env.HAPI_RUNNER_HEARTBEAT_INTERVAL || '60000');
+    const heartbeatIntervalMs = parseInt(process.env[PRODUCT_ENV.RUNNER_HEARTBEAT_INTERVAL] || '60000');
     let heartbeatRunning = false
     const restartOnStaleVersionAndHeartbeat = setInterval(async () => {
       if (heartbeatRunning) {
@@ -652,7 +791,7 @@ export async function startRunner(): Promise<void> {
     }, heartbeatIntervalMs); // Every 60 seconds in production
 
     // Setup signal handlers
-    const cleanupAndShutdown = async (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
+    const cleanupAndShutdown = async (source: 'hopi-app' | 'hopi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
       logger.debug(`[RUNNER RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
 
       // Clear health check interval
@@ -668,6 +807,12 @@ export async function startRunner(): Promise<void> {
         shutdownRequestedAt: Date.now(),
         shutdownSource: source
       }));
+
+      try {
+        await previewManager.stop();
+      } catch (error) {
+        logger.debug('[RUNNER RUN] Failed to stop preview during shutdown', error);
+      }
 
       // Give time for metadata update to send
       await new Promise(resolve => setTimeout(resolve, 100));

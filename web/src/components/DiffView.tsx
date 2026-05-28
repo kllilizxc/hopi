@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { usePointerFocusRing } from '@/hooks/usePointerFocusRing'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
+import { Pressable } from '@/components/ui/pressable'
 
 export function DiffView(props: {
     oldString: string
@@ -41,8 +42,7 @@ export function DiffView(props: {
     return (
         <Dialog>
             <DialogTrigger asChild>
-                <button
-                    type="button"
+                <Pressable
                     className={cn(
                         'w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                         suppressFocusRing && 'focus-visible:ring-0'
@@ -51,9 +51,9 @@ export function DiffView(props: {
                     onKeyDown={onTriggerKeyDown}
                     onBlur={onTriggerBlur}
                 >
-                    <div className="overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] hover:bg-[var(--app-secondary-bg)] transition-colors">
+                    <div className="overflow-hidden rounded-md app-shadow-border bg-[var(--app-subtle-bg)] hover:bg-[var(--app-secondary-bg)] transition-colors">
                         {props.filePath ? (
-                            <div className="border-b border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-1 text-xs text-[var(--app-hint)] truncate">
+                            <div className="app-shadow-divider-b bg-[var(--app-subtle-bg)] px-2 py-1 text-xs text-[var(--app-hint)] truncate">
                                 {props.filePath}
                             </div>
                         ) : null}
@@ -68,7 +68,7 @@ export function DiffView(props: {
                             </div>
                         </div>
                     </div>
-                </button>
+                </Pressable>
             </DialogTrigger>
             <DialogContent className="max-w-4xl">
                 <DialogHeader>
@@ -93,9 +93,9 @@ function DiffInlineView(props: {
     const diff = useMemo(() => diffLines(props.oldString, props.newString), [props.oldString, props.newString])
 
     return (
-        <div className="overflow-hidden rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)]">
+        <div className="overflow-hidden rounded-md app-shadow-border bg-[var(--app-subtle-bg)]">
             {props.filePath ? (
-                <div className="border-b border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-1 text-xs text-[var(--app-hint)] truncate">
+                <div className="app-shadow-divider-b bg-[var(--app-subtle-bg)] px-2 py-1 text-xs text-[var(--app-hint)] truncate">
                     {props.filePath}
                 </div>
             ) : null}

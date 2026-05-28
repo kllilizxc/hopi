@@ -1,6 +1,6 @@
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
-import type { McpServersConfig } from './buildHapiMcpBridge';
+import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
 import type {
     ApprovalPolicy,
@@ -9,6 +9,10 @@ import type {
     ThreadStartParams,
     TurnStartParams
 } from '../appServerTypes';
+
+export type McpServersConfig = Record<string, { command: string; args: string[] }>;
+
+const DEFAULT_CODEX_THREAD_INSTRUCTIONS = 'You are Codex, an AI coding agent. Follow the user instructions and repository guidance.';
 
 function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
     switch (mode.permissionMode) {
@@ -75,6 +79,7 @@ function buildMcpServerConfig(mcpServers: McpServersConfig): Record<string, unkn
 export function buildThreadStartParams(args: {
     mode: EnhancedMode;
     mcpServers: McpServersConfig;
+    cwd?: string;
     cliOverrides?: CodexCliOverrides;
     baseInstructions?: string;
     developerInstructions?: string;
@@ -87,13 +92,17 @@ export function buildThreadStartParams(args: {
     const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
 
     const config = buildMcpServerConfig(args.mcpServers);
-    const baseInstructions = args.baseInstructions ?? codexSystemPrompt;
-    const resolvedDeveloperInstructions = args.developerInstructions
-        ? `${baseInstructions}\n\n${args.developerInstructions}`
-        : baseInstructions;
+    const configuredBaseInstructions = args.baseInstructions ?? codexSystemPrompt;
+    const baseInstructions = configuredBaseInstructions.trim().length > 0
+        ? configuredBaseInstructions
+        : DEFAULT_CODEX_THREAD_INSTRUCTIONS;
+    const resolvedDeveloperInstructions = [
+        baseInstructions,
+        args.developerInstructions
+    ].filter((part): part is string => Boolean(part && part.trim())).join('\n\n');
     const configWithInstructions = {
         ...config,
-        developer_instructions: resolvedDeveloperInstructions
+        ...(resolvedDeveloperInstructions ? { developer_instructions: resolvedDeveloperInstructions } : {})
     };
 
     const params: ThreadStartParams = {
@@ -104,8 +113,13 @@ export function buildThreadStartParams(args: {
         ...(Object.keys(configWithInstructions).length > 0 ? { config: configWithInstructions } : {})
     };
 
-    if (args.mode.model) {
-        params.model = args.mode.model;
+    if (args.cwd) {
+        params.cwd = args.cwd;
+    }
+
+    const resolvedModelSpec = resolveCodexModelSpec(args.mode.model);
+    if (resolvedModelSpec?.model) {
+        params.model = resolvedModelSpec.model;
     }
 
     return params;
@@ -114,6 +128,7 @@ export function buildThreadStartParams(args: {
 export function buildTurnStartParams(args: {
     threadId: string;
     message: string;
+    cwd?: string;
     mode?: EnhancedMode;
     cliOverrides?: CodexCliOverrides;
     overrides?: {
@@ -126,6 +141,10 @@ export function buildTurnStartParams(args: {
         threadId: args.threadId,
         input: [{ type: 'text', text: args.message }]
     };
+
+    if (args.cwd) {
+        params.cwd = args.cwd;
+    }
 
     const allowCliOverrides = args.mode?.permissionMode === 'default';
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
@@ -144,7 +163,10 @@ export function buildTurnStartParams(args: {
     }
 
     const collaborationMode = args.mode?.collaborationMode;
-    const model = args.overrides?.model ?? args.mode?.model;
+    const modelSpec = resolveCodexModelSpec(args.overrides?.model ?? args.mode?.model);
+    const model = modelSpec?.model;
+    const effort = modelSpec?.effort;
+
     if (collaborationMode) {
         const settings = model ? { model } : undefined;
         params.collaborationMode = settings
@@ -152,6 +174,9 @@ export function buildTurnStartParams(args: {
             : { mode: collaborationMode };
     } else if (model) {
         params.model = model;
+        if (effort) {
+            params.effort = effort;
+        }
     }
 
     return params;

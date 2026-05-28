@@ -1,5 +1,6 @@
 import { AcpSdkBackend } from '@/agent/backends/acp';
 import { buildOpencodeEnv } from './config';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
 function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
     const result: Record<string, string> = {};
@@ -15,11 +16,13 @@ export function createOpencodeBackend(opts: {
     cwd?: string;
 }): AcpSdkBackend {
     const env = buildOpencodeEnv();
-    const args = ['acp', '--cwd', opts.cwd ?? process.cwd()];
+    const cwd = opts.cwd ?? resolveCliWorkingDirectory();
+    const args = ['acp', '--cwd', cwd];
 
     return new AcpSdkBackend({
         command: 'opencode',
         args,
-        env: filterEnv(env)
+        env: filterEnv(env),
+        cwd
     });
 }

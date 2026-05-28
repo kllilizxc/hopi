@@ -9,7 +9,6 @@ import { DiffProcessor } from './utils/diffProcessor';
 import { logger } from '@/ui/logger';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import type { CodexSessionConfig } from './types';
-import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
@@ -19,17 +18,106 @@ import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
+import type { PermissionMode } from '@hopi/protocol/types';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
     type RemoteLauncherExitReason
 } from '@/modules/common/remote/RemoteLauncherBase';
 
-type HappyServer = Awaited<ReturnType<typeof buildHapiMcpBridge>>['server'];
-
 function shouldUseAppServer(): boolean {
     const useMcpServer = process.env.CODEX_USE_MCP_SERVER === '1';
     return !useMcpServer;
+}
+
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown; entries?: unknown[]; explanation?: unknown };
+    if (record.type === 'message') {
+        return typeof record.message === 'string' && record.message.trim().length > 0;
+    }
+    if (record.type === 'plan') {
+        if (typeof record.explanation === 'string' && record.explanation.trim().length > 0) {
+            return true;
+        }
+        return Array.isArray(record.entries) && record.entries.length > 0;
+    }
+    return false;
+}
+
+type PlanEntryStatus = 'pending' | 'in_progress' | 'completed';
+
+type PlanEntry = {
+    id: string;
+    content: string;
+    priority: 'high' | 'medium' | 'low';
+    status: PlanEntryStatus;
+};
+
+function normalizePlanStatus(value: unknown): PlanEntryStatus | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const normalized = value.toLowerCase().replace(/[\s_-]/g, '');
+    if (normalized === 'pending') return 'pending';
+    if (normalized === 'inprogress') return 'in_progress';
+    if (normalized === 'completed') return 'completed';
+    return null;
+}
+
+function normalizePlanEntries(value: unknown): PlanEntry[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const entries: PlanEntry[] = [];
+    value.forEach((item, index) => {
+        if (!item || typeof item !== 'object') {
+            return;
+        }
+        const record = item as Record<string, unknown>;
+        const contentRaw = record.content ?? record.step ?? record.text;
+        const content = typeof contentRaw === 'string' ? contentRaw.trim() : '';
+        const status = normalizePlanStatus(record.status);
+        if (!content || !status) {
+            return;
+        }
+
+        const id = typeof record.id === 'string' && record.id.trim().length > 0
+            ? record.id
+            : `plan-${index + 1}`;
+
+        entries.push({
+            id,
+            content,
+            priority: 'medium',
+            status
+        });
+    });
+
+    return entries;
+}
+
+function buildUnexpectedExitMessage(error: unknown): string {
+    const detail = error instanceof Error
+        ? error.message.trim()
+        : typeof error === 'string'
+            ? error.trim()
+            : '';
+
+    if (!detail) {
+        return 'Process exited unexpectedly';
+    }
+
+    if (/^process exited unexpectedly\b/iu.test(detail)) {
+        return detail;
+    }
+
+    return `Process exited unexpectedly: ${detail}`;
 }
 
 class CodexRemoteLauncher extends RemoteLauncherBase {
@@ -40,17 +128,18 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     private permissionHandler: CodexPermissionHandler | null = null;
     private reasoningProcessor: ReasoningProcessor | null = null;
     private diffProcessor: DiffProcessor | null = null;
-    private happyServer: HappyServer | null = null;
     private abortController: AbortController = new AbortController();
     private currentThreadId: string | null = null;
     private currentTurnId: string | null = null;
+    private collaborationModeSupported = true;
+    private collaborationModeFallbackNotified = false;
 
     constructor(session: CodexSession) {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.session = session;
         this.useAppServer = shouldUseAppServer();
-        this.mcpClient = this.useAppServer ? null : new CodexMcpClient();
-        this.appServerClient = this.useAppServer ? new CodexAppServerClient() : null;
+        this.mcpClient = this.useAppServer ? null : new CodexMcpClient({ workspaceRoot: session.path });
+        this.appServerClient = this.useAppServer ? new CodexAppServerClient({ workspaceRoot: session.path }) : null;
     }
 
     protected createDisplay(context: RemoteLauncherDisplayContext): React.ReactElement {
@@ -133,6 +222,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const appServerClient = this.appServerClient;
         const appServerEventConverter = useAppServer ? new AppServerEventConverter() : null;
 
+        // Turn correlation (ready → prompt localKey) for hub-side task automation.
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let trackTurnOutput = false;
+
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (trackTurnOutput && isAssistantTextCodexMessage(message)) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
+
         const normalizeCommand = (value: unknown): string | undefined => {
             if (typeof value === 'string') {
                 const trimmed = value.trim();
@@ -156,6 +258,51 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             return typeof value === 'string' && value.length > 0 ? value : null;
         };
 
+        const dropCollaborationMode = (mode: EnhancedMode): EnhancedMode => {
+            if (!mode.collaborationMode) {
+                return mode;
+            }
+            const rest: EnhancedMode = { ...mode };
+            delete rest.collaborationMode;
+            return rest;
+        };
+
+        const getEffectiveMode = (mode: EnhancedMode): EnhancedMode => {
+            if (this.collaborationModeSupported || !mode.collaborationMode) {
+                return mode;
+            }
+            return dropCollaborationMode(mode);
+        };
+
+        const shouldRetryWithoutCollaborationMode = (error: unknown, mode: EnhancedMode): boolean => {
+            if (!mode.collaborationMode || !this.collaborationModeSupported) {
+                return false;
+            }
+            if (!(error instanceof Error)) {
+                return false;
+            }
+            const message = error.message.toLowerCase();
+            if (!message.includes('collaboration')) {
+                return false;
+            }
+            return message.includes('unknown')
+                || message.includes('invalid')
+                || message.includes('unexpected')
+                || message.includes('unsupported')
+                || message.includes('not supported')
+                || message.includes('unrecognized');
+        };
+
+        const notifyCollaborationModeFallback = (mode: string) => {
+            if (this.collaborationModeFallbackNotified) {
+                return;
+            }
+            this.collaborationModeFallbackNotified = true;
+            const message = `Codex CLI does not support collaboration mode '${mode}' in app-server. Falling back to default mode.`;
+            messageBuffer.addMessage(message, 'status');
+            session.sendSessionEvent({ type: 'message', message });
+        };
+
         const buildMcpToolName = (server: unknown, tool: unknown): string | null => {
             const serverName = asString(server);
             const toolName = asString(tool);
@@ -176,45 +323,50 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
         };
 
-        const permissionHandler = new CodexPermissionHandler(session.client, {
-            onRequest: ({ id, toolName, input }) => {
-                const inputRecord = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-                const message = typeof inputRecord.message === 'string' ? inputRecord.message : undefined;
-                const rawCommand = inputRecord.command;
-                const command = Array.isArray(rawCommand)
-                    ? rawCommand.filter((part): part is string => typeof part === 'string').join(' ')
-                    : typeof rawCommand === 'string'
-                        ? rawCommand
-                        : undefined;
-                const cwdValue = inputRecord.cwd;
-                const cwd = typeof cwdValue === 'string' && cwdValue.trim().length > 0 ? cwdValue : undefined;
+        const permissionHandler = new CodexPermissionHandler(
+            session.client,
+            () => session.getPermissionMode() as PermissionMode | undefined,
+            {
+                onRequest: ({ id, toolName, input }) => {
+                    const inputRecord = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+                    const message = typeof inputRecord.message === 'string' ? inputRecord.message : undefined;
+                    const rawCommand = inputRecord.command;
+                    const command = Array.isArray(rawCommand)
+                        ? rawCommand.filter((part): part is string => typeof part === 'string').join(' ')
+                        : typeof rawCommand === 'string'
+                            ? rawCommand
+                            : undefined;
+                    const cwdValue = inputRecord.cwd;
+                    const cwd = typeof cwdValue === 'string' && cwdValue.trim().length > 0 ? cwdValue : undefined;
 
-                session.sendCodexMessage({
-                    type: 'tool-call',
-                    name: 'CodexPermission',
-                    callId: id,
-                    input: {
-                        tool: toolName,
-                        message,
-                        command,
-                        cwd
-                    },
-                    id: randomUUID()
-                });
-            },
-            onComplete: ({ id, decision, reason, approved }) => {
-                session.sendCodexMessage({
-                    type: 'tool-call-result',
-                    callId: id,
-                    output: {
-                        decision,
-                        reason
-                    },
-                    is_error: !approved,
-                    id: randomUUID()
-                });
+                    session.sendCodexMessage({
+                        type: 'tool-call',
+                        name: 'CodexPermission',
+                        callId: id,
+                        input: {
+                            tool: toolName,
+                            message,
+                            command,
+                            cwd
+                        },
+                        id: randomUUID()
+                    });
+                },
+                onComplete: ({ id, decision, reason, approved }) => {
+                    session.sendCodexMessage({
+                        type: 'tool-call-result',
+                        callId: id,
+                        output: {
+                            decision,
+                            reason
+                        },
+                        is_error: !approved,
+                        id: randomUUID()
+                    });
+                }
             }
-        });
+        );
+        session.setPermissionHandler(permissionHandler);
         const reasoningProcessor = new ReasoningProcessor((message) => {
             session.sendCodexMessage(message);
         });
@@ -289,6 +441,29 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 if (message) {
                     messageBuffer.addMessage(message, 'assistant');
                 }
+            } else if (msgType === 'plan_update') {
+                const entries = normalizePlanEntries(msg.plan);
+                const explanation = asString(msg.explanation);
+
+                if (entries.length > 0) {
+                    const summary = explanation
+                        ? `Plan updated: ${explanation}`
+                        : `Plan updated (${entries.length} steps)`;
+                    messageBuffer.addMessage(summary, 'assistant');
+                    session.sendCodexMessage({
+                        type: 'plan',
+                        entries,
+                        ...(explanation ? { explanation } : {}),
+                        id: randomUUID()
+                    });
+                } else if (explanation) {
+                    messageBuffer.addMessage(explanation, 'assistant');
+                    session.sendCodexMessage({
+                        type: 'message',
+                        message: explanation,
+                        id: randomUUID()
+                    });
+                }
             } else if (msgType === 'agent_reasoning') {
                 const text = asString(msg.text);
                 if (text) {
@@ -320,6 +495,14 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             } else if (msgType === 'task_failed') {
                 const error = asString(msg.error);
                 messageBuffer.addMessage(error ? `Task failed: ${error}` : 'Task failed', 'status');
+                if (!activeTurnHasAssistantReply) {
+                    session.sendCodexMessage({
+                        type: 'error',
+                        message: error ? `Task failed: ${error}` : 'Task failed. Check logs for details.',
+                        reason: 'task-failed',
+                        id: randomUUID()
+                    });
+                }
                 if (!useAppServer) {
                     sendReady();
                 }
@@ -347,6 +530,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     logger.debug('thinking completed');
                     session.onThinkingChange(false);
                 }
+                trackTurnOutput = false;
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
             }
@@ -401,7 +585,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     });
                 }
             }
-            if (msgType === 'exec_command_end') {
+            if (msgType === 'exec_command_output_delta') {
                 const callId = asString(msg.call_id ?? msg.callId);
                 if (callId) {
                     const output: Record<string, unknown> = { ...msg };
@@ -413,6 +597,28 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         type: 'tool-call-result',
                         callId: callId,
                         output,
+                        is_partial: true,
+                        id: randomUUID()
+                    });
+                }
+            }
+            if (msgType === 'exec_command_end') {
+                const callId = asString(msg.call_id ?? msg.callId);
+                if (callId) {
+                    const output: Record<string, unknown> = { ...msg };
+                    delete output.type;
+                    delete output.call_id;
+                    delete output.callId;
+                    const status = typeof output.status === 'string' ? output.status.toLowerCase() : null;
+                    const isError = Boolean(output.error)
+                        || status === 'failed'
+                        || status === 'error';
+
+                    session.sendCodexMessage({
+                        type: 'tool-call-result',
+                        callId: callId,
+                        output,
+                        is_error: isError,
                         id: randomUUID()
                     });
                 }
@@ -541,8 +747,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             });
         }
 
-        const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
-        this.happyServer = happyServer;
+        const mcpServers = {};
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),
@@ -562,7 +767,11 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         }
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         const syncSessionId = () => {
@@ -577,7 +786,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             await appServerClient.connect();
             await appServerClient.initialize({
                 clientInfo: {
-                    name: 'hapi-codex-client',
+                    name: `${PRODUCT_SLUG}-codex-client`,
                     version: '1.0.0'
                 }
             });
@@ -587,7 +796,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         let wasCreated = false;
         let currentModeHash: string | null = null;
-        let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
+        let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; localKey: string | null } | null = null;
         let first = true;
 
         clearReadyAfterTurnTimer = () => {
@@ -614,7 +823,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         while (!this.shouldExit) {
             logActiveHandles('loop-top');
-            let message: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = pending;
+            let message: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; localKey: string | null } | null = pending;
             pending = null;
             if (!message) {
                 const waitSignal = this.abortController.signal;
@@ -651,12 +860,17 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
             messageBuffer.addMessage(message.message, 'user');
             currentModeHash = message.hash;
+            activeTurnLocalKey = message.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            trackTurnOutput = true;
 
             try {
                 if (!wasCreated) {
                     if (useAppServer && appServerClient) {
+                        const effectiveMode = getEffectiveMode(message.mode);
                         const threadParams = buildThreadStartParams({
-                            mode: message.mode,
+                            mode: effectiveMode,
+                            cwd: session.path,
                             mcpServers,
                             cliOverrides: session.codexCliOverrides
                         });
@@ -703,14 +917,35 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         const turnParams = buildTurnStartParams({
                             threadId,
                             message: message.message,
-                            mode: message.mode,
+                            cwd: session.path,
+                            mode: effectiveMode,
                             cliOverrides: session.codexCliOverrides
                         });
                         turnInFlight = true;
                         allowAnonymousTerminalEvent = false;
-                        const turnResponse = await appServerClient.startTurn(turnParams, {
-                            signal: this.abortController.signal
-                        });
+                        let turnResponse: unknown;
+                        try {
+                            turnResponse = await appServerClient.startTurn(turnParams, {
+                                signal: this.abortController.signal
+                            });
+                        } catch (error) {
+                            if (!shouldRetryWithoutCollaborationMode(error, effectiveMode)) {
+                                throw error;
+                            }
+                            this.collaborationModeSupported = false;
+                            notifyCollaborationModeFallback(effectiveMode.collaborationMode!);
+                            const fallbackMode = dropCollaborationMode(effectiveMode);
+                            const retryParams = buildTurnStartParams({
+                                threadId,
+                                message: message.message,
+                                cwd: session.path,
+                                mode: fallbackMode,
+                                cliOverrides: session.codexCliOverrides
+                            });
+                            turnResponse = await appServerClient.startTurn(retryParams, {
+                                signal: this.abortController.signal
+                            });
+                        }
                         const turnRecord = asRecord(turnResponse);
                         const turn = turnRecord ? asRecord(turnRecord.turn) : null;
                         const turnId = asString(turn?.id);
@@ -724,6 +959,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             message: message.message,
                             mode: message.mode,
                             first,
+                            cwd: session.path,
                             mcpServers,
                             cliOverrides: session.codexCliOverrides
                         });
@@ -735,6 +971,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     wasCreated = true;
                     first = false;
                 } else if (useAppServer && appServerClient) {
+                    const effectiveMode = getEffectiveMode(message.mode);
                     if (!this.currentThreadId) {
                         logger.debug('[Codex] Missing thread id; restarting app-server thread');
                         wasCreated = false;
@@ -745,14 +982,35 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     const turnParams = buildTurnStartParams({
                         threadId: this.currentThreadId,
                         message: message.message,
-                        mode: message.mode,
+                        cwd: session.path,
+                        mode: effectiveMode,
                         cliOverrides: session.codexCliOverrides
                     });
                     turnInFlight = true;
                     allowAnonymousTerminalEvent = false;
-                    const turnResponse = await appServerClient.startTurn(turnParams, {
-                        signal: this.abortController.signal
-                    });
+                    let turnResponse: unknown;
+                    try {
+                        turnResponse = await appServerClient.startTurn(turnParams, {
+                            signal: this.abortController.signal
+                        });
+                    } catch (error) {
+                        if (!shouldRetryWithoutCollaborationMode(error, effectiveMode)) {
+                            throw error;
+                        }
+                        this.collaborationModeSupported = false;
+                        notifyCollaborationModeFallback(effectiveMode.collaborationMode!);
+                        const fallbackMode = dropCollaborationMode(effectiveMode);
+                        const retryParams = buildTurnStartParams({
+                            threadId: this.currentThreadId,
+                            message: message.message,
+                            cwd: session.path,
+                            mode: fallbackMode,
+                            cliOverrides: session.codexCliOverrides
+                        });
+                        turnResponse = await appServerClient.startTurn(retryParams, {
+                            signal: this.abortController.signal
+                        });
+                    }
                     const turnRecord = asRecord(turnResponse);
                     const turn = turnRecord ? asRecord(turnRecord.turn) : null;
                     const turnId = asString(turn?.id);
@@ -783,8 +1041,13 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         logger.debug('[Codex] Marked session as not created after abort for proper resume');
                     }
                 } else {
-                    messageBuffer.addMessage('Process exited unexpectedly', 'status');
-                    session.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                    const unexpectedExitMessage = buildUnexpectedExitMessage(error);
+                    messageBuffer.addMessage(unexpectedExitMessage, 'status');
+                    session.sendSessionEvent({
+                        type: 'error',
+                        message: unexpectedExitMessage,
+                        reason: 'process-exited'
+                    });
                     if (useAppServer) {
                         this.currentTurnId = null;
                         this.currentThreadId = null;
@@ -806,6 +1069,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         shouldExit: this.shouldExit,
                         sendReady
                     });
+                    trackTurnOutput = false;
                 }
                 logActiveHandles('after-turn');
             }
@@ -826,11 +1090,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         }
 
         this.clearAbortHandlers(this.session.client.rpcHandlerManager);
-
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
 
         this.permissionHandler?.reset();
         this.reasoningProcessor?.abort();

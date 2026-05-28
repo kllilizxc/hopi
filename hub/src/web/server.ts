@@ -1,11 +1,11 @@
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
 import { serveStatic } from 'hono/bun'
 import { configuration } from '../configuration'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_DEFAULT_OFFICIAL_WEB_URL, PRODUCT_NAME } from '@hopi/protocol/brand'
 import type { SyncEngine } from '../sync/syncEngine'
 import { createAuthMiddleware, type WebAppEnv } from './middleware/auth'
 import { createAuthRoutes } from './routes/auth'
@@ -19,6 +19,11 @@ import { createGitRoutes } from './routes/git'
 import { createCliRoutes } from './routes/cli'
 import { createPushRoutes } from './routes/push'
 import { createVoiceRoutes } from './routes/voice'
+import { createProjectsRoutes } from './routes/projects'
+import { createOmcRoutes } from './routes/omc'
+import { createWorkspacesRoutes } from './routes/workspaces'
+import { createTasksRoutes } from './routes/tasks'
+import { createGoalsRoutes } from './routes/goals'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -27,23 +32,43 @@ import type { WebSocketData } from '@socket.io/bun-engine'
 import { loadEmbeddedAssetMap, type EmbeddedWebAsset } from './embeddedAssets'
 import { isBunCompiled } from '../utils/bunCompiled'
 import type { Store } from '../store'
+import { createCorsMiddleware } from './middleware/cors'
 
-function findWebappDistDir(): { distDir: string; indexHtmlPath: string } {
+type SpaDistBundle = {
+    appName: string
+    buildCommand: string
+    distDir: string
+    indexHtmlPath: string
+}
+
+function findSpaDistDir(packageDirName: string, appName: string, buildCommand: string): SpaDistBundle {
     const candidates = [
-        join(process.cwd(), '..', 'web', 'dist'),
-        join(import.meta.dir, '..', '..', '..', 'web', 'dist'),
-        join(process.cwd(), 'web', 'dist')
+        join(process.cwd(), '..', packageDirName, 'dist'),
+        join(import.meta.dir, '..', '..', '..', packageDirName, 'dist'),
+        join(process.cwd(), packageDirName, 'dist')
     ]
 
     for (const distDir of candidates) {
         const indexHtmlPath = join(distDir, 'index.html')
         if (existsSync(indexHtmlPath)) {
-            return { distDir, indexHtmlPath }
+            return { appName, buildCommand, distDir, indexHtmlPath }
         }
     }
 
     const distDir = candidates[0]
-    return { distDir, indexHtmlPath: join(distDir, 'index.html') }
+    return { appName, buildCommand, distDir, indexHtmlPath: join(distDir, 'index.html') }
+}
+
+function findWebappDistDir(): SpaDistBundle {
+    return findSpaDistDir('web', 'Mini App', 'bun run build:web')
+}
+
+function findOmcDistDir(): SpaDistBundle {
+    return findSpaDistDir('OMC-client', 'OMC client', 'bun run build:omc')
+}
+
+function findOmcPrototypeDistDir(): SpaDistBundle {
+    return findSpaDistDir('omc-prototype', 'OMC prototype', 'bun run build:omc-prototype')
 }
 
 function serveEmbeddedAsset(asset: EmbeddedWebAsset): Response {
@@ -52,6 +77,46 @@ function serveEmbeddedAsset(asset: EmbeddedWebAsset): Response {
             'Content-Type': asset.mimeType
         }
     })
+}
+
+function createBuildRequiredResponse(bundle: SpaDistBundle): Response {
+    return new Response(
+        `${bundle.appName} is not built.\n\nRun:\n  ${bundle.buildCommand}\n`,
+        { status: 503 }
+    )
+}
+
+function serveBundleIndex(bundle: SpaDistBundle): Response {
+    if (!existsSync(bundle.indexHtmlPath)) {
+        return createBuildRequiredResponse(bundle)
+    }
+
+    return new Response(Bun.file(bundle.indexHtmlPath))
+}
+
+function resolveBundleAssetPath(bundle: SpaDistBundle, requestPath: string, prefix = ''): string | null {
+    const trimmedPath = prefix && requestPath.startsWith(prefix) ? requestPath.slice(prefix.length) : requestPath
+    const relativePath = trimmedPath.replace(/^\/+/, '')
+    if (!relativePath) {
+        return null
+    }
+
+    const distRoot = resolve(bundle.distDir)
+    const candidatePath = resolve(distRoot, relativePath)
+    if (candidatePath !== distRoot && !candidatePath.startsWith(`${distRoot}${sep}`)) {
+        return null
+    }
+
+    return candidatePath
+}
+
+function tryServeBundleAsset(bundle: SpaDistBundle, requestPath: string, prefix = ''): Response | null {
+    const assetPath = resolveBundleAssetPath(bundle, requestPath, prefix)
+    if (!assetPath || !existsSync(assetPath) || !statSync(assetPath).isFile()) {
+        return null
+    }
+
+    return new Response(Bun.file(assetPath))
 }
 
 function createWebApp(options: {
@@ -74,10 +139,9 @@ function createWebApp(options: {
     app.get('/health', (c) => c.json({ status: 'ok', protocolVersion: PROTOCOL_VERSION }))
 
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
-    const corsOriginOption = corsOrigins.includes('*') ? '*' : corsOrigins
-    const corsMiddleware = cors({
-        origin: corsOriginOption,
-        allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    const corsMiddleware = createCorsMiddleware({
+        allowedOrigins: corsOrigins,
+        allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
         allowHeaders: ['authorization', 'content-type']
     })
     app.use('/api/*', corsMiddleware)
@@ -97,16 +161,21 @@ function createWebApp(options: {
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createPushRoutes(options.store, options.vapidPublicKey))
     app.route('/api', createVoiceRoutes())
+    app.route('/api', createProjectsRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createOmcRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createWorkspacesRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createTasksRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
+    app.route('/api', createGoalsRoutes({ store: options.store, getSyncEngine: options.getSyncEngine }))
 
     // Skip static serving in relay mode, show helpful message on root
     if (options.relayMode) {
-        const officialUrl = options.officialWebUrl || 'https://app.hapi.run'
+        const officialUrl = options.officialWebUrl || PRODUCT_DEFAULT_OFFICIAL_WEB_URL
         app.get('/', (c) => {
             return c.html(`<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>HAPI Hub</title></head>
+<head><meta charset="utf-8"><title>${PRODUCT_NAME} Hub</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px;">
-<h1>HAPI Hub</h1>
+<h1>${PRODUCT_NAME} Hub</h1>
 <p>This hub is running in relay mode. Please use the official web app:</p>
 <p><a href="${officialUrl}">${officialUrl}</a></p>
 <details>
@@ -125,17 +194,8 @@ from GitHub Pages instead of through the relay tunnel.
 
     if (options.embeddedAssetMap) {
         const embeddedAssetMap = options.embeddedAssetMap
-        const indexHtmlAsset = embeddedAssetMap.get('/index.html')
-
-        if (!indexHtmlAsset) {
-            app.get('*', (c) => {
-                return c.text(
-                    'Embedded Mini App is missing index.html. Rebuild the executable after running bun run build:web.',
-                    503
-                )
-            })
-            return app
-        }
+        const webIndexHtmlAsset = embeddedAssetMap.get('/index.html')
+        const omcIndexHtmlAsset = embeddedAssetMap.get('/omc/index.html')
 
         app.use('*', async (c, next) => {
             if (c.req.path.startsWith('/api')) {
@@ -154,31 +214,55 @@ from GitHub Pages instead of through the relay tunnel.
             return await next()
         })
 
+        app.get('/omc', (c) => {
+            if (!omcIndexHtmlAsset) {
+                return c.text(
+                    'Embedded OMC client is missing /omc/index.html. Rebuild the executable after running bun run build:omc.',
+                    503
+                )
+            }
+
+            return serveEmbeddedAsset(omcIndexHtmlAsset)
+        })
+
+        app.get('/omc/*', async (c, next) => {
+            if (c.req.path.startsWith('/api')) {
+                await next()
+                return
+            }
+
+            if (!omcIndexHtmlAsset) {
+                return c.text(
+                    'Embedded OMC client is missing /omc/index.html. Rebuild the executable after running bun run build:omc.',
+                    503
+                )
+            }
+
+            return serveEmbeddedAsset(omcIndexHtmlAsset)
+        })
+
         app.get('*', async (c, next) => {
             if (c.req.path.startsWith('/api')) {
                 await next()
                 return
             }
 
-            return serveEmbeddedAsset(indexHtmlAsset)
+            if (!webIndexHtmlAsset) {
+                return c.text(
+                    'Embedded Mini App is missing /index.html. Rebuild the executable after running bun run build:web.',
+                    503
+                )
+            }
+
+            return serveEmbeddedAsset(webIndexHtmlAsset)
         })
 
         return app
     }
 
-    const { distDir, indexHtmlPath } = findWebappDistDir()
-
-    if (!existsSync(indexHtmlPath)) {
-        app.get('/', (c) => {
-            return c.text(
-                'Mini App is not built.\n\nRun:\n  cd web\n  bun install\n  bun run build\n',
-                503
-            )
-        })
-        return app
-    }
-
-    app.use('/assets/*', serveStatic({ root: distDir }))
+    const webBundle = findWebappDistDir()
+    const omcBundle = findOmcDistDir()
+    const omcPrototypeBundle = findOmcPrototypeDistDir()
 
     app.use('*', async (c, next) => {
         if (c.req.path.startsWith('/api')) {
@@ -186,7 +270,57 @@ from GitHub Pages instead of through the relay tunnel.
             return
         }
 
-        return await serveStatic({ root: distDir })(c, next)
+        if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+            await next()
+            return
+        }
+
+        if (c.req.path === '/omc' || c.req.path.startsWith('/omc/')) {
+            const omcAsset = tryServeBundleAsset(omcBundle, c.req.path, '/omc')
+            if (omcAsset) {
+                return omcAsset
+            }
+        }
+
+        if (c.req.path === '/omc-prototype' || c.req.path.startsWith('/omc-prototype/')) {
+            const omcPrototypeAsset = tryServeBundleAsset(omcPrototypeBundle, c.req.path, '/omc-prototype')
+            if (omcPrototypeAsset) {
+                return omcPrototypeAsset
+            }
+        }
+
+        const webAsset = tryServeBundleAsset(webBundle, c.req.path)
+        if (webAsset) {
+            return webAsset
+        }
+
+        return await next()
+    })
+
+    app.get('/omc', () => {
+        return serveBundleIndex(omcBundle)
+    })
+
+    app.get('/omc/*', async (c, next) => {
+        if (c.req.path.startsWith('/api')) {
+            await next()
+            return
+        }
+
+        return serveBundleIndex(omcBundle)
+    })
+
+    app.get('/omc-prototype', () => {
+        return serveBundleIndex(omcPrototypeBundle)
+    })
+
+    app.get('/omc-prototype/*', async (c, next) => {
+        if (c.req.path.startsWith('/api')) {
+            await next()
+            return
+        }
+
+        return serveBundleIndex(omcPrototypeBundle)
     })
 
     app.get('*', async (c, next) => {
@@ -195,7 +329,7 @@ from GitHub Pages instead of through the relay tunnel.
             return
         }
 
-        return await serveStatic({ root: distDir, path: 'index.html' })(c, next)
+        return serveBundleIndex(webBundle)
     })
 
     return app

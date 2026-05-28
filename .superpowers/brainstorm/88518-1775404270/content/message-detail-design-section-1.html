@@ -1,0 +1,84 @@
+<h2>设计第 1 节：信息骨架</h2>
+<p class="subtitle">推荐方案 1 的具体落地。重点看：首屏层级、信息顺序、对话是否已经成为主视角。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Proposed Message Detail</div>
+    <div class="mockup-body" style="display:grid;gap:14px;padding:18px;background:linear-gradient(180deg,#fcfefb 0%,#f3f8f3 100%);">
+      <div style="display:grid;gap:10px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+          <div style="display:grid;gap:4px;">
+            <div style="display:flex;align-items:center;gap:10px;color:#607064;font-size:12px;">
+              <span>← 返回列表</span>
+            </div>
+            <div style="font-size:28px;font-weight:700;line-height:1.1;">做出每周投资简报</div>
+            <div style="font-size:13px;color:#607064;">12 分钟前更新</div>
+          </div>
+          <div style="padding:7px 12px;border-radius:999px;background:rgba(20,32,23,.06);font-size:12px;">等你回复</div>
+        </div>
+
+        <div style="display:grid;gap:10px;padding:14px;border-radius:20px;border:1px solid rgba(45,74,56,.12);background:rgba(255,255,255,.95);box-shadow:0 10px 24px rgba(16,33,23,.05);">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:#607064;">
+            <span style="padding:5px 9px;border-radius:999px;background:rgba(20,32,23,.05);">目标：每周投资简报</span>
+            <span style="padding:5px 9px;border-radius:999px;background:rgba(20,32,23,.05);">执行流：周报框架</span>
+            <span style="padding:5px 9px;border-radius:999px;background:rgba(20,32,23,.05);">阶段：01 调研</span>
+          </div>
+          <div style="display:grid;gap:10px;grid-template-columns:1fr;">
+            <div style="padding:12px 14px;border-radius:16px;background:rgba(31,138,100,.07);border:1px solid rgba(31,138,100,.14);">
+              <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#607064;">为什么现在需要你</div>
+              <div style="margin-top:6px;font-size:14px;line-height:1.55;">Agent 已经把主线缩成“先做周报框架”，但栏目优先级还没钉死，继续推进会影响后续内容顺序。</div>
+            </div>
+            <div style="padding:12px 14px;border-radius:16px;background:#fff8ef;border:1px solid rgba(201,138,43,.18);">
+              <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8a6a2a;">执行动作</div>
+              <div style="margin-top:6px;font-size:15px;font-weight:600;line-height:1.5;">直接回复要保留的栏目，或者改掉当前主线。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;gap:12px;min-height:270px;align-content:end;padding-top:6px;">
+        <div style="max-width:82%;padding:16px;border-radius:20px 20px 20px 8px;border:1px solid rgba(45,74,56,.10);background:white;">
+          <div style="font-size:12px;color:#607064;margin-bottom:6px;">Agent</div>
+          <div style="font-size:15px;line-height:1.7;">现在在待启动，置信 24%。如果你不改方向，我会按“框架先行”推进。</div>
+        </div>
+        <div style="justify-self:end;max-width:72%;padding:16px;border-radius:20px 20px 8px 20px;background:#142017;color:white;">
+          <div style="font-size:12px;opacity:.72;margin-bottom:6px;">你</div>
+          <div style="font-size:15px;line-height:1.7;">保留宏观、板块、风险提示，风险提示提前。</div>
+        </div>
+      </div>
+
+      <div style="display:grid;gap:10px;padding-top:8px;border-top:1px solid rgba(45,74,56,.08);">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <div style="padding:9px 12px;border-radius:999px;background:rgba(31,138,100,.10);color:#1f8a64;">采用默认主线</div>
+          <div style="padding:9px 12px;border-radius:999px;background:white;border:1px solid rgba(45,74,56,.10);">改栏目优先级</div>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;">
+          <div style="padding:13px 14px;border-radius:18px;border:1px solid rgba(45,74,56,.10);background:white;color:#607064;">继续追问，或直接告诉 Agent 要怎么做</div>
+          <div style="padding:13px 20px;border-radius:999px;background:#1f8a64;color:white;font-weight:600;">发送</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Why This Works</div>
+    <div class="mockup-body" style="display:grid;gap:12px;padding:18px;">
+      <div style="padding:14px;border-radius:18px;background:rgba(31,138,100,.07);border:1px solid rgba(31,138,100,.12);">
+        <div class="label">1. 标题层</div>
+        <p style="margin:6px 0 0;">只保留任务名、更新时间、状态。先知道“这是哪件事”。</p>
+      </div>
+      <div style="padding:14px;border-radius:18px;background:rgba(20,32,23,.04);border:1px solid rgba(45,74,56,.08);">
+        <div class="label">2. 上下文层</div>
+        <p style="margin:6px 0 0;">目标 / 执行流 / 阶段压成标签，扫描速度快，不挤占对话高度。</p>
+      </div>
+      <div style="padding:14px;border-radius:18px;background:#fff8ef;border:1px solid rgba(201,138,43,.18);">
+        <div class="label">3. 决策层</div>
+        <p style="margin:6px 0 0;">“为什么现在需要你”和“执行动作”拆成两块，信息不再混成一句提示文。</p>
+      </div>
+      <div style="padding:14px;border-radius:18px;background:rgba(255,255,255,.9);border:1px solid rgba(45,74,56,.08);">
+        <div class="label">4. 对话层</div>
+        <p style="margin:6px 0 0;">摘要说清后，马上进入对话。聊天成为主工作区，不再被头部吞掉。</p>
+      </div>
+    </div>
+  </div>
+</div>

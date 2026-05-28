@@ -1,20 +1,24 @@
 import { execFileSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import { PRODUCT_ENV } from '@hopi/protocol/brand';
 
 import type { WorktreeInfo } from '@/runner/worktree';
 import { logger } from '@/ui/logger';
+import { resolveGitExecutable } from './resolveGitExecutable';
+import { resolveCliWorkingDirectory } from './workingDirectory';
 
 export function readWorktreeEnv(): WorktreeInfo | null {
     return readWorktreeFromEnv() ?? readWorktreeFromGit();
 }
 
 function readWorktreeFromEnv(): WorktreeInfo | null {
-    const basePath = process.env.HAPI_WORKTREE_BASE_PATH?.trim();
-    const branch = process.env.HAPI_WORKTREE_BRANCH?.trim();
-    const name = process.env.HAPI_WORKTREE_NAME?.trim();
-    const worktreePath = process.env.HAPI_WORKTREE_PATH?.trim();
-    const createdAtRaw = process.env.HAPI_WORKTREE_CREATED_AT?.trim();
+    const basePath = process.env[PRODUCT_ENV.WORKTREE_BASE_PATH]?.trim();
+    const branch = process.env[PRODUCT_ENV.WORKTREE_BRANCH]?.trim();
+    const name = process.env[PRODUCT_ENV.WORKTREE_NAME]?.trim();
+    const worktreePath = process.env[PRODUCT_ENV.WORKTREE_PATH]?.trim();
+    const createdAtRaw = process.env[PRODUCT_ENV.WORKTREE_CREATED_AT]?.trim();
+    const baseCommitRaw = process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]?.trim();
 
     if (!basePath || !branch || !name || !worktreePath || !createdAtRaw) {
         return null;
@@ -25,12 +29,17 @@ function readWorktreeFromEnv(): WorktreeInfo | null {
         return null;
     }
 
+    const baseCommit = baseCommitRaw && /^[0-9a-f]{7,64}$/i.test(baseCommitRaw)
+        ? baseCommitRaw
+        : undefined;
+
     return {
         basePath,
         branch,
         name,
         worktreePath,
-        createdAt
+        createdAt,
+        baseCommit
     };
 }
 
@@ -39,7 +48,7 @@ function readWorktreeFromGit(): WorktreeInfo | null {
     let result: WorktreeInfo | null = null;
 
     try {
-        const cwd = process.cwd();
+        const cwd = resolveCliWorkingDirectory();
         const isInside = runGit(['rev-parse', '--is-inside-work-tree'], cwd);
         if (isInside !== 'true') {
             return null;
@@ -86,7 +95,8 @@ function readWorktreeFromGit(): WorktreeInfo | null {
 
 function runGit(args: string[], cwd: string): string | null {
     try {
-        const output = execFileSync('git', args, {
+        const gitCommand = resolveGitExecutable(process.env);
+        const output = execFileSync(gitCommand, args, {
             cwd,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore']

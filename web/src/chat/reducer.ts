@@ -1,8 +1,9 @@
 import type { AgentState } from '@/types/api'
 import type { ChatBlock, NormalizedMessage, UsageData } from '@/chat/types'
+import { isCodexPlanUpdateMeta } from '@hopi/protocol/chat'
 import { traceMessages, type TracedMessage } from '@/chat/tracer'
 import { dedupeAgentEvents, foldApiErrorEvents } from '@/chat/reducerEvents'
-import { collectTitleChanges, collectToolIdsFromMessages, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
+import { collectToolIdsFromMessages, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 
 // Calculate context size from usage data
@@ -19,13 +20,44 @@ export type LatestUsage = {
     timestamp: number
 }
 
+function isPlanUpdateBlock(block: ChatBlock): boolean {
+    return block.kind === 'agent-text' && isCodexPlanUpdateMeta(block.meta)
+}
+
+function collapseSupersededPlanUpdates(blocks: ChatBlock[]): ChatBlock[] {
+    const collapsed: ChatBlock[] = []
+    let latestPlanIndex: number | null = null
+    let changed = false
+
+    for (const block of blocks) {
+        if (block.kind === 'user-text') {
+            latestPlanIndex = null
+            collapsed.push(block)
+            continue
+        }
+
+        if (isPlanUpdateBlock(block)) {
+            if (latestPlanIndex !== null) {
+                collapsed.splice(latestPlanIndex, 1)
+                changed = true
+            }
+            collapsed.push(block)
+            latestPlanIndex = collapsed.length - 1
+            continue
+        }
+
+        collapsed.push(block)
+    }
+
+    return changed ? collapsed : blocks
+}
+
 export function reduceChatBlocks(
     normalized: NormalizedMessage[],
     agentState: AgentState | null | undefined
 ): { blocks: ChatBlock[]; hasReadyEvent: boolean; latestUsage: LatestUsage | null } {
     const permissionsById = getPermissions(agentState)
     const toolIdsInMessages = collectToolIdsFromMessages(normalized)
-    const titleChangesByToolUseId = collectTitleChanges(normalized)
 
     const traced = traceMessages(normalized)
     const groups = new Map<string, TracedMessage[]>()
@@ -42,8 +74,7 @@ export function reduceChatBlocks(
     }
 
     const consumedGroupIds = new Set<string>()
-    const emittedTitleChangeToolUseIds = new Set<string>()
-    const reducerContext = { permissionsById, groups, consumedGroupIds, titleChangesByToolUseId, emittedTitleChangeToolUseIds }
+    const reducerContext = { permissionsById, groups, consumedGroupIds }
     const rootResult = reduceTimeline(root, reducerContext)
     let hasReadyEvent = rootResult.hasReadyEvent
 
@@ -107,5 +138,6 @@ export function reduceChatBlocks(
         }
     }
 
-    return { blocks: dedupeAgentEvents(foldApiErrorEvents(rootResult.blocks)), hasReadyEvent, latestUsage }
+    const blocks = collapseSupersededPlanUpdates(rootResult.blocks)
+    return { blocks: dedupeAgentEvents(foldApiErrorEvents(blocks)), hasReadyEvent, latestUsage }
 }

@@ -1,4 +1,5 @@
 import { useTranslation } from '@/lib/use-translation'
+import { Switch } from '@/components/ui/switch'
 
 export function YoloToggle(props: {
     yoloMode: boolean
@@ -21,17 +22,14 @@ export function YoloToggle(props: {
                         {t('newSession.yolo.desc')}
                     </span>
                 </div>
-                <label className="relative inline-flex h-5 w-9 items-center">
-                    <input
-                        type="checkbox"
-                        checked={props.yoloMode}
-                        onChange={(e) => props.onToggle(e.target.checked)}
-                        disabled={props.isDisabled}
-                        className="peer sr-only"
-                    />
-                    <span className="absolute inset-0 rounded-full bg-[var(--app-border)] transition-colors peer-checked:bg-[var(--app-link)] peer-disabled:opacity-50" />
-                    <span className="absolute left-0.5 h-4 w-4 rounded-full bg-[var(--app-bg)] transition-transform peer-checked:translate-x-4 peer-disabled:opacity-50" />
-                </label>
+                <Switch
+                    checked={props.yoloMode}
+                    onCheckedChange={(checked) => props.onToggle(checked)}
+                    disabled={props.isDisabled}
+                    size="2"
+                    variant="surface"
+                    aria-label={t('newSession.yolo.title')}
+                />
             </div>
         </div>
     )

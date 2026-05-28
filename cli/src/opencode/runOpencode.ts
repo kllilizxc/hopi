@@ -8,10 +8,11 @@ import type { OpencodeSession } from './session';
 import type { OpencodeMode, PermissionMode } from './types';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
-import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
-import { PermissionModeSchema } from '@hapi/protocol/schemas';
+import { isPermissionModeAllowedForFlavor } from '@hopi/protocol';
+import { PermissionModeSchema } from '@hopi/protocol/schemas';
 import { startOpencodeHookServer } from './utils/startOpencodeHookServer';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
 export async function runOpencode(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -19,7 +20,7 @@ export async function runOpencode(opts: {
     permissionMode?: PermissionMode;
     resumeSessionId?: string;
 } = {}): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveCliWorkingDirectory();
     const startedBy = opts.startedBy ?? 'terminal';
 
     logger.debug(`[opencode] Starting with options: startedBy=${startedBy}, startingMode=${opts.startingMode}`);
@@ -88,7 +89,7 @@ export async function runOpencode(opts: {
         const mode: OpencodeMode = {
             permissionMode: currentPermissionMode
         };
-        messageQueue.push(formattedText, mode);
+        messageQueue.push(formattedText, mode, message.localKey ?? null);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {

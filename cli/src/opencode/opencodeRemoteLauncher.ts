@@ -1,6 +1,5 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
-import { buildHapiMcpBridge } from '@/codex/utils/buildHapiMcpBridge';
 import { convertAgentMessage } from '@/agent/messageConverter';
 import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
@@ -11,11 +10,23 @@ import { createOpencodeBackend } from './utils/opencodeBackend';
 import { OpencodePermissionHandler } from './utils/permissionHandler';
 import { TITLE_INSTRUCTION } from './utils/systemPrompt';
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OpencodeSession;
     private backend: ReturnType<typeof createOpencodeBackend> | null = null;
     private permissionHandler: OpencodePermissionHandler | null = null;
-    private happyServer: { stop: () => void } | null = null;
     private abortController = new AbortController();
     private displayPermissionMode: PermissionMode | null = null;
     private instructionsSent = false;
@@ -39,9 +50,19 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     protected async runMainLoop(): Promise<void> {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
 
-        const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
-        this.happyServer = happyServer;
+        // Track whether the agent produced any non-event output for the current turn.
+        // Used to decide task automation transitions without scanning message history.
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (turnInFlight && isAssistantTextCodexMessage(message)) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
 
         const backend = createOpencodeBackend({
             cwd: session.path
@@ -57,7 +78,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         await backend.initialize();
 
         const resumeSessionId = session.sessionId;
-        const mcpServerList = toAcpMcpServers(mcpServers);
+        const mcpServerList: McpServerStdio[] = [];
         let acpSessionId: string;
         if (resumeSessionId) {
             try {
@@ -98,7 +119,11 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         });
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         while (!this.shouldExit) {
@@ -113,11 +138,16 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
 
             this.applyDisplayMode(batch.mode.permissionMode);
             messageBuffer.addMessage(batch.message, 'user');
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            turnInFlight = true;
 
             // Inject title instructions on first prompt
             let messageText = batch.message;
             if (!this.instructionsSent) {
-                messageText = `${TITLE_INSTRUCTION}\n\n${batch.message}`;
+                messageText = TITLE_INSTRUCTION
+                    ? `${TITLE_INSTRUCTION}\n\n${batch.message}`
+                    : batch.message;
                 this.instructionsSent = true;
             }
 
@@ -135,12 +165,14 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             } catch (error) {
                 logger.warn('[opencode-remote] prompt failed', error);
                 session.sendSessionEvent({
-                    type: 'message',
-                    message: 'OpenCode prompt failed. Check logs for details.'
+                    type: 'error',
+                    message: 'OpenCode prompt failed. Check logs for details.',
+                    reason: 'prompt-failed'
                 });
                 messageBuffer.addMessage('OpenCode prompt failed', 'status');
             } finally {
                 session.onThinkingChange(false);
+                turnInFlight = false;
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
                     sendReady();
@@ -162,10 +194,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             this.backend = null;
         }
 
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
     }
 
     private handleAgentMessage(message: AgentMessage): void {
@@ -231,15 +259,6 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private async handleSwitchRequest(): Promise<void> {
         await this.requestExit('switch', () => this.handleAbort());
     }
-}
-
-function toAcpMcpServers(config: Record<string, { command: string; args: string[] }>): McpServerStdio[] {
-    return Object.entries(config).map(([name, entry]) => ({
-        name,
-        command: entry.command,
-        args: entry.args,
-        env: []
-    }));
 }
 
 export async function opencodeRemoteLauncher(

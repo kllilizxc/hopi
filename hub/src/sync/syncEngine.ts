@@ -1,13 +1,14 @@
 /**
- * Sync Engine for HAPI Telegram Bot (Direct Connect)
+ * Sync Engine for HOPI Telegram Bot (Direct Connect)
  *
  * In the direct-connect architecture:
- * - hapi-hub is the hub (Socket.IO + REST)
- * - hapi CLI connects directly to the hub (no relay)
+ * - hopi-hub is the hub (Socket.IO + REST)
+ * - hopi CLI connects directly to the hub (no relay)
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -15,26 +16,49 @@ import type { SSEManager } from '../sse/sseManager'
 import { EventPublisher, type SyncEventListener } from './eventPublisher'
 import { MachineCache, type Machine } from './machineCache'
 import { MessageService } from './messageService'
+import type { SessionDebugLogger } from './sessionDebugLogger'
+import { AutoRunScheduler } from './autoRunScheduler'
 import {
     RpcGateway,
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
+    type RpcGitAutocommitWorktreeResponse,
+    type RpcGitCaptureWorktreeMergeSnapshotResponse,
+    type RpcGitMergeWorktreeResponse,
+    type RpcGitMergeWorktreeStateResponse,
+    type RpcGitRemoveWorktreeResponse,
+    type RpcGitVerifyWorktreeMergeResponse,
     type RpcListDirectoryResponse,
     type RpcPathExistsResponse,
+    type RpcPreviewStatus,
     type RpcReadFileResponse,
+    type RpcWriteFileResponse,
     type RpcUploadFileResponse
 } from './rpcGateway'
 import { SessionCache } from './sessionCache'
+import { TaskAutomation } from './taskAutomation'
+import { OmcExecutionAutomation } from './omc/executionAutomation'
+import { OmcLoopAutomation } from './omc/loopAutomation'
+import { OmcPlanningAutomation } from './omc/planningAutomation'
+import { OmcTopicAutomation } from './omc/topicAutomation'
 
-export type { Session, SyncEvent } from '@hapi/protocol/types'
+export type { Session, SyncEvent } from '@hopi/protocol/types'
 export type { Machine } from './machineCache'
 export type { SyncEventListener } from './eventPublisher'
 export type {
     RpcCommandResponse,
     RpcDeleteUploadResponse,
+    RpcGitAutocommitWorktreeResponse,
+    RpcGitCaptureWorktreeMergeSnapshotResponse,
+    RpcGitMergeWorktreeResponse,
+    RpcGitMergeWorktreeStateResponse,
+    RpcGitRemoveWorktreeResponse,
+    RpcGitVerifyWorktreeMergeResponse,
     RpcListDirectoryResponse,
     RpcPathExistsResponse,
+    RpcPreviewStatus,
     RpcReadFileResponse,
+    RpcWriteFileResponse,
     RpcUploadFileResponse
 } from './rpcGateway'
 
@@ -42,33 +66,76 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+const SESSION_CONFIG_APPLY_ATTEMPTS = 8
+const SESSION_CONFIG_APPLY_RETRY_DELAY_MS = 250
+
+function shouldRetrySessionConfigApply(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')
+}
+
 export class SyncEngine {
+    private readonly store: Store
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
     private readonly messageService: MessageService
+    private readonly sessionDebugLogger?: SessionDebugLogger
     private readonly rpcGateway: RpcGateway
+    private readonly taskAutomation: TaskAutomation
+    private readonly autoRunScheduler: AutoRunScheduler
+    private readonly omcExecutionAutomation: OmcExecutionAutomation
+    private readonly omcLoopAutomation: OmcLoopAutomation
+    private readonly omcPlanningAutomation: OmcPlanningAutomation
+    private readonly omcTopicAutomation: OmcTopicAutomation
     private inactivityTimer: NodeJS.Timeout | null = null
+    private autoRunTimer: NodeJS.Timeout | null = null
 
     constructor(
         store: Store,
         io: Server,
         rpcRegistry: RpcRegistry,
-        sseManager: SSEManager
+        sseManager: SSEManager,
+        sessionDebugLogger?: SessionDebugLogger
     ) {
+        this.store = store
+        this.sessionDebugLogger = sessionDebugLogger
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
-        this.sessionCache = new SessionCache(store, this.eventPublisher)
-        this.machineCache = new MachineCache(store, this.eventPublisher)
-        this.messageService = new MessageService(store, io, this.eventPublisher)
+        this.sessionCache = new SessionCache(this.store, this.eventPublisher)
+        this.machineCache = new MachineCache(this.store, this.eventPublisher)
+        this.messageService = new MessageService(this.store, io, this.eventPublisher, this.sessionDebugLogger)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
+        this.taskAutomation = new TaskAutomation(this.store, this)
+        this.autoRunScheduler = new AutoRunScheduler(this.store, this)
+        this.omcExecutionAutomation = new OmcExecutionAutomation(this.store, this)
+        this.omcLoopAutomation = new OmcLoopAutomation(this.store, this)
+        this.omcPlanningAutomation = new OmcPlanningAutomation(this.store, this)
+        this.omcTopicAutomation = new OmcTopicAutomation(this.store, this)
+        this.eventPublisher.subscribe((event) => this.taskAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.autoRunScheduler.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcExecutionAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcLoopAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcPlanningAutomation.handleEvent(event))
+        this.eventPublisher.subscribe((event) => this.omcTopicAutomation.handleEvent(event))
         this.reloadAll()
+        void this.omcExecutionAutomation.reconcileAllPrograms()
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+        this.autoRunTimer = setInterval(() => this.autoRunScheduler.requestKnownProjectTicks({ delayMs: 0 }), 15 * 60_000)
+        this.autoRunTimer.unref?.()
+    }
+
+    requestAutoRunTick(namespace: string, projectId: string): void {
+        this.autoRunScheduler.requestTick(namespace, projectId, { delayMs: 0 })
     }
 
     stop(): void {
         if (this.inactivityTimer) {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
+        }
+        if (this.autoRunTimer) {
+            clearInterval(this.autoRunTimer)
+            this.autoRunTimer = null
         }
     }
 
@@ -87,6 +154,57 @@ export class SyncEngine {
             return this.machineCache.getMachine(event.machineId)?.namespace
         }
         return undefined
+    }
+
+    private resolveOnlineMachineForSessionRpc(sessionId: string): {
+        ok: true
+        machineId: string
+        sessionPath: string
+    } | {
+        ok: false
+        error: string
+    } {
+        const session = this.getSession(sessionId)
+        if (!session) {
+            return { ok: false, error: 'Session not found' }
+        }
+
+        const sessionPath = session.metadata?.path
+        if (!sessionPath) {
+            return { ok: false, error: 'Session path not available' }
+        }
+
+        const namespace = session.namespace
+        const metadata = session.metadata
+
+        const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        if (onlineMachines.length === 0) {
+            return {
+                ok: false,
+                error: 'No machine online. Start the runner and try again: hopi runner start'
+            }
+        }
+
+        const targetMachine = (() => {
+            if (metadata?.machineId) {
+                const exact = onlineMachines.find((machine) => machine.id === metadata.machineId)
+                if (exact) return exact
+            }
+            if (metadata?.host) {
+                const hostMatch = onlineMachines.find((machine) => machine.metadata?.host === metadata.host)
+                if (hostMatch) return hostMatch
+            }
+            return null
+        })()
+
+        if (!targetMachine) {
+            return {
+                ok: false,
+                error: 'Session machine is offline. Start the runner on that machine and try again.'
+            }
+        }
+
+        return { ok: true, machineId: targetMachine.id, sessionPath }
     }
 
     getSessions(): Session[] {
@@ -208,10 +326,23 @@ export class SyncEngine {
     private reloadAll(): void {
         this.sessionCache.reloadAll()
         this.machineCache.reloadAll()
+        this.autoRunScheduler.seedKnownProjects(this.store.projects.listProjects())
     }
 
     getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Session {
-        return this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+        const session = this.sessionCache.getOrCreateSession(tag, metadata, agentState, namespace)
+        this.sessionDebugLogger?.append({
+            sessionId: session.id,
+            namespace,
+            event: 'session.created_or_loaded',
+            direction: 'hub',
+            payload: {
+                tag,
+                metadata: session.metadata,
+                agentState: session.agentState
+            }
+        })
+        return session
     }
 
     getOrCreateMachine(id: string, metadata: unknown, runnerState: unknown, namespace: string): Machine {
@@ -235,6 +366,16 @@ export class SyncEngine {
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
+    }
+
+    injectMessage(
+        sessionId: string,
+        payload: {
+            content: unknown
+            localId?: string | null
+        }
+    ): void {
+        this.messageService.injectMessage(sessionId, payload)
     }
 
     async approvePermission(
@@ -274,7 +415,18 @@ export class SyncEngine {
     }
 
     async deleteSession(sessionId: string): Promise<void> {
+        const session = this.getSession(sessionId)
         await this.sessionCache.deleteSession(sessionId)
+        this.sessionDebugLogger?.append({
+            sessionId,
+            namespace: session?.namespace,
+            event: 'session.deleted',
+            direction: 'hub',
+            payload: {
+                active: session?.active ?? null,
+                metadata: session?.metadata ?? null
+            }
+        })
     }
 
     async applySessionConfig(
@@ -282,19 +434,46 @@ export class SyncEngine {
         config: {
             permissionMode?: PermissionMode
             modelMode?: ModelMode
+            collaborationMode?: string
         }
     ): Promise<void> {
         const result = await this.rpcGateway.requestSessionConfig(sessionId, config)
         if (!result || typeof result !== 'object') {
             throw new Error('Invalid response from session config RPC')
         }
-        const obj = result as { applied?: { permissionMode?: Session['permissionMode']; modelMode?: Session['modelMode'] } }
+        const obj = result as {
+            applied?: {
+                permissionMode?: Session['permissionMode']
+                modelMode?: Session['modelMode']
+                collaborationMode?: string
+            }
+        }
         const applied = obj.applied
         if (!applied || typeof applied !== 'object') {
             throw new Error('Missing applied session config')
         }
 
         this.sessionCache.applySessionConfig(sessionId, applied)
+    }
+
+    private async applySessionConfigWithRetry(
+        sessionId: string,
+        patch: {
+            permissionMode?: PermissionMode
+            modelMode?: ModelMode
+        }
+    ): Promise<void> {
+        for (let attempt = 1; attempt <= SESSION_CONFIG_APPLY_ATTEMPTS; attempt += 1) {
+            try {
+                await this.applySessionConfig(sessionId, patch)
+                return
+            } catch (error) {
+                if (!shouldRetrySessionConfigApply(error) || attempt >= SESSION_CONFIG_APPLY_ATTEMPTS) {
+                    return
+                }
+                await new Promise((resolve) => setTimeout(resolve, SESSION_CONFIG_APPLY_RETRY_DELAY_MS))
+            }
+        }
     }
 
     async spawnSession(
@@ -305,9 +484,22 @@ export class SyncEngine {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        resumeSessionId?: string
+        resumeSessionId?: string,
+        worktreeWorkspacePaths?: string[],
+        worktreeTargetBranch?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
-        return await this.rpcGateway.spawnSession(machineId, directory, agent, model, yolo, sessionType, worktreeName, resumeSessionId)
+        return await this.rpcGateway.spawnSession(
+            machineId,
+            directory,
+            agent,
+            model,
+            yolo,
+            sessionType,
+            worktreeName,
+            resumeSessionId,
+            worktreeWorkspacePaths,
+            worktreeTargetBranch
+        )
     }
 
     async resumeSession(sessionId: string, namespace: string): Promise<ResumeSessionResult> {
@@ -366,12 +558,45 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
+        const taskModeFallback = (() => {
+            const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(
+                access.sessionId,
+                namespace,
+                { includeArchived: true }
+            )
+            const linkedTask = linkedTasks[0]
+            if (!linkedTask) {
+                return null
+            }
+            return {
+                permissionMode: typeof linkedTask.permissionMode === 'string'
+                    ? linkedTask.permissionMode as PermissionMode
+                    : undefined,
+                modelMode: typeof linkedTask.modelMode === 'string'
+                    ? linkedTask.modelMode as ModelMode
+                    : undefined
+            }
+        })()
+
+        const fallbackPermissionMode = taskModeFallback?.permissionMode
+        const fallbackModelMode = taskModeFallback?.modelMode
+
+        const previousPermissionMode = session.permissionMode
+            ?? (fallbackPermissionMode && isPermissionModeAllowedForFlavor(fallbackPermissionMode, flavor)
+                ? fallbackPermissionMode
+                : undefined)
+        const previousModelMode = session.modelMode
+            ?? (fallbackModelMode && isModelModeAllowedForFlavor(fallbackModelMode, flavor)
+                ? fallbackModelMode
+                : undefined)
+        const resumeWithYolo = previousPermissionMode === 'yolo' ? true : undefined
+
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,
             metadata.path,
             flavor,
             undefined,
-            undefined,
+            resumeWithYolo,
             undefined,
             undefined,
             resumeToken
@@ -386,9 +611,26 @@ export class SyncEngine {
             return { type: 'error', message: 'Session failed to become active', code: 'resume_failed' }
         }
 
+        if (previousPermissionMode || previousModelMode) {
+            await this.applySessionConfigWithRetry(spawnResult.sessionId, {
+                permissionMode: previousPermissionMode,
+                modelMode: previousModelMode
+            })
+        }
+
         if (spawnResult.sessionId !== access.sessionId) {
             try {
                 await this.sessionCache.mergeSessions(access.sessionId, spawnResult.sessionId, namespace)
+                this.sessionDebugLogger?.append({
+                    sessionId: spawnResult.sessionId,
+                    namespace,
+                    event: 'session.merged',
+                    direction: 'hub',
+                    payload: {
+                        fromSessionId: access.sessionId,
+                        toSessionId: spawnResult.sessionId
+                    }
+                })
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to merge resumed session'
                 return { type: 'error', message, code: 'resume_failed' }
@@ -414,24 +656,222 @@ export class SyncEngine {
         return await this.rpcGateway.checkPathsExist(machineId, paths)
     }
 
+    async listMachineDirectory(machineId: string, path: string): Promise<RpcListDirectoryResponse> {
+        return await this.rpcGateway.listDirectoryOnMachine(machineId, path)
+    }
+
+    async runBash(sessionId: string, params: {
+        command: string
+        cwd?: string
+        timeout?: number
+    }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.runBash(sessionId, params)
+    }
+
+    async previewStart(machineId: string, params: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStart(machineId, params)
+    }
+
+    async previewStatus(machineId: string): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStatus(machineId)
+    }
+
+    async previewStop(machineId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStop(machineId, params)
+    }
+
+    async previewStartForSession(sessionId: string, params: {
+        taskId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStartForSession(sessionId, params)
+    }
+
+    async previewStatusForSession(sessionId: string): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStatusForSession(sessionId)
+    }
+
+    async previewStopForSession(sessionId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.rpcGateway.previewStopForSession(sessionId, params)
+    }
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitStatus(sessionId, cwd)
+        try {
+            return await this.rpcGateway.getGitStatus(sessionId, cwd)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitStatusOnMachine(
+                fallback.machineId,
+                cwd ?? fallback.sessionPath
+            )
+        }
     }
 
-    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean }): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
+    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        try {
+            return await this.rpcGateway.getGitDiffNumstat(sessionId, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitDiffNumstatOnMachine(fallback.machineId, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
+        }
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.getGitDiffFile(sessionId, options)
+    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.getGitDiffNumstatOnMachine(machineId, options)
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.rpcGateway.readSessionFile(sessionId, path)
+    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        try {
+            return await this.rpcGateway.getGitDiffFile(sessionId, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.getGitDiffFileOnMachine(fallback.machineId, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
+        }
+    }
+
+    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.rpcGateway.getGitDiffFileOnMachine(machineId, options)
+    }
+
+    async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
+        return await this.rpcGateway.gitAutocommitWorktree(sessionId, options)
+    }
+
+    async gitMergeWorktree(sessionId: string, options: {
+        targetBranch: string
+        commitMessage: string
+        strategy?: 'ff' | 'merge_commit' | 'squash'
+    }): Promise<RpcGitMergeWorktreeResponse> {
+        return await this.rpcGateway.gitMergeWorktree(sessionId, options)
+    }
+
+    async gitRemoveWorktree(sessionId: string): Promise<RpcGitRemoveWorktreeResponse> {
+        return await this.rpcGateway.gitRemoveWorktree(sessionId)
+    }
+
+    async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {
+        return await this.rpcGateway.gitMergeWorktreeState(sessionId, options)
+    }
+
+    async gitCaptureWorktreeMergeSnapshot(sessionId: string, options: { targetBranch: string }): Promise<RpcGitCaptureWorktreeMergeSnapshotResponse> {
+        return await this.rpcGateway.gitCaptureWorktreeMergeSnapshot(sessionId, options)
+    }
+
+    async gitVerifyWorktreeMerge(sessionId: string, options: {
+        targetBranch: string
+        mergeBase: string
+        snapshotRef: string
+    }): Promise<RpcGitVerifyWorktreeMergeResponse> {
+        return await this.rpcGateway.gitVerifyWorktreeMerge(sessionId, options)
+    }
+
+    async readSessionFile(sessionId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        try {
+            return await this.rpcGateway.readSessionFile(sessionId, path, cwd)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.readFileOnMachine(
+                fallback.machineId,
+                path,
+                cwd ?? fallback.sessionPath
+            )
+        }
+    }
+
+    async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.rpcGateway.readFileOnMachine(machineId, path, cwd)
+    }
+
+    async writeSessionFile(sessionId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        try {
+            return await this.rpcGateway.writeSessionFile(sessionId, path, options)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.writeFileOnMachine(fallback.machineId, path, {
+                ...options,
+                cwd: options.cwd ?? fallback.sessionPath
+            })
+        }
     }
 
     async listDirectory(sessionId: string, path: string): Promise<RpcListDirectoryResponse> {
-        return await this.rpcGateway.listDirectory(sessionId, path)
+        try {
+            return await this.rpcGateway.listDirectory(sessionId, path)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.listDirectoryOnMachine(
+                fallback.machineId,
+                path,
+                fallback.sessionPath
+            )
+        }
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
@@ -443,7 +883,24 @@ export class SyncEngine {
     }
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
-        return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
+        try {
+            return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
+        } catch (error) {
+            if (!shouldRetrySessionConfigApply(error)) {
+                throw error
+            }
+
+            const fallback = this.resolveOnlineMachineForSessionRpc(sessionId)
+            if (!fallback.ok) {
+                return { success: false, error: fallback.error }
+            }
+
+            return await this.rpcGateway.runRipgrepOnMachine(
+                fallback.machineId,
+                args,
+                cwd ?? fallback.sessionPath
+            )
+        }
     }
 
     async listSlashCommands(sessionId: string, agent: string): Promise<{

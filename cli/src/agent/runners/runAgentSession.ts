@@ -6,11 +6,23 @@ import { AgentRegistry } from '@/agent/AgentRegistry';
 import { convertAgentMessage } from '@/agent/messageConverter';
 import { PermissionAdapter } from '@/agent/permissionAdapter';
 import type { AgentBackend, PromptContent } from '@/agent/types';
-import { startHappyServer } from '@/claude/utils/startHappyServer';
-import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
 
 function emitReadyIfIdle(props: {
     queueSize: () => number;
@@ -28,13 +40,14 @@ export async function runAgentSession(opts: {
     agentType: string;
     startedBy?: 'runner' | 'terminal';
 }): Promise<void> {
+    const workingDirectory = resolveCliWorkingDirectory();
     const initialState: AgentState = {
         controlledByUser: false
     };
     const { session } = await bootstrapSession({
         flavor: opts.agentType,
         startedBy: opts.startedBy ?? 'terminal',
-        workingDirectory: process.cwd(),
+        workingDirectory,
         agentState: initialState
     });
 
@@ -47,7 +60,7 @@ export async function runAgentSession(opts: {
 
     session.onUserMessage((message) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, {});
+        messageQueue.push(formattedText, {}, message.localKey ?? null);
     });
 
     const backend: AgentBackend = AgentRegistry.create(opts.agentType);
@@ -55,33 +68,29 @@ export async function runAgentSession(opts: {
 
     const permissionAdapter = new PermissionAdapter(session, backend);
 
-    const happyServer = await startHappyServer(session);
-    const bridgeCommand = getHappyCliCommand(['mcp', '--url', happyServer.url]);
-    const mcpServers = [
-        {
-            name: 'happy',
-            command: bridgeCommand.command,
-            args: bridgeCommand.args,
-            env: []
-        }
-    ];
-
     const agentSessionId = await backend.newSession({
-        cwd: process.cwd(),
-        mcpServers
+        cwd: workingDirectory,
+        mcpServers: []
     });
 
     let thinking = false;
     let shouldExit = false;
     let waitAbortController: AbortController | null = null;
+    let activeTurnLocalKey: string | null = null;
+    let activeTurnHasAssistantReply = false;
 
     session.keepAlive(thinking, 'remote');
     const keepAliveInterval = setInterval(() => {
-        session.keepAlive(thinking, 'remote');
+        // Periodic keep-alive: best-effort. Thinking transitions use non-volatile emits.
+        session.keepAlive(thinking, 'remote', undefined, { volatile: true });
     }, 2000);
 
     const sendReady = () => {
-        session.sendSessionEvent({ type: 'ready' });
+        session.sendSessionEvent({
+            type: 'ready',
+            forLocalKey: activeTurnLocalKey ?? undefined,
+            hasAssistantReply: activeTurnHasAssistantReply
+        });
     };
 
     const handleAbort = async () => {
@@ -90,6 +99,7 @@ export async function runAgentSession(opts: {
         await permissionAdapter.cancelAll('User aborted');
         thinking = false;
         session.keepAlive(thinking, 'remote');
+        activeTurnHasAssistantReply = false;
         sendReady();
         if (waitAbortController) {
             waitAbortController.abort();
@@ -123,6 +133,9 @@ export async function runAgentSession(opts: {
                 continue;
             }
 
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+
             const promptContent: PromptContent[] = [{
                 type: 'text',
                 text: batch.message
@@ -135,6 +148,9 @@ export async function runAgentSession(opts: {
                 await backend.prompt(agentSessionId, promptContent, (message) => {
                     const converted = convertAgentMessage(message);
                     if (converted) {
+                        if (isAssistantTextCodexMessage(converted)) {
+                            activeTurnHasAssistantReply = true;
+                        }
                         session.sendCodexMessage(converted);
                     }
                 });
@@ -163,6 +179,5 @@ export async function runAgentSession(opts: {
         await session.flush();
         session.close();
         await backend.disconnect();
-        happyServer.stop();
     }
 }

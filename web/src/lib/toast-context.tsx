@@ -48,7 +48,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
     const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
         const id = createToastId()
-        setToasts((prev) => [...prev, { id, ...toast }])
+        const entry: Toast = { id, ...toast }
+
+        // Also log toast messages to the console for easier debugging
+        // (especially useful when running the PWA / Telegram Mini App).
+        try {
+            const title = entry.title?.trim() ?? ''
+            const body = entry.body?.trim() ?? ''
+            const base = title && body ? `${title} — ${body}` : (title || body || '(empty)')
+            console.info('[Toast]', base, {
+                id: entry.id,
+                sessionId: entry.sessionId,
+                url: entry.url
+            })
+        } catch {
+            // Ignore console/log formatting errors (older environments, tests, etc).
+        }
+
+        setToasts((prev) => [...prev, entry])
         const timer = setTimeout(() => {
             removeToast(id)
         }, TOAST_DURATION_MS)

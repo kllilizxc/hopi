@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useTranslation } from '@/lib/use-translation'
 import type { ServerUrlResult } from '@/hooks/useServerUrl'
+import { PRODUCT_DEFAULT_DOCS_URL } from '@hopi/protocol/brand'
 
 type LoginPromptProps = {
     mode?: 'login' | 'bind'
@@ -138,7 +139,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                             placeholder={t('login.placeholder')}
                             autoComplete="current-password"
                             disabled={isLoading}
-                            className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent disabled:opacity-50"
+                            className="w-full px-3 py-2.5 rounded-lg app-shadow-border bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] disabled:opacity-50"
                         />
                     </div>
 
@@ -168,7 +169,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                 {/* Help links */}
                 {!isBindMode && (
                     <div className="flex items-center justify-between text-xs text-[var(--app-hint)]">
-                        <a href="https://hapi.run/docs" target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--app-fg)]">
+                        <a href={PRODUCT_DEFAULT_DOCS_URL} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--app-fg)]">
                             {t('login.help')}
                         </a>
                         <Dialog open={isServerDialogOpen} onOpenChange={handleServerDialogOpenChange}>
@@ -198,7 +199,7 @@ export function LoginPrompt(props: LoginPromptProps) {
                                                 setServerError(null)
                                             }}
                                             placeholder={t('login.server.placeholder')}
-                                            className="w-full px-3 py-2.5 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent"
+                                            className="w-full px-3 py-2.5 rounded-lg app-shadow-border bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)]"
                                         />
                                         <div className="text-[11px] text-[var(--app-hint)]">
                                             {t('login.server.hint')}
@@ -231,7 +232,7 @@ export function LoginPrompt(props: LoginPromptProps) {
             {/* Footer */}
             <div className="absolute bottom-4 left-0 right-0 text-center text-xs text-[var(--app-hint)] space-y-1">
                 <div>{t('login.footer')} <span className="text-red-500">♥</span> {t('login.footer.for')}</div>
-                <div>{t('login.footer.copyright')} {new Date().getFullYear()} HAPI</div>
+                <div>{t('login.footer.copyright')} {new Date().getFullYear()} HOPI</div>
             </div>
         </div>
     )

@@ -1,34 +1,81 @@
 import { Database } from 'bun:sqlite'
+import { buildUniqueGoalKey, normalizeGoalKey } from '@hopi/protocol'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { OmcRuntimeStore } from '../sync/omc/runtimeStore'
+import { GoalDecisionTopicStore } from './goalDecisionTopicStore'
+import { GoalStore } from './goalStore'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
 import { PushStore } from './pushStore'
+import { ProjectStore } from './projectStore'
 import { SessionStore } from './sessionStore'
+import { TaskStore } from './taskStore'
 import { UserStore } from './userStore'
+import { WorkspaceStore } from './workspaceStore'
 
 export type {
+    OmcAttemptRow,
+    OmcCoordinationAgentStateRow,
+    OmcDecisionTopicRow,
+    OmcDecisionTopicTurnRow,
+    OmcDirectiveLedgerEntryRow,
+    OmcEvidenceRow,
+    OmcMailboxMessageRow,
+    OmcPlanningRunRow,
+    OmcPlanRuntimeRow,
+    OmcProgramRow,
+    OmcWorkAttemptRow,
+    OmcWorkOrderRow,
+    StoredGoal,
+    StoredGoalDecisionTopic,
     StoredMachine,
     StoredMessage,
+    StoredProject,
     StoredPushSubscription,
     StoredSession,
+    StoredTask,
     StoredUser,
+    StoredWorkspace,
     VersionedUpdateResult
 } from './types'
+export { GoalDecisionTopicStore } from './goalDecisionTopicStore'
+export { GoalStore } from './goalStore'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
+export { OmcRuntimeStore }
 export { PushStore } from './pushStore'
+export { ProjectStore } from './projectStore'
 export { SessionStore } from './sessionStore'
+export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
+export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 3
+const SCHEMA_VERSION: number = 32
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
     'messages',
     'users',
-    'push_subscriptions'
+    'push_subscriptions',
+    'projects',
+    'workspaces',
+    'tasks',
+    'goals',
+    'goal_decision_topics',
+    'omc_programs',
+    'omc_planning_runs',
+    'omc_plan_runtimes',
+    'omc_attempts',
+    'omc_evidence',
+    'omc_topics',
+    'omc_topic_turns',
+    'omc_mailbox_messages',
+    'omc_work_orders',
+    'omc_work_attempts',
+    'omc_coordination_agents',
+    'omc_directive_ledger',
 ] as const
 
 export class Store {
@@ -38,6 +85,12 @@ export class Store {
     readonly sessions: SessionStore
     readonly machines: MachineStore
     readonly messages: MessageStore
+    readonly projects: ProjectStore
+    readonly workspaces: WorkspaceStore
+    readonly tasks: TaskStore
+    readonly goals: GoalStore
+    readonly goalDecisionTopics: GoalDecisionTopicStore
+    readonly omcRuntime: OmcRuntimeStore
     readonly users: UserStore
     readonly push: PushStore
 
@@ -79,6 +132,12 @@ export class Store {
         this.sessions = new SessionStore(this.db)
         this.machines = new MachineStore(this.db)
         this.messages = new MessageStore(this.db)
+        this.projects = new ProjectStore(this.db)
+        this.workspaces = new WorkspaceStore(this.db)
+        this.tasks = new TaskStore(this.db)
+        this.goals = new GoalStore(this.db)
+        this.goalDecisionTopics = new GoalDecisionTopicStore(this.db)
+        this.omcRuntime = new OmcRuntimeStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
     }
@@ -89,11 +148,14 @@ export class Store {
             if (this.hasAnyUserTables()) {
                 this.migrateLegacySchemaIfNeeded()
                 this.createSchema()
+                // Existing tables may predate PRAGMA user_version and miss newer columns.
+                this.ensureLatestSchemaColumns()
                 this.setUserVersion(SCHEMA_VERSION)
                 return
             }
 
             this.createSchema()
+            this.ensureLatestSchemaColumns()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -110,10 +172,159 @@ export class Store {
             return
         }
 
+        if (currentVersion === 3 && SCHEMA_VERSION === 4) {
+            this.migrateFromV3ToV4()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 4 && SCHEMA_VERSION === 5) {
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 6) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 7) {
+            this.migrateFromV6ToV7()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 7 && SCHEMA_VERSION === 8) {
+            this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 17 && SCHEMA_VERSION === 18) {
+            this.migrateFromV17ToV18()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 18 && SCHEMA_VERSION === 19) {
+            this.migrateFromV18ToV19()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 19 && SCHEMA_VERSION === 20) {
+            this.migrateFromV19ToV20()
+            this.ensureLatestSchemaColumns()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 6 && SCHEMA_VERSION === 8) {
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 7) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 5 && SCHEMA_VERSION === 8) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.migrateFromV6ToV7()
+            this.migrateFromV7ToV8()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 3 && SCHEMA_VERSION === 5) {
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 4 && SCHEMA_VERSION === 6) {
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 3 && SCHEMA_VERSION === 6) {
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 2 && SCHEMA_VERSION === 5) {
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 2 && SCHEMA_VERSION === 6) {
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 1 && SCHEMA_VERSION === 5) {
+            this.migrateFromV1ToV2()
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 1 && SCHEMA_VERSION === 6) {
+            this.migrateFromV1ToV2()
+            this.migrateFromV2ToV3()
+            this.migrateFromV3ToV4()
+            this.migrateFromV4ToV5()
+            this.migrateFromV5ToV6()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion > 0 && currentVersion < SCHEMA_VERSION) {
+            if (currentVersion < 2) {
+                this.migrateFromV1ToV2()
+            }
+            if (currentVersion < 3) {
+                this.migrateFromV2ToV3()
+            }
+            if (currentVersion < 4) {
+                this.migrateFromV3ToV4()
+            }
+            this.ensureLatestSchemaColumns()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(currentVersion)
         }
 
+        // Be defensive for installs that were force-versioned without all columns present.
+        this.ensureLatestSchemaColumns()
         this.assertRequiredTablesPresent()
     }
 
@@ -187,7 +398,385 @@ export class Store {
                 UNIQUE(namespace, endpoint)
             );
             CREATE INDEX IF NOT EXISTS idx_push_subscriptions_namespace ON push_subscriptions(namespace);
+
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                default_workspace_id TEXT,
+                default_agent_flavor TEXT,
+                default_permission_mode TEXT,
+                default_model TEXT,
+                default_model_mode TEXT,
+                default_session_type TEXT NOT NULL DEFAULT 'simple',
+                worktree_target_branch TEXT,
+                worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off',
+                worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0,
+                agent_output_language TEXT NOT NULL DEFAULT 'system',
+                auto_run_enabled INTEGER NOT NULL DEFAULT 0,
+                max_running_sessions INTEGER NOT NULL DEFAULT 5,
+                automation_lane_limits TEXT,
+                automation_backstop_policy TEXT,
+                improvements_enabled INTEGER NOT NULL DEFAULT 0,
+                improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5,
+                automation_readiness_status TEXT NOT NULL DEFAULT 'unknown',
+                automation_readiness_summary TEXT,
+                automation_readiness_checked_at INTEGER,
+                workflow_profile TEXT,
+                last_improvements_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_projects_namespace ON projects(namespace);
+            CREATE INDEX IF NOT EXISTS idx_projects_namespace_archived ON projects(namespace, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_projects_machine ON projects(machine_id);
+
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                label TEXT,
+                path TEXT NOT NULL,
+                sort INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_project_path ON workspaces(project_id, path);
+            CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
+
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                goal_key TEXT NOT NULL,
+                client_request_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                success_criteria TEXT,
+                autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+                automation_paused_at INTEGER,
+                deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
+                current_focus TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_goals_project_namespace ON goals(project_id, namespace);
+            CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project_id, status, archived_at);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT,
+                goal_todo_ref TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                blocked_reason TEXT,
+                blocked_at INTEGER,
+                blocked_source TEXT,
+                blocked_session_id TEXT,
+                priority TEXT,
+                sort_key REAL,
+                active_session_id TEXT,
+                workspace_id TEXT,
+                agent_flavor TEXT,
+                permission_mode TEXT,
+                model TEXT,
+                model_mode TEXT,
+                attachments TEXT,
+                role TEXT,
+                source TEXT,
+                source_task_id TEXT,
+                workflow_profile TEXT,
+                workflow_phase TEXT,
+                sub_tasks TEXT,
+                sub_tasks_updated_at INTEGER,
+                worktree_merged_at INTEGER,
+                worktree_merge_commit TEXT,
+                merged_diff_snapshot TEXT,
+                merge_runtime TEXT,
+                preview_runtime TEXT,
+                init_runtime TEXT,
+                contract TEXT,
+                handoff TEXT,
+                evidence TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE SET NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_archived ON tasks(project_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, status, sort_key);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_source_status ON tasks(project_id, source, status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
+
+            CREATE TABLE IF NOT EXISTS goal_decision_topics (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'goal',
+                task_id TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                resolution TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
+
+            CREATE TABLE IF NOT EXISTS omc_programs (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                planning_root TEXT NOT NULL,
+                primary_branch TEXT,
+                target_branch TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_programs_namespace ON omc_programs(namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_planning_runs (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                brief_json TEXT NOT NULL,
+                session_id TEXT,
+                summary TEXT,
+                error TEXT,
+                generated_plan_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_program ON omc_planning_runs(program_id, namespace, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_session ON omc_planning_runs(session_id, namespace, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_plan_runtimes (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                phase_key TEXT NOT NULL,
+                phase_label TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                loop_status TEXT NOT NULL,
+                current_loop_run_id TEXT,
+                current_worktree_path TEXT,
+                current_branch TEXT,
+                target_branch TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_fingerprint TEXT,
+                review_required INTEGER NOT NULL DEFAULT 0,
+                review_approved_at INTEGER,
+                merge_status TEXT NOT NULL DEFAULT 'idle',
+                merge_blocked_reason TEXT,
+                last_merge_attempt_at INTEGER,
+                merge_approved_at INTEGER,
+                done_at INTEGER,
+                latest_evidence_summary TEXT,
+                last_attempt_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, plan_key),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_plan_runtimes_program ON omc_plan_runtimes(program_id, namespace, phase_key, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                loop_run_id TEXT,
+                session_id TEXT,
+                attempt_number INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                failure_fingerprint TEXT,
+                termination_reason TEXT,
+                changed_files_json TEXT NOT NULL DEFAULT '[]',
+                checks_json TEXT NOT NULL DEFAULT '[]',
+                next_suggested_step TEXT,
+                context_pack_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_attempts_plan ON omc_attempts(program_id, namespace, plan_key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_evidence (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                attempt_id TEXT,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (attempt_id) REFERENCES omc_attempts(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_plan ON omc_evidence(program_id, namespace, plan_key, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_attempt ON omc_evidence(attempt_id, namespace, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_topics (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                goal_id TEXT,
+                plan_key TEXT,
+                work_order_id TEXT,
+                lifecycle TEXT NOT NULL,
+                unread INTEGER NOT NULL DEFAULT 1,
+                bridge_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_program ON omc_topics(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_bridge_session ON omc_topics(namespace, bridge_session_id);
+
+            CREATE TABLE IF NOT EXISTS omc_topic_turns (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                author TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                session_id TEXT,
+                session_message_id TEXT,
+                reply_state TEXT NOT NULL DEFAULT 'none',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, topic_id) REFERENCES omc_topics(namespace, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topic_turns_topic ON omc_topic_turns(namespace, topic_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_mailbox_messages (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_recipient ON omc_mailbox_messages(program_id, namespace, to_agent, read_at, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_thread ON omc_mailbox_messages(program_id, namespace, thread_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_work_orders (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                goal_id TEXT,
+                plan_key TEXT,
+                title TEXT NOT NULL,
+                owner TEXT,
+                status TEXT NOT NULL,
+                current_attempt_id TEXT,
+                reviewer_verdict TEXT,
+                blocked_reason TEXT,
+                latest_accepted_attempt_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_program ON omc_work_orders(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_plan ON omc_work_orders(program_id, namespace, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_work_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                work_order_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                source_mailbox_message_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE CASCADE,
+                FOREIGN KEY (source_mailbox_message_id) REFERENCES omc_mailbox_messages(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_order ON omc_work_attempts(program_id, namespace, work_order_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_session ON omc_work_attempts(namespace, session_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_coordination_agents (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                role TEXT NOT NULL,
+                busy INTEGER NOT NULL DEFAULT 0,
+                current_work_order_id TEXT,
+                active_session_id TEXT,
+                model TEXT,
+                mode TEXT,
+                last_heartbeat INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, role),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, current_work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_coordination_agents_program ON omc_coordination_agents(program_id, namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_directive_ledger (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                source_topic_id TEXT,
+                key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_text TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, source_topic_id) REFERENCES omc_topics(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
         `)
+        this.ensureGoalKeyColumnAndIndex()
     }
 
     private migrateLegacySchemaIfNeeded(): void {
@@ -280,8 +869,1001 @@ export class Store {
         return
     }
 
+    private migrateFromV3ToV4(): void {
+        this.createSchema()
+    }
+
+    private ensureLatestSchemaColumns(): void {
+        if (SCHEMA_VERSION >= 5) {
+            this.migrateFromV4ToV5()
+        }
+        if (SCHEMA_VERSION >= 6) {
+            this.migrateFromV5ToV6()
+        }
+        if (SCHEMA_VERSION >= 7) {
+            this.migrateFromV6ToV7()
+        }
+        if (SCHEMA_VERSION >= 8) {
+            this.migrateFromV7ToV8()
+        }
+        if (SCHEMA_VERSION >= 9) {
+            this.migrateFromV8ToV9()
+        }
+        if (SCHEMA_VERSION >= 10) {
+            this.migrateFromV9ToV10()
+        }
+        if (SCHEMA_VERSION >= 11) {
+            this.migrateFromV10ToV11()
+        }
+        if (SCHEMA_VERSION >= 12) {
+            this.migrateFromV11ToV12()
+        }
+        if (SCHEMA_VERSION >= 13) {
+            this.migrateFromV12ToV13()
+        }
+        if (SCHEMA_VERSION >= 14) {
+            this.migrateFromV13ToV14()
+        }
+        if (SCHEMA_VERSION >= 15) {
+            this.migrateFromV14ToV15()
+        }
+        if (SCHEMA_VERSION >= 16) {
+            this.migrateFromV15ToV16()
+        }
+        if (SCHEMA_VERSION >= 17) {
+            this.migrateFromV16ToV17()
+        }
+        if (SCHEMA_VERSION >= 18) {
+            this.migrateFromV17ToV18()
+        }
+        if (SCHEMA_VERSION >= 19) {
+            this.migrateFromV18ToV19()
+        }
+        if (SCHEMA_VERSION >= 20) {
+            this.migrateFromV19ToV20()
+        }
+        if (SCHEMA_VERSION >= 21) {
+            this.migrateFromV20ToV21()
+        }
+        if (SCHEMA_VERSION >= 22) {
+            this.migrateFromV21ToV22()
+        }
+        if (SCHEMA_VERSION >= 23) {
+            this.migrateFromV22ToV23()
+        }
+        if (SCHEMA_VERSION >= 24) {
+            this.migrateFromV23ToV24()
+        }
+        if (SCHEMA_VERSION >= 25) {
+            this.migrateFromV24ToV25()
+        }
+        if (SCHEMA_VERSION >= 26) {
+            this.migrateFromV25ToV26()
+        }
+        if (SCHEMA_VERSION >= 27) {
+            this.migrateFromV26ToV27()
+        }
+        if (SCHEMA_VERSION >= 28) {
+            this.migrateFromV27ToV28()
+        }
+        if (SCHEMA_VERSION >= 29) {
+            this.migrateFromV28ToV29()
+        }
+        if (SCHEMA_VERSION >= 30) {
+            this.migrateFromV29ToV30()
+        }
+        if (SCHEMA_VERSION >= 31) {
+            this.migrateFromV30ToV31()
+        }
+        if (SCHEMA_VERSION >= 32) {
+            this.migrateFromV31ToV32()
+        }
+    }
+
+    private migrateFromV4ToV5(): void {
+        const columns = this.getColumnNames('projects')
+        if (columns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v4 to v5 migration.')
+        }
+
+        if (!columns.has('default_session_type')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN default_session_type TEXT NOT NULL DEFAULT 'simple'")
+        }
+        if (!columns.has('worktree_target_branch')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN worktree_target_branch TEXT')
+        }
+        if (!columns.has('worktree_auto_commit_mode')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN worktree_auto_commit_mode TEXT NOT NULL DEFAULT 'off'")
+        }
+        if (!columns.has('worktree_cleanup_after_merge')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN worktree_cleanup_after_merge INTEGER NOT NULL DEFAULT 0')
+        }
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v4 to v5 migration.')
+        }
+        if (!taskColumns.has('worktree_merged_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN worktree_merged_at INTEGER')
+        }
+        if (!taskColumns.has('worktree_merge_commit')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN worktree_merge_commit TEXT')
+        }
+        if (!taskColumns.has('agent_flavor')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN agent_flavor TEXT')
+        }
+        if (!taskColumns.has('permission_mode')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN permission_mode TEXT')
+        }
+    }
+
+    private migrateFromV5ToV6(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v5 to v6 migration.')
+        }
+        if (!taskColumns.has('sub_tasks')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN sub_tasks TEXT')
+        }
+        if (!taskColumns.has('sub_tasks_updated_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN sub_tasks_updated_at INTEGER')
+        }
+    }
+
+    private migrateFromV6ToV7(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v6 to v7 migration.')
+        }
+        if (!taskColumns.has('model_mode')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN model_mode TEXT')
+        }
+    }
+
+    private migrateFromV7ToV8(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v7 to v8 migration.')
+        }
+        const hasPendingLimitColumn = projectColumns.has('improvements_max_pending_tasks')
+        const hasLegacyGeneratedColumn = projectColumns.has('improvements_max_generated_new')
+        if (!hasPendingLimitColumn) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN improvements_max_pending_tasks INTEGER NOT NULL DEFAULT 5')
+        }
+        if (hasLegacyGeneratedColumn) {
+            this.db.exec('UPDATE projects SET improvements_max_pending_tasks = COALESCE(improvements_max_generated_new, improvements_max_pending_tasks)')
+        }
+        if (!projectColumns.has('workflow_profile')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN workflow_profile TEXT')
+        }
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v7 to v8 migration.')
+        }
+        if (!taskColumns.has('merged_diff_snapshot')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN merged_diff_snapshot TEXT')
+        }
+        if (!taskColumns.has('workflow_profile')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_profile TEXT')
+        }
+        this.db.exec(`
+            UPDATE tasks
+            SET workflow_profile = COALESCE(
+                NULLIF(TRIM(workflow_profile), ''),
+                (SELECT workflow_profile FROM projects WHERE projects.id = tasks.project_id),
+                'default'
+            )
+            WHERE workflow_profile IS NULL OR TRIM(workflow_profile) = ''
+        `)
+        if (!taskColumns.has('workflow_phase')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN workflow_phase TEXT')
+        }
+        this.db.exec("UPDATE tasks SET status = 'planned' WHERE status = 'new'")
+    }
+
+    private migrateFromV8ToV9(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v8 to v9 migration.')
+        }
+        if (!projectColumns.has('default_model')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN default_model TEXT')
+        }
+        this.db.exec('UPDATE projects SET default_model = COALESCE(default_model, default_model_mode) WHERE default_model IS NULL AND default_model_mode IS NOT NULL')
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v8 to v9 migration.')
+        }
+        if (!taskColumns.has('model')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN model TEXT')
+        }
+        if (!taskColumns.has('merge_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN merge_runtime TEXT')
+        }
+        this.db.exec('UPDATE tasks SET model = COALESCE(model, model_mode) WHERE model IS NULL AND model_mode IS NOT NULL')
+    }
+
+    private migrateFromV9ToV10(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v9 to v10 migration.')
+        }
+        if (!taskColumns.has('preview_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN preview_runtime TEXT')
+        }
+    }
+
+    private migrateFromV10ToV11(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v10 to v11 migration.')
+        }
+        if (!taskColumns.has('init_runtime')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN init_runtime TEXT')
+        }
+    }
+
+    private migrateFromV11ToV12(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v11 to v12 migration.')
+        }
+        if (!projectColumns.has('automation_readiness_status')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN automation_readiness_status TEXT NOT NULL DEFAULT 'unknown'")
+        }
+        if (!projectColumns.has('automation_readiness_summary')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_readiness_summary TEXT')
+        }
+        if (!projectColumns.has('automation_readiness_checked_at')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_readiness_checked_at INTEGER')
+        }
+    }
+
+    private migrateFromV12ToV13(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_programs (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                machine_id TEXT,
+                name TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                planning_root TEXT NOT NULL,
+                primary_branch TEXT,
+                target_branch TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_programs_namespace ON omc_programs(namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_plan_runtimes (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                phase_key TEXT NOT NULL,
+                phase_label TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                loop_status TEXT NOT NULL,
+                current_loop_run_id TEXT,
+                current_worktree_path TEXT,
+                current_branch TEXT,
+                target_branch TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+                last_failure_fingerprint TEXT,
+                review_required INTEGER NOT NULL DEFAULT 0,
+                review_approved_at INTEGER,
+                merge_status TEXT NOT NULL DEFAULT 'idle',
+                merge_blocked_reason TEXT,
+                last_merge_attempt_at INTEGER,
+                merge_approved_at INTEGER,
+                done_at INTEGER,
+                latest_evidence_summary TEXT,
+                last_attempt_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, plan_key),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_plan_runtimes_program ON omc_plan_runtimes(program_id, namespace, phase_key, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                plan_path TEXT NOT NULL,
+                loop_run_id TEXT,
+                session_id TEXT,
+                attempt_number INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                failure_fingerprint TEXT,
+                termination_reason TEXT,
+                changed_files_json TEXT NOT NULL DEFAULT '[]',
+                checks_json TEXT NOT NULL DEFAULT '[]',
+                next_suggested_step TEXT,
+                context_pack_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_attempts_plan ON omc_attempts(program_id, namespace, plan_key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_evidence (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                plan_key TEXT NOT NULL,
+                attempt_id TEXT,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                payload_json TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (attempt_id) REFERENCES omc_attempts(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_plan ON omc_evidence(program_id, namespace, plan_key, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_evidence_attempt ON omc_evidence(attempt_id, namespace, created_at ASC);
+        `)
+    }
+
+    private migrateFromV13ToV14(): void {
+        const omcAttemptColumns = this.getColumnNames('omc_attempts')
+        if (omcAttemptColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_attempts table for v13 to v14 migration.')
+        }
+        if (!omcAttemptColumns.has('session_id')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN session_id TEXT')
+        }
+        if (!omcAttemptColumns.has('context_pack_json')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN context_pack_json TEXT')
+        }
+    }
+
+    private migrateFromV14ToV15(): void {
+        const omcAttemptColumns = this.getColumnNames('omc_attempts')
+        if (omcAttemptColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_attempts table for v14 to v15 migration.')
+        }
+        if (!omcAttemptColumns.has('termination_reason')) {
+            this.db.exec('ALTER TABLE omc_attempts ADD COLUMN termination_reason TEXT')
+        }
+    }
+
+    private migrateFromV15ToV16(): void {
+        const omcPlanRuntimeColumns = this.getColumnNames('omc_plan_runtimes')
+        if (omcPlanRuntimeColumns.size === 0) {
+            throw new Error('SQLite schema missing omc_plan_runtimes table for v15 to v16 migration.')
+        }
+        if (!omcPlanRuntimeColumns.has('review_approved_at')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN review_approved_at INTEGER')
+        }
+        if (!omcPlanRuntimeColumns.has('merge_status')) {
+            this.db.exec("ALTER TABLE omc_plan_runtimes ADD COLUMN merge_status TEXT NOT NULL DEFAULT 'idle'")
+        }
+        if (!omcPlanRuntimeColumns.has('merge_blocked_reason')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN merge_blocked_reason TEXT')
+        }
+        if (!omcPlanRuntimeColumns.has('last_merge_attempt_at')) {
+            this.db.exec('ALTER TABLE omc_plan_runtimes ADD COLUMN last_merge_attempt_at INTEGER')
+        }
+    }
+
+    private migrateFromV16ToV17(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_planning_runs (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                brief_json TEXT NOT NULL,
+                session_id TEXT,
+                summary TEXT,
+                error TEXT,
+                generated_plan_paths_json TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_program ON omc_planning_runs(program_id, namespace, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_planning_runs_session ON omc_planning_runs(session_id, namespace, created_at DESC);
+        `)
+    }
+
+    private migrateFromV17ToV18(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_topics (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                goal_id TEXT,
+                plan_key TEXT,
+                work_order_id TEXT,
+                lifecycle TEXT NOT NULL,
+                unread INTEGER NOT NULL DEFAULT 1,
+                bridge_session_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_program ON omc_topics(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_topics_bridge_session ON omc_topics(namespace, bridge_session_id);
+
+            CREATE TABLE IF NOT EXISTS omc_topic_turns (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                author TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                session_id TEXT,
+                session_message_id TEXT,
+                reply_state TEXT NOT NULL DEFAULT 'none',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, topic_id) REFERENCES omc_topics(namespace, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_topic_turns_topic ON omc_topic_turns(namespace, topic_id, created_at ASC);
+        `)
+    }
+
+    private migrateFromV18ToV19(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS omc_mailbox_messages (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_recipient ON omc_mailbox_messages(program_id, namespace, to_agent, read_at, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_mailbox_thread ON omc_mailbox_messages(program_id, namespace, thread_id, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS omc_work_orders (
+                id TEXT NOT NULL,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                goal_id TEXT,
+                plan_key TEXT,
+                title TEXT NOT NULL,
+                owner TEXT,
+                status TEXT NOT NULL,
+                current_attempt_id TEXT,
+                reviewer_verdict TEXT,
+                blocked_reason TEXT,
+                latest_accepted_attempt_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (namespace, id),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_program ON omc_work_orders(program_id, namespace, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_orders_plan ON omc_work_orders(program_id, namespace, plan_key);
+
+            CREATE TABLE IF NOT EXISTS omc_work_attempts (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                work_order_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                source_mailbox_message_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE CASCADE,
+                FOREIGN KEY (source_mailbox_message_id) REFERENCES omc_mailbox_messages(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_order ON omc_work_attempts(program_id, namespace, work_order_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_omc_work_attempts_session ON omc_work_attempts(namespace, session_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS omc_coordination_agents (
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                role TEXT NOT NULL,
+                busy INTEGER NOT NULL DEFAULT 0,
+                current_work_order_id TEXT,
+                active_session_id TEXT,
+                model TEXT,
+                mode TEXT,
+                last_heartbeat INTEGER NOT NULL,
+                PRIMARY KEY (namespace, program_id, role),
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, current_work_order_id) REFERENCES omc_work_orders(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_coordination_agents_program ON omc_coordination_agents(program_id, namespace);
+
+            CREATE TABLE IF NOT EXISTS omc_directive_ledger (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                source_topic_id TEXT,
+                key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                raw_text TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (program_id) REFERENCES omc_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY (namespace, source_topic_id) REFERENCES omc_topics(namespace, id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_omc_directive_ledger_scope ON omc_directive_ledger(program_id, namespace, scope_type, scope_id, updated_at DESC);
+        `)
+    }
+
+    private migrateFromV19ToV20(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS goals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                success_criteria TEXT,
+                autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+                deploy_requires_approval INTEGER NOT NULL DEFAULT 1,
+                current_focus TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_goals_project_namespace ON goals(project_id, namespace);
+            CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project_id, status, archived_at);
+        `)
+
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v19 to v20 migration.')
+        }
+        if (!taskColumns.has('goal_id')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN goal_id TEXT REFERENCES goals(id) ON DELETE SET NULL')
+        }
+        if (!taskColumns.has('contract')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN contract TEXT')
+        }
+        if (!taskColumns.has('handoff')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN handoff TEXT')
+        }
+        if (!taskColumns.has('evidence')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN evidence TEXT')
+        }
+
+        this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
+            CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
+
+            CREATE TABLE IF NOT EXISTS goal_decision_topics (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'goal',
+                task_id TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                resolution TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
+        `)
+    }
+
+    private migrateFromV20ToV21(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v20 to v21 migration.')
+        }
+        if (!projectColumns.has('automation_lane_limits')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_lane_limits TEXT')
+        }
+    }
+
+    private migrateFromV21ToV22(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v21 to v22 migration.')
+        }
+        if (!projectColumns.has('agent_output_language')) {
+            this.db.exec("ALTER TABLE projects ADD COLUMN agent_output_language TEXT NOT NULL DEFAULT 'system'")
+        }
+    }
+
+    private migrateFromV22ToV23(): void {
+        this.ensureGoalKeyColumnAndIndex()
+    }
+
+    private migrateFromV23ToV24(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for v23 to v24 migration.')
+        }
+        if (!goalColumns.has('automation_paused_at')) {
+            this.db.exec('ALTER TABLE goals ADD COLUMN automation_paused_at INTEGER')
+        }
+    }
+
+    private migrateFromV24ToV25(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v24 to v25 migration.')
+        }
+        if (!taskColumns.has('goal_todo_ref')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN goal_todo_ref TEXT')
+        }
+    }
+
+    private migrateFromV25ToV26(): void {
+        const projectColumns = this.getColumnNames('projects')
+        if (projectColumns.size === 0) {
+            throw new Error('SQLite schema missing projects table for v25 to v26 migration.')
+        }
+        if (!projectColumns.has('automation_backstop_policy')) {
+            this.db.exec('ALTER TABLE projects ADD COLUMN automation_backstop_policy TEXT')
+        }
+    }
+
+    private migrateFromV26ToV27(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v26 to v27 migration.')
+        }
+        if (
+            !taskColumns.has('agent_flavor')
+            || !taskColumns.has('model')
+            || !taskColumns.has('model_mode')
+            || !taskColumns.has('source')
+            || !taskColumns.has('source_task_id')
+        ) {
+            return
+        }
+
+        this.db.exec(`
+            UPDATE tasks
+            SET agent_flavor = NULL,
+                model = NULL,
+                model_mode = NULL
+            WHERE agent_flavor = 'codex'
+                AND model = 'gpt-5.5'
+                AND (
+                    source_task_id IS NOT NULL
+                    OR source IN ('project_init', 'planner', 'radar')
+                )
+        `)
+    }
+
+    private migrateFromV27ToV28(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v27 to v28 migration.')
+        }
+        if (!taskColumns.has('status')) {
+            return
+        }
+
+        const runtimeColumns = ['merge_runtime', 'preview_runtime', 'init_runtime'].filter((column) => taskColumns.has(column))
+        if (runtimeColumns.length === 0) {
+            return
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, status, ${runtimeColumns.join(', ')}
+            FROM tasks
+            WHERE ${runtimeColumns.map((column) => `${column} IS NOT NULL`).join(' OR ')}
+        `).all() as Array<{
+            id: string
+            status: string
+            merge_runtime?: string | null
+            preview_runtime?: string | null
+            init_runtime?: string | null
+        }>
+        const update = taskColumns.has('finished_at')
+            ? this.db.prepare("UPDATE tasks SET status = 'blocked', finished_at = NULL WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
+            : this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
+
+        for (const row of rows) {
+            const hasBlockedRuntime = runtimeColumns.some((column) => {
+                const raw = row[column as keyof typeof row]
+                if (typeof raw !== 'string') {
+                    return false
+                }
+                try {
+                    const runtime: unknown = JSON.parse(raw)
+                    return Boolean(
+                        runtime
+                        && typeof runtime === 'object'
+                        && (runtime as { status?: unknown }).status === 'blocked'
+                    )
+                } catch {
+                    return false
+                }
+            })
+            if (hasBlockedRuntime && row.status !== 'blocked' && row.status !== 'done' && row.status !== 'finished') {
+                update.run(row.id)
+            }
+        }
+    }
+
+    private migrateFromV28ToV29(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v28 to v29 migration.')
+        }
+
+        if (!taskColumns.has('blocked_reason')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT')
+        }
+        if (!taskColumns.has('blocked_at')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_at INTEGER')
+        }
+        if (!taskColumns.has('blocked_source')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_source TEXT')
+        }
+        if (!taskColumns.has('blocked_session_id')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN blocked_session_id TEXT')
+        }
+        if (!taskColumns.has('status')) {
+            return
+        }
+
+        const normalize = (value: unknown, maxLength = 512): string | null => {
+            if (typeof value !== 'string') return null
+            const normalized = value.replace(/\s+/gu, ' ').trim()
+            if (!normalized) return null
+            return normalized.length > maxLength ? normalized.slice(0, maxLength).trim() : normalized
+        }
+        const parseRuntime = (raw: string | null): Record<string, unknown> | null => {
+            if (!raw) return null
+            try {
+                const parsed: unknown = JSON.parse(raw)
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                    ? parsed as Record<string, unknown>
+                    : null
+            } catch {
+                return null
+            }
+        }
+        const readFailureText = (runtime: Record<string, unknown>, key: 'message' | 'blockedReason'): string | null => {
+            const failure = runtime.failure
+            if (!failure || typeof failure !== 'object' || Array.isArray(failure)) return null
+            return normalize((failure as Record<string, unknown>)[key])
+        }
+        const blockedRuntime = (runtime: Record<string, unknown> | null): Record<string, unknown> | null => {
+            return runtime?.status === 'blocked' ? runtime : null
+        }
+        const runtimeReason = (runtime: Record<string, unknown> | null): string | null => {
+            if (!runtime) return null
+            return normalize(runtime.blockedReason)
+                ?? normalize(runtime.latestNote)
+                ?? readFailureText(runtime, 'blockedReason')
+                ?? readFailureText(runtime, 'message')
+        }
+        const runtimeSessionId = (runtime: Record<string, unknown> | null): string | null => {
+            return runtime ? normalize(runtime.sessionId, 128) : null
+        }
+        const reasonSpecificity = (reason: string | null): number => {
+            const normalized = reason?.toLowerCase() ?? ''
+            if (!normalized) return 0
+            if (normalized.includes('usage limit') || normalized.includes('rate limit') || normalized.includes('quota')) return 4
+            if (normalized.includes('rpc handler not registered') || normalized.includes('missing ') || normalized.includes('invalid ')) return 3
+            if (normalized.includes('check logs') || normalized.includes('systemerror state') || normalized === 'agent session reported an error') return 1
+            return 2
+        }
+        const messageColumns = this.getColumnNames('messages')
+        const canScanMessages = messageColumns.has('session_id') && messageColumns.has('content') && messageColumns.has('seq')
+        const messageQuery = canScanMessages
+            ? this.db.prepare('SELECT content FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 80')
+            : null
+        const extractMessageBlockedReason = (content: string): string | null => {
+            const record = parseRuntime(content)
+            if (!record) return null
+            const role = record.role
+            if (role !== 'assistant' && role !== 'agent') return null
+            const messageContent = record.content
+            if (!messageContent || typeof messageContent !== 'object' || Array.isArray(messageContent)) return null
+            const payload = messageContent as Record<string, unknown>
+            const type = payload.type
+            if (type === 'event') {
+                const data = payload.data
+                if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+                const eventData = data as Record<string, unknown>
+                if (eventData.type === 'error') {
+                    return normalize(eventData.message)
+                }
+                if (eventData.type === 'message') {
+                    const text = normalize(eventData.message)
+                    return text?.toLowerCase().includes('process exited unexpectedly') ? text : null
+                }
+                return null
+            }
+            if (type === 'codex') {
+                const data = payload.data
+                if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+                const codexData = data as Record<string, unknown>
+                return codexData.type === 'error' ? normalize(codexData.message) : null
+            }
+            return null
+        }
+        const findMessageBlockedReason = (sessionId: string | null): string | null => {
+            if (!messageQuery || !sessionId) return null
+            const messages = messageQuery.all(sessionId) as Array<{ content: string }>
+            let best: string | null = null
+            for (const message of messages) {
+                const reason = extractMessageBlockedReason(message.content)
+                if (reasonSpecificity(reason) > reasonSpecificity(best)) {
+                    best = reason
+                }
+            }
+            return best
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, active_session_id, updated_at, blocked_reason, blocked_source, blocked_session_id, blocked_at,
+                   merge_runtime, preview_runtime, init_runtime
+            FROM tasks
+            WHERE status = 'blocked'
+        `).all() as Array<{
+            id: string
+            active_session_id: string | null
+            updated_at: number
+            blocked_reason: string | null
+            blocked_source: string | null
+            blocked_session_id: string | null
+            blocked_at: number | null
+            merge_runtime: string | null
+            preview_runtime: string | null
+            init_runtime: string | null
+        }>
+        const update = this.db.prepare(`
+            UPDATE tasks
+            SET blocked_reason = ?,
+                blocked_source = ?,
+                blocked_session_id = ?,
+                blocked_at = ?
+            WHERE id = ?
+        `)
+
+        for (const row of rows) {
+            const mergeRuntime = blockedRuntime(parseRuntime(row.merge_runtime))
+            const previewRuntime = blockedRuntime(parseRuntime(row.preview_runtime))
+            const initRuntime = blockedRuntime(parseRuntime(row.init_runtime))
+            const runtime = mergeRuntime ?? previewRuntime ?? initRuntime
+            const messageReason = findMessageBlockedReason(row.active_session_id)
+            const source = mergeRuntime
+                ? 'merge'
+                : previewRuntime
+                    ? 'preview'
+                    : initRuntime
+                        ? 'init'
+                        : null
+            update.run(
+                row.blocked_reason ?? runtimeReason(runtime) ?? messageReason,
+                row.blocked_source ?? source ?? (messageReason ? 'agent' : null),
+                row.blocked_session_id ?? runtimeSessionId(runtime) ?? (messageReason ? row.active_session_id : null),
+                row.blocked_at ?? row.updated_at,
+                row.id
+            )
+        }
+    }
+
+    private migrateFromV29ToV30(): void {
+        const taskColumns = this.getColumnNames('tasks')
+        if (taskColumns.size === 0) {
+            throw new Error('SQLite schema missing tasks table for v29 to v30 migration.')
+        }
+        if (!taskColumns.has('role')) {
+            this.db.exec('ALTER TABLE tasks ADD COLUMN role TEXT')
+        }
+    }
+
+    private migrateFromV30ToV31(): void {
+        this.ensureGoalClientRequestIdColumnAndIndex()
+    }
+
+    private migrateFromV31ToV32(): void {
+        this.ensureGoalDecisionTopicScopeColumn()
+    }
+
+    private ensureGoalKeyColumnAndIndex(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for v22 to v23 migration.')
+        }
+
+        if (!goalColumns.has('goal_key')) {
+            this.db.exec("ALTER TABLE goals ADD COLUMN goal_key TEXT NOT NULL DEFAULT ''")
+        }
+
+        const rows = this.db.prepare(`
+            SELECT id, project_id, namespace, title, goal_key
+            FROM goals
+            ORDER BY project_id ASC, namespace ASC, created_at ASC
+        `).all() as Array<{
+            id: string
+            project_id: string
+            namespace: string
+            title: string
+            goal_key: string | null
+        }>
+
+        const usedByProjectNamespace = new Map<string, Set<string>>()
+        const update = this.db.prepare('UPDATE goals SET goal_key = ? WHERE id = ? AND namespace = ?')
+
+        for (const row of rows) {
+            const bucketKey = `${row.project_id}:${row.namespace}`
+            const used = usedByProjectNamespace.get(bucketKey) ?? new Set<string>()
+            usedByProjectNamespace.set(bucketKey, used)
+
+            const normalizedExisting = row.goal_key ? normalizeGoalKey(row.goal_key) : ''
+            const goalKey = normalizedExisting && !used.has(normalizedExisting)
+                ? normalizedExisting
+                : buildUniqueGoalKey(row.title, (candidate) => used.has(candidate))
+            used.add(goalKey)
+            update.run(goalKey, row.id, row.namespace)
+        }
+
+        this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_project_namespace_goal_key ON goals(project_id, namespace, goal_key)')
+    }
+
+    private ensureGoalClientRequestIdColumnAndIndex(): void {
+        const goalColumns = this.getColumnNames('goals')
+        if (goalColumns.size === 0) {
+            throw new Error('SQLite schema missing goals table for client request id migration.')
+        }
+
+        if (!goalColumns.has('client_request_id')) {
+            this.db.exec('ALTER TABLE goals ADD COLUMN client_request_id TEXT')
+        }
+
+        this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_project_namespace_client_request ON goals(project_id, namespace, client_request_id) WHERE client_request_id IS NOT NULL')
+    }
+
+    private ensureGoalDecisionTopicScopeColumn(): void {
+        const topicColumns = this.getColumnNames('goal_decision_topics')
+        if (topicColumns.size === 0) {
+            throw new Error('SQLite schema missing goal_decision_topics table for scope migration.')
+        }
+        if (!topicColumns.has('scope')) {
+            this.db.exec("ALTER TABLE goal_decision_topics ADD COLUMN scope TEXT NOT NULL DEFAULT 'goal'")
+            this.db.exec("UPDATE goal_decision_topics SET scope = 'task' WHERE task_id IS NOT NULL")
+        }
+    }
+
     private getMachineColumnNames(): Set<string> {
-        const rows = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
+        return this.getColumnNames('machines')
+    }
+
+    private getColumnNames(tableName: string): Set<string> {
+        const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
         return new Set(rows.map((row) => row.name))
     }
 

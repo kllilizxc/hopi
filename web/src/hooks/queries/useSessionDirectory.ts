@@ -29,7 +29,7 @@ export function useSessionDirectory(
                 return { entries: [], error: response.error ?? 'Failed to list directory' }
             }
 
-            return { entries: response.entries ?? [], error: null }
+            return { entries: response.entries, error: null }
         },
         enabled,
     })

@@ -1,10 +1,12 @@
-import type { ClientToServerEvents } from '@hapi/protocol'
+import type { ClientToServerEvents } from '@hopi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
+import type { SessionDebugLogger } from '../../../sync/sessionDebugLogger'
 import type { SyncEvent } from '../../../sync/syncEngine'
-import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
+import { extractTaskToolsFromMessage } from '../../../sync/taskTools'
+import { syncTaskSubTasksFromSessionTodos } from '../../../sync/taskSubtasks'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { AccessErrorReason, AccessResult } from './types'
 
@@ -54,10 +56,19 @@ export type SessionHandlersDeps = {
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
     onWebappEvent?: (event: SyncEvent) => void
+    sessionDebugLogger?: SessionDebugLogger
 }
 
 export function registerSessionHandlers(socket: CliSocketWithData, deps: SessionHandlersDeps): void {
-    const { store, resolveSessionAccess, emitAccessError, onSessionAlive, onSessionEnd, onWebappEvent } = deps
+    const {
+        store,
+        resolveSessionAccess,
+        emitAccessError,
+        onSessionAlive,
+        onSessionEnd,
+        onWebappEvent,
+        sessionDebugLogger
+    } = deps
 
     socket.on('message', (data: unknown) => {
         const parsed = messageSchema.safeParse(data)
@@ -86,12 +97,67 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const session = sessionAccess.value
 
         const msg = store.messages.addMessage(sid, content, localId)
+        sessionDebugLogger?.append({
+            sessionId: sid,
+            namespace: session.namespace,
+            event: 'message.received',
+            direction: 'cli-to-hub',
+            seq: msg.seq,
+            localId: msg.localId,
+            payload: {
+                raw,
+                content: msg.content
+            }
+        })
 
-        const todos = extractTodoWriteTodosFromMessageContent(content)
-        if (todos) {
+        const taskToolResult = extractTaskToolsFromMessage(content)
+        if (taskToolResult) {
+            const { todos, source } = taskToolResult
+
+            console.log('[sessionHandlers] Extracted task tools from message', {
+                sessionId: sid,
+                source,
+                todosCount: todos.length,
+                messageCreatedAt: msg.createdAt
+            })
+
+            // Update session todos for all sources
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
             if (updated) {
+                console.log('[sessionHandlers] Session todos updated successfully', { sessionId: sid })
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+
+                // Determine merge mode based on tool source
+                // TodoWrite replaces all, TaskCreate/TaskUpdate merge incrementally
+                const mode = source === 'TodoWrite' ? 'replace' : 'merge'
+
+                const updatedTask = syncTaskSubTasksFromSessionTodos({
+                    store,
+                    session,
+                    todos,
+                    todosUpdatedAt: msg.createdAt,
+                    mode
+                })
+                if (updatedTask) {
+                    console.log('[sessionHandlers] Task sub-tasks synced successfully', {
+                        taskId: updatedTask.id,
+                        projectId: updatedTask.projectId
+                    })
+                    onWebappEvent?.({
+                        type: 'task-updated',
+                        taskId: updatedTask.id,
+                        projectId: updatedTask.projectId,
+                        namespace: session.namespace,
+                        data: { taskId: updatedTask.id }
+                    })
+                } else {
+                    console.warn('[sessionHandlers] Task sub-tasks sync returned null', { sessionId: sid })
+                }
+            } else {
+                console.warn('[sessionHandlers] Session todos update failed (stale timestamp?)', {
+                    sessionId: sid,
+                    todosUpdatedAt: msg.createdAt
+                })
             }
         }
 
@@ -155,6 +221,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
 
         if (result.result === 'success') {
+            sessionDebugLogger?.append({
+                sessionId: sid,
+                namespace: sessionAccess.value.namespace,
+                event: 'session.metadata_update',
+                direction: 'cli-to-hub',
+                payload: {
+                    expectedVersion,
+                    version: result.version,
+                    metadata: result.value
+                }
+            })
+
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),
@@ -202,6 +280,18 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
 
         if (result.result === 'success') {
+            sessionDebugLogger?.append({
+                sessionId: sid,
+                namespace: sessionAccess.value.namespace,
+                event: 'session.agent_state_update',
+                direction: 'cli-to-hub',
+                payload: {
+                    expectedVersion,
+                    version: result.version,
+                    agentState: result.value
+                }
+            })
+
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),
@@ -229,6 +319,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        sessionDebugLogger?.append({
+            sessionId: data.sid,
+            namespace: sessionAccess.value.namespace,
+            event: 'session.alive',
+            direction: 'cli-to-hub',
+            payload: data
+        })
         onSessionAlive?.(data)
     })
 
@@ -241,6 +338,13 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+        sessionDebugLogger?.append({
+            sessionId: data.sid,
+            namespace: sessionAccess.value.namespace,
+            event: 'session.end',
+            direction: 'cli-to-hub',
+            payload: data
+        })
         onSessionEnd?.(data)
     })
 }

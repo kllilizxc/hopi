@@ -9,7 +9,7 @@ describe('skills', () => {
     let codexHome: string;
 
     beforeEach(async () => {
-        codexHome = await mkdtemp(join(tmpdir(), 'hapi-skills-'));
+        codexHome = await mkdtemp(join(tmpdir(), 'hopi-skills-'));
         process.env.CODEX_HOME = codexHome;
     });
 

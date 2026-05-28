@@ -1,3 +1,5 @@
+import { ListDirectoryRequestSchema } from '@hopi/protocol/schemas'
+import type { DirectoryEntry, ListDirectoryRequest, ListDirectoryResponse } from '@hopi/protocol/types'
 import { logger } from '@/ui/logger'
 import { readdir, stat } from 'fs/promises'
 import { basename, join, resolve } from 'path'
@@ -5,26 +7,10 @@ import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
 
-interface ListDirectoryRequest {
-    path: string
-}
-
-interface DirectoryEntry {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-interface ListDirectoryResponse {
-    success: boolean
-    entries?: DirectoryEntry[]
-    error?: string
-}
-
 interface GetDirectoryTreeRequest {
     path: string
     maxDepth: number
+    cwd?: string
 }
 
 interface TreeNode {
@@ -44,17 +30,32 @@ interface GetDirectoryTreeResponse {
 
 export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<ListDirectoryRequest, ListDirectoryResponse>('listDirectory', async (data) => {
-        logger.debug('List directory request:', data.path)
+        const parsedRequest = ListDirectoryRequestSchema.safeParse(data)
+        if (!parsedRequest.success) {
+            return rpcError('Invalid directory request')
+        }
 
-        const targetPath = data.path || '.'
+        logger.debug('List directory request:', parsedRequest.data.path)
 
-        const validation = validatePath(targetPath, workingDirectory)
+        const requestedCwd = parsedRequest.data.cwd
+        let scopedWorkingDirectory = workingDirectory
+        if (requestedCwd) {
+            const cwdValidation = validatePath(requestedCwd, workingDirectory)
+            if (!cwdValidation.valid) {
+                return rpcError(cwdValidation.error ?? 'Invalid working directory')
+            }
+            scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
+        }
+
+        const targetPath = parsedRequest.data.path || '.'
+
+        const validation = validatePath(targetPath, scopedWorkingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid directory path')
         }
 
         try {
-            const resolvedPath = resolve(workingDirectory, targetPath)
+            const resolvedPath = resolve(scopedWorkingDirectory, targetPath)
             const entries = await readdir(resolvedPath, { withFileTypes: true })
 
             const directoryEntries: DirectoryEntry[] = await Promise.all(
@@ -97,7 +98,11 @@ export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, 
                 return a.name.localeCompare(b.name)
             })
 
-            return { success: true, entries: directoryEntries }
+            return {
+                success: true,
+                path: resolvedPath,
+                entries: directoryEntries
+            }
         } catch (error) {
             logger.debug('Failed to list directory:', error)
             return rpcError(getErrorMessage(error, 'Failed to list directory'))
@@ -107,14 +112,24 @@ export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, 
     rpcHandlerManager.registerHandler<GetDirectoryTreeRequest, GetDirectoryTreeResponse>('getDirectoryTree', async (data) => {
         logger.debug('Get directory tree request:', data.path, 'maxDepth:', data.maxDepth)
 
+        const requestedCwd = typeof data.cwd === 'string' ? data.cwd : undefined
+        let scopedWorkingDirectory = workingDirectory
+        if (requestedCwd) {
+            const cwdValidation = validatePath(requestedCwd, workingDirectory)
+            if (!cwdValidation.valid) {
+                return rpcError(cwdValidation.error ?? 'Invalid working directory')
+            }
+            scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
+        }
+
         const targetPath = data.path || '.'
 
-        const validation = validatePath(targetPath, workingDirectory)
+        const validation = validatePath(targetPath, scopedWorkingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid directory path')
         }
 
-        const resolvedRoot = resolve(workingDirectory, targetPath)
+        const resolvedRoot = resolve(scopedWorkingDirectory, targetPath)
 
         async function buildTree(path: string, name: string, currentDepth: number): Promise<TreeNode | null> {
             try {

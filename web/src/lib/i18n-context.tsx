@@ -1,4 +1,5 @@
 import { createContext, useEffect, useState, useCallback, type ReactNode } from 'react'
+import { productStorageKey } from '@hopi/protocol/brand'
 import { en, zhCN } from './locales'
 
 export type Locale = 'en' | 'zh-CN'
@@ -14,6 +15,7 @@ export type I18nContextValue = {
 export const I18nContext = createContext<I18nContextValue | null>(null)
 
 const locales: Record<Locale, Translations> = { en, 'zh-CN': zhCN }
+const LOCALE_STORAGE_KEY = productStorageKey('lang')
 
 function interpolate(str: string, params?: Record<string, string | number>): string {
   if (!params) return str
@@ -25,13 +27,13 @@ function interpolate(str: string, params?: Record<string, string | number>): str
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
-    const saved = localStorage.getItem('hapi-lang')
+    const saved = localStorage.getItem(LOCALE_STORAGE_KEY)
     return (saved === 'en' || saved === 'zh-CN') ? saved : 'en'
   })
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale)
-    localStorage.setItem('hapi-lang', newLocale)
+    localStorage.setItem(LOCALE_STORAGE_KEY, newLocale)
     document.documentElement.lang = newLocale
   }, [])
 

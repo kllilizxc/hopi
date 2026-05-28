@@ -21,7 +21,7 @@ export const PERMISSION_MODES = [
 ] as const
 export type PermissionMode = typeof PERMISSION_MODES[number]
 
-export const MODEL_MODES = ['default', 'sonnet', 'opus'] as const
+export const MODEL_MODES = ['default', 'sonnet', 'opus', 'claude-opus-4-7', 'opus[1m]'] as const
 export type ModelMode = typeof MODEL_MODES[number]
 
 export type AgentFlavor = 'claude' | 'codex' | 'gemini' | 'opencode'
@@ -30,7 +30,7 @@ export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
     default: 'Default',
     acceptEdits: 'Accept Edits',
     plan: 'Plan Mode',
-    bypassPermissions: 'Yolo',
+    bypassPermissions: 'Bypass Permissions',
     'read-only': 'Read Only',
     'safe-yolo': 'Safe Yolo',
     yolo: 'Yolo'
@@ -57,7 +57,9 @@ export type PermissionModeOption = {
 export const MODEL_MODE_LABELS: Record<ModelMode, string> = {
     default: 'Default',
     sonnet: 'Sonnet',
-    opus: 'Opus'
+    opus: 'Opus',
+    'claude-opus-4-7': 'Opus 4.7',
+    'opus[1m]': 'Opus (1M context)'
 }
 
 export function getPermissionModeLabel(mode: PermissionMode): string {
@@ -91,6 +93,68 @@ export function getPermissionModeOptionsForFlavor(flavor?: string | null): Permi
 
 export function isPermissionModeAllowedForFlavor(mode: PermissionMode, flavor?: string | null): boolean {
     return getPermissionModesForFlavor(flavor).includes(mode)
+}
+
+export function normalizePermissionModeForFlavor(
+    mode: PermissionMode | null | undefined,
+    flavor?: string | null
+): PermissionMode | null {
+    if (!mode) {
+        return null
+    }
+    return isPermissionModeAllowedForFlavor(mode, flavor) ? mode : null
+}
+
+export function coercePermissionModeForFlavor(
+    mode: PermissionMode | null | undefined,
+    flavor?: string | null
+): PermissionMode | null {
+    const normalized = normalizePermissionModeForFlavor(mode, flavor)
+    if (normalized) {
+        return normalized
+    }
+    if (!mode) {
+        return null
+    }
+
+    if (flavor === 'codex' || flavor === 'gemini') {
+        if (mode === 'acceptEdits') return 'safe-yolo'
+        if (mode === 'bypassPermissions') return 'yolo'
+        if (mode === 'plan') return 'read-only'
+        return null
+    }
+
+    if (flavor === 'opencode') {
+        if (mode === 'bypassPermissions' || mode === 'safe-yolo' || mode === 'yolo') return 'yolo'
+        if (mode === 'acceptEdits' || mode === 'plan' || mode === 'read-only') return 'default'
+        return null
+    }
+
+    if (mode === 'read-only') return 'plan'
+    if (mode === 'safe-yolo' || mode === 'yolo') return 'bypassPermissions'
+    return null
+}
+
+export function resolvePermissionModeForFlavor(
+    flavor?: string | null,
+    preferredMode?: PermissionMode | null,
+    fallbackMode?: PermissionMode | null
+): PermissionMode {
+    return coercePermissionModeForFlavor(preferredMode, flavor)
+        ?? coercePermissionModeForFlavor(fallbackMode, flavor)
+        ?? (getPermissionModesForFlavor(flavor)[0] as PermissionMode | undefined)
+        ?? 'default'
+}
+
+export function resolveAutonomousPermissionModeForFlavor(
+    flavor?: string | null,
+    preferredMode?: PermissionMode | null
+): PermissionMode | null {
+    return coercePermissionModeForFlavor(preferredMode, flavor)
+        ?? normalizePermissionModeForFlavor('safe-yolo', flavor)
+        ?? normalizePermissionModeForFlavor('acceptEdits', flavor)
+        ?? normalizePermissionModeForFlavor('yolo', flavor)
+        ?? normalizePermissionModeForFlavor('default', flavor)
 }
 
 export function getModelModesForFlavor(flavor?: string | null): readonly ModelMode[] {

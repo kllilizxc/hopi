@@ -7,6 +7,7 @@ import { join, resolve } from 'path';
 import { platform } from 'os';
 import { runtimePath } from '@/projectPath';
 import { withBunRuntimeEnv } from '@/utils/bunRuntime';
+import { maybeWrapSpawnSpecForStrictWorkspaceWrites } from '@/sandbox/strictWorkspaceWrites';
 
 export interface RipgrepResult {
     exitCode: number
@@ -26,11 +27,21 @@ function getBinaryPath(): string {
 
 export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepResult> {
     const binaryPath = getBinaryPath();
+    const cwd = options?.cwd ?? process.cwd();
+    const env = withBunRuntimeEnv();
+    const wrapped = maybeWrapSpawnSpecForStrictWorkspaceWrites({
+        workspaceRoot: cwd,
+        command: binaryPath,
+        args,
+        cwd,
+        env
+    });
     return new Promise((resolve, reject) => {
-        const child = spawn(binaryPath, args, {
+        const child = spawn(wrapped.command, wrapped.args, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: options?.cwd,
-            env: withBunRuntimeEnv()
+            cwd: wrapped.cwd,
+            env: wrapped.env,
+            shell: wrapped.shell
         });
 
         let stdout = '';

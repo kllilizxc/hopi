@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { access, mkdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
+import { resolveGitExecutable } from '@/utils/resolveGitExecutable';
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +14,7 @@ export type WorktreeInfo = {
   branch: string;
   name: string;
   createdAt: number;
+  baseCommit?: string;
 };
 
 type WorktreeResult =
@@ -26,7 +29,8 @@ const MAX_ATTEMPTS = 5;
 
 async function runGit(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
   try {
-    const result = await execFileAsync('git', args, { cwd });
+    const gitCommand = resolveGitExecutable(process.env);
+    const result = await execFileAsync(gitCommand, args, { cwd });
     return {
       stdout: result.stdout ? result.stdout.toString() : '',
       stderr: result.stderr ? result.stderr.toString() : ''
@@ -47,6 +51,38 @@ async function resolveRepoRoot(basePath: string): Promise<string> {
     throw new Error('Unable to resolve Git repository root.');
   }
   return root;
+}
+
+export async function resolveGitRepoRoot(basePath: string): Promise<string> {
+  return await resolveRepoRoot(basePath);
+}
+
+async function resolveHeadCommit(repoRoot: string): Promise<string | undefined> {
+    try {
+        const result = await runGit(['rev-parse', '--verify', 'HEAD'], repoRoot);
+        const commit = result.stdout.trim();
+        if (/^[0-9a-f]{40}$/i.test(commit)) {
+      return commit;
+    }
+  } catch {
+  }
+  return undefined;
+}
+
+async function resolveRefCommit(repoRoot: string, ref?: string): Promise<string | undefined> {
+  if (!ref) {
+    return await resolveHeadCommit(repoRoot);
+  }
+
+  try {
+    const result = await runGit(['rev-parse', '--verify', ref], repoRoot);
+    const commit = result.stdout.trim();
+    if (/^[0-9a-f]{40}$/i.test(commit)) {
+      return commit;
+    }
+  } catch {
+  }
+  return undefined;
 }
 
 function toSlug(value: string): string {
@@ -101,9 +137,13 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
 export async function createWorktree(options: {
   basePath: string;
   nameHint?: string;
+  worktreeRootDir?: string;
+  baseBranch?: string;
 }): Promise<WorktreeResult> {
-  const { basePath, nameHint } = options;
+  const { basePath, nameHint, worktreeRootDir } = options;
+  const baseBranch = options.baseBranch?.trim() || undefined;
   let repoRoot: string;
+  let baseCommit: string | undefined;
 
   try {
     repoRoot = await resolveRepoRoot(basePath);
@@ -115,16 +155,27 @@ export async function createWorktree(options: {
     };
   }
 
+  if (baseBranch && !(await branchExists(repoRoot, baseBranch))) {
+    return {
+      ok: false,
+      error: `Failed to create worktree: target branch '${baseBranch}' not found in repository`
+    };
+  }
+
+  baseCommit = await resolveRefCommit(repoRoot, baseBranch);
+
   const repoParent = dirname(repoRoot);
   const repoName = basename(repoRoot);
-  const repoWorktreesRoot = join(repoParent, `${repoName}-worktrees`);
+  const repoWorktreesRoot = worktreeRootDir?.trim()
+    ? worktreeRootDir.trim()
+    : join(repoParent, `${repoName}-worktrees`);
   await mkdir(repoWorktreesRoot, { recursive: true });
 
   const baseName = normalizeNameHint(nameHint) ?? makeDefaultBaseName();
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const name = attempt === 0 ? baseName : `${baseName}-${randomBytes(2).toString('hex')}`;
-    const branch = `hapi-${name}`;
+    const branch = `${PRODUCT_SLUG}-${name}`;
     const worktreePath = join(repoWorktreesRoot, name);
 
     if (await pathExists(worktreePath)) {
@@ -136,7 +187,11 @@ export async function createWorktree(options: {
     }
 
     try {
-      await runGit(['worktree', 'add', '-b', branch, worktreePath], repoRoot);
+      const addArgs = ['worktree', 'add', '-b', branch, worktreePath];
+      if (baseBranch) {
+        addArgs.push(baseBranch);
+      }
+      await runGit(addArgs, repoRoot);
       return {
         ok: true,
         info: {
@@ -144,7 +199,8 @@ export async function createWorktree(options: {
           worktreePath,
           branch,
           name,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          baseCommit
         }
       };
     } catch (error) {

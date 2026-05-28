@@ -1,11 +1,9 @@
 import type { Machine } from '@/types/api'
 import { useTranslation } from '@/lib/use-translation'
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
+import { getMachineDisplayTitle } from '@/lib/displayNames'
+import { ChevronDownIcon } from '@/assets/icons'
+import { AdaptiveSelect } from '@/components/ui/AdaptiveSelect'
+import { AdaptiveSelectTrigger } from '@/components/ui/AdaptiveSelectTrigger'
 
 export function MachineSelector(props: {
     machines: Machine[]
@@ -16,30 +14,45 @@ export function MachineSelector(props: {
 }) {
     const { t } = useTranslation()
 
+    const options = props.machines.map((m) => ({
+        value: m.id,
+        label: `${getMachineDisplayTitle(m)}${m.metadata?.platform ? ` (${m.metadata.platform})` : ''}`,
+    }))
+
+    const selectedMachine = props.machineId ? props.machines.find((m) => m.id === props.machineId) : null
+    const selectedLabel = selectedMachine
+        ? `${getMachineDisplayTitle(selectedMachine)}${selectedMachine.metadata?.platform ? ` (${selectedMachine.metadata.platform})` : ''}`
+        : props.isLoading
+            ? t('loading.machines')
+            : props.machines.length === 0
+                ? t('misc.noMachines')
+                : options[0]?.label ?? ''
+
+    const isPickerDisabled = props.isDisabled || Boolean(props.isLoading) || props.machines.length === 0
+
     return (
         <div className="flex flex-col gap-1.5 px-3 py-3">
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.machine')}
             </label>
-            <select
-                value={props.machineId ?? ''}
-                onChange={(e) => props.onChange(e.target.value)}
-                disabled={props.isDisabled}
-                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-            >
-                {props.isLoading && (
-                    <option value="">{t('loading.machines')}</option>
-                )}
-                {!props.isLoading && props.machines.length === 0 && (
-                    <option value="">{t('misc.noMachines')}</option>
-                )}
-                {props.machines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                        {getMachineTitle(m)}
-                        {m.metadata?.platform ? ` (${m.metadata.platform})` : ''}
-                    </option>
-                ))}
-            </select>
+            <AdaptiveSelect
+                title={t('newSession.machine')}
+                value={props.machineId ?? options[0]?.value ?? ''}
+                options={options}
+                onValueChange={(nextId) => props.onChange(nextId)}
+                disabled={isPickerDisabled}
+                align="start"
+                trigger={
+                    <AdaptiveSelectTrigger
+                        disabled={isPickerDisabled}
+                    >
+                        <span className="min-w-0 flex-1 truncate text-left">
+                            {selectedLabel || t('newSession.machine')}
+                        </span>
+                        <ChevronDownIcon className="shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+                    </AdaptiveSelectTrigger>
+                }
+            />
         </div>
     )
 }

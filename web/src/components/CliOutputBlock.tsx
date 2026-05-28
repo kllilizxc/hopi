@@ -1,8 +1,11 @@
 import { useMemo } from 'react'
 import { stripAnsiAndControls } from '@/components/assistant-ui/markdown-utils'
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Pressable } from '@/components/ui/pressable'
 import { useTranslation } from '@/lib/use-translation'
+import { CliIcon, DetailsIcon } from '@/assets/icons'
+import { CommandLiveOutput } from '@/components/CommandLiveOutput'
 
 const CLI_TAG_PATTERN = '(?:local-command-[a-z-]+|command-(?:name|message|args))'
 const CLI_TAG_CHECK_REGEX = new RegExp(`<${CLI_TAG_PATTERN}>`, 'i')
@@ -84,23 +87,6 @@ function extractCommandName(text: string): string | null {
     return firstLine && firstLine.length > 0 ? firstLine : null
 }
 
-function DetailsIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-    )
-}
-
-function CliIcon() {
-    return (
-        <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M3 4.5l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M8.5 10.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-    )
-}
-
 export function CliOutputBlock(props: { text: string }) {
     const { t } = useTranslation()
     const content = useMemo(() => buildCliOutput(props.text, t), [props.text, t])
@@ -111,7 +97,7 @@ export function CliOutputBlock(props: { text: string }) {
             <CardHeader className="p-3 space-y-0">
                 <Dialog>
                     <DialogTrigger asChild>
-                        <button type="button" className="w-full text-left">
+                        <Pressable className="w-full text-left">
                             <div className="flex flex-col gap-1">
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0 flex items-center gap-2">
@@ -127,22 +113,21 @@ export function CliOutputBlock(props: { text: string }) {
                                     </span>
                                 </div>
                             </div>
-                        </button>
+                        </Pressable>
                     </DialogTrigger>
                     <DialogContent className="max-w-2xl">
                         <DialogHeader>
                             <DialogTitle>{t('terminal.commandName')}</DialogTitle>
                         </DialogHeader>
-                        <div className="mt-3 max-h-[75vh] overflow-auto">
-                            <div className="min-w-0 max-w-full overflow-x-auto overflow-y-hidden">
-                                <pre className="m-0 w-max min-w-full bg-[var(--app-code-bg)] p-2 text-xs font-mono">
-                                    {content}
-                                </pre>
-                            </div>
+                        <div className="mt-3">
+                            <CommandLiveOutput text={content} maxHeightClassName="max-h-[75vh]" />
                         </div>
                     </DialogContent>
                 </Dialog>
             </CardHeader>
+            <CardContent className="px-3 pb-3 pt-0">
+                <CommandLiveOutput text={content} />
+            </CardContent>
         </Card>
     )
 }

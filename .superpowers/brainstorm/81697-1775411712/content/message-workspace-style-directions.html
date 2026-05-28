@@ -1,0 +1,430 @@
+<style>
+  .cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .card {
+    cursor: pointer;
+  }
+  .style-note {
+    margin: 0 0 20px;
+    color: #475569;
+  }
+  .mock-stage {
+    display: grid;
+    gap: 12px;
+    min-height: 300px;
+    padding: 18px;
+    border-radius: 24px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+  }
+  .mock-stage--air {
+    background:
+      radial-gradient(circle at top right, rgba(52, 211, 153, 0.22), transparent 34%),
+      linear-gradient(180deg, #f6fbf9 0%, #eef6f2 100%);
+  }
+  .mock-stage--paper {
+    background:
+      radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.96), transparent 32%),
+      linear-gradient(180deg, #edf2ec 0%, #e7efe8 100%);
+  }
+  .mock-stage--signal {
+    background:
+      radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 28%),
+      linear-gradient(180deg, #eef3f2 0%, #e5ebea 100%);
+  }
+  .mock-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .mock-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .mock-chip {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    font-size: 11px;
+    line-height: 26px;
+    color: #334155;
+  }
+  .mock-briefing {
+    display: grid;
+    gap: 10px;
+  }
+  .mock-briefing--air {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mock-briefing--paper {
+    gap: 12px;
+  }
+  .mock-briefing--signal {
+    grid-template-columns: 1.2fr 0.8fr;
+  }
+  .mock-panel {
+    min-height: 78px;
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  .mock-panel--glass {
+    background: rgba(255, 255, 255, 0.58);
+    backdrop-filter: blur(16px);
+  }
+  .mock-panel--paper {
+    background: #fcfcf8;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 12px 24px rgba(33, 52, 43, 0.06);
+  }
+  .mock-panel--signal {
+    background: rgba(248, 250, 252, 0.92);
+  }
+  .mock-label {
+    margin-bottom: 8px;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #64748b;
+  }
+  .mock-lines {
+    display: grid;
+    gap: 7px;
+  }
+  .mock-line {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(71, 85, 105, 0.18);
+  }
+  .mock-line.short {
+    width: 58%;
+  }
+  .mock-line.mid {
+    width: 74%;
+  }
+  .mock-thread {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 22px;
+  }
+  .mock-thread--air {
+    background: rgba(255, 255, 255, 0.64);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(255,255,255,0.55);
+  }
+  .mock-thread--paper {
+    background: #fffef9;
+    border: 1px solid rgba(50, 60, 48, 0.08);
+    box-shadow: 0 18px 28px rgba(24, 38, 30, 0.08);
+  }
+  .mock-thread--signal {
+    background: rgba(255,255,255,0.86);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  .bubble-row {
+    display: flex;
+  }
+  .bubble-row.user {
+    justify-content: flex-end;
+  }
+  .bubble {
+    max-width: 74%;
+    min-height: 48px;
+    border-radius: 18px;
+    padding: 10px 12px;
+  }
+  .bubble.agent-soft {
+    background: rgba(255,255,255,0.9);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .bubble.user-soft {
+    background: linear-gradient(135deg, #173c30 0%, #245746 100%);
+  }
+  .bubble.agent-paper {
+    background: #f4f1e7;
+  }
+  .bubble.user-paper {
+    background: #244b3f;
+  }
+  .bubble.agent-signal {
+    background: #f8fafc;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  .bubble.user-signal {
+    background: #183e3a;
+  }
+  .bubble .mock-line {
+    background: rgba(71, 85, 105, 0.22);
+  }
+  .bubble.user-soft .mock-line,
+  .bubble.user-paper .mock-line,
+  .bubble.user-signal .mock-line {
+    background: rgba(255,255,255,0.42);
+  }
+  .mock-dock {
+    display: grid;
+    gap: 10px;
+    margin-top: auto;
+  }
+  .mock-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .mock-pill {
+    height: 34px;
+    min-width: 88px;
+    border-radius: 999px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(255,255,255,0.88);
+  }
+  .mock-composer {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.9);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+  .mock-input {
+    flex: 1;
+    height: 42px;
+    border-radius: 14px;
+    background: rgba(148, 163, 184, 0.12);
+  }
+  .mock-send {
+    width: 74px;
+    height: 42px;
+    border-radius: 14px;
+    background: #1f8a64;
+  }
+  .tag {
+    display: inline-block;
+    margin-bottom: 10px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(31, 138, 100, 0.12);
+    color: #16624a;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+</style>
+
+<h2>OMC Message Workspace</h2>
+<p class="subtitle">选一个更接近你要的聊天工作台气质。重点看：线程头部、对话区、底部 action dock 的整体感觉。</p>
+<p class="style-note">我建议优先在 A / B / C 里定主气质，后面再细化颜色、密度、圆角和动效。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a-airy-glass" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mock-stage mock-stage--air">
+        <div class="tag">A · 轻盈玻璃聊天台</div>
+        <div class="mock-bar">
+          <div class="mock-chip-row">
+            <div class="mock-chip">目标 Alpha</div>
+            <div class="mock-chip">执行流</div>
+          </div>
+          <div class="mock-chip">待回复</div>
+        </div>
+        <div class="mock-briefing mock-briefing--air">
+          <div class="mock-panel mock-panel--glass">
+            <div class="mock-label">为什么现在需要你</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line mid"></div>
+              <div class="mock-line short"></div>
+            </div>
+          </div>
+          <div class="mock-panel mock-panel--glass">
+            <div class="mock-label">执行动作</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line mid"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mock-thread mock-thread--air">
+          <div class="bubble-row">
+            <div class="bubble bubble agent-soft">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line mid"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-row user">
+            <div class="bubble bubble user-soft">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line short"></div>
+              </div>
+            </div>
+          </div>
+          <div class="mock-dock">
+            <div class="mock-actions">
+              <div class="mock-pill"></div>
+              <div class="mock-pill"></div>
+            </div>
+            <div class="mock-composer">
+              <div class="mock-input"></div>
+              <div class="mock-send"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 轻盈玻璃聊天台</h3>
+      <p>更柔和、更高级 demo 感。聊天氛围最强，但如果控制不好，信息层级会偏软。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b-paper-desk" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mock-stage mock-stage--paper">
+        <div class="tag">B · 纸张工作台</div>
+        <div class="mock-bar">
+          <div class="mock-chip-row">
+            <div class="mock-chip">目标 Alpha</div>
+            <div class="mock-chip">阶段 02</div>
+            <div class="mock-chip">执行流</div>
+          </div>
+          <div class="mock-chip">推荐</div>
+        </div>
+        <div class="mock-briefing mock-briefing--paper">
+          <div class="mock-panel mock-panel--paper">
+            <div class="mock-label">为什么现在需要你</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line"></div>
+              <div class="mock-line short"></div>
+            </div>
+          </div>
+          <div class="mock-panel mock-panel--paper">
+            <div class="mock-label">执行动作</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line mid"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mock-thread mock-thread--paper">
+          <div class="bubble-row">
+            <div class="bubble bubble agent-paper">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-row user">
+            <div class="bubble bubble user-paper">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line short"></div>
+              </div>
+            </div>
+          </div>
+          <div class="mock-dock">
+            <div class="mock-actions">
+              <div class="mock-pill"></div>
+              <div class="mock-pill"></div>
+              <div class="mock-pill" style="background:#dff3ea;"></div>
+            </div>
+            <div class="mock-composer">
+              <div class="mock-input"></div>
+              <div class="mock-send"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 纸张工作台</h3>
+      <p>外层保持柔和，内层转成更实心的阅读面。聊天感够强，信息层级也最稳。我更偏这个方向。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c-signal-desk" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mock-stage mock-stage--signal">
+        <div class="tag">C · 信号控制台</div>
+        <div class="mock-bar">
+          <div class="mock-chip-row">
+            <div class="mock-chip">计划 07</div>
+            <div class="mock-chip">风险评审</div>
+          </div>
+          <div class="mock-chip">3 条待处理</div>
+        </div>
+        <div class="mock-briefing mock-briefing--signal">
+          <div class="mock-panel mock-panel--signal">
+            <div class="mock-label">为什么现在需要你</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line mid"></div>
+              <div class="mock-line short"></div>
+            </div>
+          </div>
+          <div class="mock-panel mock-panel--signal">
+            <div class="mock-label">执行动作</div>
+            <div class="mock-lines">
+              <div class="mock-line"></div>
+              <div class="mock-line short"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mock-thread mock-thread--signal">
+          <div class="bubble-row">
+            <div class="bubble bubble agent-signal">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line short"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-row">
+            <div class="bubble bubble agent-signal">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+                <div class="mock-line mid"></div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-row user">
+            <div class="bubble bubble user-signal">
+              <div class="mock-lines">
+                <div class="mock-line"></div>
+              </div>
+            </div>
+          </div>
+          <div class="mock-dock">
+            <div class="mock-actions">
+              <div class="mock-pill"></div>
+              <div class="mock-pill"></div>
+            </div>
+            <div class="mock-composer">
+              <div class="mock-input"></div>
+              <div class="mock-send"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 信号控制台</h3>
+      <p>更紧凑、更技术化，线程像控制面板。工作台感强，但会牺牲一点亲和和“聊天”味。</p>
+    </div>
+  </div>
+</div>

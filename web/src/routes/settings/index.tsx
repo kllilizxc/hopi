@@ -1,356 +1,188 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation, type Locale } from '@/lib/use-translation'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
-import { getElevenLabsSupportedLanguages, getLanguageDisplayName, type Language } from '@/lib/languages'
+import { getElevenLabsSupportedLanguages, getLanguageDisplayName } from '@/lib/languages'
 import { getFontScaleOptions, useFontScale, type FontScale } from '@/hooks/useFontScale'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { useTheme, type Appearance, type ThemePreset } from '@/hooks/useTheme'
+import { useMotionPreference, type MotionPreference } from '@/hooks/useMotionPreference'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
+import { PRODUCT_DEFAULT_SITE_URL, productStorageKey } from '@hopi/protocol/brand'
+import { CheckIcon } from '@/assets/icons'
+import { PageHeader } from '@/components/PageHeader'
+import { SettingsSelectRow } from '@/components/SettingsSelectRow'
 
 const locales: { value: Locale; nativeLabel: string }[] = [
     { value: 'en', nativeLabel: 'English' },
     { value: 'zh-CN', nativeLabel: '简体中文' },
 ]
+const VOICE_LANG_STORAGE_KEY = productStorageKey('voice-lang')
+const OFFICIAL_SITE_HOST = new URL(PRODUCT_DEFAULT_SITE_URL).host
 
 const voiceLanguages = getElevenLabsSupportedLanguages()
-
-function BackIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <polyline points="15 18 9 12 15 6" />
-        </svg>
-    )
-}
-
-function CheckIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <polyline points="20 6 9 17 4 12" />
-        </svg>
-    )
-}
-
-function ChevronDownIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <polyline points="6 9 12 15 18 9" />
-        </svg>
-    )
-}
 
 export default function SettingsPage() {
     const { t, locale, setLocale } = useTranslation()
     const goBack = useAppGoBack()
-    const [isOpen, setIsOpen] = useState(false)
-    const [isFontOpen, setIsFontOpen] = useState(false)
-    const [isVoiceOpen, setIsVoiceOpen] = useState(false)
-    const containerRef = useRef<HTMLDivElement>(null)
-    const fontContainerRef = useRef<HTMLDivElement>(null)
-    const voiceContainerRef = useRef<HTMLDivElement>(null)
+    const { appearance, setAppearance, preset, setPreset } = useTheme()
     const { fontScale, setFontScale } = useFontScale()
+    const { preference: motionPreference, setPreference: setMotionPreference } = useMotionPreference()
 
     // Voice language state - read from localStorage
     const [voiceLanguage, setVoiceLanguage] = useState<string | null>(() => {
-        return localStorage.getItem('hapi-voice-lang')
+        return localStorage.getItem(VOICE_LANG_STORAGE_KEY)
     })
 
     const fontScaleOptions = getFontScaleOptions()
     const currentLocale = locales.find((loc) => loc.value === locale)
     const currentFontScaleLabel = fontScaleOptions.find((opt) => opt.value === fontScale)?.label ?? '100%'
     const currentVoiceLanguage = voiceLanguages.find((lang) => lang.code === voiceLanguage)
-
-    const handleLocaleChange = (newLocale: Locale) => {
-        setLocale(newLocale)
-        setIsOpen(false)
-    }
-
-    const handleFontScaleChange = (newScale: FontScale) => {
-        setFontScale(newScale)
-        setIsFontOpen(false)
-    }
-
-    const handleVoiceLanguageChange = (language: Language) => {
-        setVoiceLanguage(language.code)
-        if (language.code === null) {
-            localStorage.removeItem('hapi-voice-lang')
-        } else {
-            localStorage.setItem('hapi-voice-lang', language.code)
-        }
-        setIsVoiceOpen(false)
-    }
-
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
-
-        const handleClickOutside = (event: MouseEvent) => {
-            if (isOpen && containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false)
-            }
-            if (isFontOpen && fontContainerRef.current && !fontContainerRef.current.contains(event.target as Node)) {
-                setIsFontOpen(false)
-            }
-            if (isVoiceOpen && voiceContainerRef.current && !voiceContainerRef.current.contains(event.target as Node)) {
-                setIsVoiceOpen(false)
-            }
-        }
-
-        document.addEventListener('mousedown', handleClickOutside)
-        return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [isOpen, isFontOpen, isVoiceOpen])
-
-    // Close on escape key
-    useEffect(() => {
-        if (!isOpen && !isFontOpen && !isVoiceOpen) return
-
-        const handleEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                setIsOpen(false)
-                setIsFontOpen(false)
-                setIsVoiceOpen(false)
-            }
-        }
-
-        document.addEventListener('keydown', handleEscape)
-        return () => document.removeEventListener('keydown', handleEscape)
-    }, [isOpen, isFontOpen, isVoiceOpen])
+    const appearanceOptions: { value: Appearance; label: string }[] = [
+        { value: 'auto', label: t('settings.theme.auto') },
+        { value: 'light', label: t('settings.theme.light') },
+        { value: 'dark', label: t('settings.theme.dark') },
+    ]
+    const presetOptions: { value: ThemePreset; label: string }[] = [
+        { value: 'graphite', label: t('settings.theme.preset.graphite') },
+        { value: 'soft', label: t('settings.theme.preset.soft') },
+        { value: 'contrast', label: t('settings.theme.preset.contrast') },
+    ]
+    const currentPresetLabel = presetOptions.find((opt) => opt.value === preset)?.label ?? t('settings.theme.preset.graphite')
+    const motionOptions: { value: MotionPreference; label: string }[] = [
+        { value: 'auto', label: t('settings.motion.auto') },
+        { value: 'reduce', label: t('settings.motion.reduce') },
+    ]
+    const currentMotionLabel = motionOptions.find((opt) => opt.value === motionPreference)?.label ?? t('settings.motion.auto')
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
-                        <BackIcon />
-                    </button>
-                    <div className="flex-1 font-semibold">{t('settings.title')}</div>
-                </div>
-            </div>
+            <PageHeader
+                title={t('settings.title')}
+                onBack={goBack}
+                backLabel={t('projects.actions.back')}
+                borderClassName="app-shadow-divider-b"
+                contentClassName="p-3"
+            />
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">
                     {/* Language section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.language.title')}
                         </div>
-                        <div ref={containerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsOpen(!isOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.language.label')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>{currentLocale?.nativeLabel}</span>
-                                    <ChevronDownIcon className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
-
-                            {isOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[160px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.language.title')}
-                                >
-                                    {locales.map((loc) => {
-                                        const isSelected = locale === loc.value
-                                        return (
-                                            <button
-                                                key={loc.value}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleLocaleChange(loc.value)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{loc.nativeLabel}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
+                        <SettingsSelectRow
+                            title={t('settings.language.title')}
+                            label={t('settings.language.label')}
+                            value={locale}
+                            valueLabel={currentLocale?.nativeLabel ?? ''}
+                            options={locales.map((loc) => ({ value: loc.value, label: loc.nativeLabel }))}
+                            onValueChange={(nextLocale: Locale) => setLocale(nextLocale)}
+                        />
                     </div>
 
                     {/* Display section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.display.title')}
                         </div>
-                        <div ref={fontContainerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsFontOpen(!isFontOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isFontOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.display.fontSize')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>{currentFontScaleLabel}</span>
-                                    <ChevronDownIcon className={`transition-transform ${isFontOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
+                        <SettingsSelectRow
+                            title={t('settings.display.fontSize')}
+                            label={t('settings.display.fontSize')}
+                            value={fontScale}
+                            valueLabel={currentFontScaleLabel}
+                            options={fontScaleOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
+                            onValueChange={(nextScale: FontScale) => setFontScale(nextScale)}
+                        />
 
-                            {isFontOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[140px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg overflow-hidden z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.display.fontSize')}
-                                >
-                                    {fontScaleOptions.map((opt) => {
-                                        const isSelected = fontScale === opt.value
-                                        return (
-                                            <button
-                                                key={opt.value}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleFontScaleChange(opt.value)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{opt.label}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
+                        <SettingsSelectRow
+                            title={t('settings.display.motion')}
+                            label={t('settings.display.motion')}
+                            value={motionPreference}
+                            valueLabel={currentMotionLabel}
+                            options={motionOptions}
+                            onValueChange={(nextPref: MotionPreference) => setMotionPreference(nextPref)}
+                        />
+                    </div>
+
+                    {/* Theme section */}
+                    <div className="app-shadow-divider-b">
+                        <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                            {t('settings.theme.title')}
                         </div>
+                        {appearanceOptions.map((opt) => {
+                            const isSelected = appearance === opt.value
+                            return (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => setAppearance(opt.value)}
+                                    className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
+                                >
+                                    <span className="text-[var(--app-fg)]">{opt.label}</span>
+                                    {isSelected ? (
+                                        <span className="ml-2 text-[var(--app-link)]" aria-hidden="true">
+                                            <CheckIcon />
+                                        </span>
+                                    ) : null}
+                                </button>
+                            )
+                        })}
+
+                        <SettingsSelectRow
+                            title={t('settings.theme.preset')}
+                            label={t('settings.theme.preset')}
+                            value={preset}
+                            valueLabel={currentPresetLabel}
+                            options={presetOptions}
+                            onValueChange={(nextPreset: ThemePreset) => setPreset(nextPreset)}
+                        />
                     </div>
 
                     {/* Voice Assistant section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.voice.title')}
                         </div>
-                        <div ref={voiceContainerRef} className="relative">
-                            <button
-                                type="button"
-                                onClick={() => setIsVoiceOpen(!isVoiceOpen)}
-                                className="flex w-full items-center justify-between px-3 py-3 text-left transition-colors hover:bg-[var(--app-subtle-bg)]"
-                                aria-expanded={isVoiceOpen}
-                                aria-haspopup="listbox"
-                            >
-                                <span className="text-[var(--app-fg)]">{t('settings.voice.language')}</span>
-                                <span className="flex items-center gap-1 text-[var(--app-hint)]">
-                                    <span>
-                                        {currentVoiceLanguage
-                                            ? currentVoiceLanguage.code === null
-                                                ? t('settings.voice.autoDetect')
-                                                : getLanguageDisplayName(currentVoiceLanguage)
-                                            : t('settings.voice.autoDetect')}
-                                    </span>
-                                    <ChevronDownIcon className={`transition-transform ${isVoiceOpen ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
-
-                            {isVoiceOpen && (
-                                <div
-                                    className="absolute right-3 top-full mt-1 min-w-[200px] max-h-[300px] overflow-y-auto rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] shadow-lg z-50"
-                                    role="listbox"
-                                    aria-label={t('settings.voice.title')}
-                                >
-                                    {voiceLanguages.map((lang) => {
-                                        const isSelected = voiceLanguage === lang.code
-                                        const displayName = lang.code === null
-                                            ? t('settings.voice.autoDetect')
-                                            : getLanguageDisplayName(lang)
-                                        return (
-                                            <button
-                                                key={lang.code ?? 'auto'}
-                                                type="button"
-                                                role="option"
-                                                aria-selected={isSelected}
-                                                onClick={() => handleVoiceLanguageChange(lang)}
-                                                className={`flex items-center justify-between w-full px-3 py-2 text-base text-left transition-colors ${
-                                                    isSelected
-                                                        ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]'
-                                                        : 'text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]'
-                                                }`}
-                                            >
-                                                <span>{displayName}</span>
-                                                {isSelected && (
-                                                    <span className="ml-2 text-[var(--app-link)]">
-                                                        <CheckIcon />
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
+                        <SettingsSelectRow
+                            title={t('settings.voice.title')}
+                            label={t('settings.voice.language')}
+                            value={voiceLanguage}
+                            valueLabel={
+                                currentVoiceLanguage
+                                    ? currentVoiceLanguage.code === null
+                                        ? t('settings.voice.autoDetect')
+                                        : getLanguageDisplayName(currentVoiceLanguage)
+                                    : t('settings.voice.autoDetect')
+                            }
+                            options={voiceLanguages.map((lang) => ({
+                                value: lang.code,
+                                label: lang.code === null ? t('settings.voice.autoDetect') : getLanguageDisplayName(lang),
+                            }))}
+                            onValueChange={(nextCode: string | null) => {
+                                setVoiceLanguage(nextCode)
+                                if (nextCode === null) {
+                                    localStorage.removeItem(VOICE_LANG_STORAGE_KEY)
+                                } else {
+                                    localStorage.setItem(VOICE_LANG_STORAGE_KEY, nextCode)
+                                }
+                            }}
+                        />
                     </div>
 
                     {/* About section */}
-                    <div className="border-b border-[var(--app-divider)]">
+                    <div className="app-shadow-divider-b">
                         <div className="px-3 py-2 text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
                             {t('settings.about.title')}
                         </div>
                         <div className="flex w-full items-center justify-between px-3 py-3">
                             <span className="text-[var(--app-fg)]">{t('settings.about.website')}</span>
                             <a
-                                href="https://hapi.run"
+                                href={PRODUCT_DEFAULT_SITE_URL}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[var(--app-link)] hover:underline"
                             >
-                                hapi.run
+                                {OFFICIAL_SITE_HOST}
                             </a>
                         </div>
                         <div className="flex w-full items-center justify-between px-3 py-3">

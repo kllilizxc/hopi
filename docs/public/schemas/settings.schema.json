@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://hapi.run/schemas/settings.schema.json",
-  "title": "HAPI Settings",
-  "description": "Configuration file for HAPI (~/.hapi/settings.json)",
+  "$id": "https://hopi.run/schemas/settings.schema.json",
+  "title": "HOPI Settings",
+  "description": "Configuration file for HOPI (~/.hopi/settings.json)",
   "type": "object",
   "properties": {
     "cliApiToken": {
@@ -13,24 +13,24 @@
       "type": "string",
       "format": "uri",
       "default": "http://localhost:3006",
-      "description": "Hub URL for CLI connections. ENV: HAPI_API_URL"
+      "description": "Hub URL for CLI connections. ENV: HOPI_API_URL"
     },
     "listenHost": {
       "type": "string",
       "default": "127.0.0.1",
-      "description": "Hub HTTP bind address. ENV: HAPI_LISTEN_HOST"
+      "description": "Hub HTTP bind address. ENV: HOPI_LISTEN_HOST"
     },
     "listenPort": {
       "type": "integer",
       "default": 3006,
       "minimum": 1,
       "maximum": 65535,
-      "description": "Hub HTTP port. ENV: HAPI_LISTEN_PORT"
+      "description": "Hub HTTP port. ENV: HOPI_LISTEN_PORT"
     },
     "publicUrl": {
       "type": "string",
       "format": "uri",
-      "description": "Public URL for external access (e.g., Telegram Mini App). ENV: HAPI_PUBLIC_URL"
+      "description": "Public URL for external access (e.g., Telegram Mini App). ENV: HOPI_PUBLIC_URL"
     },
     "corsOrigins": {
       "type": "array",
@@ -71,7 +71,7 @@
     },
     "runnerAutoStartWhenRunningHappy": {
       "type": "boolean",
-      "description": "Auto-start runner when running hapi command."
+      "description": "Auto-start runner when running hopi command."
     }
   },
   "additionalProperties": false

@@ -1,9 +1,18 @@
-import { AgentStateSchema, MetadataSchema } from '@hapi/protocol/schemas'
-import type { ModelMode, PermissionMode, Session } from '@hapi/protocol/types'
+import { getSessionDebugId } from '@hopi/protocol'
+import { AgentStateSchema, MetadataSchema } from '@hopi/protocol/schemas'
+import type { ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store } from '../store'
 import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'
+import { readSessionTaskLinkMetadata, relinkTaskToSession } from './sessionTaskLink'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema } from './todos'
+
+function buildSessionEventScope(session: Pick<Session, 'namespace' | 'metadata'>): { namespace: string; projectId?: string } {
+    const projectId = session.metadata?.projectId?.trim()
+    return projectId
+        ? { namespace: session.namespace, projectId }
+        : { namespace: session.namespace }
+}
 
 export class SessionCache {
     private readonly sessions: Map<string, Session> = new Map()
@@ -61,16 +70,19 @@ export class SessionCache {
     }
 
     refreshSession(sessionId: string): Session | null {
+        const existing = this.sessions.get(sessionId)
         let stored = this.store.sessions.getSession(sessionId)
         if (!stored) {
-            const existed = this.sessions.delete(sessionId)
-            if (existed) {
-                this.publisher.emit({ type: 'session-removed', sessionId })
+            if (existing) {
+                this.sessions.delete(sessionId)
+                this.publisher.emit({
+                    type: 'session-removed',
+                    sessionId,
+                    ...buildSessionEventScope(existing)
+                })
             }
             return null
         }
-
-        const existing = this.sessions.get(sessionId)
 
         if (stored.todos === null && !this.todoBackfillAttemptedSessionIds.has(sessionId)) {
             this.todoBackfillAttemptedSessionIds.add(sessionId)
@@ -106,6 +118,7 @@ export class SessionCache {
 
         const session: Session = {
             id: stored.id,
+            debugId: getSessionDebugId(stored.id),
             namespace: stored.namespace,
             seq: stored.seq,
             createdAt: stored.createdAt,
@@ -124,7 +137,12 @@ export class SessionCache {
         }
 
         this.sessions.set(sessionId, session)
-        this.publisher.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: session })
+        this.publisher.emit({
+            type: existing ? 'session-updated' : 'session-added',
+            sessionId,
+            ...buildSessionEventScope(session),
+            data: session
+        })
         return session
     }
 
@@ -173,11 +191,19 @@ export class SessionCache {
             || modeChanged
             || (now - lastBroadcastAt > 10_000)
 
+        if (modeChanged) {
+            this.syncLinkedTaskModes(session.id, session.namespace, {
+                permissionMode: payload.permissionMode,
+                modelMode: payload.modelMode
+            })
+        }
+
         if (shouldBroadcast) {
             this.lastBroadcastAtBySessionId.set(session.id, now)
             this.publisher.emit({
                 type: 'session-updated',
                 sessionId: session.id,
+                ...buildSessionEventScope(session),
                 data: {
                     activeAt: session.activeAt,
                     thinking: session.thinking,
@@ -202,7 +228,12 @@ export class SessionCache {
         session.thinking = false
         session.thinkingAt = t
 
-        this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false } })
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            ...buildSessionEventScope(session),
+            data: { active: false, thinking: false }
+        })
     }
 
     expireInactive(now: number = Date.now()): void {
@@ -213,7 +244,12 @@ export class SessionCache {
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
             session.thinking = false
-            this.publisher.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            this.publisher.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                ...buildSessionEventScope(session),
+                data: { active: false }
+            })
         }
     }
 
@@ -230,7 +266,57 @@ export class SessionCache {
             session.modelMode = config.modelMode
         }
 
-        this.publisher.emit({ type: 'session-updated', sessionId, data: session })
+        this.syncLinkedTaskModes(sessionId, session.namespace, config)
+        this.publisher.emit({
+            type: 'session-updated',
+            sessionId,
+            ...buildSessionEventScope(session),
+            data: session
+        })
+    }
+
+    private syncLinkedTaskModes(
+        sessionId: string,
+        namespace: string,
+        modes: { permissionMode?: PermissionMode; modelMode?: ModelMode }
+    ): void {
+        if (modes.permissionMode === undefined && modes.modelMode === undefined) {
+            return
+        }
+
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(
+            sessionId,
+            namespace,
+            { includeArchived: true }
+        )
+
+        for (const task of linkedTasks) {
+            const patch: { permissionMode?: PermissionMode; modelMode?: ModelMode } = {}
+
+            if (modes.permissionMode !== undefined && task.permissionMode !== modes.permissionMode) {
+                patch.permissionMode = modes.permissionMode
+            }
+            if (modes.modelMode !== undefined && task.modelMode !== modes.modelMode) {
+                patch.modelMode = modes.modelMode
+            }
+
+            if (patch.permissionMode === undefined && patch.modelMode === undefined) {
+                continue
+            }
+
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, patch)
+            if (!updated) {
+                continue
+            }
+
+            this.publisher.emit({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace,
+                data: { taskId: updated.id }
+            })
+        }
     }
 
     async renameSession(sessionId: string, name: string): Promise<void> {
@@ -262,7 +348,7 @@ export class SessionCache {
     }
 
     async deleteSession(sessionId: string): Promise<void> {
-        const session = this.sessions.get(sessionId)
+        const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
         if (!session) {
             throw new Error('Session not found')
         }
@@ -270,6 +356,8 @@ export class SessionCache {
         if (session.active) {
             throw new Error('Cannot delete active session')
         }
+
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(sessionId, session.namespace, { includeArchived: true })
 
         const deleted = this.store.sessions.deleteSession(sessionId, session.namespace)
         if (!deleted) {
@@ -280,7 +368,26 @@ export class SessionCache {
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
 
-        this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
+        this.publisher.emit({
+            type: 'session-removed',
+            sessionId,
+            ...buildSessionEventScope(session)
+        })
+
+        for (const task of linkedTasks) {
+            const updated = this.store.tasks.updateTaskByNamespace(task.id, session.namespace, { activeSessionId: null })
+            if (!updated) {
+                continue
+            }
+
+            this.publisher.emit({
+                type: 'task-updated',
+                taskId: updated.id,
+                projectId: updated.projectId,
+                namespace: session.namespace,
+                data: { taskId: updated.id, activeSessionId: null }
+            })
+        }
     }
 
     async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {
@@ -326,14 +433,36 @@ export class SessionCache {
             )
         }
 
+        const linkedTasks = this.store.tasks.listTasksByActiveSessionIdAndNamespace(oldSessionId, namespace, { includeArchived: true })
+
         const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
         if (!deleted) {
             throw new Error('Failed to delete old session during merge')
         }
 
+        const eventEngine = {
+            handleRealtimeEvent: (event: Parameters<EventPublisher['emit']>[0]) => this.publisher.emit(event)
+        }
+
+        for (const task of linkedTasks) {
+            relinkTaskToSession({
+                store: this.store,
+                engine: eventEngine,
+                task,
+                namespace,
+                sessionId: newSessionId,
+                preserveMergeResultOnSessionChange: true
+            })
+        }
+
+        const oldSession = this.sessions.get(oldSessionId)
         const existed = this.sessions.delete(oldSessionId)
         if (existed) {
-            this.publisher.emit({ type: 'session-removed', sessionId: oldSessionId, namespace })
+            this.publisher.emit({
+                type: 'session-removed',
+                sessionId: oldSessionId,
+                ...(oldSession ? buildSessionEventScope(oldSession) : { namespace })
+            })
         }
         this.lastBroadcastAtBySessionId.delete(oldSessionId)
         this.todoBackfillAttemptedSessionIds.delete(oldSessionId)
@@ -354,7 +483,20 @@ export class SessionCache {
         const merged: Record<string, unknown> = { ...newObj }
         let changed = false
 
-        if (typeof oldObj.name === 'string' && typeof newObj.name !== 'string') {
+        const oldTaskLink = readSessionTaskLinkMetadata(oldMetadata)
+        const newTaskLink = readSessionTaskLinkMetadata(newMetadata)
+        if (oldTaskLink?.projectId && newTaskLink?.projectId !== oldTaskLink.projectId) {
+            merged.projectId = oldTaskLink.projectId
+            changed = true
+        }
+        if (oldTaskLink?.taskId && newTaskLink?.taskId !== oldTaskLink.taskId) {
+            merged.taskId = oldTaskLink.taskId
+            changed = true
+        }
+        if (oldTaskLink?.name && typeof newObj.name !== 'string') {
+            merged.name = oldTaskLink.name
+            changed = true
+        } else if (typeof oldObj.name === 'string' && typeof newObj.name !== 'string') {
             merged.name = oldObj.name
             changed = true
         }

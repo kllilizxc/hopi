@@ -1,15 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { I18nProvider } from '@/lib/i18n-context'
+import { screen, fireEvent } from '@testing-library/react'
+import { renderWithProviders } from '@/test/renderWithProviders'
 import { LoginPrompt } from './LoginPrompt'
-
-function renderWithProviders(ui: React.ReactElement) {
-    return render(
-        <I18nProvider>
-            {ui}
-        </I18nProvider>
-    )
-}
 
 describe('LoginPrompt', () => {
     beforeEach(() => {
@@ -37,7 +29,7 @@ describe('LoginPrompt', () => {
         fireEvent.change(screen.getByPlaceholderText('Access token'), { target: { value: 'token' } })
         fireEvent.click(screen.getByRole('button', { name: 'Sign In' }))
 
-        const hubInput = await screen.findByPlaceholderText('https://hapi.example.com')
+        const hubInput = await screen.findByPlaceholderText('https://hopi.example.com')
         expect(screen.getByText('Hub URL required. Please set it before signing in.')).toBeInTheDocument()
 
         fireEvent.change(hubInput, { target: { value: 'https://hub.example.com' } })

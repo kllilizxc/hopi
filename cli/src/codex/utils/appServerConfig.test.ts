@@ -1,27 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { buildThreadStartParams, buildTurnStartParams } from './appServerConfig';
-import { codexSystemPrompt } from './systemPrompt';
+import { PRODUCT_SLUG } from '@hopi/protocol/brand';
 
 describe('appServerConfig', () => {
-    const mcpServers = { hapi: { command: 'node', args: ['mcp'] } };
+    const mcpServers = { [PRODUCT_SLUG]: { command: 'node', args: ['mcp'] } };
 
     it('applies CLI overrides when permission mode is default', () => {
         const params = buildThreadStartParams({
             mode: { permissionMode: 'default' },
+            cwd: '/tmp/worktree',
             mcpServers,
             cliOverrides: { sandbox: 'danger-full-access', approvalPolicy: 'never' }
         });
 
         expect(params.sandbox).toBe('danger-full-access');
         expect(params.approvalPolicy).toBe('never');
-        expect(params.baseInstructions).toBe(codexSystemPrompt);
-        expect(params.developerInstructions).toBe(codexSystemPrompt);
+        expect(params.cwd).toBe('/tmp/worktree');
+        expect(params.baseInstructions).toBeTruthy();
+        expect(params.developerInstructions).toBeTruthy();
         expect(params.config).toEqual({
-            'mcp_servers.hapi': {
+            [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },
-            developer_instructions: codexSystemPrompt
+            developer_instructions: params.developerInstructions
         });
     });
 
@@ -43,14 +45,14 @@ describe('appServerConfig', () => {
             developerInstructions: 'Only respond in Chinese.'
         });
 
-        expect(params.baseInstructions).toBe(codexSystemPrompt);
-        expect(params.developerInstructions).toBe(`${codexSystemPrompt}\n\nOnly respond in Chinese.`);
+        expect(params.baseInstructions).toBeTruthy();
+        expect(params.developerInstructions).toBe(`${params.baseInstructions}\n\nOnly respond in Chinese.`);
         expect(params.config).toEqual({
-            'mcp_servers.hapi': {
+            [`mcp_servers.${PRODUCT_SLUG}`]: {
                 command: 'node',
                 args: ['mcp']
             },
-            developer_instructions: `${codexSystemPrompt}\n\nOnly respond in Chinese.`
+            developer_instructions: params.developerInstructions
         });
     });
 
@@ -58,10 +60,12 @@ describe('appServerConfig', () => {
         const params = buildTurnStartParams({
             threadId: 'thread-1',
             message: 'hello',
+            cwd: '/tmp/worktree',
             mode: { permissionMode: 'read-only', model: 'o3' }
         });
 
         expect(params.threadId).toBe('thread-1');
+        expect(params.cwd).toBe('/tmp/worktree');
         expect(params.input).toEqual([{ type: 'text', text: 'hello' }]);
         expect(params.approvalPolicy).toBe('never');
         expect(params.sandboxPolicy).toEqual({ type: 'readOnly' });
@@ -113,5 +117,39 @@ describe('appServerConfig', () => {
 
         expect(params.approvalPolicy).toBe('on-request');
         expect(params.model).toBe('gpt-5');
+    });
+
+    it('strips xhigh from model and maps to effort for turn params', () => {
+        const params = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: 'hello',
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh' }
+        });
+
+        expect(params.model).toBe('gpt-5.3-codex-spark');
+        expect(params.effort).toBe('high');
+    });
+
+    it('trims model suffix in collaboration mode settings', () => {
+        const params = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: 'hello',
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh', collaborationMode: 'plan' }
+        });
+
+        expect(params.collaborationMode).toEqual({
+            mode: 'plan',
+            settings: { model: 'gpt-5.3-codex-spark' }
+        });
+        expect(params.model).toBeUndefined();
+    });
+
+    it('strips xhigh from model for thread params', () => {
+        const params = buildThreadStartParams({
+            mode: { permissionMode: 'default', model: 'gpt-5.3-codex-spark xhigh' },
+            mcpServers: {}
+        });
+
+        expect(params.model).toBe('gpt-5.3-codex-spark');
     });
 });

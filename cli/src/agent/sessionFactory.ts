@@ -11,7 +11,9 @@ import { configuration } from '@/configuration'
 import { logger } from '@/ui/logger'
 import { runtimePath } from '@/projectPath'
 import { readWorktreeEnv } from '@/utils/worktreeEnv'
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
 import packageJson from '../../package.json'
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 
 export type SessionStartedBy = 'runner' | 'terminal'
 
@@ -33,9 +35,50 @@ export type SessionBootstrapResult = {
     workingDirectory: string
 }
 
+function normalizeLocaleTag(raw: string | undefined): string | undefined {
+    if (!raw) return undefined
+
+    let value = raw.trim()
+    if (!value) return undefined
+
+    if (value.includes(':')) {
+        value = value.split(':')[0] ?? value
+    }
+    value = value.split('.')[0] ?? value
+    value = value.split('@')[0] ?? value
+    value = value.replace(/_/g, '-')
+
+    if (!value) return undefined
+    const lowered = value.toLowerCase()
+    if (lowered === 'c' || lowered === 'posix') {
+        return undefined
+    }
+
+    try {
+        const [canonical] = Intl.getCanonicalLocales(value)
+        return canonical
+    } catch {
+        return undefined
+    }
+}
+
+function resolveSystemLocale(): string | undefined {
+    const envLocale = normalizeLocaleTag(
+        process.env.LC_ALL
+        ?? process.env.LC_MESSAGES
+        ?? process.env.LANGUAGE
+        ?? process.env.LANG
+    )
+    if (envLocale) {
+        return envLocale
+    }
+
+    return normalizeLocaleTag(Intl.DateTimeFormat().resolvedOptions().locale)
+}
+
 export function buildMachineMetadata(): MachineMetadata {
     return {
-        host: process.env.HAPI_HOSTNAME || os.hostname(),
+        host: process.env[PRODUCT_ENV.HOSTNAME] || os.hostname(),
         platform: os.platform(),
         happyCliVersion: packageJson.version,
         homeDir: os.homedir(),
@@ -60,6 +103,7 @@ export function buildSessionMetadata(options: {
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),
+        locale: resolveSystemLocale(),
         machineId: options.machineId,
         homeDir: os.homedir(),
         happyHomeDir: configuration.happyHomeDir,
@@ -101,7 +145,7 @@ async function reportSessionStarted(sessionId: string, metadata: Metadata): Prom
 }
 
 export async function bootstrapSession(options: SessionBootstrapOptions): Promise<SessionBootstrapResult> {
-    const workingDirectory = options.workingDirectory ?? process.cwd()
+    const workingDirectory = options.workingDirectory ?? resolveCliWorkingDirectory()
     const startedBy = options.startedBy ?? 'terminal'
     const sessionTag = options.tag ?? randomUUID()
     const agentState = options.agentState === undefined ? {} : options.agentState

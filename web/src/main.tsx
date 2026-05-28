@@ -3,33 +3,20 @@ import ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
+import '@radix-ui/themes/styles.css'
 import './index.css'
+import './styles/radix-bridge.css'
 import { registerSW } from 'virtual:pwa-register'
 import { initializeFontScale } from '@/hooks/useFontScale'
 import { getTelegramWebApp, isTelegramEnvironment, loadTelegramSdk } from './hooks/useTelegram'
+import { I18nProvider } from '@/lib/i18n-context'
+import { ToastProvider } from '@/lib/toast-context'
+import { AppThemeProvider } from '@/components/app/AppThemeProvider'
 import { queryClient } from './lib/query-client'
 import { createAppRouter } from './router'
-import { I18nProvider } from './lib/i18n-context'
-
-function getStartParam(): string | null {
-    const query = new URLSearchParams(window.location.search)
-    const fromQuery = query.get('startapp') || query.get('tgWebAppStartParam')
-    if (fromQuery) return fromQuery
-
-    return getTelegramWebApp()?.initDataUnsafe?.start_param ?? null
-}
-
-function getDeepLinkedSessionId(): string | null {
-    const startParam = getStartParam()
-    if (startParam?.startsWith('session_')) {
-        return startParam.slice('session_'.length)
-    }
-    return null
-}
 
 function getInitialPath(): string {
-    const sessionId = getDeepLinkedSessionId()
-    return sessionId ? `/sessions/${sessionId}` : '/sessions'
+    return '/projects'
 }
 
 async function bootstrap() {
@@ -69,12 +56,16 @@ async function bootstrap() {
 
     ReactDOM.createRoot(document.getElementById('root')!).render(
         <React.StrictMode>
-            <I18nProvider>
-                <QueryClientProvider client={queryClient}>
-                    <RouterProvider router={router} />
-                    {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
-                </QueryClientProvider>
-            </I18nProvider>
+            <QueryClientProvider client={queryClient}>
+                <I18nProvider>
+                    <AppThemeProvider>
+                        <ToastProvider>
+                            <RouterProvider router={router} />
+                        </ToastProvider>
+                    </AppThemeProvider>
+                </I18nProvider>
+                {import.meta.env.DEV ? <ReactQueryDevtools initialIsOpen={false} /> : null}
+            </QueryClientProvider>
         </React.StrictMode>
     )
 }

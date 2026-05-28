@@ -178,7 +178,7 @@ describe('terminal socket handlers', () => {
         expect(terminalRegistry.get('terminal-1')).toBeNull()
     })
 
-    it('cleans up and notifies CLI on terminal socket disconnect', () => {
+    it('cleans up and notifies CLI on explicit client disconnect', () => {
         const { terminalSocket, cliNamespace, terminalRegistry } = createHarness()
         const cliSocket = new FakeSocket('cli-socket-1')
         connectCliSocket(cliNamespace, cliSocket, 'session-1')
@@ -190,13 +190,32 @@ describe('terminal socket handlers', () => {
             rows: 24
         })
 
-        terminalSocket.trigger('disconnect')
+        terminalSocket.trigger('disconnect', 'client namespace disconnect')
 
         const closeEvent = lastEmit(cliSocket, 'terminal:close')
         expect(closeEvent?.data).toEqual({
             sessionId: 'session-1',
             terminalId: 'terminal-1'
         })
+        expect(terminalRegistry.get('terminal-1')).toBeNull()
+    })
+
+    it('cleans up without notifying CLI on transient disconnect', () => {
+        const { terminalSocket, cliNamespace, terminalRegistry } = createHarness()
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 90,
+            rows: 24
+        })
+
+        terminalSocket.trigger('disconnect', 'transport close')
+
+        const closeEvent = lastEmit(cliSocket, 'terminal:close')
+        expect(closeEvent).toBeUndefined()
         expect(terminalRegistry.get('terminal-1')).toBeNull()
     })
 

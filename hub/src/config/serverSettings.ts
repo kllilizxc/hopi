@@ -8,6 +8,7 @@
  * it will be saved to settings.json for future use
  */
 
+import { PRODUCT_ENV } from '@hopi/protocol/brand'
 import { getSettingsFile, readSettings, writeSettings } from './settings'
 
 export interface ServerSettings {
@@ -62,7 +63,17 @@ function parseCorsOrigins(str: string): string[] {
  */
 function deriveCorsOrigins(publicUrl: string): string[] {
     try {
-        return [new URL(publicUrl).origin]
+        const parsedPublicUrl = new URL(publicUrl)
+        const origins = new Set<string>([parsedPublicUrl.origin])
+
+        // Local dev commonly serves the web UI from an arbitrary port (Vite/preview/etc),
+        // while the hub runs on 3006.
+        if (parsedPublicUrl.hostname === 'localhost' || parsedPublicUrl.hostname === '127.0.0.1') {
+            origins.add('http://localhost:*')
+            origins.add('http://127.0.0.1:*')
+        }
+
+        return Array.from(origins)
     } catch {
         return []
     }
@@ -122,8 +133,8 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
 
     // listenHost: env > file (new or old name) > default
     let listenHost = '127.0.0.1'
-    if (process.env.HAPI_LISTEN_HOST) {
-        listenHost = process.env.HAPI_LISTEN_HOST
+    if (process.env[PRODUCT_ENV.LISTEN_HOST]) {
+        listenHost = process.env[PRODUCT_ENV.LISTEN_HOST]!
         sources.listenHost = 'env'
         if (settings.listenHost === undefined) {
             settings.listenHost = listenHost
@@ -143,10 +154,10 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
 
     // listenPort: env > file (new or old name) > default
     let listenPort = 3006
-    if (process.env.HAPI_LISTEN_PORT) {
-        const parsed = parseInt(process.env.HAPI_LISTEN_PORT, 10)
+    if (process.env[PRODUCT_ENV.LISTEN_PORT]) {
+        const parsed = parseInt(process.env[PRODUCT_ENV.LISTEN_PORT]!, 10)
         if (!Number.isFinite(parsed) || parsed <= 0) {
-            throw new Error('HAPI_LISTEN_PORT must be a valid port number')
+            throw new Error(`${PRODUCT_ENV.LISTEN_PORT} must be a valid port number`)
         }
         listenPort = parsed
         sources.listenPort = 'env'
@@ -168,8 +179,8 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
 
     // publicUrl: env > file (new or old name) > default
     let publicUrl = `http://localhost:${listenPort}`
-    if (process.env.HAPI_PUBLIC_URL) {
-        publicUrl = process.env.HAPI_PUBLIC_URL
+    if (process.env[PRODUCT_ENV.PUBLIC_URL]) {
+        publicUrl = process.env[PRODUCT_ENV.PUBLIC_URL]!
         sources.publicUrl = 'env'
         if (settings.publicUrl === undefined) {
             settings.publicUrl = publicUrl

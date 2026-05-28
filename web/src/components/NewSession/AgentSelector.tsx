@@ -1,37 +1,48 @@
+import { memo } from 'react'
 import type { AgentType } from './types'
 import { useTranslation } from '@/lib/use-translation'
+import { CompactTabs } from '@/components/ui/CompactTabs'
 
-export function AgentSelector(props: {
+type AgentSelectorProps = {
     agent: AgentType
     isDisabled: boolean
     onAgentChange: (value: AgentType) => void
-}) {
+    compact?: boolean
+}
+
+const AGENTS: AgentType[] = ['claude', 'codex', 'gemini', 'opencode']
+
+const AgentSelectorComponent = (props: AgentSelectorProps) => {
     const { t } = useTranslation()
 
-    return (
-        <div className="flex flex-col gap-1.5 px-3 py-3">
+    const content = (
+        <>
             <label className="text-xs font-medium text-[var(--app-hint)]">
                 {t('newSession.agent')}
             </label>
-            <div className="flex gap-3">
-                {(['claude', 'codex', 'gemini', 'opencode'] as const).map((agentType) => (
-                    <label
-                        key={agentType}
-                        className="flex items-center gap-1.5 cursor-pointer"
-                    >
-                        <input
-                            type="radio"
-                            name="agent"
-                            value={agentType}
-                            checked={props.agent === agentType}
-                            onChange={() => props.onAgentChange(agentType)}
-                            disabled={props.isDisabled}
-                            className="accent-[var(--app-link)]"
-                        />
-                        <span className="text-sm capitalize">{agentType}</span>
-                    </label>
-                ))}
-            </div>
+            <CompactTabs
+                items={AGENTS.map((agent) => ({
+                    id: agent,
+                    label: t(`agent.${agent}`)
+                }))}
+                selectedId={props.agent}
+                onSelect={(agent) => props.onAgentChange(agent as AgentType)}
+                ariaLabel={t('newSession.agent')}
+                distribution="equal"
+                disabled={props.isDisabled}
+            />
+        </>
+    )
+
+    if (props.compact) {
+        return content
+    }
+
+    return (
+        <div className="flex flex-col gap-1.5 px-3 py-3">
+            {content}
         </div>
     )
 }
+
+export const AgentSelector = memo(AgentSelectorComponent)

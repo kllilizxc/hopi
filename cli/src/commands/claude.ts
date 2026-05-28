@@ -1,7 +1,7 @@
 import chalk from 'chalk'
 import { execFileSync } from 'node:child_process'
 import { z } from 'zod'
-import { PROTOCOL_VERSION } from '@hapi/protocol'
+import { PROTOCOL_VERSION } from '@hopi/protocol'
 import type { StartOptions } from '@/claude/runClaude'
 import { configuration } from '@/configuration'
 import { isRunnerRunningCurrentlyInstalledHappyVersion } from '@/runner/controlClient'
@@ -13,6 +13,7 @@ import { maybeAutoStartServer } from '@/utils/autoStartServer'
 import { withBunRuntimeEnv } from '@/utils/bunRuntime'
 import { extractErrorInfo } from '@/utils/errorUtils'
 import type { CommandDefinition } from './types'
+import { PRODUCT_CLI_COMMAND, PRODUCT_ENV, PRODUCT_NAME, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand'
 
 export const claudeCommand: CommandDefinition = {
     name: 'default',
@@ -34,7 +35,7 @@ export const claudeCommand: CommandDefinition = {
             if (arg === '-h' || arg === '--help') {
                 showHelp = true
                 unknownArgs.push(arg)
-            } else if (arg === '--hapi-starting-mode') {
+            } else if (arg === PRODUCT_STARTING_MODE_FLAG) {
                 options.startingMode = z.enum(['local', 'remote']).parse(args[++i])
             } else if (arg === '--yolo') {
                 options.permissionMode = 'bypassPermissions'
@@ -65,36 +66,35 @@ export const claudeCommand: CommandDefinition = {
 
         if (showHelp) {
             console.log(`
-${chalk.bold('hapi')} - Claude Code On the Go
+${chalk.bold('hopi')} - Claude Code On the Go
 
 ${chalk.bold('Usage:')}
-  hapi [options]         Start Claude with Telegram control (direct-connect)
-  hapi auth              Manage authentication
-  hapi codex             Start Codex mode
-  hapi gemini            Start Gemini ACP mode
-  hapi opencode          Start OpenCode ACP mode
-  hapi mcp               Start MCP stdio bridge
-  hapi connect           (not available in direct-connect mode)
-  hapi notify            (not available in direct-connect mode)
-  hapi hub               Start the API + web hub
-  hapi hub --relay       Start with public relay
-  hapi server            Alias for hapi hub
-  hapi runner            Manage background service that allows
+  hopi [options]         Start Claude with Telegram control (direct-connect)
+  hopi auth              Manage authentication
+  hopi codex             Start Codex mode
+  hopi gemini            Start Gemini ACP mode
+  hopi opencode          Start OpenCode ACP mode
+  hopi connect           (not available in direct-connect mode)
+  hopi notify            (not available in direct-connect mode)
+  hopi hub               Start the API + web hub
+  hopi hub --relay       Start with public relay
+  hopi server            Alias for hopi hub
+  hopi runner            Manage background service that allows
                             to spawn new sessions away from your computer
-  hapi doctor            System diagnostics & troubleshooting
+  hopi doctor            System diagnostics & troubleshooting
 
 ${chalk.bold('Examples:')}
-  hapi                    Start session (will prompt for token if not set)
-  hapi auth login         Configure CLI_API_TOKEN interactively
-  hapi --yolo             Start with bypassing permissions
-                            hapi sugar for --dangerously-skip-permissions
-  hapi auth status        Show direct-connect status
-  hapi doctor             Run diagnostics
+  hopi                    Start session (will prompt for token if not set)
+  hopi auth login         Configure CLI_API_TOKEN interactively
+  hopi --yolo             Start with bypassing permissions
+                            hopi sugar for --dangerously-skip-permissions
+  hopi auth status        Show direct-connect status
+  hopi doctor             Run diagnostics
 
-${chalk.bold('hapi supports ALL Claude options!')}
-  Use any claude flag with hapi as you would with claude. Our favorite:
+${chalk.bold('hopi supports ALL Claude options!')}
+  Use any claude flag with hopi as you would with claude. Our favorite:
 
-  hapi --resume
+  hopi --resume
 
 ${chalk.gray('─'.repeat(60))}
 ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
@@ -118,10 +118,10 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
         await maybeAutoStartServer()
         await authAndSetupMachineIfNeeded()
 
-        logger.debug('Ensuring hapi background service is running & matches our version...')
+        logger.debug('Ensuring hopi background service is running & matches our version...')
 
         if (!(await isRunnerRunningCurrentlyInstalledHappyVersion())) {
-            logger.debug('Starting hapi background service...')
+            logger.debug('Starting hopi background service...')
 
             const runnerProcess = spawnHappyCLI(['runner', 'start-sync'], {
                 detached: true,
@@ -148,13 +148,13 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
                 messageLower.includes('enotfound') ||
                 messageLower.includes('network error')
             ) {
-                console.error(chalk.yellow('Unable to connect to HAPI hub'))
+                console.error(chalk.yellow(`Unable to connect to ${PRODUCT_NAME} hub`))
                 console.error(chalk.gray(`  Hub URL: ${configuration.apiUrl}`))
                 console.error(chalk.gray('  Please check your network connection or hub status'))
             } else if (httpStatus === 403 && responseErrorText === 'Machine access denied') {
                 console.error(chalk.red('Machine access denied.'))
                 console.error(chalk.gray('  This machineId is already registered under a different namespace.'))
-                console.error(chalk.gray('  Fix: run `hapi auth logout`, or set a separate HAPI_HOME per namespace.'))
+                console.error(chalk.gray(`  Fix: run \`${PRODUCT_CLI_COMMAND} auth logout\`, or set a separate ${PRODUCT_ENV.HOME} per namespace.`))
             } else if (httpStatus === 403 && responseErrorText === 'Session access denied') {
                 console.error(chalk.red('Session access denied.'))
                 console.error(chalk.gray('  This session belongs to a different namespace.'))
@@ -166,7 +166,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
                 messageLower.includes('forbidden')
             ) {
                 console.error(chalk.red('Authentication error:'), message)
-                console.error(chalk.gray('  Run: hapi auth login'))
+                console.error(chalk.gray(`  Run: ${PRODUCT_CLI_COMMAND} auth login`))
             } else {
                 console.error(chalk.red('Error:'), message)
             }

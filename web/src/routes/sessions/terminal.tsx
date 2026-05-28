@@ -8,6 +8,7 @@ import { useSession } from '@/hooks/queries/useSession'
 import { useTerminalSocket } from '@/hooks/useTerminalSocket'
 import { useLongPress } from '@/hooks/useLongPress'
 import { useTranslation } from '@/lib/use-translation'
+import { PageHeader } from '@/components/PageHeader'
 import { TerminalView } from '@/components/Terminal/TerminalView'
 import { LoadingState } from '@/components/LoadingState'
 import { Button } from '@/components/ui/button'
@@ -18,28 +19,16 @@ import {
     DialogHeader,
     DialogTitle
 } from '@/components/ui/dialog'
-function BackIcon() {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <polyline points="15 18 9 12 15 6" />
-        </svg>
-    )
-}
 
 function ConnectionIndicator(props: { status: 'idle' | 'connecting' | 'connected' | 'error' }) {
+    const { t } = useTranslation()
     const isConnected = props.status === 'connected'
     const isConnecting = props.status === 'connecting'
-    const label = isConnected ? 'Connected' : isConnecting ? 'Connecting' : 'Offline'
+    const label = isConnected
+        ? t('terminal.status.connected')
+        : isConnecting
+            ? t('terminal.status.connecting')
+            : t('terminal.status.offline')
     const colorClass = isConnected
         ? 'bg-emerald-500'
         : isConnecting
@@ -55,13 +44,13 @@ function ConnectionIndicator(props: { status: 'idle' | 'connecting' | 'connected
 
 type QuickInput = {
     label: string
+    labelKey?: string
     sequence?: string
-    description: string
+    descriptionKey: string
     modifier?: 'ctrl' | 'alt'
     popup?: {
-        label: string
         sequence: string
-        description: string
+        descriptionKey: string
     }
 }
 
@@ -93,32 +82,32 @@ function shouldResetModifiers(sequence: string, state: ModifierState): boolean {
 
 const QUICK_INPUT_ROWS: QuickInput[][] = [
     [
-        { label: 'Esc', sequence: '\u001b', description: 'Escape' },
+        { label: '', labelKey: 'terminal.quick.label.escape', sequence: '\u001b', descriptionKey: 'terminal.quick.description.escape' },
         {
             label: '/',
             sequence: '/',
-            description: 'Forward slash',
-            popup: { label: '?', sequence: '?', description: 'Question mark' },
+            descriptionKey: 'terminal.quick.description.forwardSlash',
+            popup: { sequence: '?', descriptionKey: 'terminal.quick.description.questionMark' },
         },
         {
             label: '-',
             sequence: '-',
-            description: 'Hyphen',
-            popup: { label: '|', sequence: '|', description: 'Pipe' },
+            descriptionKey: 'terminal.quick.description.hyphen',
+            popup: { sequence: '|', descriptionKey: 'terminal.quick.description.pipe' },
         },
-        { label: 'Home', sequence: '\u001b[H', description: 'Home' },
-        { label: '↑', sequence: '\u001b[A', description: 'Arrow up' },
-        { label: 'End', sequence: '\u001b[F', description: 'End' },
-        { label: 'PgUp', sequence: '\u001b[5~', description: 'Page up' },
+        { label: '', labelKey: 'terminal.quick.label.home', sequence: '\u001b[H', descriptionKey: 'terminal.quick.description.home' },
+        { label: '↑', sequence: '\u001b[A', descriptionKey: 'terminal.quick.description.arrowUp' },
+        { label: '', labelKey: 'terminal.quick.label.end', sequence: '\u001b[F', descriptionKey: 'terminal.quick.description.end' },
+        { label: '', labelKey: 'terminal.quick.label.pageUp', sequence: '\u001b[5~', descriptionKey: 'terminal.quick.description.pageUp' },
     ],
     [
-        { label: 'Tab', sequence: '\t', description: 'Tab' },
-        { label: 'Ctrl', description: 'Control', modifier: 'ctrl' },
-        { label: 'Alt', description: 'Alternate', modifier: 'alt' },
-        { label: '←', sequence: '\u001b[D', description: 'Arrow left' },
-        { label: '↓', sequence: '\u001b[B', description: 'Arrow down' },
-        { label: '→', sequence: '\u001b[C', description: 'Arrow right' },
-        { label: 'PgDn', sequence: '\u001b[6~', description: 'Page down' },
+        { label: '', labelKey: 'terminal.quick.label.tab', sequence: '\t', descriptionKey: 'terminal.quick.description.tab' },
+        { label: '', labelKey: 'terminal.quick.label.ctrl', descriptionKey: 'terminal.quick.description.control', modifier: 'ctrl' },
+        { label: '', labelKey: 'terminal.quick.label.alt', descriptionKey: 'terminal.quick.description.alternate', modifier: 'alt' },
+        { label: '←', sequence: '\u001b[D', descriptionKey: 'terminal.quick.description.arrowLeft' },
+        { label: '↓', sequence: '\u001b[B', descriptionKey: 'terminal.quick.description.arrowDown' },
+        { label: '→', sequence: '\u001b[C', descriptionKey: 'terminal.quick.description.arrowRight' },
+        { label: '', labelKey: 'terminal.quick.label.pageDown', sequence: '\u001b[6~', descriptionKey: 'terminal.quick.description.pageDown' },
     ],
 ]
 
@@ -129,10 +118,16 @@ function QuickKeyButton(props: {
     onPress: (sequence: string) => void
     onToggleModifier: (modifier: 'ctrl' | 'alt') => void
 }) {
+    const { t } = useTranslation()
     const { input, disabled, isActive, onPress, onToggleModifier } = props
     const modifier = input.modifier
     const popupSequence = input.popup?.sequence
-    const popupDescription = input.popup?.description
+    const label = input.labelKey ? t(input.labelKey) : input.label
+    const description = t(input.descriptionKey)
+    const popupDescription = input.popup ? t(input.popup.descriptionKey) : null
+    const title = popupDescription
+        ? t('terminal.quick.longPressHint', { label: description, popup: popupDescription })
+        : description
     const hasPopup = Boolean(popupSequence)
     const longPressDisabled = disabled || Boolean(modifier) || !hasPopup
 
@@ -167,20 +162,20 @@ function QuickKeyButton(props: {
             onPointerDown={handlePointerDown}
             disabled={disabled}
             aria-pressed={modifier ? isActive : undefined}
-            className={`flex-1 border-l border-[var(--app-border)] px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:border-l-0 active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
+            className={`flex-1 app-shadow-divider-l px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:shadow-none active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
                 isActive ? 'bg-[var(--app-link)] text-[var(--app-bg)]' : 'hover:bg-[var(--app-subtle-bg)]'
             }`}
-            aria-label={input.description}
-            title={popupDescription ? `${input.description} (long press: ${popupDescription})` : input.description}
+            aria-label={description}
+            title={title}
         >
-            {input.label}
+            {label}
         </button>
     )
 }
 
-export default function TerminalPage() {
+export function SessionTerminal(props: { sessionId: string; onBack?: () => void; embedded?: boolean }) {
     const { t } = useTranslation()
-    const { sessionId } = useParams({ from: '/sessions/$sessionId/terminal' })
+    const sessionId = props.sessionId
     const { api, token, baseUrl } = useAppContext()
     const goBack = useAppGoBack()
     const { session } = useSession(api, sessionId)
@@ -195,6 +190,7 @@ export default function TerminalPage() {
     const connectOnceRef = useRef(false)
     const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null)
     const modifierStateRef = useRef<ModifierState>({ ctrl: false, alt: false })
+    const lastPrintedExitRef = useRef<{ code: number | null; signal: string | null; at: number } | null>(null)
     const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null)
     const [ctrlActive, setCtrlActive] = useState(false)
     const [altActive, setAltActive] = useState(false)
@@ -224,9 +220,24 @@ export default function TerminalPage() {
 
     useEffect(() => {
         onExit((code, signal) => {
-            setExitInfo({ code, signal })
-            terminalRef.current?.write(`\r\n[process exited${code !== null ? ` with code ${code}` : ''}]`)
-            connectOnceRef.current = false
+            const isSigtermExit = code === null && signal === 'SIGTERM'
+            setExitInfo(isSigtermExit ? null : { code, signal })
+            const shouldPrintExit = !isSigtermExit
+            const now = Date.now()
+            const lastPrinted = lastPrintedExitRef.current
+            const isDuplicate =
+                lastPrinted &&
+                lastPrinted.code === code &&
+                lastPrinted.signal === signal &&
+                now - lastPrinted.at < 1000
+
+            if (shouldPrintExit && !isDuplicate) {
+                terminalRef.current?.write(`\r\n[process exited${code !== null ? ` with code ${code}` : ''}]`)
+                lastPrintedExitRef.current = { code, signal, at: now }
+            }
+
+            // Stop resize-driven reconnect loops after terminal has definitively exited.
+            connectOnceRef.current = true
         })
     }, [onExit])
 
@@ -293,6 +304,23 @@ export default function TerminalPage() {
     }, [session?.active, connect])
 
     useEffect(() => {
+        if (!session?.active || terminalState.status !== 'connected') {
+            return
+        }
+
+        const interval = setInterval(() => {
+            const size = lastSizeRef.current
+            if (!size) {
+                return
+            }
+            // Heartbeat via no-op resize keeps hub/CLI idle timers from terminating an actively viewed terminal.
+            resize(size.cols, size.rows)
+        }, 3_000)
+
+        return () => clearInterval(interval)
+    }, [session?.active, terminalState.status, resize])
+
+    useEffect(() => {
         connectOnceRef.current = false
         setExitInfo(null)
         disconnect()
@@ -315,13 +343,17 @@ export default function TerminalPage() {
 
     useEffect(() => {
         if (terminalState.status === 'error') {
-            connectOnceRef.current = false
+            const shouldReconnect =
+                terminalState.error !== 'Terminal exited.' &&
+                !terminalState.error.startsWith('Session is inactive') &&
+                !terminalState.error.startsWith('Too many terminals open')
+            connectOnceRef.current = !shouldReconnect
             return
         }
         if (terminalState.status === 'connecting' || terminalState.status === 'connected') {
             setExitInfo(null)
         }
-    }, [terminalState.status])
+    }, [terminalState])
 
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const writePlainInput = useCallback((text: string) => {
@@ -395,10 +427,30 @@ export default function TerminalPage() {
         [quickInputDisabled]
     )
 
+    const exitMessage = useMemo(() => {
+        if (!exitInfo) {
+            return null
+        }
+
+        if (exitInfo.code !== null && exitInfo.signal) {
+            return t('terminal.exit.withCodeAndSignal', { code: exitInfo.code, signal: exitInfo.signal })
+        }
+
+        if (exitInfo.code !== null) {
+            return t('terminal.exit.withCode', { code: exitInfo.code })
+        }
+
+        if (exitInfo.signal) {
+            return t('terminal.exit.withSignal', { signal: exitInfo.signal })
+        }
+
+        return t('terminal.exit.default')
+    }, [exitInfo, t])
+
     if (!session) {
         return (
             <div className="flex h-full items-center justify-center">
-                <LoadingState label="Loading session…" className="text-sm" />
+                <LoadingState label={t('loading.session')} className="text-sm" />
             </div>
         )
     }
@@ -409,34 +461,29 @@ export default function TerminalPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
-                    <button
-                        type="button"
-                        onClick={goBack}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                    >
-                        <BackIcon />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">Terminal</div>
-                        <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
-                    </div>
-                    <ConnectionIndicator status={status} />
-                </div>
-            </div>
+            {props.embedded ? null : (
+                <PageHeader
+                    title={t('projects.workbench.tab.terminal')}
+                    subtitle={subtitle}
+                    onBack={props.onBack ?? goBack}
+                    backLabel={t('projects.files.back')}
+                    borderClassName="app-shadow-divider-b"
+                    contentClassName="p-3"
+                    right={<ConnectionIndicator status={status} />}
+                />
+            )}
 
             {session.active ? null : (
                 <div className="px-3 pt-3">
                     <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        Session is inactive. Terminal is unavailable.
+                        {t('terminal.inactive')}
                     </div>
                 </div>
             )}
 
             {errorMessage ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
-                    <div className="rounded-md border border-[var(--app-badge-error-border)] bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
+                    <div className="rounded-md app-shadow-border-error bg-[var(--app-badge-error-bg)] p-3 text-xs text-[var(--app-badge-error-text)]">
                         {errorMessage}
                     </div>
                 </div>
@@ -444,9 +491,8 @@ export default function TerminalPage() {
 
             {exitInfo ? (
                 <div className="mx-auto w-full max-w-content px-3 pt-3">
-                    <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
-                        Terminal exited{exitInfo.code !== null ? ` with code ${exitInfo.code}` : ''}
-                        {exitInfo.signal ? ` (${exitInfo.signal})` : ''}.
+                    <div className="rounded-md app-shadow-border bg-[var(--app-subtle-bg)] p-3 text-xs text-[var(--app-hint)]">
+                        {exitMessage}
                     </div>
                 </div>
             ) : null}
@@ -457,7 +503,7 @@ export default function TerminalPage() {
                 </div>
             </div>
 
-            <div className="bg-[var(--app-bg)] border-t border-[var(--app-border)] pb-[env(safe-area-inset-bottom)]">
+            <div className="bg-[var(--app-bg)] app-shadow-divider-t pb-[env(safe-area-inset-bottom)]">
                 <div className="mx-auto w-full max-w-content px-3">
                     <div className="flex flex-col gap-2 py-2">
                         <button
@@ -466,7 +512,7 @@ export default function TerminalPage() {
                                 void handlePasteAction()
                             }}
                             disabled={quickInputDisabled}
-                            className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-secondary-bg)] px-3 py-2 text-sm font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="w-full rounded-md app-shadow-border bg-[var(--app-secondary-bg)] px-3 py-2 text-sm font-medium text-[var(--app-fg)] transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {t('button.paste')}
                         </button>
@@ -482,7 +528,7 @@ export default function TerminalPage() {
                                     const isActive = (isCtrl && ctrlActive) || (isAlt && altActive)
                                     return (
                                         <QuickKeyButton
-                                            key={input.label}
+                                            key={`${input.labelKey ?? input.label}-${input.sequence ?? modifier ?? 'modifier'}`}
                                             input={input}
                                             disabled={quickInputDisabled}
                                             isActive={isActive}
@@ -517,7 +563,7 @@ export default function TerminalPage() {
                         value={manualPasteText}
                         onChange={(event) => setManualPasteText(event.target.value)}
                         placeholder={t('terminal.paste.placeholder')}
-                        className="mt-2 min-h-32 w-full resize-y rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
+                        className="mt-2 min-h-32 w-full resize-y rounded-md app-shadow-border bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)]"
                         autoCapitalize="none"
                         autoCorrect="off"
                     />
@@ -544,4 +590,9 @@ export default function TerminalPage() {
             </Dialog>
         </div>
     )
+}
+
+export default function TerminalPage() {
+    const { sessionId } = useParams({ from: '/sessions/$sessionId/terminal' })
+    return <SessionTerminal sessionId={sessionId} />
 }

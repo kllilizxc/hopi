@@ -1,8 +1,7 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
-import { buildHapiMcpBridge } from '@/codex/utils/buildHapiMcpBridge';
 import { convertAgentMessage } from '@/agent/messageConverter';
-import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
+import type { AgentMessage, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
 import { GeminiDisplay } from '@/ui/ink/GeminiDisplay';
 import type { GeminiSession } from './session';
@@ -11,13 +10,25 @@ import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
 
+function isAssistantTextCodexMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as { type?: unknown; message?: unknown };
+    if (record.type !== 'message') {
+        return false;
+    }
+
+    return typeof record.message === 'string' && record.message.trim().length > 0;
+}
+
 class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly session: GeminiSession;
     private readonly model?: string;
     private readonly hookSettingsPath?: string;
     private backend: ReturnType<typeof createGeminiBackend> | null = null;
     private permissionHandler: GeminiPermissionHandler | null = null;
-    private happyServer: { stop: () => void } | null = null;
     private abortController = new AbortController();
     private displayModel: string | null = null;
     private displayPermissionMode: PermissionMode | null = null;
@@ -43,9 +54,17 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     protected async runMainLoop(): Promise<void> {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
+        let activeTurnLocalKey: string | null = null;
+        let activeTurnHasAssistantReply = false;
+        let turnInFlight = false;
 
-        const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
-        this.happyServer = happyServer;
+        const originalSendCodexMessage = session.sendCodexMessage.bind(session);
+        session.sendCodexMessage = (message: unknown) => {
+            if (turnInFlight && isAssistantTextCodexMessage(message)) {
+                activeTurnHasAssistantReply = true;
+            }
+            originalSendCodexMessage(message);
+        };
 
         const runtimeConfig = resolveGeminiRuntimeConfig({ model: this.model });
         this.displayModel = runtimeConfig.model;
@@ -70,7 +89,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
         const acpSessionId = await backend.newSession({
             cwd: session.path,
-            mcpServers: toAcpMcpServers(mcpServers)
+            mcpServers: []
         });
         session.onSessionFound(acpSessionId);
 
@@ -87,7 +106,11 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
         });
 
         const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
+            session.sendSessionEvent({
+                type: 'ready',
+                forLocalKey: activeTurnLocalKey ?? undefined,
+                hasAssistantReply: activeTurnHasAssistantReply
+            });
         };
 
         while (!this.shouldExit) {
@@ -101,6 +124,9 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
             this.applyDisplayMode(batch.mode.permissionMode, batch.mode.model);
             messageBuffer.addMessage(batch.message, 'user');
+            activeTurnLocalKey = batch.localKey ?? null;
+            activeTurnHasAssistantReply = false;
+            turnInFlight = true;
 
             const promptContent: PromptContent[] = [{
                 type: 'text',
@@ -116,12 +142,14 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             } catch (error) {
                 logger.warn('[gemini-remote] prompt failed', error);
                 session.sendSessionEvent({
-                    type: 'message',
-                    message: 'Gemini prompt failed. Check logs for details.'
+                    type: 'error',
+                    message: 'Gemini prompt failed. Check logs for details.',
+                    reason: 'prompt-failed'
                 });
                 messageBuffer.addMessage('Gemini prompt failed', 'status');
             } finally {
                 session.onThinkingChange(false);
+                turnInFlight = false;
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
                     sendReady();
@@ -143,10 +171,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             this.backend = null;
         }
 
-        if (this.happyServer) {
-            this.happyServer.stop();
-            this.happyServer = null;
-        }
     }
 
     private handleAgentMessage(message: AgentMessage): void {
@@ -216,15 +240,6 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     private async handleSwitchRequest(): Promise<void> {
         await this.requestExit('switch', () => this.handleAbort());
     }
-}
-
-function toAcpMcpServers(config: Record<string, { command: string; args: string[] }>): McpServerStdio[] {
-    return Object.entries(config).map(([name, entry]) => ({
-        name,
-        command: entry.command,
-        args: entry.args,
-        env: []
-    }));
 }
 
 export async function geminiRemoteLauncher(

@@ -1,5 +1,5 @@
 /**
- * HAPI Hub - Main Entry Point
+ * HOPI Hub - Main Entry Point
  *
  * Provides:
  * - Web app + HTTP API
@@ -18,12 +18,20 @@ import { startWebServer } from './web/server'
 import { getOrCreateJwtSecret } from './config/jwtSecret'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
+import { createSessionDebugLogger } from './sync/sessionDebugLogger'
 import { getOrCreateVapidKeys } from './config/vapidKeys'
 import { PushService } from './push/pushService'
 import { PushNotificationChannel } from './push/pushNotificationChannel'
 import { VisibilityTracker } from './visibility/visibilityTracker'
 import { TunnelManager } from './tunnel'
 import { waitForTunnelTlsReady } from './tunnel/tlsGate'
+import {
+    PRODUCT_DEFAULT_OFFICIAL_WEB_URL,
+    PRODUCT_DEFAULT_RELAY_API_DOMAIN,
+    PRODUCT_DEFAULT_VAPID_SUBJECT,
+    PRODUCT_ENV,
+    PRODUCT_NAME,
+} from '@hopi/protocol/brand'
 import QRCode from 'qrcode'
 import type { Server as BunServer } from 'bun'
 import type { WebSocketData } from '@socket.io/bun-engine'
@@ -106,12 +114,12 @@ let notificationHub: NotificationHub | null = null
 let tunnelManager: TunnelManager | null = null
 
 async function main() {
-    console.log('HAPI Hub starting...')
+    console.log(`${PRODUCT_NAME} Hub starting...`)
 
     // Load configuration (async - loads from env/file with persistence)
-    const relayApiDomain = process.env.HAPI_RELAY_API || 'relay.hapi.run'
+    const relayApiDomain = process.env[PRODUCT_ENV.RELAY_API] || PRODUCT_DEFAULT_RELAY_API_DOMAIN
     const relayFlag = resolveRelayFlag(process.argv)
-    const officialWebUrl = process.env.HAPI_OFFICIAL_WEB_URL || 'https://app.hapi.run'
+    const officialWebUrl = process.env[PRODUCT_ENV.OFFICIAL_WEB_URL] || PRODUCT_DEFAULT_OFFICIAL_WEB_URL
     const config = await createConfiguration()
     const baseCorsOrigins = normalizeOrigins(config.corsOrigins)
     const relayCorsOrigin = normalizeOrigin(officialWebUrl)
@@ -137,9 +145,9 @@ async function main() {
     }
 
     // Display other configuration sources
-    console.log(`[Hub] HAPI_LISTEN_HOST: ${config.listenHost} (${formatSource(config.sources.listenHost)})`)
-    console.log(`[Hub] HAPI_LISTEN_PORT: ${config.listenPort} (${formatSource(config.sources.listenPort)})`)
-    console.log(`[Hub] HAPI_PUBLIC_URL: ${config.publicUrl} (${formatSource(config.sources.publicUrl)})`)
+    console.log(`[Hub] ${PRODUCT_ENV.LISTEN_HOST}: ${config.listenHost} (${formatSource(config.sources.listenHost)})`)
+    console.log(`[Hub] ${PRODUCT_ENV.LISTEN_PORT}: ${config.listenPort} (${formatSource(config.sources.listenPort)})`)
+    console.log(`[Hub] ${PRODUCT_ENV.PUBLIC_URL}: ${config.publicUrl} (${formatSource(config.sources.publicUrl)})`)
 
     if (!config.telegramEnabled) {
         console.log('[Hub] Telegram: disabled (no TELEGRAM_BOT_TOKEN)')
@@ -160,11 +168,17 @@ async function main() {
     const store = new Store(config.dbPath)
     const jwtSecret = await getOrCreateJwtSecret()
     const vapidKeys = await getOrCreateVapidKeys(config.dataDir)
-    const vapidSubject = process.env.VAPID_SUBJECT ?? 'mailto:admin@hapi.run'
+    const vapidSubject = process.env.VAPID_SUBJECT ?? PRODUCT_DEFAULT_VAPID_SUBJECT
     const pushService = new PushService(vapidKeys, vapidSubject, store)
 
     visibilityTracker = new VisibilityTracker()
     sseManager = new SSEManager(30_000, visibilityTracker)
+    const sessionDebugLogger = createSessionDebugLogger({
+        rootDir: config.sessionDebugLogDir,
+        enabled: config.sessionDebugLogsEnabled,
+        maxBytes: config.sessionDebugLogMaxBytes,
+        maxFiles: config.sessionDebugLogMaxFiles
+    })
 
     const socketServer = createSocketServer({
         store,
@@ -179,10 +193,11 @@ async function main() {
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
-        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload)
+        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload),
+        sessionDebugLogger
     })
 
-    syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
+    syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager, sessionDebugLogger)
 
     const notificationChannels: NotificationChannel[] = [
         new PushNotificationChannel(pushService, sseManager, visibilityTracker, config.publicUrl)
@@ -234,8 +249,8 @@ async function main() {
             localPort: config.listenPort,
             enabled: true,
             apiDomain: relayApiDomain,
-            authKey: process.env.HAPI_RELAY_AUTH || null,
-            useRelay: process.env.HAPI_RELAY_FORCE_TCP === 'true' || process.env.HAPI_RELAY_FORCE_TCP === '1'
+            authKey: process.env[PRODUCT_ENV.RELAY_AUTH] || null,
+            useRelay: process.env[PRODUCT_ENV.RELAY_FORCE_TCP] === 'true' || process.env[PRODUCT_ENV.RELAY_FORCE_TCP] === '1'
         })
 
         try {
@@ -288,7 +303,7 @@ async function main() {
         void announceTunnelAccess()
     }
     console.log('')
-    console.log('HAPI Hub is ready!')
+    console.log(`${PRODUCT_NAME} Hub is ready!`)
 
     // Handle shutdown
     const shutdown = async () => {

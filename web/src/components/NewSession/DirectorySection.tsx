@@ -3,6 +3,7 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { useTranslation } from '@/lib/use-translation'
+import { Tag } from '@/components/ui/tag'
 
 export function DirectorySection(props: {
     directory: string
@@ -34,7 +35,7 @@ export function DirectorySection(props: {
                     onFocus={props.onDirectoryFocus}
                     onBlur={props.onDirectoryBlur}
                     disabled={props.isDisabled}
-                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    className="w-full rounded-lg app-shadow-border bg-[var(--app-bg)] px-3 py-3 text-sm text-[var(--app-fg)] placeholder-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 />
                 {props.suggestions.length > 0 && (
                     <div className="absolute top-full left-0 right-0 z-10 mt-1">
@@ -54,16 +55,22 @@ export function DirectorySection(props: {
                     <span className="text-xs text-[var(--app-hint)]">{t('newSession.recent')}:</span>
                     <div className="flex flex-wrap gap-1">
                         {props.recentPaths.map((path) => (
-                            <button
+                            <Tag
                                 key={path}
-                                type="button"
-                                onClick={() => props.onPathClick(path)}
-                                disabled={props.isDisabled}
-                                className="rounded bg-[var(--app-subtle-bg)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors truncate max-w-[200px] disabled:opacity-50"
-                                title={path}
+                                asChild
+                                variant="default"
+                                size="lg"
+                                className="max-w-[200px] truncate cursor-pointer hover:bg-[var(--app-secondary-bg)] disabled:opacity-50"
                             >
-                                {path}
-                            </button>
+                                <button
+                                    type="button"
+                                    onClick={() => props.onPathClick(path)}
+                                    disabled={props.isDisabled}
+                                    title={path}
+                                >
+                                    {path}
+                                </button>
+                            </Tag>
                         ))}
                     </div>
                 </div>

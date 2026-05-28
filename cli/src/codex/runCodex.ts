@@ -8,9 +8,12 @@ import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
 import { bootstrapSession } from '@/agent/sessionFactory';
 import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } from '@/agent/runnerLifecycle';
-import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
-import { PermissionModeSchema } from '@hapi/protocol/schemas';
+import { isPermissionModeAllowedForFlavor } from '@hopi/protocol';
+import { PermissionModeSchema } from '@hopi/protocol/schemas';
+import { PRODUCT_ENV } from '@hopi/protocol/brand';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import { normalizeCodexSlashCommand } from './utils/normalizeSlashCommand';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -21,7 +24,11 @@ export async function runCodex(opts: {
     resumeSessionId?: string;
     model?: string;
 }): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveCliWorkingDirectory();
+    const worktreeBaseCommit = process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]?.trim();
+    const diffBaseRef = worktreeBaseCommit && /^[0-9a-f]{7,64}$/i.test(worktreeBaseCommit)
+        ? worktreeBaseCommit
+        : undefined;
     const startedBy = opts.startedBy ?? 'terminal';
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}`);
@@ -81,7 +88,8 @@ export async function runCodex(opts: {
             collaborationMode: currentCollaborationMode
         };
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-        messageQueue.push(formattedText, enhancedMode);
+        const normalizedText = normalizeCodexSlashCommand(formattedText, { diffBaseRef });
+        messageQueue.push(normalizedText, enhancedMode, message.localKey ?? null);
     });
 
     const formatFailureReason = (message: string): string => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { getSessionDebugId } from '@hopi/protocol'
 import type { Session, SyncEvent, SyncEventListener, SyncEngine } from '../sync/syncEngine'
 import type { NotificationChannel } from './notificationTypes'
 import { NotificationHub } from './notificationHub'
@@ -43,8 +44,10 @@ class StubChannel implements NotificationChannel {
 }
 
 function createSession(overrides: Partial<Session> = {}): Session {
+    const id = overrides.id ?? 'session-1'
     return {
-        id: 'session-1',
+        id,
+        debugId: overrides.debugId ?? getSessionDebugId(id),
         namespace: 'default',
         seq: 1,
         createdAt: 0,

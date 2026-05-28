@@ -1,13 +1,14 @@
 import { logger } from '@/ui/logger'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
-import { resolve } from 'path'
+import { dirname, resolve } from 'path'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
 
 interface ReadFileRequest {
     path: string
+    cwd?: string
 }
 
 interface ReadFileResponse {
@@ -19,7 +20,10 @@ interface ReadFileResponse {
 interface WriteFileRequest {
     path: string
     content: string
+    cwd?: string
     expectedHash?: string | null
+    createParents?: boolean
+    overwrite?: boolean
 }
 
 interface WriteFileResponse {
@@ -32,13 +36,23 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>('readFile', async (data) => {
         logger.debug('Read file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
+        const requestedCwd = typeof data.cwd === 'string' ? data.cwd : undefined
+        let scopedWorkingDirectory = workingDirectory
+        if (requestedCwd) {
+            const cwdValidation = validatePath(requestedCwd, workingDirectory)
+            if (!cwdValidation.valid) {
+                return rpcError(cwdValidation.error ?? 'Invalid working directory')
+            }
+            scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
+        }
+
+        const validation = validatePath(data.path, scopedWorkingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid file path')
         }
 
         try {
-            const resolvedPath = resolve(workingDirectory, data.path)
+            const resolvedPath = resolve(scopedWorkingDirectory, data.path)
             const buffer = await readFile(resolvedPath)
             const content = buffer.toString('base64')
             return { success: true, content }
@@ -51,15 +65,30 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
     rpcHandlerManager.registerHandler<WriteFileRequest, WriteFileResponse>('writeFile', async (data) => {
         logger.debug('Write file request:', data.path)
 
-        const validation = validatePath(data.path, workingDirectory)
+        const requestedCwd = typeof data.cwd === 'string' ? data.cwd : undefined
+        let scopedWorkingDirectory = workingDirectory
+        if (requestedCwd) {
+            const cwdValidation = validatePath(requestedCwd, workingDirectory)
+            if (!cwdValidation.valid) {
+                return rpcError(cwdValidation.error ?? 'Invalid working directory')
+            }
+            scopedWorkingDirectory = resolve(workingDirectory, requestedCwd)
+        }
+
+        const validation = validatePath(data.path, scopedWorkingDirectory)
         if (!validation.valid) {
             return rpcError(validation.error ?? 'Invalid file path')
         }
 
         try {
+            const resolvedPath = resolve(scopedWorkingDirectory, data.path)
+            if (data.createParents) {
+                await mkdir(dirname(resolvedPath), { recursive: true })
+            }
+
             if (data.expectedHash !== null && data.expectedHash !== undefined) {
                 try {
-                    const existingBuffer = await readFile(data.path)
+                    const existingBuffer = await readFile(resolvedPath)
                     const existingHash = createHash('sha256').update(existingBuffer).digest('hex')
 
                     if (existingHash !== data.expectedHash) {
@@ -72,9 +101,9 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
                     }
                     return rpcError('File does not exist but hash was provided')
                 }
-            } else {
+            } else if (!data.overwrite) {
                 try {
-                    await stat(data.path)
+                    await stat(resolvedPath)
                     return rpcError('File already exists but was expected to be new')
                 } catch (error) {
                     const nodeError = error as NodeJS.ErrnoException
@@ -85,7 +114,7 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
             }
 
             const buffer = Buffer.from(data.content, 'base64')
-            await writeFile(data.path, buffer)
+            await writeFile(resolvedPath, buffer)
 
             const hash = createHash('sha256').update(buffer).digest('hex')
 

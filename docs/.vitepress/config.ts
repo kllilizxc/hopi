@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'HAPI',
+  title: 'HOPI',
   description: 'Control your AI agents from anywhere',
   base: '/docs/',
 
@@ -14,7 +14,8 @@ export default defineConfig({
 
     nav: [
       { text: 'Quick Start', link: '/guide/quick-start' },
-      { text: 'App', link: 'https://app.hapi.run', target: '_blank' }
+      { text: 'Unified Design', link: '/hopi-goal-kanban-assistant-unified-design' },
+      { text: 'App', link: 'https://app.hopi.run', target: '_blank' }
     ],
 
     sidebar: [
@@ -23,12 +24,13 @@ export default defineConfig({
       { text: 'PWA', link: '/guide/pwa' },
       { text: 'How it Works', link: '/guide/how-it-works' },
       { text: 'Voice Assistant', link: '/guide/voice-assistant' },
-      { text: 'Why HAPI', link: '/guide/why-hapi' },
-      { text: 'FAQ', link: '/guide/faq' }
+      { text: 'Why HOPI', link: '/guide/why-hopi' },
+      { text: 'FAQ', link: '/guide/faq' },
+      { text: 'Unified Design', link: '/hopi-goal-kanban-assistant-unified-design' }
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/tiann/hapi' }
+      { icon: 'github', link: 'https://github.com/tiann/hopi' }
     ],
 
     footer: {

@@ -3,29 +3,7 @@ import { useMessage } from '@assistant-ui/react'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import { cn } from '@/lib/utils'
 import { defaultComponents, MARKDOWN_PLUGINS } from '@/components/assistant-ui/markdown-text'
-
-function ChevronIcon(props: { className?: string; open?: boolean }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn(
-                'transition-transform duration-200',
-                props.open ? 'rotate-90' : '',
-                props.className
-            )}
-        >
-            <polyline points="9 18 15 12 9 6" />
-        </svg>
-    )
-}
+import { ChevronRightIcon } from '@/assets/icons'
 
 function ShimmerDot() {
     return (
@@ -66,18 +44,21 @@ export const ReasoningGroup: FC<PropsWithChildren> = ({ children }) => {
         }
     }, [isStreaming])
 
+    const expanded = isOpen || isStreaming
+
     return (
         <div className="aui-reasoning-group my-2">
             <button
                 type="button"
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={() => setIsOpen((prev) => !prev)}
+                aria-expanded={expanded}
                 className={cn(
                     'flex items-center gap-1.5 text-xs font-medium',
                     'text-[var(--app-hint)] hover:text-[var(--app-fg)]',
                     'transition-colors cursor-pointer select-none'
                 )}
             >
-                <ChevronIcon open={isOpen} />
+                <ChevronRightIcon className={cn('h-3 w-3 transition-transform duration-200', expanded ? 'rotate-90' : '')} />
                 <span>Reasoning</span>
                 {isStreaming && (
                     <span className="flex items-center gap-1 ml-1 text-[var(--app-hint)]">
@@ -86,16 +67,11 @@ export const ReasoningGroup: FC<PropsWithChildren> = ({ children }) => {
                 )}
             </button>
 
-            <div
-                className={cn(
-                    'overflow-hidden transition-all duration-200 ease-in-out',
-                    isOpen ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0'
-                )}
-            >
-                <div className="pl-4 pt-2 border-l-2 border-[var(--app-border)] ml-0.5">
+            {expanded ? (
+                <div className="pl-4 pt-2 shadow-[inset_2px_0_0_var(--app-border)] ml-0.5">
                     {children}
                 </div>
-            </div>
+            ) : null}
         </div>
     )
 }

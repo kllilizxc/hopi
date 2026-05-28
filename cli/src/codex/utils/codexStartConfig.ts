@@ -1,6 +1,7 @@
 import type { CodexSessionConfig } from '../types';
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
+import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
 
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
@@ -31,6 +32,7 @@ export function buildCodexStartConfig(args: {
     message: string;
     mode: EnhancedMode;
     first: boolean;
+    cwd?: string;
     mcpServers: Record<string, { command: string; args: string[] }>;
     cliOverrides?: CodexCliOverrides;
     developerInstructions?: string;
@@ -44,11 +46,13 @@ export function buildCodexStartConfig(args: {
 
     const prompt = args.message;
     const baseInstructions = codexSystemPrompt;
+    const developerInstructions = [
+        baseInstructions,
+        args.developerInstructions
+    ].filter((part): part is string => Boolean(part && part.trim())).join('\n\n');
     const config: Record<string, unknown> = {
-        mcp_servers: args.mcpServers,
-        developer_instructions: args.developerInstructions
-            ? `${baseInstructions}\n\n${args.developerInstructions}`
-            : baseInstructions
+        ...(Object.keys(args.mcpServers).length > 0 ? { mcp_servers: args.mcpServers } : {}),
+        ...(developerInstructions ? { developer_instructions: developerInstructions } : {})
     };
     const startConfig: CodexSessionConfig = {
         prompt,
@@ -57,8 +61,13 @@ export function buildCodexStartConfig(args: {
         config
     };
 
-    if (args.mode.model) {
-        startConfig.model = args.mode.model;
+    if (args.cwd) {
+        startConfig.cwd = args.cwd;
+    }
+
+    const modelSpec = resolveCodexModelSpec(args.mode.model);
+    if (modelSpec?.model) {
+        startConfig.model = modelSpec.model;
     }
 
     return startConfig;

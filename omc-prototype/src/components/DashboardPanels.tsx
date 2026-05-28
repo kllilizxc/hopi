@@ -1,0 +1,250 @@
+import { Link } from '@tanstack/react-router'
+import { useState } from 'react'
+import { useOperatorSurface } from '@/components/operator/OperatorSurfaceContext'
+import {
+    goalGlyph,
+    goalPresentation,
+    goalTitle,
+    labelPlanBadge,
+    labelPlanColumn,
+    labelTimeWindow,
+    planPresentation,
+} from '@/prototype/presenter'
+import { getPrimaryRelatedThread, getRelatedThreads, countUnresolvedThreads } from '@/prototype/threadSelectors'
+import { usePrototypeStore } from '@/prototype/store'
+import type {
+    PrototypeCheckpointId,
+    PrototypeGoal,
+    PrototypePlanCard,
+    PrototypeTimeWindow
+} from '@/prototype/types'
+import { GoalStatusBadge, MetaBadge } from './StatusBadge'
+import { Glyph } from './Visuals'
+
+export function GoalPortfolioPanel(props: {
+    goals: PrototypeGoal[]
+    checkpointId: PrototypeCheckpointId
+    selectedGoalId?: string | null
+}) {
+    const { threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
+
+    return (
+        <section className="flex flex-col gap-5">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-200">
+                <h2 className="text-xl font-semibold text-zinc-900">目标</h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {props.goals.map((goal) => {
+                    const view = goalPresentation(goal, props.checkpointId)
+                    const isActive = props.selectedGoalId === goal.id
+                    const relatedThreads = getRelatedThreads(threads, { goalId: goal.id })
+                    const unresolvedCount = countUnresolvedThreads(relatedThreads)
+                    const primaryThread = getPrimaryRelatedThread(threads, { goalId: goal.id })
+
+                    return (
+                        <article key={goal.id} className={`flex flex-col bg-white border rounded-xl shadow-sm transition-shadow duration-200 overflow-hidden ${isActive ? 'border-blue-400 ring-2 ring-blue-200 shadow-md' : 'border-zinc-200 hover:shadow-md'}`}>
+                            <Link
+                                to="/"
+                                search={{ goal: goal.id }}
+                                className="flex flex-col p-5 gap-4 flex-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t-xl"
+                            >
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex items-start gap-3 min-w-0">
+                                        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-zinc-100 text-zinc-600 flex-shrink-0">
+                                            <Glyph name={goalGlyph(goal.id)} />
+                                        </div>
+                                        <div className="flex flex-col min-w-0">
+                                            <h3 className="text-base font-semibold text-zinc-900 truncate">{view.title}</h3>
+                                            <p className="text-sm text-zinc-500 line-clamp-2 mt-1">{view.headline}</p>
+                                        </div>
+                                    </div>
+                                    <GoalStatusBadge status={goal.status} />
+                                </div>
+                            </Link>
+
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-zinc-50 border-t border-zinc-100">
+                                <span className="text-sm font-medium text-zinc-700">{view.progressLabel}</span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {relatedThreads.length > 0 ? (
+                                        <MetaBadge tone="neutral">
+                                            {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
+                                        </MetaBadge>
+                                    ) : null}
+                                    {isActive ? (
+                                        <MetaBadge tone="accent">当前目标</MetaBadge>
+                                    ) : (
+                                        <Link
+                                            to="/"
+                                            search={{ goal: goal.id }}
+                                            className="text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+                                        >
+                                            切换到此目标
+                                        </Link>
+                                    )}
+                                    {primaryThread ? (
+                                            <button
+                                                type="button"
+                                                className="px-4 py-1.5 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded hover:bg-zinc-50 shadow-sm transition-colors cursor-pointer whitespace-nowrap flex-shrink-0"
+                                                onClick={() => operatorSurface.openThread(primaryThread.id)}
+                                            >
+                                                打开线程
+                                            </button>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </article>
+                    )
+                })}
+            </div>
+        </section>
+    )
+}
+
+export function DailyDigestPanel(props: {
+    window: PrototypeTimeWindow
+    headline: string
+    summary: string
+}) {
+    const { actions, clock } = usePrototypeStore()
+    const windows: PrototypeTimeWindow[] = ['today', 'yesterday', 'last24h']
+
+    return (
+        <section className="flex flex-col gap-5 p-6 bg-white border border-zinc-200 rounded-xl shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
+                <h2 className="text-xl font-semibold text-zinc-900">{props.headline}</h2>
+                <div className="flex items-center bg-zinc-100 p-1 rounded-lg">
+                    {windows.map((window) => (
+                        <button
+                            key={window}
+                            type="button"
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer min-w-[64px] ${window === clock.window ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}
+                            onClick={() => actions.setTimeWindow(window)}
+                        >
+                            {labelTimeWindow(window)}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-3 py-4">
+                <strong className="text-sm font-semibold text-zinc-500 uppercase tracking-wider">{labelTimeWindow(props.window)}</strong>
+                <p className="text-base text-zinc-700 leading-relaxed max-w-3xl">{props.summary}</p>
+            </div>
+        </section>
+    )
+}
+
+export function PlanCardsOverviewPanel(props: {
+    goals: PrototypeGoal[]
+    planCards: PrototypePlanCard[]
+    checkpointId: PrototypeCheckpointId
+}) {
+    const { threads } = usePrototypeStore()
+    const operatorSurface = useOperatorSurface()
+    const [expandedId, setExpandedId] = useState<string | null>(props.planCards[0]?.id ?? null)
+
+    return (
+        <section className="flex flex-col gap-5">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-200">
+                <h2 className="text-xl font-semibold text-zinc-900">计划卡</h2>
+            </div>
+
+            {props.planCards.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-5 py-8 text-sm text-zinc-500">
+                    当前还没有可以操作的计划卡。
+                </div>
+            ) : (
+                <div className="flex flex-col gap-4">
+                    {props.planCards.map((planCard) => {
+                    const goal = props.goals.find((item) => item.id === planCard.goalId)
+                    const view = planPresentation(planCard)
+                    const expanded = expandedId === planCard.id
+                    const relatedThreads = getRelatedThreads(threads, { goalId: planCard.goalId, planId: planCard.id })
+                    const primaryThread = getPrimaryRelatedThread(threads, { goalId: planCard.goalId, planId: planCard.id })
+                    const unresolvedCount = countUnresolvedThreads(relatedThreads)
+
+                    return (
+                        <article key={planCard.id} className={`flex flex-col bg-white border border-zinc-200 rounded-xl shadow-sm transition-all duration-200 overflow-hidden ${expanded ? 'ring-2 ring-blue-500/20' : 'hover:border-zinc-300'}`}>
+                            <button
+                                type="button"
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 w-full text-left focus:outline-none focus-visible:bg-zinc-50 transition-colors"
+                                onClick={() => setExpandedId(expanded ? null : planCard.id)}
+                            >
+                                <div className="flex items-center gap-4 min-w-0">
+                                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex-shrink-0">
+                                        <Glyph name="kanban" />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-xs font-medium text-zinc-500 truncate mb-0.5">{goal ? goalTitle(goal.id) : '未命名目标'}</span>
+                                        <h3 className="text-base font-semibold text-zinc-900 truncate">{view.title}</h3>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-4 flex-shrink-0">
+                                    <MetaBadge tone={planCard.column === 'Done' ? 'success' : planCard.column === 'Review' ? 'accent' : planCard.column === 'Running' ? 'warning' : 'neutral'}>
+                                        {labelPlanColumn(planCard.column)}
+                                    </MetaBadge>
+                                </div>
+                            </button>
+
+                            {expanded ? (
+                                <div className="flex flex-col gap-4 p-5 pt-0 bg-white border-t border-zinc-100">
+                                    <p className="text-sm text-zinc-600 leading-relaxed max-w-3xl mt-4">{planCard.summary}</p>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="flex flex-col gap-1 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
+                                            <span className="text-xs font-medium text-zinc-500 uppercase">当前信号</span>
+                                            <strong className="text-sm font-medium text-zinc-900">{planCard.signal}</strong>
+                                        </div>
+                                        <div className="flex flex-col gap-1 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
+                                            <span className="text-xs font-medium text-zinc-500 uppercase">最近更新</span>
+                                            <strong className="text-sm font-medium text-zinc-900">{planCard.updatedAt}</strong>
+                                        </div>
+                                    </div>
+
+                                    {planCard.badges.length > 0 ? (
+                                        <div className="flex flex-wrap gap-2">
+                                            {planCard.badges.map((badge) => (
+                                                <MetaBadge key={badge}>{labelPlanBadge(badge)}</MetaBadge>
+                                            ))}
+                                        </div>
+                                    ) : null}
+
+                                    <div className="flex flex-wrap items-center gap-3 mt-2 pt-4 border-t border-zinc-100">
+                                        {relatedThreads.length > 0 ? (
+                                            <MetaBadge tone="neutral">
+                                                {unresolvedCount > 0 ? `${unresolvedCount} 条待处理线程` : `${relatedThreads.length} 条相关线程`}
+                                            </MetaBadge>
+                                        ) : null}
+                                        {primaryThread ? (
+                                            <button
+                                                type="button"
+                                                className="px-4 py-1.5 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-md hover:bg-zinc-50 shadow-sm transition-colors cursor-pointer whitespace-nowrap flex-shrink-0"
+                                                onClick={() => operatorSurface.openThread(primaryThread.id)}
+                                            >
+                                                打开线程
+                                            </button>
+                                        ) : null}
+                                        <Link
+                                            to="/goals/$goalId/plans/$planId"
+                                            params={{ goalId: planCard.goalId, planId: planCard.id }}
+                                            className="px-4 py-1.5 text-sm font-medium text-white bg-zinc-900 rounded-md hover:bg-zinc-800 shadow-sm transition-colors ml-auto sm:ml-0 cursor-pointer whitespace-nowrap text-center flex-shrink-0 text-white"
+                                        >
+                                            看卡片明细
+                                        </Link>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="px-5 pb-5 pt-0">
+                                    <p className="text-sm text-zinc-500 truncate">{planCard.summary}</p>
+                                </div>
+                            )}
+                        </article>
+                    )
+                    })}
+                </div>
+            )}
+        </section>
+    )
+}

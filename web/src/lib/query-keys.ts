@@ -3,15 +3,46 @@ export const queryKeys = {
     session: (sessionId: string) => ['session', sessionId] as const,
     messages: (sessionId: string) => ['messages', sessionId] as const,
     machines: ['machines'] as const,
+    machineDirectory: (machineId: string, path: string) => ['machine-directory', machineId, path] as const,
+    projects: ['projects'] as const,
+    workflowStrategies: ['workflow-strategies'] as const,
+    project: (projectId: string) => ['project', projectId] as const,
+    projectAssistant: (projectId: string, goalId: string) => ['project-controller', projectId, goalId] as const,
+    projectController: (projectId: string, goalId: string) => ['project-controller', projectId, goalId] as const,
+    workspaces: (projectId: string) => ['workspaces', projectId] as const,
+    goals: (projectId: string) => ['goals', projectId] as const,
+    goalTodoRoot: ['goal-todo'] as const,
+    goalTodo: (projectId: string, goalId: string) => ['goal-todo', projectId, goalId] as const,
+    goalTopicsRoot: ['goal-topics'] as const,
+    goalTopics: (goalId: string) => ['goal-topics', goalId] as const,
+    tasksRoot: (projectId: string) => ['tasks', projectId] as const,
+    tasks: (projectId: string, goalId?: string | null) => ['tasks', projectId, goalId ?? 'all'] as const,
+    task: (taskId: string) => ['task', taskId] as const,
+    taskPreview: (taskId: string) => ['task-preview', taskId] as const,
+    taskMergeState: (taskId: string) => ['task-merge-state', taskId] as const,
     gitStatus: (sessionId: string) => ['git-status', sessionId] as const,
+    gitCommittedDiff: (sessionId: string, baseRef: string) => ['git-committed-diff', sessionId, baseRef] as const,
+    taskMergedDiffNumstat: (taskId: string, baseRef: string, targetRef: string) => [
+        'task-merged-diff-numstat',
+        taskId,
+        baseRef,
+        targetRef
+    ] as const,
     sessionFiles: (sessionId: string, query: string) => ['session-files', sessionId, query] as const,
     sessionDirectory: (sessionId: string, path: string) => ['session-directory', sessionId, path] as const,
     sessionFile: (sessionId: string, path: string) => ['session-file', sessionId, path] as const,
-    gitFileDiff: (sessionId: string, path: string, staged?: boolean) => [
+    gitFileDiff: (sessionId: string, path: string, options?: { staged?: boolean; baseRef?: string }) => [
         'git-file-diff',
         sessionId,
         path,
-        staged ? 'staged' : 'unstaged'
+        options?.baseRef ? `base:${options.baseRef}` : 'working-tree',
+        options?.staged === true ? 'staged' : options?.staged === false ? 'unstaged' : 'auto'
+    ] as const,
+    taskMergedFileDiff: (taskId: string, path: string, baseRef?: string) => [
+        'task-merged-file-diff',
+        taskId,
+        path,
+        baseRef ?? 'none'
     ] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     skills: (sessionId: string) => ['skills', sessionId] as const,

@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import type { AppendMessage, AttachmentAdapter, ThreadMessageLike } from '@assistant-ui/react'
 import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant-ui/react'
-import { safeStringify } from '@hapi/protocol'
+import { safeStringify } from '@hopi/protocol'
 import { renderEventLabel } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
@@ -16,6 +16,72 @@ export type HappyChatMessageMetadata = {
     event?: AgentEvent
     source?: CliOutputBlock['source']
     attachments?: AttachmentMetadata[]
+}
+
+function getToolGroupState(blocks: ToolCallBlock[]): ToolCallBlock['tool']['state'] {
+    if (blocks.some((block) => block.tool.state === 'running')) return 'running'
+    if (blocks.some((block) => block.tool.state === 'pending')) return 'pending'
+    if (blocks.some((block) => block.tool.state === 'error')) return 'error'
+    return 'completed'
+}
+
+function getToolGroupCompletedAt(blocks: ToolCallBlock[]): number | null {
+    const completedAt = blocks
+        .map((block) => block.tool.completedAt)
+        .filter((value): value is number => typeof value === 'number')
+
+    if (completedAt.length !== blocks.length) return null
+    return Math.max(...completedAt)
+}
+
+function createToolGroupBlock(blocks: ToolCallBlock[]): ToolCallBlock {
+    const first = blocks[0]
+    const id = `tool-group:${first.id}`
+    const startedAtValues = blocks
+        .map((block) => block.tool.startedAt ?? block.tool.createdAt)
+        .filter((value): value is number => typeof value === 'number')
+
+    return {
+        kind: 'tool-call',
+        id,
+        localId: null,
+        createdAt: first.createdAt,
+        tool: {
+            id,
+            name: 'ToolGroup',
+            state: getToolGroupState(blocks),
+            input: { count: blocks.length },
+            createdAt: first.tool.createdAt,
+            startedAt: startedAtValues.length > 0 ? Math.min(...startedAtValues) : null,
+            completedAt: getToolGroupCompletedAt(blocks),
+            description: null,
+        },
+        children: blocks,
+    }
+}
+
+export function groupConsecutiveToolBlocks(blocks: readonly ChatBlock[]): ChatBlock[] {
+    const grouped: ChatBlock[] = []
+    let pendingTools: ToolCallBlock[] = []
+
+    const flushPendingTools = () => {
+        if (pendingTools.length === 0) return
+        grouped.push(pendingTools.length === 1 ? pendingTools[0] : createToolGroupBlock(pendingTools))
+        pendingTools = []
+    }
+
+    for (const block of blocks) {
+        if (block.kind === 'tool-call') {
+            pendingTools.push(block)
+            continue
+        }
+
+        flushPendingTools()
+        grouped.push(block)
+    }
+
+    flushPendingTools()
+    return grouped
 }
 
 function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
@@ -176,13 +242,17 @@ export function useHappyRuntime(props: {
     onAbort: () => Promise<void>
     attachmentAdapter?: AttachmentAdapter
     allowSendWhenInactive?: boolean
+    isRunning?: boolean
 }) {
+    const isRunning = props.isRunning ?? props.session.thinking
+    const groupedBlocks = useMemo(() => groupConsecutiveToolBlocks(props.blocks), [props.blocks])
+
     // Use cached message converter for performance optimization
     // This prevents re-converting all messages on every render
     const convertedMessages = useExternalMessageConverter<ChatBlock>({
         callback: toThreadMessageLike,
-        messages: props.blocks as ChatBlock[],
-        isRunning: props.session.thinking,
+        messages: groupedBlocks,
+        isRunning,
     })
 
     const onNew = useCallback(async (message: AppendMessage) => {
@@ -199,7 +269,7 @@ export function useHappyRuntime(props: {
     // useExternalStoreRuntime may use adapter identity for subscriptions
     const adapter = useMemo(() => ({
         isDisabled: props.isSending || (!props.session.active && !props.allowSendWhenInactive),
-        isRunning: props.session.thinking,
+        isRunning,
         messages: convertedMessages,
         onNew,
         onCancel,
@@ -209,7 +279,7 @@ export function useHappyRuntime(props: {
         props.session.active,
         props.isSending,
         props.allowSendWhenInactive,
-        props.session.thinking,
+        isRunning,
         convertedMessages,
         onNew,
         onCancel,

@@ -4,7 +4,11 @@ import type { EnhancedMode } from './loop';
 
 const harness = vi.hoisted(() => ({
     notifications: [] as Array<{ method: string; params: unknown }>,
-    registerRequestCalls: [] as string[]
+    registerRequestCalls: [] as string[],
+    startTurnParams: [] as Array<Record<string, unknown>>,
+    failOnCollaboration: false,
+    emitPlanUpdate: false,
+    startTurnErrorMessage: null as string | null
 }));
 
 vi.mock('./codexAppServerClient', () => {
@@ -33,10 +37,30 @@ vi.mock('./codexAppServerClient', () => {
             return { thread: { id: 'thread-anonymous' } };
         }
 
-        async startTurn(): Promise<{ turn: Record<string, never> }> {
+        async startTurn(params: Record<string, unknown>): Promise<{ turn: Record<string, never> }> {
+            harness.startTurnParams.push(params);
+            if (harness.failOnCollaboration && 'collaborationMode' in params) {
+                throw new Error('Invalid params: unknown field collaborationMode');
+            }
+            if (typeof harness.startTurnErrorMessage === 'string') {
+                throw new Error(harness.startTurnErrorMessage);
+            }
             const started = { turn: {} };
             harness.notifications.push({ method: 'turn/started', params: started });
             this.notificationHandler?.('turn/started', started);
+
+            if (harness.emitPlanUpdate) {
+                const planUpdated = {
+                    turnId: 'turn-plan-1',
+                    explanation: 'Split work into plan steps.',
+                    plan: [
+                        { step: 'Inspect files', status: 'pending' },
+                        { step: 'Apply patch', status: 'inProgress' }
+                    ]
+                };
+                harness.notifications.push({ method: 'turn/plan/updated', params: planUpdated });
+                this.notificationHandler?.('turn/plan/updated', planUpdated);
+            }
 
             const completed = { status: 'Completed', turn: {} };
             harness.notifications.push({ method: 'turn/completed', params: completed });
@@ -55,15 +79,6 @@ vi.mock('./codexAppServerClient', () => {
     return { CodexAppServerClient: MockCodexAppServerClient };
 });
 
-vi.mock('./utils/buildHapiMcpBridge', () => ({
-    buildHapiMcpBridge: async () => ({
-        server: {
-            stop: () => {}
-        },
-        mcpServers: {}
-    })
-}));
-
 import { codexRemoteLauncher } from './codexRemoteLauncher';
 
 type FakeAgentState = {
@@ -71,15 +86,16 @@ type FakeAgentState = {
     completedRequests: Record<string, unknown>;
 };
 
-function createMode(): EnhancedMode {
+function createMode(collaborationMode?: EnhancedMode['collaborationMode']): EnhancedMode {
     return {
-        permissionMode: 'default'
+        permissionMode: 'default',
+        ...(collaborationMode ? { collaborationMode } : {})
     };
 }
 
-function createSessionStub() {
+function createSessionStub(mode: EnhancedMode = createMode()) {
     const queue = new MessageQueue2<EnhancedMode>((mode) => JSON.stringify(mode));
-    queue.push('hello from launcher test', createMode());
+    queue.push('hello from launcher test', mode);
     queue.close();
 
     const sessionEvents: Array<{ type: string; [key: string]: unknown }> = [];
@@ -111,13 +127,18 @@ function createSessionStub() {
     };
 
     const session = {
-        path: '/tmp/hapi-update',
-        logPath: '/tmp/hapi-update/test.log',
+        path: '/tmp/hopi-update',
+        logPath: '/tmp/hopi-update/test.log',
         client,
         queue,
         codexArgs: undefined,
         codexCliOverrides: undefined,
         sessionId: null as string | null,
+        permissionMode: 'default' as EnhancedMode['permissionMode'],
+        getPermissionMode() {
+            return session.permissionMode;
+        },
+        setPermissionHandler(_handler: unknown) {},
         thinking: false,
         onThinkingChange(nextThinking: boolean) {
             session.thinking = nextThinking;
@@ -153,6 +174,10 @@ describe('codexRemoteLauncher', () => {
     afterEach(() => {
         harness.notifications = [];
         harness.registerRequestCalls = [];
+        harness.startTurnParams = [];
+        harness.failOnCollaboration = false;
+        harness.emitPlanUpdate = false;
+        harness.startTurnErrorMessage = null;
         delete process.env.CODEX_USE_MCP_SERVER;
     });
 
@@ -170,8 +195,76 @@ describe('codexRemoteLauncher', () => {
         expect(exitReason).toBe('exit');
         expect(foundSessionIds).toContain('thread-anonymous');
         expect(harness.notifications.map((entry) => entry.method)).toEqual(['turn/started', 'turn/completed']);
-        expect(sessionEvents.filter((event) => event.type === 'ready').length).toBeGreaterThanOrEqual(1);
+        const readyEvents = sessionEvents.filter((event) => event.type === 'ready');
+        expect(readyEvents.length).toBeGreaterThanOrEqual(1);
+        expect(readyEvents.every((event) => event.hasAssistantReply === false)).toBe(true);
         expect(thinkingChanges).toContain(true);
         expect(session.thinking).toBe(false);
+    });
+
+    it('retries without collaboration mode when app-server rejects collaborationMode', async () => {
+        harness.failOnCollaboration = true;
+        const {
+            session,
+            sessionEvents
+        } = createSessionStub(createMode('plan'));
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.startTurnParams).toHaveLength(2);
+        expect(harness.startTurnParams[0]).toHaveProperty('collaborationMode');
+        expect(harness.startTurnParams[1]).not.toHaveProperty('collaborationMode');
+        expect(sessionEvents.some((event) => event.type === 'message' && event.message === 'Process exited unexpectedly')).toBe(false);
+        expect(
+            sessionEvents.some((event) =>
+                event.type === 'message'
+                && typeof event.message === 'string'
+                && event.message.includes('Falling back to default mode')
+            )
+        ).toBe(true);
+    });
+
+    it('emits codex plan messages for turn plan updates', async () => {
+        harness.emitPlanUpdate = true;
+        const {
+            session,
+            codexMessages,
+            sessionEvents
+        } = createSessionStub(createMode('plan'));
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(
+            codexMessages.some((message) => {
+                if (!message || typeof message !== 'object') return false;
+                const record = message as Record<string, unknown>;
+                return record.type === 'plan'
+                    && Array.isArray(record.entries)
+                    && record.entries.length === 2;
+            })
+        ).toBe(true);
+        const readyEvents = sessionEvents.filter((event) => event.type === 'ready');
+        expect(readyEvents.length).toBeGreaterThanOrEqual(1);
+        expect(readyEvents.some((event) => event.hasAssistantReply === true)).toBe(true);
+    });
+
+    it('emits structured process-exited errors with launcher detail', async () => {
+        harness.startTurnErrorMessage = 'Codex app-server exited (code=1, signal=null)';
+        const {
+            session,
+            sessionEvents
+        } = createSessionStub();
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(sessionEvents).toContainEqual({
+            type: 'error',
+            message: 'Process exited unexpectedly: Codex app-server exited (code=1, signal=null)',
+            reason: 'process-exited'
+        });
+        expect(sessionEvents.some((event) => event.type === 'message' && event.message === 'Process exited unexpectedly')).toBe(false);
     });
 });

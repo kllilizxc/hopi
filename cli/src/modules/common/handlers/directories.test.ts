@@ -21,7 +21,7 @@ describe('directory RPC handlers', () => {
             await rm(rootDir, { recursive: true, force: true })
         }
 
-        rootDir = await createTempDir('hapi-dir-handler')
+        rootDir = await createTempDir('hopi-dir-handler')
         await mkdir(join(rootDir, 'src'), { recursive: true })
         await writeFile(join(rootDir, 'src', 'index.ts'), 'console.log("ok")')
         await writeFile(join(rootDir, 'README.md'), '# test')
@@ -36,12 +36,47 @@ describe('directory RPC handlers', () => {
             params: JSON.stringify({ path: '' })
         })
 
-        const parsed = JSON.parse(response) as { success: boolean; entries?: Array<{ name: string; type: string }> }
+        const parsed = JSON.parse(response) as {
+            success: boolean
+            path?: string
+            entries?: Array<{ name: string; type: string }>
+        }
         expect(parsed.success).toBe(true)
+        expect(parsed.path).toBe(rootDir)
 
         const names = (parsed.entries ?? []).map((entry) => entry.name)
         expect(names).toContain('src')
         expect(names).toContain('README.md')
+    })
+
+    it('lists a scoped cwd directory via listDirectory', async () => {
+        const response = await rpc.handleRequest({
+            method: 'session-test:listDirectory',
+            params: JSON.stringify({ cwd: 'src', path: '' })
+        })
+
+        const parsed = JSON.parse(response) as {
+            success: boolean
+            path?: string
+            entries?: Array<{ name: string; type: string }>
+        }
+        expect(parsed.success).toBe(true)
+        expect(parsed.path).toBe(join(rootDir, 'src'))
+
+        const names = (parsed.entries ?? []).map((entry) => entry.name)
+        expect(names).toContain('index.ts')
+        expect(names).not.toContain('README.md')
+    })
+
+    it('rejects path traversal outside cwd when cwd is provided', async () => {
+        const response = await rpc.handleRequest({
+            method: 'session-test:listDirectory',
+            params: JSON.stringify({ cwd: 'src', path: '..' })
+        })
+
+        const parsed = JSON.parse(response) as { success: boolean; error?: string }
+        expect(parsed.success).toBe(false)
+        expect(parsed.error ?? '').toContain('outside the working directory')
     })
 
     it('skips symlink stat in listDirectory', async () => {

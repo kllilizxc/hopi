@@ -9,13 +9,13 @@ import { apiValidationError } from '@/utils/errorUtils'
 import { AsyncLock } from '@/utils/lock'
 import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
-import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hapi/protocol'
+import type { ClientToServerEvents, Goal, GoalDecisionTopic, ServerToClientEvents, Task, Update } from '@hopi/protocol'
 import {
     TerminalClosePayloadSchema,
     TerminalOpenPayloadSchema,
     TerminalResizePayloadSchema,
     TerminalWritePayloadSchema
-} from '@hapi/protocol'
+} from '@hopi/protocol'
 import type {
     AgentState,
     MessageContent,
@@ -32,6 +32,7 @@ import { registerCommonHandlers } from '../modules/common/registerCommonHandlers
 import { cleanupUploadDir } from '../modules/common/handlers/uploads'
 import { TerminalManager } from '@/terminal/TerminalManager'
 import { applyVersionedAck } from './versionedUpdate'
+import { PreviewManager } from '@/runner/previewManager'
 
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
@@ -43,12 +44,14 @@ export class ApiSessionClient extends EventEmitter {
     private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
     private pendingMessages: UserMessage[] = []
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null
+    private webApiToken: { token: string; expiresAt: number } | null = null
     private lastSeenMessageSeq: number | null = null
     private backfillInFlight: Promise<void> | null = null
     private needsBackfill = false
     private hasConnectedOnce = false
     readonly rpcHandlerManager: RpcHandlerManager
     private readonly terminalManager: TerminalManager
+    private readonly previewManager: PreviewManager
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
 
@@ -65,10 +68,42 @@ export class ApiSessionClient extends EventEmitter {
             scopePrefix: this.sessionId,
             logger: (msg, data) => logger.debug(msg, data)
         })
+        this.previewManager = new PreviewManager()
 
         if (this.metadata?.path) {
             registerCommonHandlers(this.rpcHandlerManager, this.metadata.path)
         }
+
+        this.rpcHandlerManager.registerHandler('preview-start', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : ''
+            const rootPath = typeof params?.rootPath === 'string' ? params.rootPath.trim() : ''
+            const mode = params?.mode === 'worktree' ? 'worktree' : 'local'
+            const basePort = typeof params?.basePort === 'number' ? params.basePort : undefined
+
+            if (!taskId) {
+                throw new Error('Task ID is required')
+            }
+            if (!rootPath) {
+                throw new Error('Root path is required')
+            }
+
+            return await this.previewManager.start({
+                taskId,
+                sessionId: this.sessionId,
+                rootPath,
+                mode,
+                basePort
+            })
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-status', () => {
+            return this.previewManager.getState()
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-stop', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : undefined
+            return await this.previewManager.stop({ taskId })
+        })
 
         this.socket = io(`${configuration.apiUrl}/cli`, {
             auth: {
@@ -85,13 +120,24 @@ export class ApiSessionClient extends EventEmitter {
             autoConnect: false
         })
 
+        const emitTerminalEvent = (
+            event: 'terminal:ready' | 'terminal:output' | 'terminal:exit' | 'terminal:error',
+            payload: Record<string, unknown>
+        ): void => {
+            // Socket.IO buffers emits while disconnected; drop live terminal events to avoid stale replay.
+            if (!this.socket.connected) {
+                return
+            }
+            this.socket.emit(event, payload as never)
+        }
+
         this.terminalManager = new TerminalManager({
             sessionId: this.sessionId,
             getSessionPath: () => this.metadata?.path ?? null,
-            onReady: (payload) => this.socket.emit('terminal:ready', payload),
-            onOutput: (payload) => this.socket.emit('terminal:output', payload),
-            onExit: (payload) => this.socket.emit('terminal:exit', payload),
-            onError: (payload) => this.socket.emit('terminal:error', payload)
+            onReady: (payload) => emitTerminalEvent('terminal:ready', payload),
+            onOutput: (payload) => emitTerminalEvent('terminal:output', payload),
+            onExit: (payload) => emitTerminalEvent('terminal:exit', payload),
+            onError: (payload) => emitTerminalEvent('terminal:error', payload)
         })
 
         this.socket.on('connect', () => {
@@ -116,7 +162,11 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
             this.rpcHandlerManager.onSocketDisconnect()
-            this.terminalManager.closeAll()
+            // Keep terminal subprocesses alive across transient transport drops.
+            // They are explicitly closed in close(), and on terminal:close events from hub.
+            if (reason === 'io client disconnect' || reason === 'io server disconnect') {
+                this.terminalManager.closeAll()
+            }
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
@@ -237,6 +287,189 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.emit('message', message.content)
+    }
+
+    getSessionMetadata(): Metadata | null {
+        return this.metadata
+    }
+
+    private async getWebApiToken(): Promise<string> {
+        if (this.webApiToken && this.webApiToken.expiresAt > Date.now() + 30_000) {
+            return this.webApiToken.token
+        }
+
+        const response = await axios.post(
+            `${configuration.apiUrl}/api/auth`,
+            { accessToken: this.token },
+            {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 15_000
+            }
+        )
+        const token = typeof response.data?.token === 'string' ? response.data.token : null
+        if (!token) {
+            throw apiValidationError('Invalid /api/auth response', response)
+        }
+
+        this.webApiToken = {
+            token,
+            expiresAt: Date.now() + 14 * 60_000
+        }
+        return token
+    }
+
+    private async webApiRequest<T>(options: {
+        method: 'GET' | 'POST' | 'PATCH'
+        path: string
+        body?: unknown
+        params?: Record<string, string | boolean | undefined>
+    }): Promise<T> {
+        const token = await this.getWebApiToken()
+        const query = new URLSearchParams()
+        for (const [key, value] of Object.entries(options.params ?? {})) {
+            if (value !== undefined) {
+                query.set(key, String(value))
+            }
+        }
+        const queryText = query.toString()
+        const url = `${configuration.apiUrl}${options.path}${queryText ? `?${queryText}` : ''}`
+        const response = await axios.request<T>({
+            method: options.method,
+            url,
+            data: options.body,
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30_000
+        })
+        return response.data
+    }
+
+    async getTask(taskId: string): Promise<Task | null> {
+        try {
+            const data = await this.webApiRequest<{ task?: unknown }>({
+                method: 'GET',
+                path: `/api/tasks/${encodeURIComponent(taskId)}`
+            })
+            return data.task && typeof data.task === 'object' ? data.task as Task : null
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return null
+            }
+            throw error
+        }
+    }
+
+    async createTask(projectId: string, input: {
+        title: string
+        description?: string
+        goalId?: string
+        status?: string
+        priority?: string
+        workflowProfile: string
+        contract?: string
+        agentFlavor?: string
+        model?: string
+        modelMode?: string | null
+        source?: string
+    }): Promise<Task> {
+        const data = await this.webApiRequest<{ task?: unknown }>({
+            method: 'POST',
+            path: `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+            body: input
+        })
+        if (!data.task || typeof data.task !== 'object') {
+            throw new Error('Invalid create task response')
+        }
+        return data.task as Task
+    }
+
+    async listProjectTasks(projectId: string, options?: {
+        goalId?: string
+        includeArchived?: boolean
+    }): Promise<Task[]> {
+        const data = await this.webApiRequest<{ tasks?: unknown }>({
+            method: 'GET',
+            path: `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+            params: {
+                goalId: options?.goalId,
+                includeArchived: options?.includeArchived
+            }
+        })
+        return Array.isArray(data.tasks) ? data.tasks as Task[] : []
+    }
+
+    async updateTask(taskId: string, input: {
+        title?: string
+        description?: string | null
+        status?: string
+        priority?: string | null
+        contract?: string | null
+        handoff?: string | null
+        evidence?: string | null
+        source?: string
+    }): Promise<Task> {
+        const data = await this.webApiRequest<{ task?: unknown }>({
+            method: 'PATCH',
+            path: `/api/tasks/${encodeURIComponent(taskId)}`,
+            body: input
+        })
+        if (!data.task || typeof data.task !== 'object') {
+            throw new Error('Invalid update task response')
+        }
+        return data.task as Task
+    }
+
+    async mergeTaskWorktree(taskId: string, payload?: {
+        targetBranch?: string
+        conflictStrategy?: 'manual' | 'agent'
+    }): Promise<{
+        ok: boolean
+        commitHash?: string | null
+        skippedReason?: string | null
+        mergedAt?: number | null
+    }> {
+        return await this.webApiRequest({
+            method: 'POST',
+            path: `/api/tasks/${encodeURIComponent(taskId)}/worktree/merge`,
+            body: payload ?? {}
+        })
+    }
+
+    async updateGoal(goalId: string, input: {
+        status?: string
+        currentFocus?: string | null
+        successCriteria?: string | null
+        autopilotEnabled?: boolean
+        deployRequiresApproval?: boolean
+    }): Promise<Goal> {
+        const data = await this.webApiRequest<{ goal?: unknown }>({
+            method: 'PATCH',
+            path: `/api/goals/${encodeURIComponent(goalId)}`,
+            body: input
+        })
+        if (!data.goal || typeof data.goal !== 'object') {
+            throw new Error('Invalid update goal response')
+        }
+        return data.goal as Goal
+    }
+
+    async createGoalDecisionTopic(goalId: string, input: {
+        taskId?: string | null
+        title: string
+        body: string
+        blocking?: boolean
+    }): Promise<GoalDecisionTopic> {
+        const data = await this.webApiRequest<{ topic?: unknown }>({
+            method: 'POST',
+            path: `/api/goals/${encodeURIComponent(goalId)}/topics`,
+            body: input
+        })
+        if (!data.topic || typeof data.topic !== 'object') {
+            throw new Error('Invalid create decision topic response')
+        }
+        return data.topic as GoalDecisionTopic
     }
 
     private async backfillIfNeeded(): Promise<void> {
@@ -415,10 +648,16 @@ export class ApiSessionClient extends EventEmitter {
         type: 'message'
         message: string
     } | {
+        type: 'error'
+        message: string
+        reason?: 'aborted' | 'process-exited' | 'prompt-failed' | 'task-failed' | 'unknown'
+    } | {
         type: 'permission-mode-changed'
         mode: SessionPermissionMode
     } | {
         type: 'ready'
+        forLocalKey?: string
+        hasAssistantReply?: boolean
     }, id?: string): void {
         const content = {
             role: 'agent',
@@ -438,9 +677,19 @@ export class ApiSessionClient extends EventEmitter {
     keepAlive(
         thinking: boolean,
         mode: 'local' | 'remote',
-        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode }
+        runtime?: { permissionMode?: SessionPermissionMode; modelMode?: SessionModelMode },
+        options?: { volatile?: boolean }
     ): void {
-        this.socket.volatile.emit('session-alive', {
+        const volatile = options?.volatile === true
+
+        // Avoid buffering keep-alive events while disconnected.
+        // (Socket.IO will queue non-volatile emits in-memory and flush on reconnect; keepAlive is frequent.)
+        if (!this.socket.connected) {
+            return
+        }
+
+        const emitter = volatile ? this.socket.volatile : this.socket
+        emitter.emit('session-alive', {
             sid: this.sessionId,
             time: Date.now(),
             thinking,
@@ -617,6 +866,7 @@ export class ApiSessionClient extends EventEmitter {
     close(): void {
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
+        void this.previewManager.stop()
         this.socket.disconnect()
     }
 }

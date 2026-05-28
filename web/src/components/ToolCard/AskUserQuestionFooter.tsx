@@ -258,7 +258,7 @@ export function AskUserQuestionFooter(props: {
     }
 
     return (
-        <div className="mt-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+        <div className="mt-3 rounded-lg app-shadow-border bg-[var(--app-bg)] p-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -288,7 +288,7 @@ export function AskUserQuestionFooter(props: {
                         onChange={(e) => setFallbackText(e.target.value)}
                         disabled={props.disabled || loading}
                         placeholder={t('tool.askUserQuestion.placeholder')}
-                        className="mt-2 w-full min-h-[88px] resize-y rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent disabled:opacity-50"
+                        className="mt-2 w-full min-h-[88px] resize-y rounded-md app-shadow-border bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] disabled:opacity-50"
                     />
                 </div>
             ) : (
@@ -344,7 +344,7 @@ export function AskUserQuestionFooter(props: {
                                 onChange={(e) => updateOtherText(clampedStep, e.target.value)}
                                 disabled={props.disabled || loading}
                                 placeholder={t('tool.askUserQuestion.otherPlaceholder')}
-                                className="mt-2 w-full min-h-[88px] resize-y rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] focus:border-transparent disabled:opacity-50"
+                                className="mt-2 w-full min-h-[88px] resize-y rounded-md app-shadow-border bg-[var(--app-bg)] px-3 py-2 text-sm text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-2 focus:ring-[var(--app-button)] disabled:opacity-50"
                             />
                         ) : null}
                     </div>

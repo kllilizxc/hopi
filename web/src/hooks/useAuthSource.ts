@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getTelegramWebApp, isTelegramEnvironment } from './useTelegram'
 import type { AuthSource } from './useAuth'
+import { productStorageNamespaceKey } from '@hopi/protocol/brand'
 
-const ACCESS_TOKEN_PREFIX = 'hapi_access_token::'
+const ACCESS_TOKEN_PREFIX = `${productStorageNamespaceKey('access-token')}::`
 
 function getTelegramInitData(): string | null {
     const tg = getTelegramWebApp()

@@ -3,9 +3,14 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
+import { resolveHubUrl } from './vite.config.helpers'
 
 const require = createRequire(import.meta.url)
 const base = process.env.VITE_BASE_URL || '/'
+const webPortEnv = process.env.HOPI_WEB_PORT?.trim()
+const webPort = webPortEnv ? Number.parseInt(webPortEnv, 10) : null
+
+const hubUrl = resolveHubUrl()
 
 export default defineConfig({
     define: {
@@ -13,14 +18,17 @@ export default defineConfig({
     },
     server: {
         host: true,
-        allowedHosts: ['hapidev.weishu.me'],
+        port: webPort ?? undefined,
+        allowedHosts: ['hopidev.weishu.me', 'macbook-pro-2.tailfbf761.ts.net', 'macbook-pro-2.tailfbf761.ts.net'],
+        // Only enforce strict port when caller explicitly pinned the port (preview mode).
+        strictPort: Boolean(webPortEnv),
         proxy: {
             '/api': {
-                target: 'http://127.0.0.1:3006',
+                target: hubUrl,
                 changeOrigin: true
             },
             '/socket.io': {
-                target: 'http://127.0.0.1:3006',
+                target: hubUrl,
                 ws: true
             }
         }
@@ -34,8 +42,8 @@ export default defineConfig({
             srcDir: 'src',
             filename: 'sw.ts',
             manifest: {
-                name: 'HAPI',
-                short_name: 'HAPI',
+                name: 'HOPI',
+                short_name: 'HOPI',
                 description: 'AI-powered development assistant',
                 theme_color: '#ffffff',
                 background_color: '#ffffff',

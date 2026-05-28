@@ -1,4 +1,4 @@
-import { TerminalOpenPayloadSchema } from '@hapi/protocol'
+import { TerminalOpenPayloadSchema } from '@hopi/protocol'
 import { z } from 'zod'
 import type { TerminalRegistry, TerminalRegistryEntry } from '../terminalRegistry'
 import type { SocketServer, SocketWithData } from '../socketTypes'
@@ -198,8 +198,13 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
         emitCloseToCli(entry)
     })
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
         const removed = terminalRegistry.removeBySocket(socket.id)
+        // Only close PTYs on explicit client disconnect. For transient network drops,
+        // keep processes alive and let reconnect open/rebind without forced SIGTERM.
+        if (reason !== 'client namespace disconnect') {
+            return
+        }
         for (const entry of removed) {
             emitCloseToCli(entry)
         }

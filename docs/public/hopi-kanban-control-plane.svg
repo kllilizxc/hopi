@@ -1,0 +1,73 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Goal-native Kanban control plane</title>
+  <desc id="desc">A diagram showing candidate, planned, in progress, in review, merging, and done workflow states, with decision and dependency blockers influencing scheduling.</desc>
+  <rect width="1280" height="640" rx="28" fill="#F7F8F2"/>
+  <text x="64" y="72" fill="#171717" font-family="Inter, Arial, sans-serif" font-size="31" font-weight="700">Kanban is the executable control plane</text>
+  <text x="64" y="106" fill="#5B5B55" font-family="Inter, Arial, sans-serif" font-size="17">Cards are not just visual tasks; they define dispatch eligibility, blockers, dependencies, review gates, and merge completion.</text>
+
+  <rect x="62" y="154" width="1156" height="324" rx="22" fill="#FFFFFF" stroke="#DADAD2" stroke-width="2"/>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="92" y="196" width="166" height="228" rx="14" fill="#F4F2EA" stroke="#CEC8B8"/>
+    <text x="116" y="231" fill="#222" font-size="17" font-weight="700">candidate</text>
+    <text x="116" y="260" fill="#666" font-size="14">reservoir</text>
+    <rect x="116" y="292" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#D6D0C0"/>
+    <text x="135" y="318" fill="#666" font-size="13">future work</text>
+    <rect x="116" y="348" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#D6D0C0"/>
+    <text x="135" y="374" fill="#666" font-size="13">planner ask</text>
+
+    <rect x="292" y="196" width="166" height="228" rx="14" fill="#EEF6F8" stroke="#B9CED6"/>
+    <text x="316" y="231" fill="#222" font-size="17" font-weight="700">planned</text>
+    <text x="316" y="260" fill="#666" font-size="14">dispatch pool</text>
+    <rect x="316" y="292" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#B9CED6"/>
+    <text x="334" y="318" fill="#666" font-size="13">ready task</text>
+    <rect x="316" y="348" width="118" height="42" rx="10" fill="#FFF5EA" stroke="#E0BE96"/>
+    <text x="331" y="374" fill="#8B5E25" font-size="13">blocked badge</text>
+
+    <rect x="492" y="196" width="166" height="228" rx="14" fill="#F0F5EC" stroke="#C5D0B9"/>
+    <text x="516" y="231" fill="#222" font-size="17" font-weight="700">in_progress</text>
+    <text x="516" y="260" fill="#666" font-size="14">generator active</text>
+    <rect x="516" y="292" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#C5D0B9"/>
+    <text x="535" y="318" fill="#666" font-size="13">worktree run</text>
+    <rect x="516" y="348" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#C5D0B9"/>
+    <text x="542" y="374" fill="#666" font-size="13">patches</text>
+
+    <rect x="692" y="196" width="166" height="228" rx="14" fill="#F4F0F8" stroke="#CCBFD9"/>
+    <text x="716" y="231" fill="#222" font-size="17" font-weight="700">in_review</text>
+    <text x="716" y="260" fill="#666" font-size="14">acceptance gate</text>
+    <rect x="716" y="292" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#CCBFD9"/>
+    <text x="735" y="318" fill="#666" font-size="13">review pass</text>
+    <rect x="716" y="348" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#CCBFD9"/>
+    <text x="734" y="374" fill="#666" font-size="13">send back</text>
+
+    <rect x="892" y="196" width="166" height="228" rx="14" fill="#FFF5EA" stroke="#DFC29D"/>
+    <text x="916" y="231" fill="#222" font-size="17" font-weight="700">merging</text>
+    <text x="916" y="260" fill="#666" font-size="14">merge / repair</text>
+    <rect x="916" y="292" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#DFC29D"/>
+    <text x="942" y="318" fill="#666" font-size="13">merge</text>
+    <rect x="916" y="348" width="118" height="42" rx="10" fill="#FFFFFF" stroke="#DFC29D"/>
+    <text x="940" y="374" fill="#666" font-size="13">repair</text>
+
+    <rect x="1092" y="196" width="96" height="228" rx="14" fill="#EEF1EA" stroke="#C7CDBD"/>
+    <text x="1116" y="231" fill="#222" font-size="17" font-weight="700">done</text>
+    <text x="1116" y="260" fill="#666" font-size="14">merged</text>
+  </g>
+
+  <path d="M258 310H292" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M458 310H492" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M658 310H692" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M858 310H892" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M1058 310H1092" stroke="#72786B" stroke-width="3" stroke-linecap="round"/>
+
+  <rect x="166" y="516" width="270" height="72" rx="16" fill="#FFF8EF" stroke="#DFC29D"/>
+  <text x="194" y="548" fill="#2C1F10" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Decision blockers</text>
+  <text x="194" y="573" fill="#625548" font-family="Inter, Arial, sans-serif" font-size="14">explicit topics in decisions.yml</text>
+
+  <rect x="504" y="516" width="270" height="72" rx="16" fill="#EEF6F8" stroke="#B9CED6"/>
+  <text x="532" y="548" fill="#10242B" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Dependency blockers</text>
+  <text x="532" y="573" fill="#40575F" font-family="Inter, Arial, sans-serif" font-size="14">stable refs in dependencyTaskList</text>
+
+  <rect x="842" y="516" width="270" height="72" rx="16" fill="#F0F5EC" stroke="#C5D0B9"/>
+  <text x="870" y="548" fill="#182018" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700">Lane capacity</text>
+  <text x="870" y="573" fill="#4C5840" font-family="Inter, Arial, sans-serif" font-size="14">scheduler starts only eligible work</text>
+</svg>

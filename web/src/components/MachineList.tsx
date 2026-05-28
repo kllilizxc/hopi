@@ -1,11 +1,6 @@
 import type { Machine } from '@/types/api'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
+import { getMachineDisplayTitle } from '@/lib/displayNames'
 
 export function MachineList(props: {
     machines: Machine[]
@@ -25,7 +20,7 @@ export function MachineList(props: {
                         onClick={() => props.onSelect(m.id)}
                     >
                         <CardHeader className="pb-2">
-                            <CardTitle className="truncate">{getMachineTitle(m)}</CardTitle>
+                            <CardTitle className="truncate">{getMachineDisplayTitle(m)}</CardTitle>
                             <CardDescription className="truncate">
                                 {m.metadata?.platform ? m.metadata.platform : 'Unknown platform'}
                             </CardDescription>

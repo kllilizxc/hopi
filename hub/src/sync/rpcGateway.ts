@@ -1,6 +1,11 @@
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import { ListDirectoryResponseSchema } from '@hopi/protocol/schemas'
+import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
+import type { DirectoryEntry as SharedDirectoryEntry, ListDirectoryResponse as SharedListDirectoryResponse } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
+
+const DEFAULT_RPC_TIMEOUT_MS = 30_000
+const WORKTREE_MERGE_RPC_TIMEOUT_MS = 90_000
 
 export type RpcCommandResponse = {
     success: boolean
@@ -16,6 +21,12 @@ export type RpcReadFileResponse = {
     error?: string
 }
 
+export type RpcWriteFileResponse = {
+    success: boolean
+    hash?: string
+    error?: string
+}
+
 export type RpcUploadFileResponse = {
     success: boolean
     path?: string
@@ -27,21 +38,98 @@ export type RpcDeleteUploadResponse = {
     error?: string
 }
 
-export type RpcDirectoryEntry = {
-    name: string
-    type: 'file' | 'directory' | 'other'
-    size?: number
-    modified?: number
-}
-
-export type RpcListDirectoryResponse = {
-    success: boolean
-    entries?: RpcDirectoryEntry[]
-    error?: string
-}
+export type RpcDirectoryEntry = SharedDirectoryEntry
+export type RpcListDirectoryResponse = SharedListDirectoryResponse
 
 export type RpcPathExistsResponse = {
     exists: Record<string, boolean>
+}
+
+export type RpcGitAutocommitWorktreeResponse = {
+    success: boolean
+    commitHash?: string
+    skippedReason?: 'clean'
+    stdout?: string
+    stderr?: string
+    error?: string
+}
+
+export type RpcGitMergeWorktreeResponse = {
+    success: boolean
+    commitHash?: string
+    skippedReason?: 'no_changes'
+    conflictFiles?: string[]
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcGitRemoveWorktreeResponse = {
+    success: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcGitMergeWorktreeStateResponse = {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    hasWorkingTreeChanges?: boolean
+    committedChangedCount?: number
+    mergeable?: boolean
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcGitCaptureWorktreeMergeSnapshotResponse = {
+    success: boolean
+    targetBranch?: string
+    sourceBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcGitVerifyWorktreeMergeResponse = {
+    success: boolean
+    verified?: boolean
+    targetBranch?: string
+    mergeBase?: string
+    snapshotRef?: string
+    expectedChangeCount?: number
+    targetHead?: string
+    stdout?: string
+    stderr?: string
+    exitCode?: number
+    error?: string
+}
+
+export type RpcPreviewStatus = {
+    active: boolean
+    status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+    taskId?: string
+    sessionId?: string
+    mode?: 'local' | 'worktree'
+    rootPath?: string
+    runPath?: string
+    command?: string
+    port?: number
+    url?: string
+    pid?: number
+    startedAt?: number
+    updatedAt: number
+    error?: string
+    logTail: string[]
 }
 
 export class RpcGateway {
@@ -94,6 +182,7 @@ export class RpcGateway {
         config: {
             permissionMode?: PermissionMode
             modelMode?: ModelMode
+            collaborationMode?: string
         }
     ): Promise<unknown> {
         return await this.sessionRpc(sessionId, 'set-session-config', config)
@@ -111,13 +200,26 @@ export class RpcGateway {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        resumeSessionId?: string
+        resumeSessionId?: string,
+        worktreeWorkspacePaths?: string[],
+        worktreeTargetBranch?: string
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
                 machineId,
                 'spawn-happy-session',
-                { type: 'spawn-in-directory', directory, agent, model, yolo, sessionType, worktreeName, resumeSessionId }
+                {
+                    type: 'spawn-in-directory',
+                    directory,
+                    worktreeWorkspacePaths,
+                    agent,
+                    model,
+                    yolo,
+                    sessionType,
+                    worktreeName,
+                    resumeSessionId,
+                    worktreeTargetBranch
+                }
             )
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>
@@ -127,10 +229,26 @@ export class RpcGateway {
                 if (obj.type === 'error' && typeof obj.errorMessage === 'string') {
                     return { type: 'error', message: obj.errorMessage }
                 }
+                if (obj.type === 'requestToApproveDirectoryCreation' && typeof obj.directory === 'string') {
+                    return {
+                        type: 'error',
+                        message: `Directory does not exist: ${obj.directory}`
+                    }
+                }
+                if (typeof obj.error === 'string') {
+                    return { type: 'error', message: obj.error }
+                }
             }
             return { type: 'error', message: 'Unexpected spawn result' }
         } catch (error) {
-            return { type: 'error', message: error instanceof Error ? error.message : String(error) }
+            const message = error instanceof Error ? error.message : String(error)
+            if (message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')) {
+                return {
+                    type: 'error',
+                    message: 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
+                }
+            }
+            return { type: 'error', message }
         }
     }
 
@@ -152,24 +270,150 @@ export class RpcGateway {
         return exists
     }
 
+    async runBash(sessionId: string, params: {
+        command: string
+        cwd?: string
+        timeout?: number
+    }): Promise<RpcCommandResponse> {
+        return await this.sessionRpc(sessionId, 'bash', params) as RpcCommandResponse
+    }
+
+    async previewStart(machineId: string, params: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-start', params) as RpcPreviewStatus
+    }
+
+    async previewStatus(machineId: string): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-status', {}) as RpcPreviewStatus
+    }
+
+    async previewStop(machineId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.machineRpc(machineId, 'preview-stop', params ?? {}) as RpcPreviewStatus
+    }
+
+    async previewStartForSession(sessionId: string, params: {
+        taskId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-start', {
+            taskId: params.taskId,
+            sessionId,
+            rootPath: params.rootPath,
+            mode: params.mode,
+            basePort: params.basePort
+        }) as RpcPreviewStatus
+    }
+
+    async previewStatusForSession(sessionId: string): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-status', {}) as RpcPreviewStatus
+    }
+
+    async previewStopForSession(sessionId: string, params?: { taskId?: string }): Promise<RpcPreviewStatus> {
+        return await this.sessionRpc(sessionId, 'preview-stop', params ?? {}) as RpcPreviewStatus
+    }
     async getGitStatus(sessionId: string, cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-status', { cwd }) as RpcCommandResponse
     }
 
-    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitStatusOnMachine(machineId: string, cwd?: string): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-status', { cwd }) as RpcCommandResponse
+    }
+
+    async getGitDiffNumstat(sessionId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-numstat', options) as RpcCommandResponse
     }
 
-    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean }): Promise<RpcCommandResponse> {
+    async getGitDiffNumstatOnMachine(machineId: string, options: { cwd?: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-diff-numstat', options) as RpcCommandResponse
+    }
+
+    async getGitDiffFile(sessionId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'git-diff-file', options) as RpcCommandResponse
     }
 
-    async readSessionFile(sessionId: string, path: string): Promise<RpcReadFileResponse> {
-        return await this.sessionRpc(sessionId, 'readFile', { path }) as RpcReadFileResponse
+    async getGitDiffFileOnMachine(machineId: string, options: { cwd?: string; filePath: string; staged?: boolean; baseRef?: string; targetRef?: string }): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'git-diff-file', options) as RpcCommandResponse
     }
 
-    async listDirectory(sessionId: string, path: string): Promise<RpcListDirectoryResponse> {
-        return await this.sessionRpc(sessionId, 'listDirectory', { path }) as RpcListDirectoryResponse
+    async gitAutocommitWorktree(sessionId: string, options: { message: string }): Promise<RpcGitAutocommitWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-autocommit-worktree', options) as RpcGitAutocommitWorktreeResponse
+    }
+
+    async gitMergeWorktree(sessionId: string, options: {
+        targetBranch: string
+        commitMessage: string
+        strategy?: 'ff' | 'merge_commit' | 'squash'
+    }): Promise<RpcGitMergeWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-merge-worktree', options, {
+            timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
+        }) as RpcGitMergeWorktreeResponse
+    }
+
+    async gitRemoveWorktree(sessionId: string): Promise<RpcGitRemoveWorktreeResponse> {
+        return await this.sessionRpc(sessionId, 'git-remove-worktree', {}, {
+            timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
+        }) as RpcGitRemoveWorktreeResponse
+    }
+
+    async gitMergeWorktreeState(sessionId: string, options: { targetBranch: string }): Promise<RpcGitMergeWorktreeStateResponse> {
+        return await this.sessionRpc(sessionId, 'git-merge-worktree-state', options) as RpcGitMergeWorktreeStateResponse
+    }
+
+    async gitCaptureWorktreeMergeSnapshot(sessionId: string, options: { targetBranch: string }): Promise<RpcGitCaptureWorktreeMergeSnapshotResponse> {
+        return await this.sessionRpc(sessionId, 'git-capture-worktree-merge-snapshot', options) as RpcGitCaptureWorktreeMergeSnapshotResponse
+    }
+
+    async gitVerifyWorktreeMerge(sessionId: string, options: {
+        targetBranch: string
+        mergeBase: string
+        snapshotRef: string
+    }): Promise<RpcGitVerifyWorktreeMergeResponse> {
+        return await this.sessionRpc(sessionId, 'git-verify-worktree-merge', options, {
+            timeoutMs: WORKTREE_MERGE_RPC_TIMEOUT_MS
+        }) as RpcGitVerifyWorktreeMergeResponse
+    }
+
+    async readSessionFile(sessionId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.sessionRpc(sessionId, 'readFile', { path, cwd }) as RpcReadFileResponse
+    }
+
+    async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
+        return await this.machineRpc(machineId, 'readFile', { path, cwd }) as RpcReadFileResponse
+    }
+
+    async writeSessionFile(sessionId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        return await this.sessionRpc(sessionId, 'writeFile', { path, ...options }) as RpcWriteFileResponse
+    }
+
+    async writeFileOnMachine(machineId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        return await this.machineRpc(machineId, 'writeFile', { path, ...options }) as RpcWriteFileResponse
+    }
+
+    async listDirectory(sessionId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
+        return parseListDirectoryResponse(await this.sessionRpc(sessionId, 'listDirectory', { path, cwd }))
+    }
+
+    async listDirectoryOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcListDirectoryResponse> {
+        return parseListDirectoryResponse(await this.machineRpc(machineId, 'listDirectory', { path, cwd }))
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
@@ -182,6 +426,10 @@ export class RpcGateway {
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'ripgrep', { args, cwd }) as RpcCommandResponse
+    }
+
+    async runRipgrepOnMachine(machineId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
+        return await this.machineRpc(machineId, 'ripgrep', { args, cwd }) as RpcCommandResponse
     }
 
     async listSlashCommands(sessionId: string, agent: string): Promise<{
@@ -208,15 +456,29 @@ export class RpcGateway {
         }
     }
 
-    private async sessionRpc(sessionId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${sessionId}:${method}`, params)
+    private async sessionRpc(
+        sessionId: string,
+        method: string,
+        params: unknown,
+        options?: { timeoutMs?: number }
+    ): Promise<unknown> {
+        return await this.rpcCall(`${sessionId}:${method}`, params, options)
     }
 
-    private async machineRpc(machineId: string, method: string, params: unknown): Promise<unknown> {
-        return await this.rpcCall(`${machineId}:${method}`, params)
+    private async machineRpc(
+        machineId: string,
+        method: string,
+        params: unknown,
+        options?: { timeoutMs?: number }
+    ): Promise<unknown> {
+        return await this.rpcCall(`${machineId}:${method}`, params, options)
     }
 
-    private async rpcCall(method: string, params: unknown): Promise<unknown> {
+    private async rpcCall(
+        method: string,
+        params: unknown,
+        options?: { timeoutMs?: number }
+    ): Promise<unknown> {
         const socketId = this.rpcRegistry.getSocketIdForMethod(method)
         if (!socketId) {
             throw new Error(`RPC handler not registered: ${method}`)
@@ -227,7 +489,8 @@ export class RpcGateway {
             throw new Error(`RPC socket disconnected: ${method}`)
         }
 
-        const response = await socket.timeout(30_000).emitWithAck('rpc-request', {
+        const timeoutMs = options?.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
+        const response = await socket.timeout(timeoutMs).emitWithAck('rpc-request', {
             method,
             params: JSON.stringify(params)
         }) as unknown
@@ -242,4 +505,12 @@ export class RpcGateway {
             return response
         }
     }
+}
+
+function parseListDirectoryResponse(result: unknown): RpcListDirectoryResponse {
+    const parsed = ListDirectoryResponseSchema.safeParse(result)
+    if (!parsed.success) {
+        throw new Error('Invalid listDirectory response')
+    }
+    return parsed.data
 }

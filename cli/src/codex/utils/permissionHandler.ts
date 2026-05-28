@@ -7,6 +7,7 @@
 
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
+import type { PermissionMode } from "@hopi/protocol/types";
 import {
     BasePermissionHandler,
     type PendingPermissionRequest,
@@ -38,7 +39,11 @@ type CodexPermissionHandlerOptions = {
 };
 
 export class CodexPermissionHandler extends BasePermissionHandler<PermissionResponse, PermissionResult> {
-    constructor(session: ApiSessionClient, private readonly options?: CodexPermissionHandlerOptions) {
+    constructor(
+        session: ApiSessionClient,
+        private readonly getPermissionMode: () => PermissionMode | undefined,
+        private readonly options?: CodexPermissionHandlerOptions
+    ) {
         super(session);
     }
 
@@ -58,6 +63,40 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
         toolName: string,
         input: unknown
     ): Promise<PermissionResult> {
+        const mode = this.getPermissionMode() ?? 'default';
+        const autoDecision = this.resolveAutoApprovalDecision(mode, toolName, toolCallId);
+        if (autoDecision) {
+            const result: PermissionResult = { decision: autoDecision };
+            this.options?.onRequest?.({ id: toolCallId, toolName, input });
+            this.options?.onComplete?.({
+                id: toolCallId,
+                toolName,
+                input,
+                approved: true,
+                decision: result.decision
+            });
+
+            // Record completion in agent state (mirrors Gemini/Opencode handlers).
+            this.client.updateAgentState((currentState) => ({
+                ...currentState,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [toolCallId]: {
+                        tool: toolName,
+                        arguments: input,
+                        createdAt: Date.now(),
+                        completedAt: Date.now(),
+                        status: 'approved',
+                        mode,
+                        decision: result.decision
+                    }
+                }
+            }));
+
+            logger.debug(`[Codex] Auto-approved ${toolName} (${toolCallId}) mode=${mode} decision=${result.decision}`);
+            return result;
+        }
+
         return new Promise<PermissionResult>((resolve, reject) => {
             // Store the pending request
             this.addPendingRequest(toolCallId, toolName, input, { resolve, reject });
@@ -76,6 +115,42 @@ export class CodexPermissionHandler extends BasePermissionHandler<PermissionResp
 
             logger.debug(`[Codex] Permission request sent for tool: ${toolName} (${toolCallId})`);
         });
+    }
+
+    reconcileAutoApprovals(): void {
+        const mode = this.getPermissionMode() ?? 'default';
+        if (this.pendingRequests.size === 0) {
+            return;
+        }
+
+        for (const [id, pending] of Array.from(this.pendingRequests.entries())) {
+            const autoDecision = this.resolveAutoApprovalDecision(mode, pending.toolName, id);
+            if (!autoDecision) {
+                continue;
+            }
+
+            this.pendingRequests.delete(id);
+            const result: PermissionResult = { decision: autoDecision };
+
+            // Surface completion to UI (tool-call-result etc.)
+            this.options?.onComplete?.({
+                id,
+                toolName: pending.toolName,
+                input: pending.input,
+                approved: true,
+                decision: autoDecision
+            });
+
+            pending.resolve(result);
+
+            this.finalizeRequest(id, {
+                status: 'approved',
+                mode,
+                decision: autoDecision
+            });
+
+            logger.debug(`[Codex] Auto-approved pending ${pending.toolName} (${id}) mode=${mode} decision=${autoDecision}`);
+        }
     }
 
     /**

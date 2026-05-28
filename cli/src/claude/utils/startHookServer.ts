@@ -8,6 +8,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { PRODUCT_HEADERS } from '@hopi/protocol/brand';
 
 /**
  * Data received from Claude's SessionStart hook.
@@ -39,7 +40,7 @@ export interface HookServer {
 }
 
 function readHookToken(req: IncomingMessage): string | null {
-    const header = req.headers['x-hapi-hook-token'];
+    const header = req.headers[PRODUCT_HEADERS.HOOK_TOKEN];
     if (Array.isArray(header)) {
         return header[0] ?? null;
     }

@@ -1,0 +1,107 @@
+/*
+Radix Themes Token Bridge
+
+Intent:
+- Keep Telegram colors as the source-of-truth via `--tg-theme-*` (mapped to `--app-*` in `web/src/index.css`)
+- Make Radix Themes components visually match the app by mapping Radix tokens -> `--app-*`
+
+Notes:
+- We intentionally over-specify variable names to support Radix Themes token changes across versions.
+- Any unknown variables are ignored by the browser, so this is safe to ship.
+*/
+
+/* Scope overrides to Radix Themes root wrapper. */
+.radix-themes,
+.rt-Theme {
+    /* Base surfaces */
+    --color-background: var(--app-bg);
+    --color-panel: var(--app-secondary-bg);
+    --color-surface: var(--app-bg);
+    --color-overlay: rgba(0, 0, 0, 0.5);
+
+    /* Text */
+    --color-text: var(--app-fg);
+    --color-text-secondary: var(--app-hint);
+    --color-text-tertiary: var(--app-hint);
+
+    /* Borders / separators */
+    --color-border: var(--app-border);
+    --color-separator: var(--app-divider);
+
+    /* Accent (use Telegram button color "as-is") */
+    --color-accent: var(--app-button);
+    --color-accent-contrast: var(--app-button-text);
+    --color-solid: var(--app-button);
+    --color-solid-hover: var(--app-button);
+    --color-solid-active: var(--app-button);
+
+    /* Link */
+    --color-link: var(--app-link);
+
+    /*
+    Fallback mapping for token sets that use scale variables directly.
+    These are coarse, but keep components aligned even if the semantic vars above are not used.
+    */
+    --gray-1: var(--app-bg);
+    --gray-2: var(--app-secondary-bg);
+    --gray-3: var(--app-subtle-bg);
+    --gray-4: var(--app-subtle-bg);
+    --gray-5: var(--app-subtle-bg);
+    --gray-6: var(--app-subtle-bg);
+    --gray-7: var(--app-subtle-bg);
+    --gray-8: var(--app-subtle-bg);
+    --gray-9: var(--app-hint);
+    --gray-10: var(--app-hint);
+    --gray-11: var(--app-hint);
+    --gray-12: var(--app-fg);
+
+    --accent-9: var(--app-button);
+    --accent-10: var(--app-button);
+    --accent-11: var(--app-button);
+    --accent-12: var(--app-button-text);
+    --accent-contrast: var(--app-button-text);
+
+    /* Fallback (non color-mix) tint scale for accent surfaces. */
+    --accent-1: var(--app-bg);
+    --accent-2: var(--app-secondary-bg);
+    --accent-3: var(--app-subtle-bg);
+    --accent-4: var(--app-subtle-bg);
+    --accent-5: var(--app-subtle-bg);
+    --accent-6: var(--app-subtle-bg);
+    --accent-7: var(--app-subtle-bg);
+    --accent-8: var(--app-subtle-bg);
+}
+
+@supports (color: color-mix(in srgb, white, black)) {
+    .radix-themes,
+    .rt-Theme {
+        --color-solid-hover: color-mix(in srgb, var(--app-button) 92%, black);
+        --color-solid-active: color-mix(in srgb, var(--app-button) 84%, black);
+
+        --gray-4: color-mix(in srgb, var(--app-subtle-bg) 85%, var(--app-fg));
+        --gray-5: color-mix(in srgb, var(--app-subtle-bg) 70%, var(--app-fg));
+        --gray-6: color-mix(in srgb, var(--app-subtle-bg) 55%, var(--app-fg));
+        --gray-7: color-mix(in srgb, var(--app-subtle-bg) 40%, var(--app-fg));
+        --gray-8: color-mix(in srgb, var(--app-subtle-bg) 30%, var(--app-fg));
+        --gray-10: color-mix(in srgb, var(--app-hint) 85%, var(--app-fg));
+
+        --accent-10: color-mix(in srgb, var(--app-button) 92%, black);
+        --accent-11: color-mix(in srgb, var(--app-button) 88%, black);
+
+        --accent-1: color-mix(in srgb, var(--app-button) 6%, var(--app-bg));
+        --accent-2: color-mix(in srgb, var(--app-button) 10%, var(--app-bg));
+        --accent-3: color-mix(in srgb, var(--app-button) 14%, var(--app-bg));
+        --accent-4: color-mix(in srgb, var(--app-button) 18%, var(--app-bg));
+        --accent-5: color-mix(in srgb, var(--app-button) 22%, var(--app-bg));
+        --accent-6: color-mix(in srgb, var(--app-button) 26%, var(--app-bg));
+        --accent-7: color-mix(in srgb, var(--app-button) 30%, var(--app-bg));
+        --accent-8: color-mix(in srgb, var(--app-button) 36%, var(--app-bg));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .radix-themes,
+    .rt-Theme {
+        scroll-behavior: auto;
+    }
+}

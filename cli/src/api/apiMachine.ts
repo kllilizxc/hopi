@@ -1,19 +1,23 @@
 /**
- * WebSocket client for machine/runner communication with hapi-hub
+ * WebSocket client for machine/runner communication with hopi-hub
  */
 
 import { io, type Socket } from 'socket.io-client'
+import axios from 'axios'
 import { stat } from 'node:fs/promises'
 import { logger } from '@/ui/logger'
 import { configuration } from '@/configuration'
-import type { Update, UpdateMachineBody } from '@hapi/protocol'
+import type { Update, UpdateMachineBody } from '@hopi/protocol'
 import type { RunnerState, Machine, MachineMetadata } from './types'
-import { RunnerStateSchema, MachineMetadataSchema } from './types'
+import { RunnerStateSchema, MachineMetadataSchema, CreateMachineResponseSchema } from './types'
 import { backoff } from '@/utils/time'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import os from 'node:os'
+import { resolveCliWorkingDirectory } from '@/utils/workingDirectory'
+import { apiValidationError } from '@/utils/errorUtils'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -53,6 +57,63 @@ type MachineRpcHandlers = {
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
     stopSession: (sessionId: string) => boolean
     requestShutdown: () => void
+    startPreview: (options: {
+        taskId: string
+        sessionId: string
+        rootPath: string
+        mode: 'local' | 'worktree'
+        basePort?: number
+    }) => Promise<{
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }>
+    getPreviewStatus: () => {
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }
+    stopPreview: (options?: { taskId?: string }) => Promise<{
+        active: boolean
+        status: 'idle' | 'starting' | 'ready' | 'error' | 'stopped'
+        taskId?: string
+        sessionId?: string
+        mode?: 'local' | 'worktree'
+        rootPath?: string
+        runPath?: string
+        command?: string
+        port?: number
+        url?: string
+        pid?: number
+        startedAt?: number
+        updatedAt: number
+        error?: string
+        logTail: string[]
+    }>
 }
 
 interface PathExistsRequest {
@@ -67,6 +128,7 @@ export class ApiMachineClient {
     private socket!: Socket<ServerToRunnerEvents, RunnerToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
     private rpcHandlerManager: RpcHandlerManager
+    private connectionGeneration = 0
 
     constructor(
         private readonly token: string,
@@ -77,7 +139,11 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         })
 
-        registerCommonHandlers(this.rpcHandlerManager, process.cwd())
+        const handlerRoot = typeof this.machine.metadata?.homeDir === 'string' && this.machine.metadata.homeDir.trim().length > 0
+            ? this.machine.metadata.homeDir.trim()
+            : os.homedir() || resolveCliWorkingDirectory()
+
+        registerCommonHandlers(this.rpcHandlerManager, handlerRoot)
 
         this.rpcHandlerManager.registerHandler<PathExistsRequest, PathExistsResponse>('path-exists', async (params) => {
             const rawPaths = Array.isArray(params?.paths) ? params.paths : []
@@ -99,16 +165,11 @@ export class ApiMachineClient {
         })
     }
 
-    setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
+    setRPCHandlers({ spawnSession, stopSession, requestShutdown, startPreview, getPreviewStatus, stopPreview }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
-            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, yolo, token, sessionType, worktreeName } = params || {}
-
-            if (!directory) {
-                throw new Error('Directory is required')
-            }
-
-            const result = await spawnSession({
+            const {
                 directory,
+                worktreeWorkspacePaths,
                 sessionId,
                 resumeSessionId,
                 machineId,
@@ -118,7 +179,35 @@ export class ApiMachineClient {
                 yolo,
                 token,
                 sessionType,
-                worktreeName
+                worktreeName,
+                worktreeTargetBranch
+            } = params || {}
+
+            if (!directory) {
+                throw new Error('Directory is required')
+            }
+
+            const normalizedWorktreeWorkspacePaths = Array.isArray(worktreeWorkspacePaths)
+                ? Array.from(new Set(worktreeWorkspacePaths
+                    .filter((path): path is string => typeof path === 'string')
+                    .map((path) => path.trim())
+                    .filter((path) => path.length > 0)))
+                : undefined
+
+            const result = await spawnSession({
+                directory,
+                worktreeWorkspacePaths: normalizedWorktreeWorkspacePaths,
+                sessionId,
+                resumeSessionId,
+                machineId,
+                approvedNewDirectoryCreation,
+                agent,
+                model,
+                yolo,
+                token,
+                sessionType,
+                worktreeName,
+                worktreeTargetBranch
             })
 
             switch (result.type) {
@@ -127,7 +216,7 @@ export class ApiMachineClient {
                 case 'requestToApproveDirectoryCreation':
                     return { type: 'requestToApproveDirectoryCreation', directory: result.directory }
                 case 'error':
-                    throw new Error(result.errorMessage)
+                    return { type: 'error', errorMessage: result.errorMessage }
             }
         })
 
@@ -148,6 +237,41 @@ export class ApiMachineClient {
         this.rpcHandlerManager.registerHandler('stop-runner', () => {
             setTimeout(() => requestShutdown(), 100)
             return { message: 'Runner stop request acknowledged' }
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-start', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : ''
+            const sessionId = typeof params?.sessionId === 'string' ? params.sessionId.trim() : ''
+            const rootPath = typeof params?.rootPath === 'string' ? params.rootPath.trim() : ''
+            const mode = params?.mode === 'worktree' ? 'worktree' : 'local'
+            const basePort = typeof params?.basePort === 'number' ? params.basePort : undefined
+
+            if (!taskId) {
+                throw new Error('Task ID is required')
+            }
+            if (!sessionId) {
+                throw new Error('Session ID is required')
+            }
+            if (!rootPath) {
+                throw new Error('Root path is required')
+            }
+
+            return await startPreview({
+                taskId,
+                sessionId,
+                rootPath,
+                mode,
+                basePort
+            })
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-status', () => {
+            return getPreviewStatus()
+        })
+
+        this.rpcHandlerManager.registerHandler('preview-stop', async (params: any) => {
+            const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : undefined
+            return await stopPreview({ taskId })
         })
     }
 
@@ -217,6 +341,72 @@ export class ApiMachineClient {
         })
     }
 
+    private async registerMachineWithServer(): Promise<void> {
+        const response = await axios.post(
+            `${configuration.apiUrl}/cli/machines`,
+            {
+                id: this.machine.id,
+                metadata: this.machine.metadata,
+                runnerState: this.machine.runnerState
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 60_000
+            }
+        )
+
+        const parsed = CreateMachineResponseSchema.safeParse(response.data)
+        if (!parsed.success) {
+            throw apiValidationError('Invalid /cli/machines response', response)
+        }
+
+        const raw = parsed.data.machine
+        this.machine.seq = raw.seq
+        this.machine.createdAt = raw.createdAt
+        this.machine.updatedAt = raw.updatedAt
+        this.machine.active = raw.active
+        this.machine.activeAt = raw.activeAt
+
+        const metadata = (() => {
+            if (raw.metadata == null) return null
+            const parsedMetadata = MachineMetadataSchema.safeParse(raw.metadata)
+            return parsedMetadata.success ? parsedMetadata.data : null
+        })()
+
+        const runnerState = (() => {
+            if (raw.runnerState == null) return null
+            const parsedRunnerState = RunnerStateSchema.safeParse(raw.runnerState)
+            return parsedRunnerState.success ? parsedRunnerState.data : null
+        })()
+
+        this.machine.metadata = metadata
+        this.machine.metadataVersion = raw.metadataVersion
+        this.machine.runnerState = runnerState
+        this.machine.runnerStateVersion = raw.runnerStateVersion
+    }
+
+    private async handleConnected(generation: number): Promise<void> {
+        await backoff(() => this.registerMachineWithServer())
+        if (generation !== this.connectionGeneration) {
+            return
+        }
+
+        this.rpcHandlerManager.onSocketConnect(this.socket)
+        this.updateRunnerState((state) => ({
+            ...(state ?? {}),
+            status: 'running',
+            pid: process.pid,
+            httpPort: this.machine.runnerState?.httpPort,
+            startedAt: Date.now()
+        })).catch((error) => {
+            logger.debug('[API MACHINE] Failed to update runner state on connect', error)
+        })
+        this.startKeepAlive()
+    }
+
     connect(): void {
         this.socket = io(`${configuration.apiUrl}/cli`, {
             transports: ['websocket'],
@@ -233,21 +423,15 @@ export class ApiMachineClient {
 
         this.socket.on('connect', () => {
             logger.debug('[API MACHINE] Connected to bot')
-            this.rpcHandlerManager.onSocketConnect(this.socket)
-            this.updateRunnerState((state) => ({
-                ...(state ?? {}),
-                status: 'running',
-                pid: process.pid,
-                httpPort: this.machine.runnerState?.httpPort,
-                startedAt: Date.now()
-            })).catch((error) => {
-                logger.debug('[API MACHINE] Failed to update runner state on connect', error)
+            const generation = ++this.connectionGeneration
+            this.handleConnected(generation).catch((error) => {
+                logger.debug('[API MACHINE] Failed to initialize machine connection', error)
             })
-            this.startKeepAlive()
         })
 
         this.socket.on('disconnect', () => {
             logger.debug('[API MACHINE] Disconnected from bot')
+            this.connectionGeneration++
             this.rpcHandlerManager.onSocketDisconnect()
             this.stopKeepAlive()
         })
