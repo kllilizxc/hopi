@@ -2384,7 +2384,7 @@ describe('TaskAutomation', () => {
         expect(doneTodo).not.toContain('taskId:')
     })
 
-    it('blocks accepted auto-merge when the source branch has no committed changes', async () => {
+    it('skips auto-merge when the accepted source branch has no changes', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-goal-evaluator-auto-merge-no-commits'
@@ -2507,18 +2507,19 @@ describe('TaskAutomation', () => {
             store,
             namespace,
             taskId,
-            predicate: (task) => task?.mergeRuntime?.status === 'blocked'
+            predicate: (task) => task?.mergeRuntime?.status === 'succeeded'
         })
 
         const accepted = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(accepted?.status).toBe('review')
-        expect(accepted?.finishedAt).toBeNull()
+        expect(accepted?.status).toBe('done')
+        expect(accepted?.finishedAt).toBeNumber()
         expect(accepted?.worktreeMergedAt).toBeNull()
         expect(accepted?.worktreeMergeCommit).toBeNull()
-        expect(accepted?.mergeRuntime?.blockedReason).toContain('No committed changes are waiting to merge')
+        expect(accepted?.mergeRuntime?.latestNote).toContain('Auto-merge skipped')
+        expect(accepted?.mergeRuntime?.blockedReason).toBeNull()
         expect(mergeCalls).toBe(0)
-        expect(cleanupCalls).toBe(0)
-        expect(archiveCalls).toBe(0)
+        expect(cleanupCalls).toBe(1)
+        expect(archiveCalls).toBe(1)
     })
 
     it('auto-merges evaluator acceptance through the evaluator session when the generator session is stale', async () => {

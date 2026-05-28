@@ -924,6 +924,7 @@ describe('goal routes', () => {
             exists: false,
             path: join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'todo.yml'),
             rawYaml: null,
+            parseError: null,
             sections: [],
             updatedAt: null
         })

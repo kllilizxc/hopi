@@ -287,4 +287,74 @@ describe('goal todo yaml', () => {
         expect(todo).not.toContain('tag:')
         expect(todo).not.toContain('taskId:')
     })
+
+    it('keeps the last valid projection and does not overwrite corrupt todo yaml', () => {
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-todo-'))
+        const goal = {
+            id: 'goal-local-id',
+            goalKey: 'parse-error-goal',
+            title: 'Parse Error Goal'
+        } as never
+        const todoPath = join(workspacePath, '.hopi', 'docs', 'goals', 'parse-error-goal', 'todo.yml')
+        mkdirSync(join(workspacePath, '.hopi', 'docs', 'goals', 'parse-error-goal'), { recursive: true })
+        writeFileSync(todoPath, [
+            'version: 1',
+            'goal:',
+            '  goalKey: parse-error-goal',
+            '  goalId: goal-local-id',
+            '  title: Parse Error Goal',
+            'items:',
+            '  - ref: keep-me',
+            '    status: planned',
+            '    title: Keep the valid task',
+            ''
+        ].join('\n'), 'utf8')
+
+        const valid = readGoalTodo({
+            project: {} as never,
+            goal,
+            defaultWorkspace: {
+                path: workspacePath
+            } as never
+        })
+        expect(valid.sections.map((section) => section.id)).toEqual(['keep-me'])
+
+        const corruptYaml = [
+            'version: 1',
+            'goal:',
+            '  goalKey: parse-error-goal',
+            'items:',
+            '  - ref: broken',
+            '    status: planned',
+            '    title: Broken task',
+            '    broken: [',
+            ''
+        ].join('\n')
+        writeFileSync(todoPath, corruptYaml, 'utf8')
+
+        const corrupt = readGoalTodo({
+            project: {} as never,
+            goal,
+            defaultWorkspace: {
+                path: workspacePath
+            } as never
+        }) as ReturnType<typeof readGoalTodo> & { parseError?: string | null }
+        expect(corrupt.parseError).toContain('todo.yml parse error')
+        expect(corrupt.sections.map((section) => section.id)).toEqual(['keep-me'])
+
+        const updated = updateGoalTodoTaskState({
+            project: {} as never,
+            goal,
+            defaultWorkspace: {
+                path: workspacePath
+            } as never,
+            todoRef: 'keep-me',
+            taskId: 'keep-me',
+            title: 'Keep the valid task',
+            kind: 'done'
+        })
+
+        expect(updated).toBe(false)
+        expect(readFileSync(todoPath, 'utf8')).toBe(corruptYaml)
+    })
 })

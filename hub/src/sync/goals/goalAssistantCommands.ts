@@ -8,7 +8,7 @@ import { appendGoalEvent, readGoalEvents, type GoalEventActor } from './goalEven
 import { getGoalDesignPath, getDocsRoot, getPreferencePath } from './goalDocPaths'
 import { bootstrapGoalDocs } from './goalDocs'
 import { readGoalDecisionTopics, readGoalDecisionTopicsWithLegacyBackfill, resolveGoalDecisionTopicInDocs } from './goalDecisions'
-import { createGoalTodoTaskId, upsertGoalTodoTaskState } from './goalTodo'
+import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState, type GoalTodoSection } from './goalTodo'
 import { prependTaskHandoffDecisionContext } from './decisionHandoff'
 import { getProjectDefaultTaskRuntimeSettings } from '../projectTaskDefaults'
 import { continueTaskInLinkedSession, startSessionFromTask } from '../taskSessionService'
@@ -183,10 +183,10 @@ function getTaskOr404(ctx: GoalContext, taskId: string): StoredTask | CommandRes
     return task
 }
 
-function taskDto(task: StoredTask): Record<string, unknown> {
+function taskDto(task: StoredTask, lane: CanonicalLane = getTaskLane(task)): Record<string, unknown> {
     return {
         ...task,
-        lane: getTaskLane(task),
+        lane,
         role: getTaskRole(task)
     }
 }
@@ -242,10 +242,17 @@ function buildPlanningTaskContract(input: {
     ].join('\n')
 }
 
-function deriveTaskBlockers(task: StoredTask, topics: StoredGoalDecisionTopic[]): Array<Record<string, unknown>> {
+function deriveDecisionBlockers(taskKeys: Array<string | null | undefined>, topics: StoredGoalDecisionTopic[]): Array<Record<string, unknown>> {
+    const keys = new Set(taskKeys
+        .filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+        .map((key) => key.trim()))
+    if (keys.size === 0) {
+        return []
+    }
+
     const blockers: Array<Record<string, unknown>> = []
     for (const topic of topics) {
-        if (topic.taskId === task.id && topic.blocking && topic.status === 'waiting') {
+        if (topic.taskId && keys.has(topic.taskId) && topic.blocking && topic.status === 'waiting') {
             blockers.push({
                 kind: 'decision',
                 topicId: topic.id,
@@ -254,6 +261,13 @@ function deriveTaskBlockers(task: StoredTask, topics: StoredGoalDecisionTopic[])
             })
         }
     }
+    return blockers
+}
+
+function deriveTaskBlockers(task: StoredTask, topics: StoredGoalDecisionTopic[]): Array<Record<string, unknown>> {
+    const blockers: Array<Record<string, unknown>> = [
+        ...deriveDecisionBlockers([task.id, task.goalTodoRef], topics)
+    ]
     if (task.mergeRuntime?.status === 'blocked' || task.mergeRuntime?.status === 'canceled') {
         blockers.push({
             kind: 'merge',
@@ -290,6 +304,95 @@ function deriveTaskBlockers(task: StoredTask, topics: StoredGoalDecisionTopic[])
     return blockers
 }
 
+function laneForTodoSection(section: GoalTodoSection): CanonicalLane {
+    if (section.status === 'done') return 'done'
+    if (section.status === 'review') return section.tag === 'merging' ? 'merging' : 'in_review'
+    if (section.status === 'running') return 'in_progress'
+    return 'planned'
+}
+
+function deriveTodoSectionBlockers(section: GoalTodoSection, topics: StoredGoalDecisionTopic[]): Array<Record<string, unknown>> {
+    const blockers = deriveDecisionBlockers([section.id, section.taskId, section.todoRef], topics)
+    if (section.blocked) {
+        blockers.push({
+            kind: section.blocked.kind ?? 'blocked',
+            summary: section.blocked.summary,
+            updatedAt: section.blocked.updatedAt
+        })
+    }
+    return blockers
+}
+
+function buildGoalStateTasks(ctx: GoalContext, topics: StoredGoalDecisionTopic[]): Array<Record<string, unknown>> {
+    const todo = readGoalTodo({
+        project: ctx.project,
+        goal: ctx.goal,
+        defaultWorkspace: ctx.defaultWorkspace
+    })
+    const overlays = ctx.store.tasks.listTasksByProjectAndNamespace(ctx.project.id, ctx.namespace, {
+        goalId: ctx.goal.id
+    })
+    const overlayByKey = new Map<string, StoredTask>()
+    for (const task of overlays) {
+        overlayByKey.set(task.id, task)
+        if (task.goalTodoRef) {
+            overlayByKey.set(task.goalTodoRef, task)
+        }
+    }
+
+    const seenTaskIds = new Set<string>()
+    const projected = todo.sections.map((section) => {
+        const overlay = overlayByKey.get(section.id)
+            ?? (section.taskId ? overlayByKey.get(section.taskId) : undefined)
+            ?? (section.todoRef ? overlayByKey.get(section.todoRef) : undefined)
+        const lane = laneForTodoSection(section)
+        if (overlay) {
+            seenTaskIds.add(overlay.id)
+            return {
+                ...taskDto(overlay, lane),
+                goalTodoRef: overlay.goalTodoRef ?? section.id,
+                title: section.title,
+                description: section.body || overlay.description,
+                kanbanStatus: section.status,
+                kanbanTag: section.tag,
+                dependencyTaskList: section.dependencyTaskList,
+                blockers: [
+                    ...deriveTodoSectionBlockers(section, topics),
+                    ...deriveTaskBlockers(overlay, topics)
+                ]
+            }
+        }
+        return {
+            id: section.id,
+            projectId: ctx.project.id,
+            goalId: ctx.goal.id,
+            goalTodoRef: section.todoRef ?? section.id,
+            title: section.title,
+            description: section.body || null,
+            status: section.status,
+            lane,
+            role: null,
+            source: 'todo',
+            kanbanStatus: section.status,
+            kanbanTag: section.tag,
+            dependencyTaskList: section.dependencyTaskList,
+            blockers: deriveTodoSectionBlockers(section, topics)
+        }
+    })
+
+    for (const task of overlays) {
+        if (seenTaskIds.has(task.id)) {
+            continue
+        }
+        projected.push({
+            ...taskDto(task),
+            blockers: deriveTaskBlockers(task, topics)
+        })
+    }
+
+    return projected
+}
+
 function appendCommandRejected(ctx: GoalContext, input: {
     commandId: string
     command: string
@@ -310,9 +413,6 @@ function appendCommandRejected(ctx: GoalContext, input: {
 }
 
 function inspectGoalState(ctx: GoalContext): CommandResponse {
-    const tasks = ctx.store.tasks.listTasksByProjectAndNamespace(ctx.project.id, ctx.namespace, {
-        goalId: ctx.goal.id
-    })
     const topics = readGoalDecisionTopicsWithLegacyBackfill({
         store: ctx.store,
         namespace: ctx.namespace,
@@ -338,10 +438,7 @@ function inspectGoalState(ctx: GoalContext): CommandResponse {
             ok: true,
             state: {
                 goal: ctx.goal,
-                tasks: tasks.map((task) => ({
-                    ...taskDto(task),
-                    blockers: deriveTaskBlockers(task, topics)
-                })),
+                tasks: buildGoalStateTasks(ctx, topics),
                 openDecisionTopics,
                 recentEvents: readGoalEvents({
                     project: ctx.project,

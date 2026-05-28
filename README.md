@@ -1,10 +1,12 @@
 # HOPI
 
+> 说明：这只是我给自己提效的一个实验项目，目前还在开发中，可能出现文档不完善或缺乏运行说明的情况。
+
 HOPI is a local-first autonomous development system for keeping AI coding agents working beyond a single chat session.
 
 It started as a personal productivity tool: a way to let Claude Code, Codex, Gemini, and OpenCode keep iterating on real projects while I am away from the keyboard. The interesting part is not just remote control. HOPI turns a product goal into an executable Kanban workflow, then coordinates specialized agents around that workflow with durable state, review gates, dependency rules, and human intervention points.
 
-![HOPI local-first agent control room](docs/public/hopi-hero.png)
+![HOPI flat-dot local-first agent control room](docs/public/hopi-hero.png)
 
 ## Relationship To Happy
 
@@ -19,9 +21,9 @@ The reused foundation is intentionally narrow:
 
 HOPI's main work is the layer above that foundation: goal-native Kanban, file-native workflow state, multi-agent coordination, deterministic scheduling, decision blockers, review/merge gates, and audit traces.
 
-![HOPI builds on Happy session foundations](docs/public/hopi-happy-foundation.svg)
+![HOPI builds on Happy session foundations](docs/public/hopi-happy-foundation.png)
 
-![HOPI Goal system architecture](docs/public/hopi-goal-system.svg)
+![HOPI Goal system architecture](docs/public/hopi-goal-system.png)
 
 ## The Problem
 
@@ -52,7 +54,7 @@ A Goal owns:
 
 The Kanban board is not just a UI. It is the control plane for autonomous work.
 
-![Goal-native Kanban control plane](docs/public/hopi-kanban-control-plane.svg)
+![Goal-native Kanban control plane](docs/public/hopi-kanban-control-plane.png)
 
 ## How It Works
 
@@ -80,7 +82,7 @@ The database is useful, but it is not the workflow authority. If repo-local docs
 
 This separation is intentional. The assistant can explain and operate the system, but Planner remains the only actor that reshapes engineering work. Worker agents can report outcomes, but durable Kanban mutations go through the same local-doc control path.
 
-![Multi-agent collaboration pipeline](docs/public/hopi-agent-pipeline.svg)
+![Multi-agent collaboration pipeline](docs/public/hopi-agent-pipeline.png)
 
 ## File-Native Workflow
 
@@ -142,7 +144,7 @@ HOPI still preserves the original remote-control workflow:
 
 The remote layer is not a replacement for native agents. HOPI wraps them, keeps their terminal workflows intact, and adds orchestration around them.
 
-![Session runtime and remote control flow](docs/public/hopi-session-runtime.svg)
+![Session runtime and remote control flow](docs/public/hopi-session-runtime.png)
 
 ## Architecture
 

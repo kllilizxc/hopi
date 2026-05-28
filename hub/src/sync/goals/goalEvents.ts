@@ -13,6 +13,7 @@ export type GoalEventActor = Record<string, unknown>
 
 export type GoalEvent = {
     id: string
+    timestamp: string
     createdAt: number
     writer: 'hopi_server'
     action: string
@@ -55,9 +56,11 @@ export function appendGoalEvent(input: {
     const path = getEventsPath(input)
     if (!path) return null
     ensureEventsFile(path)
+    const createdAt = input.now ?? Date.now()
     const event: GoalEvent = {
         id: randomUUID(),
-        createdAt: input.now ?? Date.now(),
+        timestamp: new Date(createdAt).toISOString(),
+        createdAt,
         writer: 'hopi_server',
         action: input.action,
         entity: input.entity,

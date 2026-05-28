@@ -41,6 +41,7 @@ export type GoalTodoResponse = {
     exists: boolean
     path: string | null
     rawYaml: string | null
+    parseError: string | null
     sections: GoalTodoSection[]
     updatedAt: number | null
 }
@@ -77,6 +78,17 @@ type GoalTodoYamlDocument = {
     version: 1
     goals: GoalTodoYamlGoal[]
 }
+
+class GoalTodoParseError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = 'GoalTodoParseError'
+    }
+}
+
+type GoalTodoParsedProjection = Pick<GoalTodoResponse, 'rawYaml' | 'sections'>
+
+const lastValidProjectionCache = new Map<string, GoalTodoParsedProjection>()
 
 const yamlItemStatusSchema = z.enum(['planning', 'running', 'review', 'blocked', 'done'])
 const legacyYamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review'])
@@ -128,6 +140,19 @@ function normalizeNewlines(value: string): string {
 
 function normalizeKey(value: string | null | undefined): string {
     return (value ?? '').trim().toLowerCase()
+}
+
+function projectionCacheKey(path: string, scope: GoalTodoScope): string {
+    return [
+        path,
+        normalizeKey(scope.goalKey),
+        normalizeKey(scope.goalId)
+    ].join('\0')
+}
+
+function formatTodoParseError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error)
+    return `todo.yml parse error: ${message}`
 }
 
 function normalizeReservoirTag(value: string | null): string | null {
@@ -301,7 +326,7 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
         const parsed = YAML.parse(rawYaml)
         const result = yamlDocumentSchema.safeParse(parsed && typeof parsed === 'object' ? parsed : {})
         if (!result.success) {
-            return { version: 1, goals: [] }
+            throw new GoalTodoParseError(result.error.issues.map((issue) => issue.message).join('; '))
         }
         const goals: GoalTodoYamlGoal[] = []
         if (result.data.goal || result.data.items) {
@@ -315,8 +340,11 @@ function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
             version: 1,
             goals
         }
-    } catch {
-        return { version: 1, goals: [] }
+    } catch (error) {
+        if (error instanceof GoalTodoParseError) {
+            throw error
+        }
+        throw new GoalTodoParseError(error instanceof Error ? error.message : String(error))
     }
 }
 
@@ -443,15 +471,35 @@ function sectionFromYamlItem(item: GoalTodoYamlItem): GoalTodoSection | null {
     }
 }
 
-export function parseGoalTodoYaml(rawYaml: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'rawYaml' | 'sections'> {
+export function parseGoalTodoYaml(rawYaml: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'rawYaml' | 'parseError' | 'sections'> {
     const normalizedYaml = normalizeNewlines(rawYaml)
     const document = parseYamlDocument(normalizedYaml)
     const goal = document.goals.find((candidate) => goalMatchesScope(candidate, scope))
     return {
         rawYaml: goal ? stringifyYamlDocument({ version: 1, goals: [goal] }) : normalizedYaml,
+        parseError: null,
         sections: (goal?.items ?? [])
             .map(sectionFromYamlItem)
             .filter((section): section is GoalTodoSection => Boolean(section))
+    }
+}
+
+function parseGoalTodoYamlForPath(path: string, rawYaml: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'rawYaml' | 'parseError' | 'sections'> {
+    const cacheKey = projectionCacheKey(path, scope)
+    try {
+        const parsed = parseGoalTodoYaml(rawYaml, scope)
+        lastValidProjectionCache.set(cacheKey, {
+            rawYaml: parsed.rawYaml,
+            sections: parsed.sections
+        })
+        return parsed
+    } catch (error) {
+        const cached = lastValidProjectionCache.get(cacheKey)
+        return {
+            rawYaml: normalizeNewlines(rawYaml),
+            parseError: formatTodoParseError(error),
+            sections: cached?.sections ?? []
+        }
     }
 }
 
@@ -957,7 +1005,12 @@ export function createGoalTodoTaskId(input: {
         scope,
         goalTitle: input.goal.title
     })
-    const document = writable ? parseYamlDocument(writable.rawYaml) : { version: 1 as const, goals: [] }
+    let document: GoalTodoYamlDocument
+    try {
+        document = writable ? parseYamlDocument(writable.rawYaml) : { version: 1 as const, goals: [] }
+    } catch {
+        document = { version: 1, goals: [] }
+    }
     const goal = document.goals.find((candidate) => goalMatchesScope(candidate, scope))
     const used = new Set((goal?.items ?? []).map((item) => normalizeKey(item.id)))
     const base = slugifyTodoId(input.title)
@@ -993,7 +1046,12 @@ export function upsertGoalTodoTaskState(input: {
     })
     if (!writable) return false
 
-    const document = parseYamlDocument(writable.rawYaml)
+    let document: GoalTodoYamlDocument
+    try {
+        document = parseYamlDocument(writable.rawYaml)
+    } catch {
+        return false
+    }
     const goal = findOrCreateYamlGoal(document, {
         ...scope,
         goalTitle: input.goal.title
@@ -1054,14 +1112,19 @@ export function updateGoalTodoTaskState(input: {
 
     const docsRoot = getDocsRoot(input.defaultWorkspace)
     if (docsRoot) mkdirSync(getGoalDocsDir(docsRoot, input.goal.goalKey), { recursive: true })
-    const next = updateGoalTodoYaml(writable.rawYaml, {
-        ...scope,
-        goalTitle: input.goal.title,
-        todoRef,
-        taskId: input.taskId,
-        kind: input.kind,
-        title: input.title
-    })
+    let next: string
+    try {
+        next = updateGoalTodoYaml(writable.rawYaml, {
+            ...scope,
+            goalTitle: input.goal.title,
+            todoRef,
+            taskId: input.taskId,
+            kind: input.kind,
+            title: input.title
+        })
+    } catch {
+        return false
+    }
     if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) return false
     writeFileSync(writable.path, next, 'utf8')
     return true
@@ -1079,11 +1142,12 @@ export function readGoalTodo(input: {
     const canonicalPath = getCanonicalGoalTodoYamlPath(input.defaultWorkspace, scope)
     if (canonicalPath && existsSync(canonicalPath)) {
         const rawYaml = readFileSync(canonicalPath, 'utf8')
-        const parsed = parseGoalTodoYaml(rawYaml, scope)
+        const parsed = parseGoalTodoYamlForPath(canonicalPath, rawYaml, scope)
         return {
             exists: true,
             path: canonicalPath,
             rawYaml: parsed.rawYaml,
+            parseError: parsed.parseError,
             sections: parsed.sections,
             updatedAt: Math.round(statSync(canonicalPath).mtimeMs)
         }
@@ -1099,16 +1163,18 @@ export function readGoalTodo(input: {
             exists: false,
             path: canonicalPath,
             rawYaml: null,
+            parseError: null,
             sections: [],
             updatedAt: null
         }
     }
 
-    const parsed = parseGoalTodoYaml(legacy.rawYaml, scope)
+    const parsed = parseGoalTodoYamlForPath(legacy.path, legacy.rawYaml, scope)
     return {
         exists: true,
         path: legacy.path,
         rawYaml: parsed.rawYaml,
+        parseError: parsed.parseError,
         sections: parsed.sections,
         updatedAt: legacy.updatedAt
     }

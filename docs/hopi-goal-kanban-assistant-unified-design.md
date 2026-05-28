@@ -673,6 +673,8 @@ Work artifact exists and must be evaluated against its acceptance contract.
 
 Review passed and the system is merging or repairing merge conflicts.
 
+Before attempting a merge, Merger must check the linked worktree state. If the worktree has no uncommitted changes and the source branch has no committed delta against the target branch, Merger skips the merge operation. For an already accepted no-code, planner, duplicate-closure, or docs-truth-complete task, this closes the merge gate without setting a merge-blocked state. For a task that still expects a code artifact, the reviewer should reject it before acceptance rather than relying on Merger to manufacture a blocker from an empty branch.
+
 ### `done`
 
 Final completion state.
@@ -794,6 +796,7 @@ Merger runs tasks in `merging`.
 Outputs:
 
 - merge success -> task becomes `done`
+- no worktree changes and no source branch delta -> skip merge operation; if the accepted task is no-code/docs-truth complete, task becomes `done` with a no-merge-required runtime note
 - merge blocked -> derived merge blocker + assistant intervention
 - merge repair retry budget exhausted -> merge blocker remains and intervention is refreshed, not duplicated
 

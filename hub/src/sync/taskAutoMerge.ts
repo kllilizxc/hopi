@@ -283,10 +283,10 @@ function mergeStateCanMerge(result: RpcGitMergeWorktreeStateResponse): boolean {
     return result.mergeable === true
 }
 
-function buildNoCommittedChangesBlockedReason(result: RpcGitMergeWorktreeStateResponse): string {
+function buildNoChangesSkippedNote(result: RpcGitMergeWorktreeStateResponse): string {
     const sourceBranch = normalizeBranchName(result.sourceBranch)
     const branchSuffix = sourceBranch ? ` on ${sourceBranch}` : ''
-    return `No committed changes are waiting to merge${branchSuffix}. Confirm the linked worktree changes were committed to the source branch, then retry merge.`
+    return `Auto-merge skipped: no worktree changes or source branch commits were waiting to merge${branchSuffix}.`
 }
 
 function resolveDefaultMergeRootPath(taskSession: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>): string {
@@ -351,7 +351,7 @@ function resolveAutoMergeTaskSession(options: {
     }
 }
 
-async function cleanupTaskWorktreeAfterSuccessfulMerge(options: {
+async function cleanupTaskWorktreeAfterClosedMergeGate(options: {
     store: Store
     engine: SyncEngine
     namespace: string
@@ -386,7 +386,7 @@ async function cleanupTaskWorktreeAfterSuccessfulMerge(options: {
             namespace: options.namespace,
             data: {
                 title: 'Worktree cleanup failed',
-                body: result.error ?? 'Merge succeeded, but cleanup failed.',
+                body: result.error ?? 'Merge gate closed, but cleanup failed.',
                 sessionId: options.sessionId,
                 url: ''
             }
@@ -405,7 +405,7 @@ export async function cleanupMergedTaskWorktree(options: {
     if (!project) {
         return
     }
-    await cleanupTaskWorktreeAfterSuccessfulMerge({
+    await cleanupTaskWorktreeAfterClosedMergeGate({
         ...options,
         project
     })
@@ -716,7 +716,79 @@ async function persistSuccessfulAutoMerge(options: {
         }
     })
 
-    await cleanupTaskWorktreeAfterSuccessfulMerge({
+    await cleanupTaskWorktreeAfterClosedMergeGate({
+        store: options.store,
+        engine: options.engine,
+        namespace: options.namespace,
+        project: options.project,
+        task: updated,
+        sessionId: options.sessionId
+    })
+
+    if (updated.activeSessionId) {
+        try {
+            await options.engine.archiveSession(updated.activeSessionId)
+        } catch {
+        }
+    }
+
+    return updated
+}
+
+async function persistSkippedAutoMergeWithoutChanges(options: {
+    store: Store
+    engine: SyncEngine
+    namespace: string
+    project: StoredProject
+    task: StoredTask
+    sessionId: string
+    latestNote: string
+}): Promise<StoredTask | null> {
+    const completedAt = Date.now()
+    const strategy = getWorkflowStrategy(options.task)
+    const finishedTransitionPatch = strategy.getTaskPatchForTransition('task_finished', options.task)
+
+    const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
+        status: 'done',
+        workflowPhase: finishedTransitionPatch?.workflowPhase,
+        finishedAt: completedAt,
+        worktreeMergedAt: null,
+        worktreeMergeCommit: null,
+        mergedDiffSnapshot: null,
+        mergeRuntime: buildTaskMergeRuntime({
+            current: options.task.mergeRuntime,
+            activeSessionId: options.task.activeSessionId,
+            status: 'succeeded',
+            sessionId: options.sessionId,
+            latestNote: options.latestNote,
+            blockedReason: null,
+            startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? completedAt,
+            completedAt
+        })
+    })
+    if (!updated) {
+        return null
+    }
+
+    syncAcceptedGoalTodoToDone({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        task: updated
+    })
+
+    emitTaskUpdated({
+        engine: options.engine,
+        namespace: options.namespace,
+        task: updated,
+        data: {
+            worktreeMergedAt: updated.worktreeMergedAt,
+            worktreeMergeCommit: updated.worktreeMergeCommit,
+            mergeRuntime: updated.mergeRuntime
+        }
+    })
+
+    await cleanupTaskWorktreeAfterClosedMergeGate({
         store: options.store,
         engine: options.engine,
         namespace: options.namespace,
@@ -849,15 +921,16 @@ export async function autoMergeAcceptedTask(options: {
             return 'blocked'
         }
 
-        blockMerge({
+        await persistSkippedAutoMergeWithoutChanges({
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
+            project,
             task: runningTask,
             sessionId,
-            reason: buildNoCommittedChangesBlockedReason(mergeState)
+            latestNote: buildNoChangesSkippedNote(mergeState)
         })
-        return 'blocked'
+        return 'merged'
     }
 
     const sourceBranch = normalizeBranchName(mergeState.sourceBranch)

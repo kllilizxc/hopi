@@ -35,6 +35,7 @@ describe('useGoalTodo', () => {
             exists: true,
             path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
             rawYaml: 'version: 1\ngoals: []\n',
+            parseError: null,
             updatedAt: 1_700_000_000_000,
             sections: [
                 {

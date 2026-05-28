@@ -2442,6 +2442,9 @@ function buildGoalTodoTaskProjection(options: {
     }
     const overlayByKey = new Map<string, StoredTask>()
     for (const task of overlays) {
+        if (!options.includeArchived && task.archivedAt) {
+            continue
+        }
         overlayByKey.set(task.id, task)
         if (task.goalTodoRef) {
             overlayByKey.set(task.goalTodoRef, task)
@@ -2459,9 +2462,6 @@ function buildGoalTodoTaskProjection(options: {
     const baseTime = todo.updatedAt ?? Date.now()
     const projected = todo.sections.flatMap((section, index) => {
         const overlay = overlayByKey.get(section.id) ?? null
-        if (!options.includeArchived && overlay?.archivedAt) {
-            return []
-        }
         const status = section.status === 'unknown' ? 'planning' : section.status
         const decisionBlocker = findTaskScopedBlockingDecision(decisionTopics, [
             section.id,

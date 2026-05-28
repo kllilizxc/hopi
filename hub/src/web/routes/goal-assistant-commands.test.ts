@@ -295,6 +295,18 @@ describe('goal assistant commands', () => {
             source: 'manual',
             workflowProfile: 'default'
         } as Parameters<typeof store.tasks.createTask>[0])
+        writeFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'todo.yml'), [
+            'version: 1',
+            'goal:',
+            `  goalKey: ${goal.goalKey}`,
+            `  goalId: ${goal.id}`,
+            '  title: Inspect Goal State',
+            'items:',
+            '  - ref: docs-only-plan',
+            '    status: planned',
+            '    title: Docs-only planned card',
+            ''
+        ].join('\n'), 'utf8')
         writeFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goal.goalKey, 'decisions.yml'), [
             'version: 1',
             'topics:',
@@ -338,6 +350,11 @@ describe('goal assistant commands', () => {
             id: task.id,
             lane: 'planned',
             blockers: [expect.objectContaining({ kind: 'decision' })]
+        }))
+        expect(body.state.tasks).toContainEqual(expect.objectContaining({
+            id: 'docs-only-plan',
+            title: 'Docs-only planned card',
+            lane: 'planned'
         }))
         expect(body.state.openDecisionTopics).toContainEqual(expect.objectContaining({
             title: 'Pick content route'

@@ -12,10 +12,23 @@ import {
     getLegacyGoalDocPath,
     getPreferencePath
 } from './goalDocPaths'
+import {
+    KANBAN_SKILL_MARKDOWN,
+    KANBAN_TODO_MJS,
+    KANBAN_YAML_MJS
+} from './kanbanSkillTemplates'
 
 function ensureFile(path: string, content: string): void {
     if (existsSync(path)) return
     writeFileSync(path, content, 'utf8')
+}
+
+function ensureKanbanSkill(workspace: StoredWorkspace): void {
+    const skillDir = join(workspace.path, '.hopi', 'skills', 'kanban')
+    mkdirSync(skillDir, { recursive: true })
+    ensureFile(join(skillDir, 'SKILL.md'), KANBAN_SKILL_MARKDOWN)
+    ensureFile(join(skillDir, 'todo.mjs'), KANBAN_TODO_MJS)
+    ensureFile(join(skillDir, 'yaml.mjs'), KANBAN_YAML_MJS)
 }
 
 function yamlString(value: string): string {
@@ -109,13 +122,15 @@ export function bootstrapGoalDocs(input: {
     goal: StoredGoal
     defaultWorkspace: StoredWorkspace | null
 }): { docsRoot: string | null } {
-    const docsRoot = getDocsRoot(input.defaultWorkspace)
-    if (!docsRoot) return { docsRoot: null }
+    const defaultWorkspace = input.defaultWorkspace
+    const docsRoot = getDocsRoot(defaultWorkspace)
+    if (!docsRoot || !defaultWorkspace) return { docsRoot: null }
 
     const goalDir = getGoalDocsDir(docsRoot, input.goal.goalKey)
     mkdirSync(goalDir, { recursive: true })
+    ensureKanbanSkill(defaultWorkspace)
 
-    const preferencePath = getPreferencePath(input.defaultWorkspace)
+    const preferencePath = getPreferencePath(defaultWorkspace)
     if (preferencePath) {
         ensureFile(preferencePath, [
             '# HOPI Preferences',

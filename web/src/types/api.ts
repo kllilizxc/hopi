@@ -155,6 +155,7 @@ export type GoalTodoResponse = {
     exists: boolean
     path: string | null
     rawYaml: string | null
+    parseError: string | null
     sections: GoalTodoSection[]
     updatedAt: number | null
 }

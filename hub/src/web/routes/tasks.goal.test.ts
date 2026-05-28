@@ -688,4 +688,34 @@ describe('goal-scoped task routes', () => {
         expect(todo).toContain('status: planned')
         expect(todo).toContain('title: Legacy DB task')
     })
+
+    it('does not let an archived DB overlay hide a docs-owned goal todo card', async () => {
+        const store = new Store(':memory:')
+        const projectId = 'project-yaml-archive-overlay'
+        const goalId = 'goal-yaml-archive-overlay'
+        const taskId = 'docs-owned-archive-card'
+        seedGoalTodoTask(store, {
+            projectId,
+            goalId,
+            goalKey: 'yaml-archive-overlay',
+            taskId,
+            status: 'candidate'
+        })
+
+        const app = createTestApp(store)
+        const archiveResponse = await app.request(`/api/tasks/${taskId}/archive`, {
+            method: 'POST'
+        })
+        expect(archiveResponse.status).toBe(200)
+        expect(store.tasks.getTaskByNamespace(taskId, 'default')?.archivedAt).toBeTypeOf('number')
+
+        const listResponse = await app.request(`/api/projects/${projectId}/tasks?goalId=${goalId}`)
+        expect(listResponse.status).toBe(200)
+        const listBody = await listResponse.json() as { tasks: Array<{ id: string; goalTodoRef: string | null; title: string }> }
+        expect(listBody.tasks).toContainEqual(expect.objectContaining({
+            id: taskId,
+            goalTodoRef: taskId,
+            title: 'YAML only task'
+        }))
+    })
 })
