@@ -38,6 +38,7 @@ interface LoopOptions {
     allowedTools?: string[]
     onSessionReady?: (session: Session) => void
     hookSettingsPath: string
+    profileAppendSystemPrompt?: string
 }
 
 export async function loop(opts: LoopOptions) {
@@ -63,6 +64,7 @@ export async function loop(opts: LoopOptions) {
         startedBy,
         startingMode,
         hookSettingsPath: opts.hookSettingsPath,
+        profileAppendSystemPrompt: opts.profileAppendSystemPrompt,
         permissionMode: opts.permissionMode ?? 'default',
         modelMode
     });

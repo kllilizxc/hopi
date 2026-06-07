@@ -10,6 +10,7 @@ import { awaitFileExist } from "@/modules/watcher/awaitFileExist";
 import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import { getHopiBlobsDir } from "@/constants/uploadPaths";
+import { buildClaudeUserContentFromFormattedMessage } from "@/utils/attachmentFormatter";
 
 export async function claudeRemote(opts: {
 
@@ -149,7 +150,7 @@ export async function claudeRemote(opts: {
         type: 'user',
         message: {
             role: 'user',
-            content: initial.message,
+            content: buildClaudeUserContentFromFormattedMessage(initial.message),
         },
     });
 
@@ -211,7 +212,13 @@ export async function claudeRemote(opts: {
                     return;
                 }
                 mode = next.mode;
-                messages.push({ type: 'user', message: { role: 'user', content: next.message } });
+                messages.push({
+                    type: 'user',
+                    message: {
+                        role: 'user',
+                        content: buildClaudeUserContentFromFormattedMessage(next.message)
+                    }
+                });
             }
 
             // Handle tool result

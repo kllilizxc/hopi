@@ -40,6 +40,7 @@ import { useVoiceOptional } from '@/lib/voice-context'
 import { useAppContext } from '@/lib/app-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 import { useVisibilityReporter } from '@/hooks/useVisibilityReporter'
+import { getTaskLane } from '@/lib/task-status'
 
 function getMessageSentFrom(meta: unknown): string | null {
     if (!meta || typeof meta !== 'object') return null
@@ -47,7 +48,7 @@ function getMessageSentFrom(meta: unknown): string | null {
     return typeof sentFrom === 'string' ? sentFrom : null
 }
 
-function shouldTreatSessionAsRunningFallback(session: Session, normalized: NormalizedMessage[]): boolean {
+export function shouldTreatSessionAsRunningFallback(session: Session, normalized: NormalizedMessage[]): boolean {
     if (!session.active) return false
     if (session.thinking) return true
 
@@ -57,6 +58,10 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
     }
 
     const metadata = session.metadata
+    if (metadata?.hopiController === true) {
+        return false
+    }
+
     const isRunnerSession = metadata?.startedBy === 'runner'
         || metadata?.startedFromRunner === true
         || typeof metadata?.taskId === 'string'
@@ -113,6 +118,51 @@ function shouldTreatSessionAsRunningFallback(session: Session, normalized: Norma
     const MAX_FALLBACK_MS = 15 * 60 * 1000
     const ageMs = Date.now() - lastPromptAt
     return ageMs >= 0 && ageMs < MAX_FALLBACK_MS
+}
+
+export function shouldQuerySessionMergeState(task: Task | null | undefined, hasActiveMergeRuntime: boolean): boolean {
+    if (!task || hasActiveMergeRuntime) {
+        return false
+    }
+
+    return getTaskLane(task) === 'in_review'
+        && !task.archivedAt
+        && !task.finishedAt
+        && !task.worktreeMergedAt
+}
+
+export function shouldShowContinueActionForTask(
+    task: Task | null | undefined,
+    options: {
+        hasPendingRequests: boolean
+        effectiveIsRunning: boolean
+    }
+): boolean {
+    if (!task) {
+        return false
+    }
+
+    return getTaskLane(task) === 'in_review'
+        && !task.archivedAt
+        && !task.finishedAt
+        && !options.hasPendingRequests
+        && !options.effectiveIsRunning
+}
+
+export function shouldTreatSessionThinkingAsRunning(
+    session: Session,
+    task: Pick<Task, 'activeSessionId'> | null | undefined,
+    hasPendingRequests: boolean
+): boolean {
+    if (!session.thinking) return false
+    if (
+        !hasPendingRequests
+        && task?.activeSessionId
+        && task.activeSessionId !== session.id
+    ) {
+        return false
+    }
+    return true
 }
 
 const CONTINUE_PROMPT_TEXT = '继续'
@@ -250,12 +300,7 @@ export function SessionChat(props: {
     })
     const shouldQueryMergeState = Boolean(
         taskId
-        && task
-        && task.status === 'in_review'
-        && !task.archivedAt
-        && !task.finishedAt
-        && !task.worktreeMergedAt
-        && !hasActiveMergeRuntime
+        && shouldQuerySessionMergeState(task, hasActiveMergeRuntime)
     )
     const {
         state: mergeState,
@@ -677,17 +722,15 @@ export function SessionChat(props: {
         return createAttachmentAdapter(props.api, props.session.id)
     }, [props.api, props.session.id, props.session.active])
 
-    const effectiveIsRunning = props.session.thinking
+    const effectiveIsRunning = shouldTreatSessionThinkingAsRunning(props.session, task, hasPendingRequests)
         || (!ignoreRunningFallback && shouldTreatSessionAsRunningFallback(props.session, normalizedMessages))
 
     const showContinueAction = Boolean(
         taskId
-        && task
-        && task.status === 'in_review'
-        && !task.archivedAt
-        && !task.finishedAt
-        && !hasPendingRequests
-        && !effectiveIsRunning
+        && shouldShowContinueActionForTask(task, {
+            hasPendingRequests,
+            effectiveIsRunning
+        })
     )
     const canStartMerge = Boolean(
         shouldQueryMergeState

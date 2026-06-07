@@ -1,14 +1,19 @@
 import { fireEvent, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '@/test/renderWithProviders'
-import type { Task } from '@/types/api'
+import type { GoalTodoResponse, Task } from '@/types/api'
 import { ProjectKanbanBoard } from './kanban'
 
 const indexCss = readFileSync('src/index.css', 'utf8').replace(/\r\n/g, '\n')
 
 const mocks = vi.hoisted(() => ({
     tasks: [] as Task[],
+    goalTodo: null as GoalTodoResponse | null,
+    tasksLoading: false,
+    tasksError: null as string | null,
+    goalTodoLoading: false,
+    goalTodoError: null as string | null,
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
     addToast: vi.fn()
@@ -39,8 +44,17 @@ vi.mock('@/hooks/queries/useProject', () => ({
 vi.mock('@/hooks/queries/useTasks', () => ({
     useTasks: () => ({
         tasks: mocks.tasks,
-        isLoading: false,
-        error: null,
+        isLoading: mocks.tasksLoading,
+        error: mocks.tasksError,
+        refetch: vi.fn()
+    })
+}))
+
+vi.mock('@/hooks/queries/useGoalTodo', () => ({
+    useGoalTodo: () => ({
+        todo: mocks.goalTodo,
+        isLoading: mocks.goalTodoLoading,
+        error: mocks.goalTodoError,
         refetch: vi.fn()
     })
 }))
@@ -77,6 +91,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         evidence: overrides.evidence ?? null,
         workflowProfile: overrides.workflowProfile ?? 'default',
         workflowPhase: overrides.workflowPhase ?? null,
+        tag: overrides.tag ?? null,
         subTasks: overrides.subTasks ?? [
             {
                 id: 'subtask-1',
@@ -99,9 +114,165 @@ function createTask(overrides: Partial<Task> = {}): Task {
     }
 }
 
+function createGoalTodo(overrides: Partial<GoalTodoResponse> = {}): GoalTodoResponse {
+    return {
+        board: overrides.board ?? {
+            goal: {
+                goalKey: 'goal-1',
+                goalId: 'goal-1',
+                title: 'Goal 1'
+            },
+            items: []
+        },
+        tasks: overrides.tasks ?? []
+    }
+}
+
 describe('ProjectKanbanBoard', () => {
+    beforeEach(() => {
+        mocks.tasks = []
+        mocks.goalTodo = null
+        mocks.tasksLoading = false
+        mocks.tasksError = null
+        mocks.goalTodoLoading = false
+        mocks.goalTodoError = null
+        vi.clearAllMocks()
+    })
+
+    it('keeps deferred and candidate reservoir notes out of the execution Kanban lanes', () => {
+        mocks.tasks = [
+            createTask({
+                id: 'ready-task',
+                title: 'Ready implementation slice',
+                status: 'planning',
+                tag: 'ready'
+            }),
+            createTask({
+                id: 'deferred-note',
+                title: 'Deferred presentation idea',
+                status: 'planning',
+                tag: 'deferred'
+            }),
+            createTask({
+                id: 'candidate-note',
+                title: 'Candidate follow-up idea',
+                status: 'planning',
+                tag: 'candidate'
+            })
+        ]
+        mocks.goalTodo = createGoalTodo({
+            tasks: mocks.tasks,
+            board: {
+                goal: {
+                    goalKey: 'goal-1',
+                    goalId: 'goal-1',
+                    title: 'Goal 1'
+                },
+                items: [
+                    {
+                        ref: 'deferred-note',
+                        kind: 'planning',
+                        status: 'planned',
+                        tag: 'deferred',
+                        title: 'Deferred presentation idea',
+                        description: 'Keep this as a later presentation pass.',
+                        acceptanceCriteria: [],
+                        dependencyTaskList: [],
+                        blockedBy: [],
+                        taskId: null
+                    },
+                    {
+                        ref: 'candidate-note',
+                        kind: 'planning',
+                        status: 'planned',
+                        tag: 'candidate',
+                        title: 'Candidate follow-up idea',
+                        description: '',
+                        acceptanceCriteria: [],
+                        dependencyTaskList: [],
+                        blockedBy: [],
+                        taskId: null
+                    }
+                ]
+            }
+        })
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        const plannedColumn = document.querySelector('[data-kanban-column-status="planned"]')
+        expect(plannedColumn?.textContent).toContain('Ready implementation slice')
+        expect(plannedColumn?.textContent).not.toContain('Deferred presentation idea')
+        expect(plannedColumn?.textContent).not.toContain('Candidate follow-up idea')
+
+        expect(screen.getByText('Todo / Backlog')).toBeInTheDocument()
+        expect(screen.getByText('2 items')).toBeInTheDocument()
+        expect(screen.getByText('Deferred presentation idea')).toBeInTheDocument()
+        expect(screen.getByText('Candidate follow-up idea')).toBeInTheDocument()
+    })
+
+    it('keeps legacy blocked candidate notes in the reservoir when their derived lane is still planned', () => {
+        mocks.tasks = [
+            createTask({
+                id: 'candidate-note',
+                title: 'Candidate follow-up idea',
+                status: 'blocked',
+                tag: 'candidate'
+            }),
+            createTask({
+                id: 'ready-task',
+                title: 'Ready implementation slice',
+                status: 'planning',
+                tag: 'ready'
+            })
+        ]
+        mocks.goalTodo = createGoalTodo({
+            tasks: mocks.tasks,
+            board: {
+                goal: {
+                    goalKey: 'goal-1',
+                    goalId: 'goal-1',
+                    title: 'Goal 1'
+                },
+                items: [
+                    {
+                        ref: 'candidate-note',
+                        kind: 'planning',
+                        status: 'planned',
+                        tag: 'candidate',
+                        title: 'Candidate follow-up idea',
+                        description: '',
+                        acceptanceCriteria: [],
+                        dependencyTaskList: [],
+                        blockedBy: [],
+                        taskId: null
+                    }
+                ]
+            }
+        })
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        const plannedColumn = document.querySelector('[data-kanban-column-status="planned"]')
+        expect(plannedColumn?.textContent).toContain('Ready implementation slice')
+        expect(plannedColumn?.textContent).not.toContain('Candidate follow-up idea')
+        expect(screen.getByText('Candidate follow-up idea')).toBeInTheDocument()
+    })
+
     it('renders solid columns and theme-aware task hover surfaces', () => {
         mocks.tasks = [createTask()]
+        mocks.goalTodo = createGoalTodo({ tasks: mocks.tasks })
 
         renderWithProviders(
             <ProjectKanbanBoard
@@ -137,6 +308,7 @@ describe('ProjectKanbanBoard', () => {
 
     it('uses a soft shadow boundary for expanded subtasks', () => {
         mocks.tasks = [createTask()]
+        mocks.goalTodo = createGoalTodo({ tasks: mocks.tasks })
 
         renderWithProviders(
             <ProjectKanbanBoard
@@ -172,6 +344,7 @@ describe('ProjectKanbanBoard', () => {
                 blockedReason: 'Need manual conflict resolution.'
             }
         })]
+        mocks.goalTodo = createGoalTodo({ tasks: mocks.tasks })
 
         renderWithProviders(
             <ProjectKanbanBoard
@@ -185,5 +358,36 @@ describe('ProjectKanbanBoard', () => {
         const mergingColumn = document.querySelector('[data-kanban-column-status="merging"]')
         expect(mergingColumn).not.toBeNull()
         expect(mergingColumn?.textContent).toContain('Repair merge conflict')
+    })
+
+    it('uses goal todo loading for goal-scoped boards', () => {
+        mocks.tasksLoading = true
+        mocks.goalTodoLoading = true
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText(/loading/i)).toBeInTheDocument()
+    })
+
+    it('uses goal todo errors for goal-scoped boards', () => {
+        mocks.tasksError = 'Project task query failed'
+        mocks.goalTodoError = 'Goal todo query failed'
+
+        renderWithProviders(
+            <ProjectKanbanBoard
+                projectId="project-1"
+                goalId="goal-1"
+                onOpenNewTask={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('Goal todo query failed')).toBeInTheDocument()
+        expect(screen.queryByText('Project task query failed')).toBeNull()
     })
 })

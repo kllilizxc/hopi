@@ -15,7 +15,7 @@ import { getTaskSessionStartFailureHttpStatus } from '@hopi/protocol/task-sessio
 import { Hono } from 'hono'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { Store, StoredProject, StoredTask, StoredWorkspace } from '../../store'
+import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
 import {
     buildApprovalPendingActionRuntimeNote,
     buildQueuedActionRuntimeNote,
@@ -53,10 +53,25 @@ import { getDefaultWorkflowPhase, getWorkflowStrategy } from '../../sync/workflo
 import {
     createGoalTodoTaskId,
     readGoalTodo,
+    removeGoalTodoTaskState,
     upsertGoalTodoTaskState,
-    type GoalTodoStatus
+    type GoalTodoEventOptions,
+    type GoalTodoStatus,
+    type GoalTodoTaskKind
 } from '../../sync/goals/goalTodo'
-import { syncTaskStateToGoalTodo } from '../../sync/goals/goalTodoTaskSync'
+import {
+    buildGoalTodoTaskProjection,
+    findGoalTodoTaskProjectionById,
+    getTaskByNamespaceOrGoalTodoProjection,
+    materializeGoalTodoTaskOverlayForWrite,
+    type GoalTodoProjectedTask
+} from '../../sync/goals/goalTodoProjection'
+import {
+    buildGoalTodoBlockedStateFromStoredTask,
+    getGoalTodoStatusForStoredTask,
+    getGoalTodoTagForStoredTask,
+    recoverStoredTaskStatusFromLegacyBlocked
+} from '../../sync/goals/goalTaskState'
 import { notifyProjectControllerTaskBlockedTransition } from '../../sync/projectController'
 import type { WebAppEnv } from '../middleware/auth'
 import { handleTaskMovedToFinished } from './taskFinishAutomation'
@@ -293,20 +308,35 @@ function isActiveMergeRuntimeStatus(status: string | null | undefined): boolean 
         || status === 'retrying'
 }
 
-function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTask['mergeRuntime']>['status']): {
+function resolveReviewLaneStatus(task: Pick<StoredTask, 'status'>): string {
+    return task.status === 'in_review' ? 'in_review' : 'review'
+}
+
+function hasBlockedMergeRuntime(task: Pick<StoredTask, 'mergeRuntime'>): boolean {
+    return task.mergeRuntime?.status === 'blocked'
+}
+
+function resolveExecutionLaneStatus(task: Pick<StoredTask, 'status'>): string {
+    return task.status === 'running' ? 'running' : 'in_progress'
+}
+
+function buildTaskStatusPatchForMergeRuntimeStatus(
+    task: Pick<StoredTask, 'status' | 'mergeRuntime'>,
+    status: NonNullable<StoredTask['mergeRuntime']>['status']
+): {
     status?: string
     finishedAt?: number | null
 } {
     if (status === 'blocked') {
         return {
-            status: 'blocked',
+            status: resolveReviewLaneStatus(task),
             finishedAt: null
         }
     }
 
     if (isActiveMergeRuntimeStatus(status)) {
         return {
-            status: 'review',
+            status: resolveReviewLaneStatus(task),
             finishedAt: null
         }
     }
@@ -317,7 +347,7 @@ function buildTaskStatusPatchForMergeRuntimeStatus(status: NonNullable<StoredTas
 function shouldMarkFinishedAfterSuccessfulMerge(task: Pick<StoredTask, 'status' | 'mergeRuntime'>): boolean {
     return task.status === 'review'
         || task.status === 'in_review'
-        || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
+        || hasBlockedMergeRuntime(task)
 }
 
 function isPendingPreviewRuntimeStatus(status: TaskPreviewRuntimeStatus | null | undefined): boolean {
@@ -337,19 +367,18 @@ function buildTaskStatusPatchForPreviewRuntimeStatus(
 } {
     if (status === 'blocked') {
         return {
-            status: 'blocked',
+            status: resolveExecutionLaneStatus(task),
             finishedAt: null
         }
     }
 
-    const shouldRecoverPreviewBlock = task.status === 'blocked'
-        && task.previewRuntime?.status === 'blocked'
+    const shouldRecoverPreviewBlock = task.previewRuntime?.status === 'blocked'
         && task.mergeRuntime?.status !== 'blocked'
         && task.initRuntime?.status !== 'blocked'
         && (status === 'running' || status === 'retrying' || status === 'ready')
     if (shouldRecoverPreviewBlock) {
         return {
-            status: 'review',
+            status: resolveExecutionLaneStatus(task),
             finishedAt: null
         }
     }
@@ -404,52 +433,98 @@ function updateTaskMergeRuntime(options: {
     startedAt?: number | null
     completedAt?: number | null
 }): StoredTask | null {
-    const taskStatusPatch = buildTaskStatusPatchForMergeRuntimeStatus(options.status)
+    const currentTask = buildTaskRouteRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })
+    const taskStatusPatch = buildTaskStatusPatchForMergeRuntimeStatus(currentTask, options.status)
+    const nextMergeRuntime = buildTaskMergeRuntime({
+        task: options.task,
+        status: options.status,
+        sessionId: options.sessionId,
+        retryCount: options.retryCount,
+        failureFingerprint: options.failureFingerprint,
+        latestNote: options.latestNote,
+        blockedReason: options.blockedReason,
+        startedAt: options.startedAt,
+        completedAt: options.completedAt
+    })
+    const event = buildGoalTodoRuntimeRouteEvent(
+        'merge_runtime_updated_from_tasks_api',
+        'Updated a goal-scoped merge runtime via the tasks API.',
+        {
+            route: '/api/tasks/:taskId/worktree/merge',
+            status: options.status
+        }
+    )
+    const wroteDocsFirst = syncGoalTodoBeforeTaskRouteUpdate({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task,
+        requireExistingProjection: true,
+        patch: {
+            ...taskStatusPatch,
+            mergeRuntime: nextMergeRuntime
+        },
+        event
+    })
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         ...taskStatusPatch,
-        mergeRuntime: buildTaskMergeRuntime({
-            task: options.task,
-            status: options.status,
-            sessionId: options.sessionId,
-            retryCount: options.retryCount,
-            failureFingerprint: options.failureFingerprint,
-            latestNote: options.latestNote,
-            blockedReason: options.blockedReason,
-            startedAt: options.startedAt,
-            completedAt: options.completedAt
-        })
+        mergeRuntime: nextMergeRuntime
     })
     if (!updatedTask) {
         return null
     }
-
-    syncTaskStateToGoalTodo({
+    const projectedRuntimeTask = buildProjectedTaskRouteRuntimeView({
         store: options.store,
         namespace: options.namespace,
         task: updatedTask
     })
+    const runtimeTask = projectedRuntimeTask
+        ?? (updatedTask.goalId
+            ? buildPreviewRouteFallbackTask({
+                previousTask: options.task,
+                updatedTask
+            })
+            : buildTaskRouteRuntimeView({
+                store: options.store,
+                namespace: options.namespace,
+                task: updatedTask
+            }))
+
+    if (!wroteDocsFirst) {
+        syncGoalTodoBeforeTaskRouteUpdate({
+            store: options.store,
+            namespace: options.namespace,
+            task: runtimeTask,
+            requireExistingProjection: true,
+            patch: {},
+            event
+        })
+    }
     notifyProjectControllerTaskBlockedTransition({
         store: options.store,
         engine: options.engine,
         namespace: options.namespace,
         previousTask: options.task,
-        task: updatedTask
+        task: runtimeTask
     })
     emitTaskUpdatedEvent({
         engine: options.engine,
         namespace: options.namespace,
-        taskId: updatedTask.id,
-        projectId: updatedTask.projectId,
+        taskId: runtimeTask.id,
+        projectId: runtimeTask.projectId,
         data: {
-            activeSessionId: updatedTask.activeSessionId,
-            status: updatedTask.status,
-            finishedAt: updatedTask.finishedAt,
-            mergeRuntime: updatedTask.mergeRuntime,
-            worktreeMergedAt: updatedTask.worktreeMergedAt
+            activeSessionId: runtimeTask.activeSessionId,
+            status: runtimeTask.status,
+            finishedAt: runtimeTask.finishedAt,
+            mergeRuntime: runtimeTask.mergeRuntime,
+            worktreeMergedAt: runtimeTask.worktreeMergedAt
         }
     })
 
-    return updatedTask
+    return runtimeTask
 }
 
 function getTaskPreviewRuntime(task: Pick<StoredTask, 'previewRuntime'>): TaskPreviewRuntime | null {
@@ -465,6 +540,28 @@ function withTaskPreviewRuntime<T extends StoredTask>(task: T | null, previewRun
         ...task,
         previewRuntime
     }
+}
+
+function buildTaskRouteFallbackTask(options: {
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    return {
+        ...options.updatedTask,
+        title: options.previousTask.title,
+        description: options.previousTask.description,
+        goalTodoRef: options.previousTask.goalTodoRef,
+        subTasks: options.previousTask.subTasks,
+        subTasksUpdatedAt: options.previousTask.subTasksUpdatedAt,
+        attachments: options.previousTask.attachments
+    }
+}
+
+function buildPreviewRouteFallbackTask(options: {
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    return buildTaskRouteFallbackTask(options)
 }
 
 function normalizePreviewRuntimeText(text: string | null | undefined, maxChars = 280): string | null {
@@ -618,6 +715,11 @@ function updateTaskPreviewRuntime(options: {
     startedAt?: number | null
     completedAt?: number | null
 }): StoredTaskWithPreviewRuntime | null {
+    const currentTask = buildTaskRouteRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })
     const nextPreviewRuntime = buildTaskPreviewRuntime({
         task: options.task,
         status: options.status,
@@ -631,7 +733,7 @@ function updateTaskPreviewRuntime(options: {
         completedAt: options.completedAt
     })
 
-    const taskStatusPatch = buildTaskStatusPatchForPreviewRuntimeStatus(options.status, options.task)
+    const taskStatusPatch = buildTaskStatusPatchForPreviewRuntimeStatus(options.status, currentTask)
     const hasTaskStatusChange = (
         (taskStatusPatch.status !== undefined && taskStatusPatch.status !== options.task.status)
         || (taskStatusPatch.finishedAt !== undefined && taskStatusPatch.finishedAt !== options.task.finishedAt)
@@ -639,28 +741,82 @@ function updateTaskPreviewRuntime(options: {
 
     if (!hasMeaningfulPreviewRuntimeChange(getTaskPreviewRuntime(options.task), nextPreviewRuntime) && !hasTaskStatusChange) {
         const latestTask = options.store.tasks.getTaskByNamespace(options.task.id, options.namespace) ?? options.task
-        return withTaskPreviewRuntime(latestTask, nextPreviewRuntime)
+        const projectedRuntimeTask = buildProjectedTaskRouteRuntimeView({
+            store: options.store,
+            namespace: options.namespace,
+            task: latestTask
+        })
+        const runtimeTask = projectedRuntimeTask
+            ?? (latestTask.goalId
+                ? buildPreviewRouteFallbackTask({
+                    previousTask: options.task,
+                    updatedTask: latestTask
+                })
+                : buildTaskRouteRuntimeView({
+                    store: options.store,
+                    namespace: options.namespace,
+                    task: latestTask
+                }))
+        return withTaskPreviewRuntime(runtimeTask, nextPreviewRuntime)
     }
+
+    const event = buildGoalTodoRuntimeRouteEvent(
+        'preview_runtime_updated_from_tasks_api',
+        'Updated a goal-scoped preview runtime via the tasks API.',
+        {
+            route: '/api/tasks/:taskId/preview',
+            status: options.status
+        }
+    )
+    const wroteDocsFirst = syncGoalTodoBeforeTaskRouteUpdate({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task,
+        requireExistingProjection: true,
+        patch: {
+            ...taskStatusPatch,
+            previewRuntime: nextPreviewRuntime
+        },
+        event
+    })
 
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         ...taskStatusPatch,
         previewRuntime: nextPreviewRuntime
     })
-
-    const nextTask = withTaskPreviewRuntime(updatedTask ?? options.task, nextPreviewRuntime)
-
-    if (updatedTask && nextTask) {
-        syncTaskStateToGoalTodo({
+    const projectedRuntimeTask = updatedTask
+        ? buildProjectedTaskRouteRuntimeView({
             store: options.store,
             namespace: options.namespace,
             task: updatedTask
         })
+        : null
+    const fallbackTask = updatedTask && !projectedRuntimeTask && updatedTask.goalId
+        ? buildPreviewRouteFallbackTask({
+            previousTask: options.task,
+            updatedTask
+        })
+        : null
+    const runtimeTask = projectedRuntimeTask ?? fallbackTask
+    const nextTask = withTaskPreviewRuntime(runtimeTask ?? updatedTask ?? options.task, nextPreviewRuntime)
+
+    if (updatedTask && nextTask) {
+        if (!wroteDocsFirst) {
+            syncGoalTodoBeforeTaskRouteUpdate({
+                store: options.store,
+                namespace: options.namespace,
+                task: runtimeTask ?? updatedTask,
+                requireExistingProjection: true,
+                patch: {},
+                event
+            })
+        }
         notifyProjectControllerTaskBlockedTransition({
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
             previousTask: options.task,
-            task: updatedTask
+            task: runtimeTask ?? updatedTask
         })
         emitTaskUpdatedEvent({
             engine: options.engine,
@@ -722,10 +878,13 @@ function syncPreviewRuntimeFromLivePreview(options: {
 type TaskPreviewKickoffSkippedReason = 'queued' | 'waiting' | 'approval_pending' | 'running' | 'retrying'
 
 function buildTaskPreviewResponse(options: {
+    store: Store
+    namespace: string
     task: StoredTaskWithPreviewRuntime
     preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
     skippedReason?: TaskPreviewKickoffSkippedReason | null
 }): {
+    task: StoredTask | GoalTodoProjectedTask
     preview: Awaited<ReturnType<SyncEngine['previewStatusForSession']>>
     previewRuntime: TaskPreviewRuntime | null
     skippedReason?: TaskPreviewKickoffSkippedReason | null
@@ -744,6 +903,11 @@ function buildTaskPreviewResponse(options: {
         : livePreview
 
     return {
+        task: buildTaskRouteResponseTask({
+            store: options.store,
+            namespace: options.namespace,
+            task: options.task
+        }),
         preview,
         previewRuntime: runtime,
         ...(options.skippedReason !== undefined ? { skippedReason: options.skippedReason } : {})
@@ -751,6 +915,8 @@ function buildTaskPreviewResponse(options: {
 }
 
 function buildMergeKickoffResponse(options: {
+    store: Store
+    namespace: string
     task: StoredTask
     skippedReason: string | null
 }): {
@@ -758,6 +924,7 @@ function buildMergeKickoffResponse(options: {
     commitHash: string | null
     skippedReason: string | null
     mergedAt: number | null
+    task: StoredTask | GoalTodoProjectedTask
     autoResolved: null
 } {
     return {
@@ -765,6 +932,11 @@ function buildMergeKickoffResponse(options: {
         commitHash: options.task.worktreeMergeCommit ?? null,
         skippedReason: options.skippedReason,
         mergedAt: options.task.worktreeMergedAt ?? null,
+        task: buildTaskRouteResponseTask({
+            store: options.store,
+            namespace: options.namespace,
+            task: options.task
+        }),
         autoResolved: null
     }
 }
@@ -1636,6 +1808,11 @@ function buildPreviewMonitorKey(namespace: string, taskId: string): string {
     return `${namespace}:${taskId}`
 }
 
+function getTaskMonitorId(task: Pick<StoredTask, 'id' | 'goalTodoRef'>): string {
+    const goalTodoRef = task.goalTodoRef?.trim()
+    return goalTodoRef && goalTodoRef.length > 0 ? goalTodoRef : task.id
+}
+
 function cancelPreviewDeferredStart(namespace: string, taskId: string): void {
     const key = buildPreviewMonitorKey(namespace, taskId)
     const existing = inFlightPreviewDeferredStartControllers.get(key)
@@ -1726,6 +1903,34 @@ function scheduleConversationMergeMonitor(options: {
                     failureFingerprint: blockedState.failureFingerprint,
                     latestNote: blockedState.latestNote,
                     blockedReason: blockedState.blockedReason
+                })
+            }
+
+            const resolveLatestMergeTask = () => {
+                const latestStoredTask = materializeGoalTodoTaskOverlayForWrite({
+                    store: options.store,
+                    namespace: options.namespace,
+                    taskId: options.taskId
+                })
+                if (latestStoredTask) {
+                    return buildTaskRouteRuntimeView({
+                        store: options.store,
+                        namespace: options.namespace,
+                        task: latestStoredTask
+                    })
+                }
+
+                const storedTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                if (!storedTask) {
+                    return null
+                }
+                if (storedTask.goalId) {
+                    return null
+                }
+                return buildTaskRouteRuntimeView({
+                    store: options.store,
+                    namespace: options.namespace,
+                    task: storedTask
                 })
             }
 
@@ -1867,7 +2072,7 @@ function scheduleConversationMergeMonitor(options: {
                     timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
                 })
 
-                const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                const latestTask = resolveLatestMergeTask()
                 if (!latestTask) {
                     return
                 }
@@ -2000,7 +2205,7 @@ function scheduleConversationMergeMonitor(options: {
                     timeoutMs: AUTO_CONVERSATION_MERGE_TIMEOUT_MS
                 })
 
-                const latestTask = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+                const latestTask = resolveLatestMergeTask()
                 if (!latestTask) {
                     return
                 }
@@ -2131,19 +2336,45 @@ async function persistSuccessfulTaskMerge(options: {
         console.warn('[Tasks] Failed to capture diff snapshot:', error)
     }
 
+    const nextMergeRuntime = buildTaskMergeRuntime({
+        task: options.task,
+        status: 'succeeded',
+        sessionId: options.sessionId,
+        latestNote: options.mergeRuntimeNote ?? 'Merge completed in the linked session.',
+        blockedReason: null,
+        startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
+        completedAt: mergedAt
+    })
+    const event = buildGoalTodoRuntimeRouteEvent(
+        'merge_runtime_updated_from_tasks_api',
+        'Recorded a successful goal-scoped merge via the tasks API.',
+        {
+            route: '/api/tasks/:taskId/worktree/merge',
+            status: 'succeeded'
+        }
+    )
+    const wroteDocsFirst = syncGoalTodoBeforeTaskRouteUpdate({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task,
+        requireExistingProjection: true,
+        patch: {
+            worktreeMergedAt: mergedAt,
+            worktreeMergeCommit: options.mergeResult.commitHash ?? null,
+            mergedDiffSnapshot: diffSnapshot,
+            mergeRuntime: nextMergeRuntime,
+            status: statusChangingToFinished ? 'done' : undefined,
+            workflowPhase: finishedTransitionPatch?.workflowPhase,
+            finishedAt: statusChangingToFinished ? mergedAt : undefined
+        },
+        event
+    })
+
     const updatedTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         worktreeMergedAt: mergedAt,
         worktreeMergeCommit: options.mergeResult.commitHash ?? null,
         mergedDiffSnapshot: diffSnapshot,
-        mergeRuntime: buildTaskMergeRuntime({
-            task: options.task,
-            status: 'succeeded',
-            sessionId: options.sessionId,
-            latestNote: options.mergeRuntimeNote ?? 'Merge completed in the linked session.',
-            blockedReason: null,
-            startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
-            completedAt: mergedAt
-        }),
+        mergeRuntime: nextMergeRuntime,
         status: statusChangingToFinished ? 'done' : undefined,
         workflowPhase: finishedTransitionPatch?.workflowPhase,
         finishedAt: statusChangingToFinished ? mergedAt : undefined
@@ -2152,11 +2383,16 @@ async function persistSuccessfulTaskMerge(options: {
         return null
     }
 
-    syncTaskStateToGoalTodo({
-        store: options.store,
-        namespace: options.namespace,
-        task: updatedTask
-    })
+    if (!wroteDocsFirst) {
+        syncGoalTodoBeforeTaskRouteUpdate({
+            store: options.store,
+            namespace: options.namespace,
+            task: updatedTask,
+            requireExistingProjection: true,
+            patch: {},
+            event
+        })
+    }
     emitTaskUpdatedEvent({
         engine: options.engine,
         namespace: options.namespace,
@@ -2290,21 +2526,11 @@ function normalizeGoalTaskStatus(status: string | null | undefined): GoalTodoSta
     }
 }
 
-function defaultTagForGoalStatus(status: GoalTodoStatus): string | null {
-    switch (status) {
-        case 'planning':
-            return 'ready'
-        case 'running':
-            return 'promoted'
-        case 'review':
-            return 'in_review'
-        case 'blocked':
-            return 'unknown'
-        case 'done':
-            return 'accepted'
-        case 'unknown':
-            return null
-    }
+function goalTodoTaskKindForSource(source: string | null | undefined): GoalTodoTaskKind {
+    const normalized = source?.trim().toLowerCase()
+    return normalized === 'planner' || normalized === 'radar'
+        ? 'planning'
+        : 'engineering'
 }
 
 function getDefaultWorkspaceForProject(store: Store, project: StoredProject): StoredWorkspace | null {
@@ -2315,307 +2541,173 @@ function getDefaultWorkspaceForProject(store: Store, project: StoredProject): St
     return store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
-function hasBlockedTaskActionRuntime(task: StoredTask): boolean {
-    return task.mergeRuntime?.status === 'blocked'
-        || task.previewRuntime?.status === 'blocked'
-        || task.initRuntime?.status === 'blocked'
-}
-
-function shouldRepairBlockedActionRuntimeTask(task: StoredTask): boolean {
-    const status = normalizeGoalTaskStatus(task.status)
-    return status !== 'blocked'
-        && status !== 'done'
-        && hasBlockedTaskActionRuntime(task)
-}
-
-function repairGoalTodoOverlayState(options: {
-    store: Store
-    namespace: string
+function resolveGoalTodoRefForRouteTask(options: {
     project: StoredProject
+    goal: StoredGoal
     defaultWorkspace: StoredWorkspace | null
-    task: StoredTask
-    hasTodoSection: boolean
-    todoSectionStatus?: string | null
-}): { task: StoredTask; todoChanged: boolean } {
-    let task = options.task
-    let todoChanged = false
-
-    if (!task.goalTodoRef && !task.archivedAt) {
-        const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
-            goalTodoRef: task.id
-        })
-        if (updated) {
-            task = updated
-        }
+    task: Pick<StoredTask, 'id' | 'goalTodoRef'>
+}): string {
+    const existingRef = options.task.goalTodoRef?.trim()
+    if (existingRef) {
+        return existingRef
     }
-
-    if (shouldRepairBlockedActionRuntimeTask(task)) {
-        const updated = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
-            status: 'blocked',
-            finishedAt: null
-        })
-        if (updated) {
-            task = updated
-        }
-    }
-
-    if (
-        task.goalTodoRef
-        && !task.archivedAt
-        && (
-            !options.hasTodoSection
-            || (
-                hasBlockedTaskActionRuntime(task)
-                &&
-                normalizeGoalTaskStatus(task.status) === 'blocked'
-                && options.todoSectionStatus !== 'blocked'
-            )
-        )
-    ) {
-        todoChanged = syncTaskStateToGoalTodo({
-            store: options.store,
-            namespace: options.namespace,
-            task,
-            project: options.project,
-            defaultWorkspace: options.defaultWorkspace
-        })
-    }
-
-    return { task, todoChanged }
-}
-
-function buildGoalTodoTaskProjection(options: {
-    store: Store
-    project: StoredProject
-    goalId: string
-    namespace: string
-    includeArchived: boolean
-}): StoredTask[] {
-    const goal = options.store.goals.getGoalByNamespace(options.goalId, options.namespace)
-    if (!goal || goal.projectId !== options.project.id) {
-        return []
-    }
-
-    const defaultWorkspace = getDefaultWorkspaceForProject(options.store, options.project)
-    let todo = readGoalTodo({
+    const todo = readGoalTodo({
         project: options.project,
-        goal,
-        defaultWorkspace
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
     })
-    let overlays = options.store.tasks.listTasksByProjectAndNamespace(options.project.id, options.namespace, {
-        includeArchived: true,
-        goalId: goal.id
-    })
-    let todoChanged = false
-    const todoSectionIds = new Set(todo.sections.map((section) => section.id))
-    overlays = overlays.map((task) => {
-        const goalTodoRef = task.goalTodoRef ?? task.id
-        const repair = repairGoalTodoOverlayState({
+    return todo.board.items.find((item) => item.taskId === options.task.id)?.ref?.trim() || options.task.id
+}
+
+function buildGoalTodoRuntimeRouteEvent(
+    action: string,
+    reason: string,
+    metadata?: Record<string, unknown>
+): GoalTodoEventOptions {
+    return {
+        writer: 'hopi-tasks-api',
+        action,
+        reason,
+        metadata
+    }
+}
+
+
+function syncGoalTodoBeforeTaskRouteUpdate(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+    patch: Partial<StoredTask>
+    requireExistingProjection?: boolean
+    event?: GoalTodoEventOptions
+}): boolean {
+    const currentTask = options.requireExistingProjection
+        ? buildProjectedTaskRouteRuntimeView({
             store: options.store,
             namespace: options.namespace,
-            project: options.project,
-            defaultWorkspace,
-            task,
-            hasTodoSection: todoSectionIds.has(goalTodoRef),
-            todoSectionStatus: todo.sections.find((section) => section.id === goalTodoRef)?.status
+            task: options.task
         })
-        todoChanged = todoChanged || repair.todoChanged
-        return repair.task
-    })
-    if (todoChanged) {
-        todo = readGoalTodo({
-            project: options.project,
-            goal,
-            defaultWorkspace
+        : buildTaskRouteRuntimeView({
+            store: options.store,
+            namespace: options.namespace,
+            task: options.task
         })
-    }
-    const overlayByKey = new Map<string, StoredTask>()
-    for (const task of overlays) {
-        overlayByKey.set(task.id, task)
-        if (task.goalTodoRef) {
-            overlayByKey.set(task.goalTodoRef, task)
-        }
+    if (!currentTask || !currentTask.goalId || !currentTask.goalTodoRef) {
+        return false
     }
 
-    const baseTime = todo.updatedAt ?? Date.now()
-    const projected = todo.sections.flatMap((section, index) => {
-        const overlay = overlayByKey.get(section.id) ?? null
-        if (!options.includeArchived && overlay?.archivedAt) {
-            return []
-        }
-        const status = section.status === 'unknown' ? 'planning' : section.status
-        const blockedReason = status === 'blocked'
-            ? section.blocked?.summary ?? overlay?.blockedReason ?? null
-            : null
-        return [{
-            id: overlay?.id ?? section.id,
-            projectId: options.project.id,
-            goalId: goal.id,
-            goalTodoRef: section.id,
-            title: section.title,
-            description: section.body || overlay?.description || null,
-            status,
-            tag: section.tag,
-            blockedReason,
-            blockedAt: status === 'blocked' ? section.blocked?.updatedAt ?? overlay?.blockedAt ?? null : null,
-            blockedSource: status === 'blocked' ? section.blocked?.kind ?? overlay?.blockedSource ?? null : null,
-            blockedSessionId: status === 'blocked' ? overlay?.blockedSessionId ?? null : null,
-            priority: overlay?.priority ?? null,
-            sortKey: overlay?.sortKey ?? baseTime - index,
-            activeSessionId: overlay?.activeSessionId ?? null,
-            workspaceId: overlay?.workspaceId ?? defaultWorkspace?.id ?? null,
-            agentFlavor: overlay?.agentFlavor ?? options.project.defaultAgentFlavor,
-            permissionMode: overlay?.permissionMode ?? options.project.defaultPermissionMode,
-            model: overlay?.model ?? options.project.defaultModel,
-            modelMode: overlay?.modelMode ?? options.project.defaultModelMode,
-            attachments: overlay?.attachments ?? null,
-            source: overlay?.source ?? 'manual',
-            sourceTaskId: overlay?.sourceTaskId ?? null,
-            workflowProfile: overlay?.workflowProfile ?? 'default',
-            workflowPhase: overlay?.workflowPhase ?? null,
-            subTasks: overlay?.subTasks ?? null,
-            subTasksUpdatedAt: overlay?.subTasksUpdatedAt ?? null,
-            worktreeMergedAt: overlay?.worktreeMergedAt ?? null,
-            worktreeMergeCommit: overlay?.worktreeMergeCommit ?? null,
-            mergedDiffSnapshot: overlay?.mergedDiffSnapshot ?? null,
-            mergeRuntime: overlay?.mergeRuntime ?? null,
-            previewRuntime: overlay?.previewRuntime ?? null,
-            initRuntime: overlay?.initRuntime ?? null,
-            contract: overlay?.contract ?? null,
-            handoff: overlay?.handoff ?? null,
-            evidence: overlay?.evidence ?? null,
-            createdAt: overlay?.createdAt ?? baseTime,
-            updatedAt: Math.max(overlay?.updatedAt ?? 0, baseTime),
-            finishedAt: overlay?.finishedAt ?? null,
-            archivedAt: overlay?.archivedAt ?? null
-        } as StoredTask & { tag?: string | null }]
+    const nextTask = {
+        ...currentTask,
+        ...options.patch
+    } as StoredTask
+    const durableBlocked = buildGoalTodoBlockedStateFromStoredTask(nextTask)
+
+    const project = options.store.projects.getProjectByNamespace(nextTask.projectId, options.namespace)
+    const goal = nextTask.goalId
+        ? options.store.goals.getGoalByNamespace(nextTask.goalId, options.namespace)
+        : null
+    if (!project || !goal || goal.projectId !== project.id) {
+        return false
+    }
+
+    return upsertGoalTodoTaskState({
+        project,
+        goal,
+        defaultWorkspace: getDefaultWorkspaceForProject(options.store, project),
+        taskId: nextTask.goalTodoRef?.trim() || nextTask.id,
+        status: getGoalTodoStatusForStoredTask(nextTask),
+        tag: getGoalTodoTagForStoredTask(nextTask),
+        taskKind: goalTodoTaskKindForSource(nextTask.source),
+        title: nextTask.title,
+        body: nextTask.description,
+        blocked: durableBlocked,
+        event: options.event
     })
-    return projected
 }
 
-type GoalTodoProjectedTask = StoredTask & { tag?: string | null }
-
-function findGoalTodoTaskProjectionById(options: {
+function buildProjectedTaskRouteRuntimeView(options: {
     store: Store
     namespace: string
-    taskId: string
-    includeArchived?: boolean
-}): GoalTodoProjectedTask | null {
-    const projects = options.store.projects.listProjectsByNamespace(options.namespace, {
-        includeArchived: Boolean(options.includeArchived)
-    })
-    for (const project of projects) {
-        const goals = options.store.goals.listGoalsByProjectAndNamespace(project.id, options.namespace, {
-            includeArchived: Boolean(options.includeArchived)
-        })
-        for (const goal of goals) {
-            const tasks = buildGoalTodoTaskProjection({
-                store: options.store,
-                project,
-                goalId: goal.id,
-                namespace: options.namespace,
-                includeArchived: Boolean(options.includeArchived)
-            }) as GoalTodoProjectedTask[]
-            const task = tasks.find((candidate) => (
-                candidate.id === options.taskId
-                || candidate.goalTodoRef === options.taskId
-            ))
-            if (task) return task
-        }
-    }
-    return null
-}
-
-function getTaskByNamespaceOrGoalTodoProjection(options: {
-    store: Store
-    namespace: string
-    taskId: string
-}): GoalTodoProjectedTask | StoredTask | null {
-    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (stored?.goalId) {
-        const project = options.store.projects.getProjectByNamespace(stored.projectId, options.namespace)
-        if (project) {
-            const projected = buildGoalTodoTaskProjection({
-                store: options.store,
-                project,
-                goalId: stored.goalId,
-                namespace: options.namespace,
-                includeArchived: true
-            }) as GoalTodoProjectedTask[]
-            return projected.find((candidate) => (
-                candidate.id === options.taskId
-                || candidate.goalTodoRef === options.taskId
-                || candidate.id === stored.id
-                || candidate.goalTodoRef === stored.goalTodoRef
-            )) ?? stored
-        }
+    task: StoredTask
+}): StoredTask | GoalTodoProjectedTask | null {
+    if (!options.task.goalId) {
+        return options.task
     }
 
-    return stored ?? findGoalTodoTaskProjectionById({
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
         store: options.store,
         namespace: options.namespace,
-        taskId: options.taskId,
-        includeArchived: true
+        taskId: options.task.goalTodoRef?.trim() || options.task.id
     })
-}
-
-function materializeGoalTodoTaskOverlayForWrite(options: {
-    store: Store
-    namespace: string
-    taskId: string
-}): StoredTask | null {
-    const existing = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (existing) return existing
-
-    const projected = findGoalTodoTaskProjectionById({
-        store: options.store,
-        namespace: options.namespace,
-        taskId: options.taskId,
-        includeArchived: true
-    })
-    if (!projected || !projected.goalId) {
+    if (!projected) {
         return null
     }
+    if (projected === options.task) {
+        return options.task
+    }
 
-    const latest = options.store.tasks.getTaskByNamespace(projected.id, options.namespace)
-    if (latest) return latest
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    if (!hasExplicitOverlayBlock) {
+        return projected
+    }
 
-    return options.store.tasks.createTask({
-        id: projected.id,
-        projectId: projected.projectId,
-        goalId: projected.goalId,
-        goalTodoRef: projected.goalTodoRef ?? projected.id,
-        title: projected.title,
-        description: projected.description,
-        status: projected.status,
-        blockedReason: projected.blockedReason,
-        blockedAt: projected.blockedAt,
-        blockedSource: projected.blockedSource,
-        blockedSessionId: projected.blockedSessionId,
-        priority: projected.priority,
-        sortKey: projected.sortKey,
-        activeSessionId: projected.activeSessionId,
-        workspaceId: projected.workspaceId,
-        agentFlavor: projected.agentFlavor,
-        permissionMode: projected.permissionMode,
-        model: projected.model,
-        modelMode: projected.modelMode,
-        attachments: projected.attachments ?? undefined,
-        source: projected.source,
-        sourceTaskId: projected.sourceTaskId,
-        workflowProfile: projected.workflowProfile,
-        workflowPhase: projected.workflowPhase,
-        subTasks: projected.subTasks ?? undefined,
-        subTasksUpdatedAt: projected.subTasksUpdatedAt,
-        worktreeMergedAt: projected.worktreeMergedAt,
-        worktreeMergeCommit: projected.worktreeMergeCommit,
-        mergeRuntime: projected.mergeRuntime,
-        previewRuntime: projected.previewRuntime,
-        initRuntime: projected.initRuntime,
-        contract: projected.contract,
-        handoff: projected.handoff,
-        evidence: projected.evidence
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function buildTaskRouteResponseTask(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | GoalTodoProjectedTask {
+    return buildTaskRouteRuntimeView(options)
+}
+
+function buildTaskRouteRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | GoalTodoProjectedTask {
+    if (!options.task.goalId) {
+        return options.task
+    }
+
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.goalTodoRef?.trim() || options.task.id
     })
+    if (!projected || projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    if (!hasExplicitOverlayBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
 }
 
 const mergedDiffLookupQuerySchema = z.object({
@@ -3582,7 +3674,8 @@ async function runPreviewStartFlow(options: {
                     store: options.store,
                     engine: options.engine,
                     namespace: options.namespace,
-                    taskId: options.resolved.task.id,
+                    taskId: getTaskMonitorId(options.resolved.task),
+                    runtimeTaskId: options.resolved.task.id,
                     sessionId: options.resolved.session.id,
                     previewPath: fallbackPath,
                     basePort: options.basePort
@@ -3590,6 +3683,8 @@ async function runPreviewStartFlow(options: {
                 return {
                     status: 200,
                     body: buildTaskPreviewResponse({
+                        store: options.store,
+                        namespace: options.namespace,
                         task: previewTask,
                         preview: fallbackAttempt.preview
                     }),
@@ -3622,7 +3717,8 @@ async function runPreviewStartFlow(options: {
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
-            taskId: options.resolved.task.id,
+            taskId: getTaskMonitorId(options.resolved.task),
+            runtimeTaskId: options.resolved.task.id,
             sessionId: options.resolved.session.id,
             previewPath: attemptResult.previewPath,
             basePort: options.basePort
@@ -3630,6 +3726,8 @@ async function runPreviewStartFlow(options: {
         return {
             status: 200,
             body: buildTaskPreviewResponse({
+                store: options.store,
+                namespace: options.namespace,
                 task: previewTask,
                 preview: attemptResult.preview
             }),
@@ -3675,7 +3773,12 @@ async function runPreviewStartFlow(options: {
             status: attemptResult.status,
             body: {
                 error: attemptResult.error,
-                previewRuntime: previewTask.previewRuntime
+                previewRuntime: previewTask.previewRuntime,
+                task: buildTaskRouteResponseTask({
+                    store: options.store,
+                    namespace: options.namespace,
+                    task: previewTask
+                })
             },
             task: previewTask
         }
@@ -3802,7 +3905,12 @@ async function runPreviewStartFlow(options: {
         })
         const body: Record<string, unknown> = {
             error: repairAttempt.error,
-            previewRuntime: previewTask.previewRuntime
+            previewRuntime: previewTask.previewRuntime,
+            task: buildTaskRouteResponseTask({
+                store: options.store,
+                namespace: options.namespace,
+                task: previewTask
+            })
         }
         body[repairFlag] = true
         return {
@@ -3836,14 +3944,20 @@ async function runPreviewStartFlow(options: {
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
-            taskId: options.resolved.task.id,
+            taskId: getTaskMonitorId(options.resolved.task),
+            runtimeTaskId: options.resolved.task.id,
             sessionId: options.resolved.session.id,
             previewPath: retryAttempt.previewPath,
             basePort: options.basePort
         })
         const body: Record<string, unknown> = {
             preview: retryAttempt.preview,
-            previewRuntime: previewTask.previewRuntime
+            previewRuntime: previewTask.previewRuntime,
+            task: buildTaskRouteResponseTask({
+                store: options.store,
+                namespace: options.namespace,
+                task: previewTask
+            })
         }
         body[repairFlag] = true
         return {
@@ -3887,7 +4001,12 @@ async function runPreviewStartFlow(options: {
     })
     const body: Record<string, unknown> = {
         error: retryAttempt.error,
-        previewRuntime: previewTask.previewRuntime
+        previewRuntime: previewTask.previewRuntime,
+        task: buildTaskRouteResponseTask({
+            store: options.store,
+            namespace: options.namespace,
+            task: previewTask
+        })
     }
     body[repairFlag] = true
     return {
@@ -4039,6 +4158,7 @@ function schedulePreviewSelfHealMonitor(options: {
     engine: SyncEngine
     namespace: string
     taskId: string
+    runtimeTaskId: string
     sessionId: string
     previewPath: Extract<TaskPreviewPathResult, { ok: true }>
     basePort?: number
@@ -4089,7 +4209,7 @@ function schedulePreviewSelfHealMonitor(options: {
                 }
 
                 const preview = statusResult.preview
-                if (preview.taskId && preview.taskId !== options.taskId) {
+                if (preview.taskId && preview.taskId !== options.runtimeTaskId) {
                     return
                 }
                 if (preview.status === 'ready' || preview.status === 'starting') {
@@ -4197,7 +4317,7 @@ function schedulePreviewSelfHealMonitor(options: {
                     namespace: options.namespace,
                     sessionId: resolved.session.id,
                     task: {
-                        id: options.taskId,
+                        id: options.runtimeTaskId,
                         title: resolved.task.title
                     },
                     mode: options.previewPath.mode,
@@ -4335,7 +4455,11 @@ function resolveTaskPreviewAccess(options: {
     status: 400 | 403 | 404
     error: string
 } {
-    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    const task = resolveProjectedTaskById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
     if (!task) {
         return { ok: false, status: 404, error: 'Task not found' }
     }
@@ -4364,6 +4488,28 @@ function resolveTaskPreviewAccess(options: {
     }
 }
 
+function resolveProjectedTaskById(options: {
+    store: Store
+    namespace: string
+    taskId: string
+}): StoredTask | null {
+    const projected = findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId,
+        includeArchived: true
+    })
+    if (projected) {
+        return projected
+    }
+
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (stored?.goalId) {
+        return null
+    }
+    return stored
+}
+
 export function createTasksRoutes(options: {
     store: Store
     getSyncEngine: () => SyncEngine | null
@@ -4390,11 +4536,25 @@ export function createTasksRoutes(options: {
                 project,
                 goalId,
                 namespace,
-                includeArchived
+                includeArchived,
+                includeReservoirPlanningNotes: false
             })
             return c.json({ tasks })
         }
-        const tasks = options.store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { includeArchived, goalId })
+        const nonGoalTasks = options.store.tasks
+            .listTasksByProjectAndNamespace(projectId, namespace, { includeArchived })
+            .filter((task) => !task.goalId)
+        const goalTasks = options.store.goals
+            .listGoalsByProjectAndNamespace(projectId, namespace, { includeArchived })
+            .flatMap((goal) => buildGoalTodoTaskProjection({
+                store: options.store,
+                project,
+                goalId: goal.id,
+                namespace,
+                includeArchived,
+                includeReservoirPlanningNotes: false
+            }))
+        const tasks = [...nonGoalTasks, ...goalTasks]
         return c.json({ tasks })
     })
 
@@ -4460,12 +4620,56 @@ export function createTasksRoutes(options: {
         const normalizedStatus = goal
             ? normalizeGoalTaskStatus(parsed.data.status ?? 'planning')
             : parsed.data.status ?? 'planning'
-        const goalStatus = goal ? normalizeGoalTaskStatus(normalizedStatus) : null
+        const routeTaskState = {
+            goalId: parsed.data.goalId ?? null,
+            status: normalizedStatus,
+            blockedReason: parsed.data.blockedReason ?? null,
+            blockedSource: parsed.data.blockedSource ?? null,
+            blockedAt: Date.now(),
+            mergeRuntime: null,
+            previewRuntime: null,
+            initRuntime: null
+        }
+        const storedStatus = goal
+            ? recoverStoredTaskStatusFromLegacyBlocked(routeTaskState)
+            : normalizedStatus
+        const goalStatus = goal ? getGoalTodoStatusForStoredTask({
+            ...routeTaskState,
+            status: storedStatus
+        }) : null
         const tag = parsed.data.tag !== undefined
             ? parsed.data.tag
             : goal
-                ? defaultTagForGoalStatus(goalStatus ?? 'planning')
+                ? getGoalTodoTagForStoredTask({
+                    ...routeTaskState,
+                    status: storedStatus
+                })
                 : null
+        const source = parsed.data.source ?? 'manual'
+        if (goal) {
+            const goalTodoBlocked = buildGoalTodoBlockedStateFromStoredTask(routeTaskState)
+            upsertGoalTodoTaskState({
+                project,
+                goal,
+                defaultWorkspace,
+                taskId,
+                status: goalStatus ?? 'planning',
+                tag,
+                taskKind: goalTodoTaskKindForSource(source),
+                title: parsed.data.title,
+                body: parsed.data.description ?? null,
+                blocked: goalTodoBlocked,
+                event: {
+                    writer: 'hopi-tasks-api',
+                    action: 'todo_item_created_from_tasks_api',
+                    reason: 'Created a goal-scoped task via the tasks API.',
+                    metadata: {
+                        source: 'tasks_create',
+                        route: '/api/projects/:projectId/tasks'
+                    }
+                }
+            })
+        }
         const created = options.store.tasks.createTask({
             id: taskId,
             projectId,
@@ -4473,7 +4677,7 @@ export function createTasksRoutes(options: {
             goalTodoRef: goal ? taskId : null,
             title: parsed.data.title,
             description: parsed.data.description ?? null,
-            status: normalizedStatus,
+            status: goal ? storedStatus : normalizedStatus,
             blockedReason: parsed.data.blockedReason ?? null,
             blockedSource: parsed.data.blockedSource ?? null,
             blockedSessionId: parsed.data.blockedSessionId ?? null,
@@ -4492,39 +4696,24 @@ export function createTasksRoutes(options: {
             contract: parsed.data.contract ?? null,
             handoff: parsed.data.handoff ?? null,
             evidence: parsed.data.evidence ?? null,
-            source: parsed.data.source ?? 'manual'
+            source
         })
-
-        if (goal) {
-            upsertGoalTodoTaskState({
-                project,
-                goal,
-                defaultWorkspace,
-                taskId,
-                status: goalStatus ?? 'planning',
-                tag,
-                title: parsed.data.title,
-                body: parsed.data.description ?? null,
-                blocked: goalStatus === 'blocked'
-                    ? {
-                        kind: parsed.data.blockedSource ?? tag ?? 'unknown',
-                        summary: parsed.data.blockedReason ?? null,
-                        updatedAt: Date.now()
-                    }
-                    : null
-            })
-        }
 
         const engine = options.getSyncEngine()
         engine?.handleRealtimeEvent({ type: 'task-added', taskId, projectId, namespace, data: { taskId } })
-
-        return c.json({ task: created })
+        return c.json({
+            task: buildTaskRouteResponseTask({
+                store: options.store,
+                namespace,
+                task: created
+            })
+        })
     })
 
     app.get('/tasks/:taskId', (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
-        const task = getTaskByNamespaceOrGoalTodoProjection({
+        const task = resolveProjectedTaskById({
             store: options.store,
             namespace,
             taskId
@@ -4561,6 +4750,11 @@ export function createTasksRoutes(options: {
         if (!project) {
             return c.json({ error: 'Project not found' }, 404)
         }
+        const existingRouteTask = buildTaskRouteRuntimeView({
+            store: options.store,
+            namespace,
+            task: existing
+        }) as StoredTask
         const nextTaskAgentFlavor = resolveTaskAgentFlavor({
             projectDefaultAgentFlavor: project.defaultAgentFlavor,
             storedTaskAgentFlavor: existing.agentFlavor,
@@ -4594,15 +4788,33 @@ export function createTasksRoutes(options: {
         }
 
         const normalizedStatus = existing.goalId
-            ? normalizeGoalTaskStatus(parsed.data.status ?? existing.status)
+            ? normalizeGoalTaskStatus(parsed.data.status ?? existingRouteTask.status)
             : parsed.data.status
+        const nextGoalId = parsed.data.goalId === undefined ? existingRouteTask.goalId : parsed.data.goalId
+        const nextRouteTaskState = {
+            goalId: nextGoalId,
+            status: normalizedStatus ?? existingRouteTask.status,
+            blockedReason: parsed.data.blockedReason !== undefined
+                ? parsed.data.blockedReason
+                : existingRouteTask.blockedReason,
+            blockedSource: parsed.data.blockedSource !== undefined
+                ? parsed.data.blockedSource
+                : existingRouteTask.blockedSource,
+            blockedAt: existingRouteTask.blockedAt,
+            mergeRuntime: existingRouteTask.mergeRuntime,
+            previewRuntime: existingRouteTask.previewRuntime,
+            initRuntime: existingRouteTask.initRuntime
+        }
+        const storedStatus = nextGoalId
+            ? recoverStoredTaskStatusFromLegacyBlocked(nextRouteTaskState)
+            : normalizedStatus
         const statusChangingToFinished = (normalizedStatus === 'done' || parsed.data.status === 'finished')
-            && existing.status !== 'finished'
-            && existing.status !== 'done'
+            && existingRouteTask.status !== 'finished'
+            && existingRouteTask.status !== 'done'
         const finishedAt = statusChangingToFinished ? Date.now() : undefined
-        const strategy = getWorkflowStrategy(existing)
+        const strategy = getWorkflowStrategy(existingRouteTask)
         const finishedTransitionPatch = statusChangingToFinished
-            ? strategy.getTaskPatchForTransition('task_finished', existing)
+            ? strategy.getTaskPatchForTransition('task_finished', existingRouteTask)
             : null
         let nextPermissionMode = parsed.data.permissionMode
         if (
@@ -4625,12 +4837,86 @@ export function createTasksRoutes(options: {
         ) {
             nextModelMode = null
         }
+        const currentGoal = existingRouteTask.goalId
+            ? options.store.goals.getGoalByNamespace(existingRouteTask.goalId, namespace)
+            : null
+        const currentGoalProject = currentGoal
+            ? options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+            : null
+        const nextGoal = nextGoalId
+            ? options.store.goals.getGoalByNamespace(nextGoalId, namespace)
+            : null
+        const nextGoalProject = nextGoal
+            ? options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+            : null
+        const goalChanged = parsed.data.goalId !== undefined && parsed.data.goalId !== existing.goalId
+        const sameGoalDocsFirst = Boolean(
+            nextGoal
+            && nextGoalProject
+            && currentGoal
+            && nextGoal.id === currentGoal.id
+        )
+        const nextGoalStatus = nextGoal ? getGoalTodoStatusForStoredTask({
+            ...nextRouteTaskState,
+            status: storedStatus ?? existing.status
+        }) : null
+        const nextGoalTag = parsed.data.tag !== undefined
+            ? parsed.data.tag
+            : nextGoal
+                ? getGoalTodoTagForStoredTask({
+                    ...nextRouteTaskState,
+                    status: storedStatus ?? existing.status
+                })
+                : null
+        const nextBlockedReason = parsed.data.blockedReason !== undefined
+            ? parsed.data.blockedReason
+            : existing.blockedReason
+        const nextBlockedSource = parsed.data.blockedSource !== undefined
+            ? parsed.data.blockedSource
+            : existing.blockedSource
+        const nextGoalTodoBlocked = buildGoalTodoBlockedStateFromStoredTask(nextRouteTaskState)
+        const nextGoalTodoRef = sameGoalDocsFirst && nextGoal && nextGoalProject
+            ? resolveGoalTodoRefForRouteTask({
+                project: nextGoalProject,
+                goal: nextGoal,
+                defaultWorkspace: getDefaultWorkspaceForProject(options.store, nextGoalProject),
+                task: existingRouteTask
+            })
+            : existing.goalTodoRef
+        const routeEvent: GoalTodoEventOptions = {
+            writer: 'hopi-tasks-api',
+            action: 'todo_item_updated_from_tasks_api',
+            reason: 'Updated a goal-scoped task via the tasks API.',
+            metadata: {
+                source: 'tasks_patch',
+                route: '/api/tasks/:taskId'
+            }
+        }
+        const wroteDocsFirst = Boolean(
+            sameGoalDocsFirst
+            && nextGoal
+            && nextGoalProject
+            && upsertGoalTodoTaskState({
+                project: nextGoalProject,
+                goal: nextGoal,
+                defaultWorkspace: getDefaultWorkspaceForProject(options.store, nextGoalProject),
+                taskId: nextGoalTodoRef ?? existing.id,
+                status: nextGoalStatus ?? 'planning',
+                tag: nextGoalTag,
+                taskKind: goalTodoTaskKindForSource(parsed.data.source ?? existingRouteTask.source),
+                title: parsed.data.title ?? existingRouteTask.title,
+                body: parsed.data.description !== undefined ? parsed.data.description : existingRouteTask.description,
+                blocked: nextGoalTodoBlocked,
+                event: routeEvent
+            })
+        )
 
         const updated = options.store.tasks.updateTaskByNamespace(existing.id, namespace, {
             title: parsed.data.title,
             goalId: parsed.data.goalId,
+            goalTodoRef: nextGoalTodoRef,
             description: parsed.data.description,
-            status: normalizedStatus,
+            status: storedStatus,
             blockedReason: parsed.data.blockedReason,
             blockedSource: parsed.data.blockedSource,
             blockedSessionId: parsed.data.blockedSessionId,
@@ -4660,37 +4946,65 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Task not found' }, 404)
         }
 
+        if (goalChanged && currentGoal && currentGoalProject) {
+            removeGoalTodoTaskState({
+                project: currentGoalProject,
+                goal: currentGoal,
+                defaultWorkspace: getDefaultWorkspaceForProject(options.store, currentGoalProject),
+                todoRef: existing.goalTodoRef ?? existing.id,
+                taskId: existing.id,
+                event: {
+                    writer: 'hopi-tasks-api',
+                    action: 'todo_item_removed_from_tasks_api',
+                    reason: updated.goalId
+                        ? 'Moved a goal-scoped task to another goal via the tasks API.'
+                        : 'Removed a goal-scoped task from its goal via the tasks API.',
+                    metadata: {
+                        source: 'tasks_patch',
+                        route: '/api/tasks/:taskId'
+                    }
+                }
+            })
+        }
+
         if (updated.goalId) {
-            const goal = options.store.goals.getGoalByNamespace(updated.goalId, namespace)
-            const project = options.store.projects.getProjectByNamespace(updated.projectId, namespace)
-            if (goal && project) {
-                const goalStatus = normalizeGoalTaskStatus(normalizedStatus ?? updated.status)
-                upsertGoalTodoTaskState({
-                    project,
-                    goal,
-                    defaultWorkspace: getDefaultWorkspaceForProject(options.store, project),
-                    taskId: updated.goalTodoRef ?? updated.id,
-                    status: goalStatus,
-                    tag: parsed.data.tag !== undefined ? parsed.data.tag : defaultTagForGoalStatus(goalStatus),
-                    title: parsed.data.title ?? updated.title,
-                    body: parsed.data.description !== undefined ? parsed.data.description : updated.description,
-                    blocked: goalStatus === 'blocked'
-                        ? {
-                            kind: parsed.data.blockedSource ?? updated.blockedSource ?? parsed.data.tag ?? 'unknown',
-                            summary: parsed.data.blockedReason ?? updated.blockedReason ?? null,
-                            updatedAt: Date.now()
-                        }
-                        : null
+            if (!wroteDocsFirst) {
+                syncGoalTodoBeforeTaskRouteUpdate({
+                    store: options.store,
+                    namespace,
+                    task: updated,
+                    patch: {},
+                    event: routeEvent
                 })
             }
         }
         const engine = options.getSyncEngine()
+        const projectedRuntimeTask = buildProjectedTaskRouteRuntimeView({
+            store: options.store,
+            namespace,
+            task: updated
+        })
+        const fallbackRuntimeTask = updated.goalId && !projectedRuntimeTask
+            ? buildTaskRouteFallbackTask({
+                previousTask: existingRouteTask,
+                updatedTask: updated
+            })
+            : null
+        const runtimeTask = (
+            projectedRuntimeTask
+            ?? fallbackRuntimeTask
+            ?? buildTaskRouteRuntimeView({
+                store: options.store,
+                namespace,
+                task: updated
+            })
+        ) as StoredTask
         notifyProjectControllerTaskBlockedTransition({
             store: options.store,
             engine,
             namespace,
-            previousTask: existing,
-            task: updated
+            previousTask: existingRouteTask,
+            task: runtimeTask
         })
 
         if (statusChangingToFinished && engine) {
@@ -4711,7 +5025,9 @@ export function createTasksRoutes(options: {
             data: { taskId: updated.id }
         })
 
-        return c.json({ task: updated })
+        return c.json({
+            task: runtimeTask
+        })
     })
 
     app.post('/tasks/:taskId/archive', (c) => {
@@ -4724,6 +5040,29 @@ export function createTasksRoutes(options: {
         })
         if (!existing) {
             return c.json({ error: 'Task not found' }, 404)
+        }
+
+        if (existing.goalId) {
+            const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+            const goal = options.store.goals.getGoalByNamespace(existing.goalId, namespace)
+            if (project && goal && goal.projectId === project.id) {
+                removeGoalTodoTaskState({
+                    project,
+                    goal,
+                    defaultWorkspace: getDefaultWorkspaceForProject(options.store, project),
+                    todoRef: existing.goalTodoRef ?? existing.id,
+                    taskId: existing.id,
+                    event: {
+                        writer: 'hopi-tasks-api',
+                        action: 'todo_item_removed_from_tasks_api',
+                        reason: 'Archived a goal-scoped task via the tasks API.',
+                        metadata: {
+                            source: 'tasks_archive',
+                            route: '/api/tasks/:taskId/archive'
+                        }
+                    }
+                })
+            }
         }
 
         const ok = options.store.tasks.archiveTaskByNamespace(existing.id, namespace)
@@ -4820,7 +5159,13 @@ export function createTasksRoutes(options: {
             return c.json({ error: 'Task not found' }, 404)
         }
 
-        return c.json({ task: updated })
+        return c.json({
+            task: buildTaskRouteResponseTask({
+                store: options.store,
+                namespace,
+                task: updated
+            })
+        })
     })
 
     app.post('/tasks/:taskId/start-session', async (c) => {
@@ -4891,7 +5236,11 @@ export function createTasksRoutes(options: {
         }
 
         return c.json({
-            task: result.task,
+            task: buildTaskRouteResponseTask({
+                store: options.store,
+                namespace,
+                task: result.task
+            }),
             sessionId: result.sessionId,
             initRecoveryAttempted: result.initRecoveryAttempted,
             initRecoveryError: result.initRecoveryError
@@ -4926,6 +5275,7 @@ export function createTasksRoutes(options: {
         if (!previewTask) {
             return c.json({ error: 'Task not found' }, 404)
         }
+        const previewMonitorTaskId = getTaskMonitorId(resolved.task)
 
         const requestedMode = parsed.data.mode ?? 'auto'
         const previewPath = resolveTaskPreviewPath(resolved.session, requestedMode)
@@ -4933,8 +5283,8 @@ export function createTasksRoutes(options: {
             return c.json({ error: previewPath.error }, previewPath.status)
         }
 
-        cancelPreviewDeferredStart(namespace, taskId)
-        cancelPreviewSelfHealMonitor(namespace, taskId)
+        cancelPreviewDeferredStart(namespace, previewMonitorTaskId)
+        cancelPreviewSelfHealMonitor(namespace, previewMonitorTaskId)
 
         if (!resolved.session.active) {
             const blockedReason = PREVIEW_SESSION_INACTIVE_BLOCKED_REASON
@@ -4955,6 +5305,11 @@ export function createTasksRoutes(options: {
             })
             return c.json({
                 error: blockedReason,
+                task: buildTaskRouteResponseTask({
+                    store: options.store,
+                    namespace,
+                    task: previewTask
+                }),
                 previewRuntime: previewTask.previewRuntime
             }, 503)
         }
@@ -4981,12 +5336,14 @@ export function createTasksRoutes(options: {
                 store: options.store,
                 engine,
                 namespace,
-                taskId: resolved.task.id,
+                taskId: previewMonitorTaskId,
                 requestedMode,
                 basePort: parsed.data.basePort
             })
 
             return c.json(buildTaskPreviewResponse({
+                store: options.store,
+                namespace,
                 task: previewTask,
                 preview: buildIdlePreviewStatus({
                     taskId: resolved.task.id,
@@ -5056,6 +5413,8 @@ export function createTasksRoutes(options: {
                 preview
             })
             return c.json(buildTaskPreviewResponse({
+                store: options.store,
+                namespace,
                 task: previewTask,
                 preview
             }))
@@ -5081,6 +5440,8 @@ export function createTasksRoutes(options: {
                     preview
                 })
                 return c.json(buildTaskPreviewResponse({
+                    store: options.store,
+                    namespace,
                     task: previewTask,
                     preview
                 }))
@@ -5117,9 +5478,10 @@ export function createTasksRoutes(options: {
         if (!previewTask) {
             return c.json({ error: 'Task not found' }, 404)
         }
+        const previewMonitorTaskId = getTaskMonitorId(resolved.task)
 
-        cancelPreviewDeferredStart(namespace, taskId)
-        cancelPreviewSelfHealMonitor(namespace, taskId)
+        cancelPreviewDeferredStart(namespace, previewMonitorTaskId)
+        cancelPreviewSelfHealMonitor(namespace, previewMonitorTaskId)
 
         const currentRuntimeStatus = previewTask.previewRuntime?.status ?? null
         const previewStatusResult = await getPreviewStatusWithFallback({
@@ -5158,10 +5520,12 @@ export function createTasksRoutes(options: {
                 blockedReason: null,
                 completedAt: Date.now()
             }) ?? previewTask
-            return c.json({
+            return c.json(buildTaskPreviewResponse({
+                store: options.store,
+                namespace,
+                task: previewTask,
                 preview,
-                previewRuntime: previewTask.previewRuntime
-            })
+            }))
         }
 
         const stopResult = await stopPreviewWithFallback({
@@ -5183,16 +5547,22 @@ export function createTasksRoutes(options: {
             failureFingerprint: null,
             blockedReason: null
         }) ?? previewTask
-        return c.json({
-            preview: stopResult.preview,
-            previewRuntime: previewTask.previewRuntime
-        })
+        return c.json(buildTaskPreviewResponse({
+            store: options.store,
+            namespace,
+            task: previewTask,
+            preview: stopResult.preview
+        }))
     })
 
     app.get('/tasks/:taskId/worktree/merge-state', async (c) => {
         const namespace = c.get('namespace')
         const taskId = c.req.param('taskId')
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const task = resolveProjectedTaskById({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -5337,7 +5707,11 @@ export function createTasksRoutes(options: {
             return c.json({ success: false, error: 'Invalid baseRef' }, 400)
         }
 
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const task = resolveProjectedTaskById({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -5398,7 +5772,11 @@ export function createTasksRoutes(options: {
             return c.json({ success: false, error: 'Invalid baseRef' }, 400)
         }
 
-        const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+        const task = resolveProjectedTaskById({
+            store: options.store,
+            namespace,
+            taskId
+        })
         if (!task) {
             return c.json({ error: 'Task not found' }, 404)
         }
@@ -5462,15 +5840,21 @@ export function createTasksRoutes(options: {
                 return c.json({ error: 'Invalid body' }, 400)
             }
 
-            const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+            const task = materializeGoalTodoTaskOverlayForWrite({
+                store: options.store,
+                namespace,
+                taskId
+            })
             if (!task) {
                 return c.json({ error: 'Task not found' }, 404)
             }
 
-            const mergeMonitorKey = buildMergeMonitorKey(namespace, task.id)
+            const mergeMonitorKey = buildMergeMonitorKey(namespace, getTaskMonitorId(task))
             if (isActiveMergeRuntimeStatus(task.mergeRuntime?.status)
                 && inFlightConversationMergeMonitorKeys.has(mergeMonitorKey)) {
                 return c.json(buildMergeKickoffResponse({
+                    store: options.store,
+                    namespace,
                     task,
                     skippedReason: task.mergeRuntime?.status ?? 'running'
                 }))
@@ -5646,6 +6030,8 @@ export function createTasksRoutes(options: {
                     }) ?? resolvedTask
 
                 return c.json(buildMergeKickoffResponse({
+                    store: options.store,
+                    namespace,
                     task: finishedTask,
                     skippedReason: mergeState.reason === 'already_merged' ? 'already_merged' : 'no_changes'
                 }))
@@ -5687,7 +6073,7 @@ export function createTasksRoutes(options: {
                     store: options.store,
                     engine,
                     namespace,
-                    taskId: runtimeTask.id,
+                    taskId: getTaskMonitorId(runtimeTask),
                     sessionId,
                     targetBranch,
                     workflow: mergeWorkflow,
@@ -5699,6 +6085,8 @@ export function createTasksRoutes(options: {
                 })
 
                 return c.json(buildMergeKickoffResponse({
+                    store: options.store,
+                    namespace,
                     task: runtimeTask,
                     skippedReason: runtimeStatus
                 }))
@@ -5754,6 +6142,8 @@ export function createTasksRoutes(options: {
                 }) ?? runningTask
 
                 return c.json(buildMergeKickoffResponse({
+                    store: options.store,
+                    namespace,
                     task: mergedTask,
                     skippedReason: null
                 }))
@@ -5835,7 +6225,7 @@ export function createTasksRoutes(options: {
                 store: options.store,
                 engine,
                 namespace,
-                taskId: runtimeTask.id,
+                taskId: getTaskMonitorId(runtimeTask),
                 sessionId,
                 promptLocalId,
                 targetBranch,
@@ -5847,6 +6237,8 @@ export function createTasksRoutes(options: {
             })
 
             return c.json(buildMergeKickoffResponse({
+                store: options.store,
+                namespace,
                 task: runtimeTask,
                 skippedReason: 'running'
             }))
@@ -5861,13 +6253,26 @@ export function createTasksRoutes(options: {
         try {
             const namespace = c.get('namespace')
             const taskId = c.req.param('taskId')
-            const task = options.store.tasks.getTaskByNamespace(taskId, namespace)
+            const task = materializeGoalTodoTaskOverlayForWrite({
+                store: options.store,
+                namespace,
+                taskId
+            })
             if (!task) {
                 return c.json({ error: 'Task not found' }, 404)
             }
 
             if (!isActiveMergeRuntimeStatus(task.mergeRuntime?.status)) {
-                return c.json({ ok: true, canceled: false, mergeRuntime: task.mergeRuntime })
+                return c.json({
+                    ok: true,
+                    canceled: false,
+                    task: buildTaskRouteResponseTask({
+                        store: options.store,
+                        namespace,
+                        task
+                    }),
+                    mergeRuntime: task.mergeRuntime
+                })
             }
 
             const engine = options.getSyncEngine()
@@ -5881,18 +6286,48 @@ export function createTasksRoutes(options: {
                 }
             }
 
+            const event = buildGoalTodoRuntimeRouteEvent(
+                'merge_runtime_updated_from_tasks_api',
+                'Canceled a goal-scoped merge runtime via the tasks API.',
+                {
+                    route: '/api/tasks/:taskId/worktree/merge/cancel',
+                    status: 'canceled'
+                }
+            )
+            const nextMergeRuntime = buildTaskMergeRuntime({
+                task,
+                status: 'canceled',
+                sessionId: task.mergeRuntime?.sessionId ?? task.activeSessionId ?? null,
+                latestNote: 'Merge canceled from the task action.',
+                blockedReason: null,
+                completedAt: Date.now()
+            })
+            const wroteDocsFirst = syncGoalTodoBeforeTaskRouteUpdate({
+                store: options.store,
+                namespace,
+                task,
+                requireExistingProjection: true,
+                patch: {
+                    mergeRuntime: nextMergeRuntime
+                },
+                event
+            })
             const updatedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
-                mergeRuntime: buildTaskMergeRuntime({
-                    task,
-                    status: 'canceled',
-                    sessionId: task.mergeRuntime?.sessionId ?? task.activeSessionId ?? null,
-                    latestNote: 'Merge canceled from the task action.',
-                    blockedReason: null,
-                    completedAt: Date.now()
-                })
+                mergeRuntime: nextMergeRuntime
             })
             if (!updatedTask) {
                 return c.json({ error: 'Task not found' }, 404)
+            }
+
+            if (!wroteDocsFirst) {
+                syncGoalTodoBeforeTaskRouteUpdate({
+                    store: options.store,
+                    namespace,
+                    task: updatedTask,
+                    requireExistingProjection: true,
+                    patch: {},
+                    event
+                })
             }
 
             if (engine) {
@@ -5908,7 +6343,16 @@ export function createTasksRoutes(options: {
                 })
             }
 
-            return c.json({ ok: true, canceled: true, mergeRuntime: updatedTask.mergeRuntime })
+            return c.json({
+                ok: true,
+                canceled: true,
+                task: buildTaskRouteResponseTask({
+                    store: options.store,
+                    namespace,
+                    task: updatedTask
+                }),
+                mergeRuntime: updatedTask.mergeRuntime
+            })
         } catch (error) {
             const message = formatErrorMessage(error, 'Merge cancel failed unexpectedly')
             console.error('[Tasks] Unexpected merge cancel error:', error)

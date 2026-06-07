@@ -701,7 +701,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         db.close()
     })
@@ -733,7 +733,7 @@ describe('Store schema migration safety', () => {
         expect(taskColumns).toContain('init_runtime')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         db.close()
     })
@@ -752,7 +752,7 @@ describe('Store schema migration safety', () => {
             WHERE type = 'table' AND name IN ('goals', 'goal_decision_topics')
         `).all() as Array<{ name: string }>).map((row) => row.name)
         expect(tableNames).toContain('goals')
-        expect(tableNames).toContain('goal_decision_topics')
+        expect(tableNames).not.toContain('goal_decision_topics')
 
         const taskColumns = (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((column) => column.name)
         expect(taskColumns).toContain('goal_id')
@@ -782,7 +782,7 @@ describe('Store schema migration safety', () => {
         }))
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
 
         const project = store.projects.createProject({
             id: 'goal-project',
@@ -814,14 +814,6 @@ describe('Store schema migration safety', () => {
         })
         expect(goal.goalKey).toBe('ship-autopilot-foundation')
         expect(store.goals.getGoalByGoalKeyAndNamespace(project.id, 'default', goal.goalKey)?.id).toBe(goal.id)
-        const topic = store.goalDecisionTopics.create({
-            id: 'topic-1',
-            projectId: project.id,
-            goalId: goal.id,
-            namespace: 'default',
-            title: 'Pick rollout path',
-            body: 'Decide how deployment approval should work.'
-        })
         const task = store.tasks.createTask({
             id: 'task-1',
             projectId: project.id,
@@ -834,8 +826,6 @@ describe('Store schema migration safety', () => {
             evidence: 'Migration smoke test'
         })
 
-        expect(topic.status).toBe('waiting')
-        expect(topic.blocking).toBe(true)
         expect(task.goalId).toBe(goal.id)
         expect(task.goalTodoRef).toBe('Implement store layer')
         expect(task.contract).toBe('Add SQLite goal persistence')
@@ -950,11 +940,11 @@ describe('Store schema migration safety', () => {
 
         const migratedDb = (migratedStore as unknown as { db: Database }).db
         const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
         migratedDb.close()
     })
 
-    it('moves merge-blocked tasks into blocked status during migration', () => {
+    it('preserves merge/preview lanes while backfilling blocker metadata during migration', () => {
         const path = join(tmpdir(), `hopi-schema-merge-blocked-status-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
         createdPaths.push(path)
 
@@ -1061,7 +1051,7 @@ describe('Store schema migration safety', () => {
 
         const migratedStore = new Store(path)
         const blocked = migratedStore.tasks.getTaskByNamespace('task-merge-blocked', 'default')
-        expect(blocked?.status).toBe('blocked')
+        expect(blocked?.status).toBe('in_review')
         expect(blocked?.finishedAt).toBeNull()
         expect(blocked?.blockedReason).toBe('conflicts persisted')
         expect(blocked?.blockedSource).toBe('merge')
@@ -1072,7 +1062,7 @@ describe('Store schema migration safety', () => {
         expect(review?.status).toBe('in_review')
 
         const previewBlocked = migratedStore.tasks.getTaskByNamespace('task-preview-blocked', 'default')
-        expect(previewBlocked?.status).toBe('blocked')
+        expect(previewBlocked?.status).toBe('running')
         expect(previewBlocked?.finishedAt).toBeNull()
         expect(previewBlocked?.blockedReason).toBe('preview crashed')
         expect(previewBlocked?.blockedSource).toBe('preview')
@@ -1086,7 +1076,7 @@ describe('Store schema migration safety', () => {
 
         const migratedDb = (migratedStore as unknown as { db: Database }).db
         const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
+        expect(userVersion.user_version).toBe(32)
         migratedDb.close()
     })
 
@@ -1112,9 +1102,81 @@ describe('Store schema migration safety', () => {
         expect(store.goals.getGoalByGoalKeyAndNamespace('p-goal-key', 'default', 'portable-goal')?.id).toBe('g1')
 
         const userVersion = db.prepare('PRAGMA user_version').get() as { user_version: number }
-        expect(userVersion.user_version).toBe(29)
-
+        expect(userVersion.user_version).toBe(32)
         db.close()
+    })
+
+    it('drops the obsolete goal_decision_topics table when opening a v30 database', () => {
+        const path = join(tmpdir(), `hopi-schema-drop-goal-decision-topics-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+        const db = new Database(path, { create: true, readwrite: true, strict: true })
+        db.exec('PRAGMA user_version = 30')
+        db.exec(`
+            CREATE TABLE goal_decision_topics (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                task_id TEXT,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                blocking INTEGER NOT NULL DEFAULT 1,
+                resolution TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        `)
+        db.close()
+
+        const store = new Store(path)
+        const migratedDb = (store as unknown as { db: Database }).db
+        const tableNames = (migratedDb.prepare(`
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'goal_decision_topics'
+        `).all() as Array<{ name: string }>).map((row) => row.name)
+        expect(tableNames).toEqual([])
+        const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        expect(userVersion.user_version).toBe(32)
+        migratedDb.close()
+    })
+
+    it('drops the obsolete goal_operator_intents table when opening a v31 database', () => {
+        const path = join(tmpdir(), `hopi-schema-drop-goal-operator-intents-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`)
+        createdPaths.push(path)
+        const db = new Database(path, { create: true, readwrite: true, strict: true })
+        db.exec('PRAGMA user_version = 31')
+        db.exec(`
+            CREATE TABLE goal_operator_intents (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                lane TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                consumed_at INTEGER
+            );
+        `)
+        db.close()
+
+        const store = new Store(path)
+        const migratedDb = (store as unknown as { db: Database }).db
+        const tableNames = (migratedDb.prepare(`
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'goal_operator_intents'
+        `).all() as Array<{ name: string }>).map((row) => row.name)
+        expect(tableNames).toEqual([])
+        const userVersion = migratedDb.prepare('PRAGMA user_version').get() as { user_version: number }
+        expect(userVersion.user_version).toBe(32)
+        migratedDb.close()
     })
 
     it('backfills goal_key before creating current indexes on unversioned legacy goal tables', () => {

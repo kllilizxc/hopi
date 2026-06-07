@@ -48,6 +48,77 @@ describe('SessionCache realtime scope', () => {
         }))
     })
 
+    it('preserves goal assistant tooling metadata on refresh', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-goal-assistant-tooling',
+            {
+                path: '/tmp/project',
+                host: 'test',
+                projectId: 'project-goal-assistant',
+                goalId: 'goal-goal-assistant',
+                hopiController: true,
+                goalAssistantToolingVersion: 6
+            },
+            null,
+            namespace
+        )
+
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const cache = new SessionCache(store, publisher)
+
+        const session = cache.refreshSession(storedSession.id)
+
+        expect(session?.metadata?.goalAssistantToolingVersion).toBe(6)
+    })
+
+    it('emits thinking false when expiring an inactive thinking session', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-session-expire'
+
+        const storedSession = store.sessions.getOrCreateSession(
+            'session-expire-thinking',
+            {
+                path: '/tmp/project',
+                host: 'test',
+                projectId,
+                taskId: 'task-session-expire',
+                hopiTaskRole: 'generator'
+            },
+            null,
+            namespace
+        )
+
+        const visibilityTracker = new VisibilityTracker()
+        const sseManager = new SSEManager(0, visibilityTracker)
+        const publisher = new EventPublisher(sseManager, (event) => event.namespace)
+        const events: unknown[] = []
+        publisher.subscribe((event) => events.push(event))
+
+        const cache = new SessionCache(store, publisher)
+        cache.refreshSession(storedSession.id)
+        const now = Date.now()
+        cache.handleSessionAlive({ sid: storedSession.id, time: now, thinking: true })
+        events.length = 0
+
+        cache.expireInactive(now + 31_000)
+
+        expect(events).toContainEqual(expect.objectContaining({
+            type: 'session-updated',
+            sessionId: storedSession.id,
+            projectId,
+            data: expect.objectContaining({
+                active: false,
+                thinking: false
+            })
+        }))
+    })
+
     it('emits projectId when a cached project-linked session disappears from storage', () => {
         const store = new Store(':memory:')
         const namespace = 'default'

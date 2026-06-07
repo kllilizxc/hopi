@@ -8,7 +8,7 @@ import { PermissionAdapter } from '@/agent/permissionAdapter';
 import type { AgentBackend, PromptContent } from '@/agent/types';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { bootstrapSession } from '@/agent/sessionFactory';
-import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
+import { buildPromptContentFromFormattedMessage, formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 
 function isAssistantTextCodexMessage(message: unknown): boolean {
@@ -136,10 +136,7 @@ export async function runAgentSession(opts: {
             activeTurnLocalKey = batch.localKey ?? null;
             activeTurnHasAssistantReply = false;
 
-            const promptContent: PromptContent[] = [{
-                type: 'text',
-                text: batch.message
-            }];
+            const promptContent: PromptContent[] = buildPromptContentFromFormattedMessage(batch.message);
 
             thinking = true;
             session.keepAlive(thinking, 'remote');

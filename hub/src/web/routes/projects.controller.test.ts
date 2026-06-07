@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 import type { Session } from '@hopi/protocol/types'
+import type { GoalAssistantSessionProfile } from '@hopi/protocol/goal-assistant'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Hono } from 'hono'
 import { Store, type StoredSession } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { createProjectsRoutes } from './projects'
+
+const tempDirs: string[] = []
 
 function createRuntimeSession(stored: StoredSession, overrides: Partial<Session> = {}): Session {
     return {
@@ -39,7 +45,8 @@ function createTestApp(store: Store, engine: SyncEngine): Hono {
 
 function seedProject(store: Store, options?: { defaultAgentFlavor?: 'claude' | 'codex' | null }): { projectId: string; workspacePath: string } {
     const projectId = 'project-controller'
-    const workspacePath = '/tmp/hopi-controller-workspace'
+    const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-controller-workspace-'))
+    tempDirs.push(workspacePath)
     store.projects.createProject({
         id: projectId,
         namespace: 'default',
@@ -56,6 +63,12 @@ function seedProject(store: Store, options?: { defaultAgentFlavor?: 'claude' | '
     return { projectId, workspacePath }
 }
 
+afterEach(() => {
+    for (const path of tempDirs.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+    }
+})
+
 function seedGoalTask(store: Store, projectId: string, goalId: string, id: string): void {
     store.tasks.createTask({
         id,
@@ -68,13 +81,25 @@ function seedGoalTask(store: Store, projectId: string, goalId: string, id: strin
 
 function createControllerEngine(store: Store): {
     engine: SyncEngine
-    spawnCalls: Array<{ machineId: string; directory: string; agent?: string; model?: string }>
+    spawnCalls: Array<{
+        machineId: string
+        directory: string
+        agent?: string
+        model?: string
+        sessionProfile?: GoalAssistantSessionProfile
+    }>
     sentMessages: Array<{ sessionId: string; text: string }>
     appliedConfigs: Array<{ sessionId: string; permissionMode?: string }>
     sessions: Map<string, Session>
 } {
     const sessions = new Map<string, Session>()
-    const spawnCalls: Array<{ machineId: string; directory: string; agent?: string; model?: string }> = []
+    const spawnCalls: Array<{
+        machineId: string
+        directory: string
+        agent?: string
+        model?: string
+        sessionProfile?: GoalAssistantSessionProfile
+    }> = []
     const sentMessages: Array<{ sessionId: string; text: string }> = []
     const appliedConfigs: Array<{ sessionId: string; permissionMode?: string }> = []
 
@@ -87,8 +112,20 @@ function createControllerEngine(store: Store): {
                 metadata: { host: 'localhost' }
             }
         },
-        async spawnSession(machineId: string, directory: string, agent?: string, model?: string) {
-            spawnCalls.push({ machineId, directory, agent, model })
+        async spawnSession(
+            machineId: string,
+            directory: string,
+            agent?: string,
+            model?: string,
+            _yolo?: boolean,
+            _sessionType?: string,
+            _worktreeName?: string,
+            _resumeSessionId?: string,
+            _worktreeWorkspacePaths?: string[],
+            _worktreeTargetBranch?: string,
+            sessionProfile?: GoalAssistantSessionProfile
+        ) {
+            spawnCalls.push({ machineId, directory, agent, model, sessionProfile })
             const stored = store.sessions.getOrCreateSession(
                 `controller-${spawnCalls.length}`,
                 { path: directory, host: 'localhost', machineId, flavor: agent },
@@ -166,7 +203,12 @@ describe('project controller session routes', () => {
             machineId: 'machine-1',
             directory: workspacePath,
             agent: 'codex',
-            model: 'gpt-5.5'
+            model: 'gpt-5.5',
+            sessionProfile: {
+                kind: 'goal_assistant',
+                projectId,
+                goalId: 'goal-controller'
+            }
         }])
         expect(appliedConfigs).toEqual([{
             sessionId: body.sessionId,
@@ -179,6 +221,7 @@ describe('project controller session routes', () => {
             projectId,
             goalId: 'goal-controller',
             hopiController: true,
+            goalAssistantToolingVersion: 9,
             name: 'Goal Assistant - Controller Project - Ship Controller'
         })
     })
@@ -203,6 +246,7 @@ describe('project controller session routes', () => {
                 projectId,
                 goalId: 'goal-controller',
                 hopiController: true,
+                goalAssistantToolingVersion: 9,
                 name: 'Controller - Controller Project - Ship Controller',
                 flavor: 'codex'
             },
@@ -250,6 +294,7 @@ describe('project controller session routes', () => {
                 projectId,
                 goalId: 'goal-controller',
                 hopiController: true,
+                goalAssistantToolingVersion: 9,
                 name: 'Goal Assistant - Controller Project - Ship Controller',
                 flavor: 'codex'
             },
@@ -272,6 +317,130 @@ describe('project controller session routes', () => {
             sessionId: stored.id,
             permissionMode: 'read-only'
         }])
+    })
+
+    it('forceNew retires prior controller sessions before spawning a fresh one', async () => {
+        const store = new Store(':memory:')
+        const { projectId, workspacePath } = seedProject(store)
+        store.goals.createGoal({
+            id: 'goal-controller',
+            projectId,
+            namespace: 'default',
+            goalKey: 'ship-controller',
+            title: 'Ship Controller',
+            status: 'active'
+        })
+
+        const existingA = store.sessions.getOrCreateSession(
+            'controller-existing-a',
+            {
+                path: workspacePath,
+                host: 'localhost',
+                machineId: 'machine-1',
+                projectId,
+                goalId: 'goal-controller',
+                hopiController: true,
+                goalAssistantToolingVersion: 9,
+                name: 'Goal Assistant - Controller Project - Ship Controller',
+                flavor: 'codex'
+            },
+            null,
+            'default'
+        )
+        const existingB = store.sessions.getOrCreateSession(
+            'controller-existing-b',
+            {
+                path: workspacePath,
+                host: 'localhost',
+                machineId: 'machine-1',
+                projectId,
+                goalId: 'goal-controller',
+                hopiController: true,
+                goalAssistantToolingVersion: 9,
+                name: 'Goal Assistant - Controller Project - Ship Controller',
+                flavor: 'codex'
+            },
+            null,
+            'default'
+        )
+
+        const controller = createControllerEngine(store)
+        controller.sessions.set(existingA.id, createRuntimeSession(existingA))
+        controller.sessions.set(existingB.id, createRuntimeSession(existingB, { active: false }))
+        const app = createTestApp(store, controller.engine)
+
+        const response = await app.request(`/api/projects/${projectId}/controller-session`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ goalId: 'goal-controller', forceNew: true })
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { sessionId: string; created: boolean }
+        expect(body.created).toBe(true)
+        expect(body.sessionId).not.toBe(existingA.id)
+        expect(body.sessionId).not.toBe(existingB.id)
+        expect(controller.spawnCalls).toHaveLength(1)
+
+        expect(store.sessions.getSessionByNamespace(existingA.id, 'default')?.metadata).toMatchObject({
+            hopiController: false,
+            controllerRetiredReason: 'force_new'
+        })
+        expect(store.sessions.getSessionByNamespace(existingB.id, 'default')?.metadata).toMatchObject({
+            hopiController: false,
+            controllerRetiredReason: 'force_new'
+        })
+    })
+
+    it('reset route retires controller sessions without spawning a replacement', async () => {
+        const store = new Store(':memory:')
+        const { projectId, workspacePath } = seedProject(store)
+        store.goals.createGoal({
+            id: 'goal-controller',
+            projectId,
+            namespace: 'default',
+            goalKey: 'ship-controller',
+            title: 'Ship Controller',
+            status: 'active'
+        })
+
+        const existing = store.sessions.getOrCreateSession(
+            'controller-existing-reset',
+            {
+                path: workspacePath,
+                host: 'localhost',
+                machineId: 'machine-1',
+                projectId,
+                goalId: 'goal-controller',
+                hopiController: true,
+                goalAssistantToolingVersion: 9,
+                name: 'Goal Assistant - Controller Project - Ship Controller',
+                flavor: 'codex'
+            },
+            null,
+            'default'
+        )
+
+        const controller = createControllerEngine(store)
+        controller.sessions.set(existing.id, createRuntimeSession(existing))
+        const app = createTestApp(store, controller.engine)
+
+        const response = await app.request(`/api/projects/${projectId}/controller-session/reset`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ goalId: 'goal-controller' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            retiredSessionIds: [existing.id]
+        })
+        expect(controller.spawnCalls).toEqual([])
+        expect(store.sessions.getSessionByNamespace(existing.id, 'default')?.metadata).toMatchObject({
+            hopiController: false,
+            controllerRetiredReason: 'manual_reset'
+        })
     })
 
     it('queues an opportunistic controller briefing with goal index and todo paths', async () => {
@@ -313,14 +482,71 @@ describe('project controller session routes', () => {
         expect(controller.sentMessages[0]?.text).not.toContain('.hopi/docs/goals/other-goal/todo.yml')
         expect(controller.sentMessages[0]?.text).toContain('Focus only on the current goal above')
         expect(controller.sentMessages[0]?.text).toContain('Stay in an operator-console role')
+        expect(controller.sentMessages[0]?.text).toContain('default surface for Goal/Kanban questions and Goal/Kanban instructions')
 
         const stored = store.sessions.getSessionByNamespace(body.sessionId, 'default')
         expect(stored?.metadata).toMatchObject({
             projectId,
             goalId: 'goal-controller',
             hopiController: true,
+            goalAssistantToolingVersion: 9,
             controllerBriefingLastAt: expect.any(Number),
             controllerBriefingLastGoalId: 'goal-controller'
+        })
+    })
+
+    it('uses canonical goal.md metadata for controller session naming and briefing text', async () => {
+        const store = new Store(':memory:')
+        const { projectId, workspacePath } = seedProject(store)
+        store.goals.createGoal({
+            id: 'goal-controller-docs',
+            projectId,
+            namespace: 'default',
+            goalKey: 'ship-controller-docs',
+            title: 'DB Controller Goal',
+            status: 'active'
+        })
+        seedGoalTask(store, projectId, 'goal-controller-docs', 'task-controller-docs')
+        const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', 'ship-controller-docs')
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'goal.md'), [
+            '---',
+            'goalKey: ship-controller-docs',
+            'title: "Canonical Controller Goal"',
+            'status: blocked',
+            'autopilotEnabled: false',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Canonical Controller Goal',
+            '',
+            '## Objective',
+            '',
+            'Drive controller behavior from canonical goal docs.',
+            ''
+        ].join('\n'))
+
+        const controller = createControllerEngine(store)
+        const app = createTestApp(store, controller.engine)
+
+        const response = await app.request(`/api/projects/${projectId}/controller-briefing`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ goalId: 'goal-controller-docs' })
+        })
+
+        expect(response.status).toBe(200)
+        const body = await response.json() as { queued: boolean; sessionId: string }
+        expect(body.queued).toBe(true)
+        expect(controller.sentMessages).toHaveLength(1)
+        expect(controller.sentMessages[0]?.text).toContain('Canonical Controller Goal (ship-controller-docs, blocked)')
+
+        const stored = store.sessions.getSessionByNamespace(body.sessionId, 'default')
+        expect(stored?.metadata).toMatchObject({
+            projectId,
+            goalId: 'goal-controller-docs',
+            hopiController: true,
+            name: 'Goal Assistant - Controller Project - Canonical Controller Goal'
         })
     })
 

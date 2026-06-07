@@ -17,6 +17,12 @@ import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor, resolveC
 import { ModelModeSchema, PermissionModeSchema } from '@hopi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import {
+    buildSessionProfileMcpServers,
+    getSessionProfileDeveloperPrompt,
+    getSessionProfileFromEnv,
+    getSessionProfileStartingPermissionMode
+} from '@/sessionProfiles';
 
 export interface StartOptions {
     model?: string
@@ -28,9 +34,21 @@ export interface StartOptions {
     startedBy?: 'runner' | 'terminal'
 }
 
+function mergeAppendSystemPrompt(parts: Array<string | null | undefined>): string | undefined {
+    const merged = parts
+        .map((part) => typeof part === 'string' ? part.trim() : '')
+        .filter((part) => part.length > 0)
+        .join('\n\n');
+    return merged || undefined;
+}
+
 export async function runClaude(options: StartOptions = {}): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
     const startedBy = options.startedBy ?? 'terminal';
+    const sessionProfile = getSessionProfileFromEnv();
+    const sessionProfileMcpServers = buildSessionProfileMcpServers(sessionProfile);
+    const sessionProfileAppendSystemPrompt = getSessionProfileDeveloperPrompt(sessionProfile);
+    const sessionProfileStartingPermissionMode = getSessionProfileStartingPermissionMode(sessionProfile, 'claude');
 
     // Log environment info at startup
     logger.debugLargeJson('[START] HOPI process started', getEnvironmentInfo());
@@ -137,11 +155,15 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     }));
 
     // Forward messages to the queue
-    let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
+    let currentPermissionMode: PermissionMode = (
+        sessionProfileStartingPermissionMode && isPermissionModeAllowedForFlavor(sessionProfileStartingPermissionMode, 'claude')
+            ? sessionProfileStartingPermissionMode
+            : options.permissionMode
+    ) ?? 'default';
     let currentModelMode: SessionModelMode = resolveClaudeModelMode(options.model) ?? 'default';
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
-    let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+    let currentAppendSystemPrompt: string | undefined = undefined; // Track per-message append prompt on top of session profile
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
 
@@ -226,7 +248,10 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 model: messageModel,
                 fallbackModel: messageFallbackModel,
                 customSystemPrompt: messageCustomSystemPrompt,
-                appendSystemPrompt: messageAppendSystemPrompt,
+                appendSystemPrompt: mergeAppendSystemPrompt([
+                    messageAppendSystemPrompt,
+                    sessionProfileAppendSystemPrompt
+                ]),
                 allowedTools: messageAllowedTools,
                 disallowedTools: messageDisallowedTools
             };
@@ -320,12 +345,13 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 currentSessionRef.current = sessionInstance;
                 syncSessionModes();
             },
-            mcpServers: {},
+            mcpServers: sessionProfileMcpServers,
             session,
             claudeEnvVars: options.claudeEnvVars,
             claudeArgs: options.claudeArgs,
             startedBy,
-            hookSettingsPath
+            hookSettingsPath,
+            profileAppendSystemPrompt: sessionProfileAppendSystemPrompt ?? undefined
         });
     } catch (error) {
         loopError = error;

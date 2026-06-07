@@ -16,8 +16,16 @@ import {
 } from './mergeWorkflowRunner'
 import { relinkTaskToSession } from './sessionTaskLink'
 import { getWorkflowStrategy } from './workflowStrategy'
-import { updateGoalTodoTaskState } from './goals/goalTodo'
-import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
+import { getDocsRoot } from './goals/goalDocPaths'
+import {
+    type GoalTodoEventOptions,
+    upsertGoalTodoTaskState
+} from './goals/goalTodo'
+import { getGoalTodoStatusForStoredTask, getGoalTodoTagForStoredTask } from './goals/goalTaskState'
+import {
+    getTaskByNamespaceOrGoalTodoProjection,
+    materializeGoalTodoTaskOverlayForWrite
+} from './goals/goalTodoProjection'
 import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 import type { RpcGitMergeWorktreeResponse, RpcGitMergeWorktreeStateResponse, SyncEngine } from './syncEngine'
 
@@ -47,30 +55,305 @@ function normalizeBranchName(value: string | undefined | null): string | null {
     return normalizeNonEmptyString(value)
 }
 
+function buildGoalTodoMergeEvent(
+    action: string,
+    reason: string,
+    metadata?: Record<string, unknown> | null
+): GoalTodoEventOptions {
+    return {
+        writer: 'task-auto-merge',
+        action,
+        reason,
+        metadata: metadata ?? null
+    }
+}
+
+function buildGoalTodoMergeBlockedState(task: Pick<
+    StoredTask,
+    'status' | 'blockedReason' | 'blockedSource' | 'blockedAt' | 'mergeRuntime'
+>): {
+    kind: string | null
+    summary: string | null
+    updatedAt: number
+} | null {
+    const summary = task.blockedReason ?? task.mergeRuntime?.blockedReason ?? null
+    const kind = task.blockedSource
+        ?? (task.mergeRuntime?.status === 'blocked' ? 'merge' : null)
+        ?? (summary ? 'intervention' : null)
+    if (!kind && !summary) {
+        return null
+    }
+    return {
+        kind,
+        summary,
+        updatedAt: task.blockedAt ?? Date.now()
+    }
+}
+
+function resolveGoalMergeBlockedOverlayStatus(task: Pick<StoredTask, 'goalId' | 'status'>): StoredTask['status'] {
+    if (!task.goalId) {
+        return 'blocked'
+    }
+    return task.status === 'in_review' ? 'in_review' : 'review'
+}
+
+function getTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    }) ?? options.task
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function getProjectedTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | null {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+    if (!projected) {
+        return null
+    }
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function buildTaskRuntimeFallback(options: {
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    return {
+        ...options.updatedTask,
+        title: options.previousTask.title,
+        description: options.previousTask.description,
+        goalTodoRef: options.previousTask.goalTodoRef,
+        subTasks: options.previousTask.subTasks,
+        subTasksUpdatedAt: options.previousTask.subTasksUpdatedAt,
+        attachments: options.previousTask.attachments
+    }
+}
+
+function getTaskRuntimeViewOrFallback(options: {
+    store: Store
+    namespace: string
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    const runtimeTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.updatedTask
+    })
+    if (!options.updatedTask.goalId || runtimeTask !== options.updatedTask) {
+        return runtimeTask
+    }
+
+    return buildTaskRuntimeFallback({
+        previousTask: options.previousTask,
+        updatedTask: options.updatedTask
+    })
+}
+
+function resolveWritableAutoMergeTask(options: {
+    store: Store
+    namespace: string
+    taskId: string
+}): StoredTask | null {
+    const materialized = materializeGoalTodoTaskOverlayForWrite({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (materialized) {
+        return materialized
+    }
+
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (!stored || !stored.goalId) {
+        return stored
+    }
+
+    const project = options.store.projects.getProjectByNamespace(stored.projectId, options.namespace)
+    if (!project) {
+        return null
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    if (getDocsRoot(defaultWorkspace)) {
+        return null
+    }
+
+    return stored
+}
+
+function syncGoalTodoBeforeTaskUpdate(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+    patch: Partial<StoredTask>
+    event?: GoalTodoEventOptions
+}): boolean {
+    const task = getProjectedTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })
+    if (!task || !task.goalId || !task.goalTodoRef) {
+        return false
+    }
+
+    const nextTask = {
+        ...task,
+        ...options.patch
+    } as StoredTask
+
+    const blocked = buildGoalTodoMergeBlockedState(nextTask)
+    if (blocked) {
+        nextTask.blockedReason = nextTask.blockedReason ?? nextTask.mergeRuntime?.blockedReason ?? null
+        nextTask.blockedSource = nextTask.blockedSource ?? 'merge'
+        nextTask.blockedSessionId = nextTask.blockedSessionId ?? nextTask.mergeRuntime?.sessionId ?? null
+        nextTask.blockedAt = nextTask.blockedAt ?? blocked.updatedAt
+    } else {
+        nextTask.blockedReason = null
+        nextTask.blockedSource = null
+        nextTask.blockedSessionId = null
+        nextTask.blockedAt = null
+    }
+
+    const project = options.store.projects.getProjectByNamespace(nextTask.projectId, options.namespace)
+    const goal = nextTask.goalId
+        ? options.store.goals.getGoalByNamespace(nextTask.goalId, options.namespace)
+        : null
+    if (!project || !goal || goal.projectId !== project.id) {
+        return false
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    const goalTodoRef = nextTask.goalTodoRef?.trim() || nextTask.id
+
+    return upsertGoalTodoTaskState({
+        project,
+        goal,
+        defaultWorkspace,
+        taskId: goalTodoRef,
+        status: getGoalTodoStatusForStoredTask(nextTask),
+        tag: getGoalTodoTagForStoredTask(nextTask),
+        taskKind: nextTask.source === 'planner' || nextTask.source === 'radar' ? 'planning' : 'engineering',
+        title: nextTask.title,
+        body: nextTask.description,
+        blocked,
+        event: options.event
+    })
+}
+
 function syncAcceptedGoalTodoToDone(options: {
     store: Store
     namespace: string
     project: StoredProject
     task: StoredTask
-}): void {
-    if (!options.task.goalId || !options.task.goalTodoRef) {
-        return
+}): boolean {
+    const task = getProjectedTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })
+    if (!task || !task.goalId || !task.goalTodoRef) {
+        return false
     }
-    const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+    const goal = options.store.goals.getGoalByNamespace(task.goalId, options.namespace)
     if (!goal || goal.projectId !== options.project.id) {
-        return
+        return false
     }
     const defaultWorkspace = options.project.defaultWorkspaceId
         ? options.store.workspaces.getWorkspace(options.project.defaultWorkspaceId)
         : options.store.workspaces.listWorkspacesByProject(options.project.id)[0] ?? null
-    updateGoalTodoTaskState({
+    return upsertGoalTodoTaskState({
         project: options.project,
         goal,
         defaultWorkspace,
-        todoRef: options.task.goalTodoRef,
-        taskId: options.task.id,
-        kind: 'done',
-        title: options.task.title
+        taskId: task.goalTodoRef,
+        status: 'done',
+        tag: 'accepted',
+        taskKind: task.source === 'planner' || task.source === 'radar' ? 'planning' : 'engineering',
+        title: task.title,
+        body: task.description,
+        blocked: null,
+        event: buildGoalTodoMergeEvent(
+            'merge_task_completed',
+            'Auto-merge completed and marked the todo item done.',
+            {
+                source: 'syncAcceptedGoalTodoToDone',
+                taskId: task.id
+            }
+        )
     })
 }
 
@@ -204,51 +487,91 @@ function updateMergeRuntime(options: {
     forceReviewStatus?: boolean
 }): StoredTask | null {
     const taskStatus = options.status === 'blocked'
-        ? 'blocked'
+        ? resolveGoalMergeBlockedOverlayStatus(options.task)
         : options.forceReviewStatus
             ? 'review'
             : undefined
     const finishedAt = options.status === 'blocked' || options.forceReviewStatus
         ? null
         : undefined
+    const nextMergeRuntime = buildTaskMergeRuntime({
+        current: options.task.mergeRuntime,
+        activeSessionId: options.task.activeSessionId,
+        status: options.status,
+        sessionId: options.sessionId,
+        latestNote: options.latestNote,
+        blockedReason: options.blockedReason ?? null,
+        retryCount: options.retryCount,
+        startedAt: options.startedAt,
+        completedAt: options.completedAt
+    })
+    const event = buildGoalTodoMergeEvent(
+        options.status === 'blocked' ? 'merge_task_blocked' : 'merge_runtime_updated',
+        options.status === 'blocked'
+            ? 'Auto-merge blocked this todo item.'
+            : `Auto-merge runtime moved into ${options.status}.`,
+        {
+            source: 'updateMergeRuntime',
+            mergeStatus: options.status,
+            sessionId: options.sessionId
+        }
+    )
+    const wroteDocsFirst = syncGoalTodoBeforeTaskUpdate({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task,
+        patch: {
+            status: taskStatus,
+            finishedAt,
+            blockedReason: options.status === 'blocked' ? options.blockedReason ?? null : null,
+            blockedSource: options.status === 'blocked' ? 'merge' : null,
+            blockedSessionId: options.status === 'blocked' ? options.sessionId : null,
+            mergeRuntime: nextMergeRuntime
+        },
+        event
+    })
     const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         status: taskStatus,
         finishedAt,
-        mergeRuntime: buildTaskMergeRuntime({
-            current: options.task.mergeRuntime,
-            activeSessionId: options.task.activeSessionId,
-            status: options.status,
-            sessionId: options.sessionId,
-            latestNote: options.latestNote,
-            blockedReason: options.blockedReason ?? null,
-            retryCount: options.retryCount,
-            startedAt: options.startedAt,
-            completedAt: options.completedAt
-        })
+        blockedReason: options.status === 'blocked' ? options.blockedReason ?? null : null,
+        blockedSource: options.status === 'blocked' ? 'merge' : null,
+        blockedSessionId: options.status === 'blocked' ? options.sessionId : null,
+        mergeRuntime: nextMergeRuntime
     })
     if (updated) {
-        syncTaskStateToGoalTodo({
+        const runtimeTask = getTaskRuntimeViewOrFallback({
             store: options.store,
             namespace: options.namespace,
-            task: updated
+            previousTask: options.task,
+            updatedTask: updated
         })
+        if (!wroteDocsFirst) {
+            syncGoalTodoBeforeTaskUpdate({
+                store: options.store,
+                namespace: options.namespace,
+                task: runtimeTask,
+                patch: {},
+                event
+            })
+        }
         notifyProjectControllerTaskBlockedTransition({
             store: options.store,
             engine: options.engine,
             namespace: options.namespace,
             previousTask: options.task,
-            task: updated
+            task: runtimeTask
         })
         emitTaskUpdated({
             engine: options.engine,
             namespace: options.namespace,
-            task: updated,
+            task: runtimeTask,
             data: {
-                mergeRuntime: updated.mergeRuntime,
-                status: updated.status,
-                finishedAt: updated.finishedAt
+                mergeRuntime: runtimeTask.mergeRuntime,
+                status: runtimeTask.status,
+                finishedAt: runtimeTask.finishedAt
             }
         })
+        return runtimeTask
     }
     return updated
 }
@@ -309,20 +632,38 @@ function resolveAutoMergeTaskSession(options: {
     sessionId: string
     session: NonNullable<ReturnType<SyncEngine['getSessionByNamespace']>>
 } | null {
+    const baseTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })
     const preferredSessionId = normalizeNonEmptyString(options.preferredSessionId)
     if (preferredSessionId) {
         const preferredSession = options.engine.getSessionByNamespace(preferredSessionId, options.namespace)
         if (isUsableWorktreeSession(preferredSession)) {
-            const task = preferredSessionId === options.task.activeSessionId
-                ? options.task
-                : relinkTaskToSession({
+            const task = (() => {
+                if (preferredSessionId === options.task.activeSessionId) {
+                    return baseTask
+                }
+                const relinked = relinkTaskToSession({
                     store: options.store,
                     engine: options.engine,
                     task: options.task,
                     namespace: options.namespace,
                     sessionId: preferredSessionId,
                     preserveMergeResultOnSessionChange: true
-                }) ?? options.task
+                })
+                return relinked
+                    ? getTaskRuntimeView({
+                        store: options.store,
+                        namespace: options.namespace,
+                        task: relinked
+                    })
+                    : null
+            })()
+            if (!task) {
+                return null
+            }
             return {
                 task,
                 sessionId: preferredSessionId,
@@ -331,7 +672,7 @@ function resolveAutoMergeTaskSession(options: {
         }
     }
 
-    const activeSessionId = normalizeNonEmptyString(options.task.activeSessionId)
+    const activeSessionId = normalizeNonEmptyString(baseTask.activeSessionId)
     if (!activeSessionId) {
         return null
     }
@@ -342,7 +683,7 @@ function resolveAutoMergeTaskSession(options: {
     }
 
     return {
-        task: options.task,
+        task: baseTask,
         sessionId: activeSessionId,
         session: activeSession
     }
@@ -650,7 +991,15 @@ async function askAgentToRepairAutoMergeConflict(options: {
 
     return {
         ok: true,
-        task: options.store.tasks.getTaskByNamespace(options.task.id, options.namespace) ?? updated
+        task: (() => {
+            const latest = options.store.tasks.getTaskByNamespace(options.task.id, options.namespace)
+            return latest ? getTaskRuntimeViewOrFallback({
+                store: options.store,
+                namespace: options.namespace,
+                previousTask: updated,
+                updatedTask: latest
+            }) : updated
+        })()
     }
 }
 
@@ -672,6 +1021,26 @@ async function persistSuccessfulAutoMerge(options: {
         sessionId: options.sessionId,
         baseCommit: options.baseCommit
     })
+    const nextMergeRuntime = buildTaskMergeRuntime({
+        current: options.task.mergeRuntime,
+        activeSessionId: options.task.activeSessionId,
+        status: 'succeeded',
+        sessionId: options.sessionId,
+        latestNote: 'Auto-merge completed for the accepted worktree task.',
+        blockedReason: null,
+        startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
+        completedAt: mergedAt
+    })
+    const wroteDocsFirst = syncAcceptedGoalTodoToDone({
+        store: options.store,
+        namespace: options.namespace,
+        project: options.project,
+        task: {
+            ...options.task,
+            status: 'done',
+            title: options.task.title
+        }
+    })
 
     const updated = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         status: 'done',
@@ -680,26 +1049,19 @@ async function persistSuccessfulAutoMerge(options: {
         worktreeMergedAt: mergedAt,
         worktreeMergeCommit: options.targetHead,
         mergedDiffSnapshot: diffSnapshot,
-        mergeRuntime: buildTaskMergeRuntime({
-            current: options.task.mergeRuntime,
-            activeSessionId: options.task.activeSessionId,
-            status: 'succeeded',
-            sessionId: options.sessionId,
-            latestNote: 'Auto-merge completed for the accepted worktree task.',
-            blockedReason: null,
-            startedAt: options.task.mergeRuntime?.startedAt ?? options.task.mergeRuntime?.requestedAt ?? mergedAt,
-            completedAt: mergedAt
-        })
+        mergeRuntime: nextMergeRuntime
     })
     if (!updated) {
         return null
     }
-    syncAcceptedGoalTodoToDone({
-        store: options.store,
-        namespace: options.namespace,
-        project: options.project,
-        task: updated
-    })
+    if (!wroteDocsFirst) {
+        syncAcceptedGoalTodoToDone({
+            store: options.store,
+            namespace: options.namespace,
+            project: options.project,
+            task: updated
+        })
+    }
 
     emitTaskUpdated({
         engine: options.engine,
@@ -738,7 +1100,12 @@ export async function autoMergeAcceptedTask(options: {
     taskId: string
     preferredSessionId?: string
 }): Promise<'not_applicable' | 'merged' | 'blocked'> {
-    let task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    const storedTask = resolveWritableAutoMergeTask(options)
+    let task = storedTask ? getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: storedTask
+    }) : null
     if (!task || !isAutoMergeCandidate(task) || !task.activeSessionId) {
         return 'not_applicable'
     }
@@ -873,7 +1240,13 @@ export async function autoMergeAcceptedTask(options: {
         })
 
         if (attempt.kind === 'success') {
-            runningTask = options.store.tasks.getTaskByNamespace(task.id, options.namespace) ?? runningTask
+            const latest = options.store.tasks.getTaskByNamespace(task.id, options.namespace)
+            runningTask = latest ? getTaskRuntimeViewOrFallback({
+                store: options.store,
+                namespace: options.namespace,
+                previousTask: runningTask,
+                updatedTask: latest
+            }) : runningTask
             await persistSuccessfulAutoMerge({
                 store: options.store,
                 engine: options.engine,
@@ -977,12 +1350,18 @@ export function requestAutoMergeAcceptedTask(options: {
     taskId: string
     preferredSessionId?: string
 }): boolean {
-    const key = `${options.namespace}:${options.taskId}`
+    const storedTask = resolveWritableAutoMergeTask(options)
+    const keyTaskId = storedTask?.id ?? options.taskId
+    const key = `${options.namespace}:${keyTaskId}`
     if (inFlightAutoMergeKeys.has(key)) {
         return true
     }
 
-    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    const task = storedTask ? getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: storedTask
+    }) : null
     if (!task || !isAutoMergeCandidate(task)) {
         return false
     }
@@ -990,16 +1369,22 @@ export function requestAutoMergeAcceptedTask(options: {
     inFlightAutoMergeKeys.add(key)
     void autoMergeAcceptedTask(options)
         .catch((error) => {
-            const latest = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-            if (!latest || !latest.activeSessionId) {
+            const latestStored = resolveWritableAutoMergeTask(options)
+            if (!latestStored || !latestStored.activeSessionId) {
                 return
             }
+            const latestTask = getTaskRuntimeViewOrFallback({
+                store: options.store,
+                namespace: options.namespace,
+                previousTask: task,
+                updatedTask: latestStored
+            })
             blockMerge({
                 store: options.store,
                 engine: options.engine,
                 namespace: options.namespace,
-                task: latest,
-                sessionId: latest.activeSessionId,
+                task: latestTask,
+                sessionId: latestTask.activeSessionId!,
                 reason: normalizeText(error) || 'Auto-merge failed unexpectedly'
             })
         })

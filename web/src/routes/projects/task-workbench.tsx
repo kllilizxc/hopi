@@ -343,7 +343,7 @@ function StartSessionDialog(props: {
     const permissionOptions = useMemo(() => getTaskPermissionModeOptionsForFlavor(agent), [agent])
 
     useEffect(() => {
-        if (permissionOptions.some((option: { mode: PermissionMode }) => option.mode === permissionMode)) {
+        if (permissionOptions.some((option) => option.mode === permissionMode)) {
             return
         }
         const workflowProfile = (props.workflowProfile ?? '').trim().toLowerCase()
@@ -421,11 +421,11 @@ function StartSessionDialog(props: {
                         <AdaptiveSelectField
                             title={t('misc.permissionMode')}
                             value={permissionMode}
-                            options={permissionOptions.map((opt: { mode: PermissionMode; label: string }) => ({
-                                value: opt.mode as PermissionMode,
+                            options={permissionOptions.map((opt) => ({
+                                value: opt.mode,
                                 label: opt.label,
                             }))}
-                            onValueChange={(value) => setPermissionMode(value as PermissionMode)}
+                            onValueChange={setPermissionMode}
                             disabled={isPending}
                             align="start"
                         />

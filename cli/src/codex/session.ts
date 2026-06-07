@@ -5,6 +5,7 @@ import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { CodexPermissionHandler } from './utils/permissionHandler';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import type { SessionProfileMcpConfig } from '@/sessionProfiles';
 
 type LocalLaunchFailure = {
     message: string;
@@ -14,6 +15,8 @@ type LocalLaunchFailure = {
 export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode> {
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
+    readonly mcpServers: SessionProfileMcpConfig;
+    readonly developerInstructions?: string;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -32,6 +35,8 @@ export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode>
         startingMode: 'local' | 'remote';
         codexArgs?: string[];
         codexCliOverrides?: CodexCliOverrides;
+        mcpServers?: SessionProfileMcpConfig;
+        developerInstructions?: string;
         permissionMode?: PermissionMode;
     }) {
         super({
@@ -54,6 +59,8 @@ export class CodexSession extends AgentSessionBase<EnhancedMode, PermissionMode>
 
         this.codexArgs = opts.codexArgs;
         this.codexCliOverrides = opts.codexCliOverrides;
+        this.mcpServers = opts.mcpServers ?? {};
+        this.developerInstructions = opts.developerInstructions;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

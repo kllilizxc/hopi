@@ -170,3 +170,57 @@ describe('SyncEngine.resumeSession', () => {
         expect(applyCalls[0]?.patch.permissionMode).toBe('safe-yolo')
     })
 })
+
+describe('SyncEngine.writeFileOnMachine', () => {
+    it('delegates machine file writes to the RPC gateway', async () => {
+        const calls: Array<{
+            machineId: string
+            path: string
+            options: {
+                content: string
+                cwd?: string
+                expectedHash?: string | null
+                createParents?: boolean
+                overwrite?: boolean
+            }
+        }> = []
+        const engine = {
+            rpcGateway: {
+                async writeFileOnMachine(machineId: string, path: string, options: {
+                    content: string
+                    cwd?: string
+                    expectedHash?: string | null
+                    createParents?: boolean
+                    overwrite?: boolean
+                }) {
+                    calls.push({ machineId, path, options })
+                    return { success: true, path, hash: 'next-hash' }
+                }
+            }
+        } as unknown as SyncEngine
+
+        const result = await (SyncEngine.prototype.writeFileOnMachine as any).call(
+            engine,
+            'machine-1',
+            '/workspace/.hopi/docs/goals/example/planner-mail.yml',
+            {
+                content: 'Ym9keQ==',
+                cwd: '/workspace',
+                createParents: true,
+                overwrite: true
+            }
+        )
+
+        expect(result).toEqual({ success: true, path: '/workspace/.hopi/docs/goals/example/planner-mail.yml', hash: 'next-hash' })
+        expect(calls).toEqual([{
+            machineId: 'machine-1',
+            path: '/workspace/.hopi/docs/goals/example/planner-mail.yml',
+            options: {
+                content: 'Ym9keQ==',
+                cwd: '/workspace',
+                createParents: true,
+                overwrite: true
+            }
+        }])
+    })
+})

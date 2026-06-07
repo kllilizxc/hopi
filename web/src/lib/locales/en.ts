@@ -91,12 +91,12 @@ export default {
   'projects.decisions.answerLabel': 'Answer',
 
   'projects.todo.title': 'Todo / Backlog',
+  'projects.todo.boardHint': 'Candidate and deferred notes stay here until Planner promotes them; they do not count as Planned work.',
   'projects.todo.loading': 'Loading todo…',
   'projects.todo.count': '{n} items',
   'projects.todo.missing': 'Missing',
   'projects.todo.missingDocs': 'Goal todo.yml not found.',
   'projects.todo.empty': 'No todo items parsed.',
-  'projects.todo.rawYaml': 'Raw YAML',
   'projects.todo.linkedTask': 'Task {id}',
   'projects.todo.kind.ready': 'Ready',
   'projects.todo.kind.candidate': 'Candidate',
@@ -323,7 +323,7 @@ export default {
   'projects.controller.openFailed': 'Failed to open Goal Assistant',
   'projects.controller.unavailable': 'Goal Assistant unavailable',
   'projects.controller.emptyGreetingTitle': 'Goal Assistant is ready.',
-  'projects.controller.emptyGreetingBody': 'This goal can be discussed before tasks exist. Ask for clarification, add planner mail, or review current goal state here.',
+  'projects.controller.emptyGreetingBody': 'Use Goal Assistant as the kanban butler for this goal: ask board questions, continue or requeue work, add planner mail, or review current goal state here.',
 
   'projects.create.title': 'Create project',
   'projects.create.description': 'Projects group tasks and bind one or more workspaces.',

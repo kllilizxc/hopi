@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { stripLeadingTaskTitleRef } from '@hopi/protocol'
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { z } from 'zod'
@@ -7,7 +7,24 @@ import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } fr
 import { notifyProjectController } from '../projectController'
 import type { SyncEngine } from '../syncEngine'
 import { getProjectDefaultTaskRuntimeSettings } from '../projectTaskDefaults'
-import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState, type GoalTodoStatus, type GoalTodoUpdateKind } from './goalTodo'
+import { createGoalDecisionTopic } from './goalControl'
+import { syncGoalOwnedDocs } from './goalDocs'
+import { getDocsRoot, getGoalEventsPath, getGoalTodoPath } from './goalDocPaths'
+import { appendGoalWorkflowEvent, buildDocsBackedGoalWorkflowGoalSnapshot } from './goalEventLog'
+import {
+    buildGoalTodoBlockedStateFromStoredTask,
+    getGoalTodoStatusForStoredTask,
+    getGoalTodoTagForStoredTask,
+    getStoredTaskRuntimeBlockedReason,
+    getStoredTaskRuntimeBlockedSource,
+    recoverStoredTaskStatusFromLegacyBlocked
+} from './goalTaskState'
+import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState, type GoalTodoEventOptions, type GoalTodoTaskKind } from './goalTodo'
+import {
+    findGoalTodoTaskProjectionById,
+    getTaskByNamespaceOrGoalTodoProjection,
+    materializeGoalTodoTaskOverlayForWrite
+} from './goalTodoProjection'
 
 const taskStatusSchema = z.enum(['planning', 'running', 'review', 'done', 'blocked', 'planned', 'in_progress', 'in_review', 'finished'])
 const taskPrioritySchema = z.enum(['high', 'medium', 'low'])
@@ -150,6 +167,153 @@ function normalizeTaskStatus(value: unknown): unknown {
     }
 }
 
+function getTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    }) ?? options.task
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function getProjectedTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | null {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+    if (!projected) {
+        return null
+    }
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function isStaleDbOnlyGoalTaskForSource(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source'>
+    source: StoredTask['source']
+}): boolean {
+    if (!options.task.goalId) {
+        return false
+    }
+    if (options.task.source !== options.source) {
+        return false
+    }
+    if (typeof options.task.goalTodoRef === 'string' && options.task.goalTodoRef.trim().length > 0) {
+        return false
+    }
+    return !findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+}
+
+function isStaleDbOnlyManualGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'manual'
+    })
+}
+
+function isStaleDbOnlyBootstrapGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'project_init'
+    })
+}
+
+function normalizeCreatedGoalTaskStatus(value: unknown): unknown {
+    const normalized = normalizeTaskStatus(value)
+    switch (normalized) {
+        case 'running':
+        case 'in_progress':
+        case 'review':
+        case 'in_review':
+        case 'blocked':
+        case 'done':
+        case 'finished':
+            return 'planning'
+        default:
+            return normalized
+    }
+}
+
 function buildContractFromPlannerFields(action: Record<string, unknown>): string | undefined {
     if (typeof action.contract === 'string' && action.contract.trim()) {
         return action.contract
@@ -219,7 +383,7 @@ function normalizeActionPacketInput(raw: unknown): unknown {
                     title: typeof item.title === 'string'
                         ? stripLeadingTaskTitleRef(item.title, typeof todoRef === 'string' ? todoRef : null)
                         : item.title,
-                    status: normalizeTaskStatus(item.status),
+                    status: normalizeCreatedGoalTaskStatus(item.status),
                     todoRef,
                     workflowProfile: getAlias(item, 'workflowProfile', 'workflow_profile'),
                     contract: buildContractFromPlannerFields(item),
@@ -540,10 +704,150 @@ function getDefaultCreatedTaskSource(_current: StoredTask): string {
     return 'manual'
 }
 
+function getGoalTodoTaskKindForSource(source: string | null | undefined): GoalTodoTaskKind {
+    const normalized = source?.trim().toLowerCase()
+    return normalized === 'planner' || normalized === 'radar'
+        ? 'planning'
+        : 'engineering'
+}
+
 function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorkspace | null {
     return project.defaultWorkspaceId
         ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function appendGoalMetadataActionPacketEvent(options: {
+    project: StoredProject
+    goalId: string
+    goalKey: string
+    before: Record<string, unknown> | null
+    after: Record<string, unknown> | null
+    defaultWorkspace: StoredWorkspace | null
+    sessionId: string
+}): void {
+    const docsRoot = getDocsRoot(options.defaultWorkspace)
+    if (!docsRoot) {
+        return
+    }
+
+    appendGoalWorkflowEvent(getGoalEventsPath(docsRoot, options.goalKey), {
+        writer: 'hopi-actions',
+        action: 'goal_updated_from_action_packet',
+        entity: {
+            type: 'goal',
+            id: options.goalId
+        },
+        before: options.before,
+        after: options.after,
+        reason: 'Planner action packet updated the durable goal metadata.',
+        metadata: {
+            projectId: options.project.id,
+            source: 'update_goal',
+            sessionId: options.sessionId
+        }
+    })
+}
+
+function materializeGoalActionTaskOverlay(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    currentTask: StoredTask
+    taskId: string
+    taskTitle: string
+    description: string | null | undefined
+    status: string
+    priority: 'high' | 'medium' | 'low' | null
+    workflowProfile: string
+    source: string
+    contract: string | null | undefined
+}): StoredTask {
+    const defaults = getProjectDefaultTaskRuntimeSettings(options.project, { autonomous: true })
+    const existing = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+        ?? options.store.tasks
+            .listTasksByProjectAndNamespace(options.project.id, options.namespace, { goalId: options.currentTask.goalId ?? undefined })
+            .find((task) => task.goalTodoRef === options.taskId)
+        ?? null
+
+    if (existing) {
+        return options.store.tasks.updateTaskByNamespace(existing.id, options.namespace, {
+            goalId: options.currentTask.goalId,
+            goalTodoRef: options.taskId,
+            title: options.taskTitle,
+            description: options.description ?? null,
+            status: options.status,
+            priority: options.priority,
+            sortKey: existing.sortKey ?? Date.now(),
+            workspaceId: options.currentTask.workspaceId,
+            agentFlavor: defaults.agentFlavor,
+            permissionMode: defaults.permissionMode,
+            model: defaults.model,
+            modelMode: defaults.modelMode,
+            workflowProfile: options.workflowProfile,
+            source: options.source,
+            contract: options.contract ?? null
+        }) ?? existing
+    }
+
+    const materialized = materializeGoalTodoTaskOverlayForWrite({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (materialized) {
+        return options.store.tasks.updateTaskByNamespace(materialized.id, options.namespace, {
+            title: options.taskTitle,
+            description: options.description ?? null,
+            status: options.status,
+            priority: options.priority,
+            sortKey: materialized.sortKey ?? Date.now(),
+            workspaceId: options.currentTask.workspaceId,
+            agentFlavor: defaults.agentFlavor,
+            permissionMode: defaults.permissionMode,
+            model: defaults.model,
+            modelMode: defaults.modelMode,
+            workflowProfile: options.workflowProfile,
+            source: options.source,
+            contract: options.contract ?? null
+        }) ?? materialized
+    }
+
+    return options.store.tasks.createTask({
+        id: options.taskId,
+        projectId: options.currentTask.projectId,
+        goalId: options.currentTask.goalId,
+        goalTodoRef: options.taskId,
+        title: options.taskTitle,
+        description: options.description ?? null,
+        status: options.status,
+        priority: options.priority,
+        sortKey: Date.now(),
+        workspaceId: options.currentTask.workspaceId,
+        ...defaults,
+        workflowProfile: options.workflowProfile,
+        source: options.source,
+        sourceTaskId: options.currentTask.id,
+        contract: options.contract ?? null
+    })
+}
+
+function resolveGoalTodoRefForTask(options: {
+    project: StoredProject
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+    task: Pick<StoredTask, 'id' | 'goalTodoRef'>
+}): string {
+    const existingRef = options.task.goalTodoRef?.trim()
+    if (existingRef) {
+        return existingRef
+    }
+    const todo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace: options.defaultWorkspace
+    })
+    return todo.board.items.find((item) => item.taskId === options.task.id)?.ref?.trim() || options.task.id
 }
 
 function findGoalTodoTitle(options: {
@@ -563,19 +867,23 @@ function findGoalTodoTitle(options: {
         defaultWorkspace: options.defaultWorkspace
     })
     const todoRefKey = normalizeTaskTitleKey(todoRef)
-    const section = todo.sections.find((item) => (
-        item.todoRef && normalizeTaskTitleKey(item.todoRef) === todoRefKey
+    const boardItem = todo.board.items.find((item) => (
+        normalizeTaskTitleKey(item.ref) === todoRefKey
+        || (item.taskId && normalizeTaskTitleKey(item.taskId) === todoRefKey)
     ))
-    return section?.title.trim() || null
+    if (boardItem?.title.trim()) {
+        return boardItem.title.trim()
+    }
+    return null
 }
 
 function syncGoalTodoRef(options: {
     store: Store
     namespace: string
     project: StoredProject
-    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'title' | 'description' | 'blockedReason' | 'blockedSource' | 'workspaceId'>
-    kind: GoalTodoUpdateKind
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'title' | 'description' | 'status' | 'blockedReason' | 'blockedSource' | 'blockedAt' | 'workspaceId' | 'mergeRuntime' | 'previewRuntime' | 'initRuntime'>
     tag?: string | null
+    event?: GoalTodoEventOptions
 }): void {
     if (!options.task.goalId || !options.task.goalTodoRef) {
         return
@@ -584,51 +892,21 @@ function syncGoalTodoRef(options: {
     if (!goal || goal.projectId !== options.project.id) {
         return
     }
-    const statusTag = getGoalTodoStatusTagForKind(options.kind)
     const defaultWorkspace = getDefaultWorkspace(options.store, options.project)
         ?? (options.task.workspaceId ? options.store.workspaces.getWorkspace(options.task.workspaceId) : null)
+    const goalStatus = getGoalTodoStatusForStoredTask(options.task)
     upsertGoalTodoTaskState({
         project: options.project,
         goal,
         defaultWorkspace,
         taskId: options.task.goalTodoRef,
-        status: statusTag.status,
-        tag: options.tag !== undefined ? options.tag : statusTag.tag,
+        status: goalStatus,
+        tag: options.tag !== undefined ? options.tag : getGoalTodoTagForStoredTask(options.task),
         title: options.task.title,
         body: options.task.description,
-        blocked: statusTag.status === 'blocked'
-            ? {
-                kind: options.task.blockedSource ?? 'blocked',
-                summary: options.task.blockedReason,
-                updatedAt: Date.now()
-            }
-            : null
+        blocked: buildGoalTodoBlockedStateFromStoredTask(options.task),
+        event: options.event
     })
-}
-
-function getGoalTodoStatusTagForKind(kind: GoalTodoUpdateKind): { status: GoalTodoStatus; tag: string | null } {
-    switch (kind) {
-        case 'planning':
-            return { status: 'planning', tag: 'ready' }
-        case 'promoted':
-        case 'running':
-            return { status: 'running', tag: 'promoted' }
-        case 'in_review':
-        case 'review':
-            return { status: 'review', tag: 'in_review' }
-        case 'blocked':
-            return { status: 'blocked', tag: 'unknown' }
-        case 'done':
-            return { status: 'done', tag: 'accepted' }
-    }
-}
-
-function getGoalTodoKindForTaskStatus(status: GoalActionTaskStatus): GoalTodoUpdateKind {
-    if (status === 'done' || status === 'finished') return 'done'
-    if (status === 'review' || status === 'in_review') return 'review'
-    if (status === 'blocked') return 'blocked'
-    if (status === 'planning' || status === 'planned') return 'planning'
-    return 'running'
 }
 
 function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>): 'planner' | 'generator' | 'evaluator' | 'radar' | null {
@@ -645,9 +923,9 @@ function getGoalTaskActionRole(task: Pick<StoredTask, 'goalId' | 'status' | 'sou
 }
 
 function normalizeUpdateCurrentTaskStatusForRole(
-    status: GoalActionTaskStatus,
+    status: string | null | undefined,
     task: Pick<StoredTask, 'goalId' | 'status' | 'source'>
-): GoalActionTaskStatus {
+): string | null | undefined {
     if (status !== 'finished' && status !== 'done') {
         return status
     }
@@ -656,7 +934,7 @@ function normalizeUpdateCurrentTaskStatusForRole(
 }
 
 function getUpdateCurrentTaskSourceForRole(
-    status: GoalActionTaskStatus,
+    status: string | null | undefined,
     task: Pick<StoredTask, 'goalId' | 'status' | 'source'>
 ): string | null | undefined {
     const role = getGoalTaskActionRole(task)
@@ -677,17 +955,39 @@ export function applyGoalActionPacketFromSession(options: {
     taskId: string
     sessionId: string
 }): boolean {
-    const current = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    const current = materializeGoalTodoTaskOverlayForWrite({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    }) ?? options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
     if (!current || current.archivedAt || !current.goalId || current.projectId !== options.projectId) {
         return false
     }
 
-    const goal = options.store.goals.getGoalByNamespace(current.goalId, options.namespace)
+    let goal = options.store.goals.getGoalByNamespace(current.goalId, options.namespace)
     if (!goal || goal.projectId !== current.projectId) {
         return false
     }
     const project = options.store.projects.getProjectByNamespace(current.projectId, options.namespace)
     if (!project) {
+        return false
+    }
+    const defaultWorkspace = getDefaultWorkspace(options.store, project)
+    if (
+        defaultWorkspace
+        && (
+            isStaleDbOnlyManualGoalTask({
+                store: options.store,
+                namespace: options.namespace,
+                task: current
+            })
+            || isStaleDbOnlyBootstrapGoalTask({
+                store: options.store,
+                namespace: options.namespace,
+                task: current
+            })
+        )
+    ) {
         return false
     }
 
@@ -703,20 +1003,42 @@ export function applyGoalActionPacketFromSession(options: {
         return false
     }
 
+    const todo = readGoalTodo({
+        project,
+        goal,
+        defaultWorkspace
+    })
     let touchedProject = false
+    const shouldUseDocsFirstDuplicateSuppression = Boolean(defaultWorkspace)
     const existingGoalTaskTitleKeys = new Set(
-        options.store.tasks
-            .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
-            .map((task) => normalizeTaskTitleKey(task.title))
+        [
+            ...(
+                shouldUseDocsFirstDuplicateSuppression
+                    ? []
+                    : options.store.tasks
+                        .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
+                        .map((task) => normalizeTaskTitleKey(task.title))
+            ),
+            ...todo.board.items.map((item) => normalizeTaskTitleKey(item.title))
+        ]
             .filter((title) => title.length > 0)
     )
     const existingGoalTaskTodoRefs = new Set(
-        options.store.tasks
-            .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
-            .map((task) => typeof task.goalTodoRef === 'string' ? normalizeTaskTitleKey(task.goalTodoRef) : '')
+        [
+            ...(
+                shouldUseDocsFirstDuplicateSuppression
+                    ? []
+                    : options.store.tasks
+                        .listTasksByProjectAndNamespace(current.projectId, options.namespace, { goalId: current.goalId })
+                        .map((task) => typeof task.goalTodoRef === 'string' ? normalizeTaskTitleKey(task.goalTodoRef) : '')
+            ),
+            ...todo.board.items.flatMap((item) => [
+                normalizeTaskTitleKey(item.ref),
+                item.taskId ? normalizeTaskTitleKey(item.taskId) : ''
+            ])
+        ]
             .filter((todoRef) => todoRef.length > 0)
     )
-    const defaultWorkspace = getDefaultWorkspace(options.store, project)
 
     for (const action of packet.actions) {
         if (action.type === 'create_goal_task') {
@@ -742,35 +1064,65 @@ export function applyGoalActionPacketFromSession(options: {
                 defaultWorkspace,
                 title: taskTitle
             })
-            const created = options.store.tasks.createTask({
-                id: taskId,
-                projectId: current.projectId,
-                goalId: current.goalId,
-                goalTodoRef: taskId,
+            const createdStatus = action.status ?? 'planning'
+            const createdSource = action.source ?? getDefaultCreatedTaskSource(current)
+            const createGoalTaskEvent: GoalTodoEventOptions = {
+                writer: 'hopi-actions',
+                action: 'todo_item_created_from_action_packet',
+                reason: 'Planner action packet created a durable goal task.',
+                metadata: {
+                    source: 'create_goal_task',
+                    sessionId: options.sessionId
+                }
+            }
+            const createdGoalTodoTaskState = {
+                status: createdStatus,
+                blockedSource: null,
+                mergeRuntime: null,
+                previewRuntime: null,
+                initRuntime: null
+            } as const
+            const wroteDocsFirst = Boolean(defaultWorkspace) && upsertGoalTodoTaskState({
+                project,
+                goal,
+                defaultWorkspace,
+                taskId,
+                status: getGoalTodoStatusForStoredTask(createdGoalTodoTaskState),
+                tag: action.tag !== undefined ? action.tag : getGoalTodoTagForStoredTask(createdGoalTodoTaskState),
+                taskKind: getGoalTodoTaskKindForSource(createdSource),
                 title: taskTitle,
+                body: action.description ?? null,
+                blocked: null,
+                event: createGoalTaskEvent
+            })
+            const created = materializeGoalActionTaskOverlay({
+                store: options.store,
+                namespace: options.namespace,
+                project,
+                currentTask: current,
+                taskId,
+                taskTitle,
                 description: action.description,
-                status: action.status ?? 'planning',
+                status: createdStatus,
                 priority: action.priority ?? null,
-                sortKey: Date.now(),
-                workspaceId: current.workspaceId,
-                ...getProjectDefaultTaskRuntimeSettings(project, { autonomous: true }),
                 workflowProfile: action.workflowProfile ?? 'default',
-                source: action.source ?? getDefaultCreatedTaskSource(current),
-                sourceTaskId: current.id,
+                source: createdSource,
                 contract: action.contract
             })
             if (titleKey) {
                 existingGoalTaskTitleKeys.add(titleKey)
             }
             existingGoalTaskTodoRefs.add(normalizeTaskTitleKey(taskId))
-            syncGoalTodoRef({
-                store: options.store,
-                namespace: options.namespace,
-                project,
-                task: created,
-                kind: getGoalTodoKindForTaskStatus(created.status as GoalActionTaskStatus),
-                tag: action.tag
-            })
+            if (!wroteDocsFirst) {
+                syncGoalTodoRef({
+                    store: options.store,
+                    namespace: options.namespace,
+                    project,
+                    task: created,
+                    tag: action.tag,
+                    event: createGoalTaskEvent
+                })
+            }
             options.engine.handleRealtimeEvent({
                 type: 'task-added',
                 taskId: created.id,
@@ -787,16 +1139,97 @@ export function applyGoalActionPacketFromSession(options: {
             if (!latest || latest.archivedAt) {
                 continue
             }
-            const status = normalizeUpdateCurrentTaskStatusForRole(action.status, latest)
-            const source = getUpdateCurrentTaskSourceForRole(status, latest)
-            const statusChangingToFinished = (status === 'finished' || status === 'done') && latest.status !== 'finished' && latest.status !== 'done'
+            const docsRoot = getDocsRoot(defaultWorkspace)
+            const hasCanonicalGoalTodoFile = Boolean(
+                docsRoot
+                && existsSync(getGoalTodoPath(docsRoot, goal.goalKey))
+            )
+            const latestProjectedTask = getProjectedTaskRuntimeView({
+                store: options.store,
+                namespace: options.namespace,
+                task: latest
+            })
+            const latestTask = getTaskRuntimeView({
+                store: options.store,
+                namespace: options.namespace,
+                task: latest
+            })
+            const missingPreexistingCanonicalGoalTodoItem = Boolean(
+                defaultWorkspace
+                && hasCanonicalGoalTodoFile
+                && latest.goalTodoRef?.trim()
+                && !latestProjectedTask
+            )
+            const requestedStatus = normalizeUpdateCurrentTaskStatusForRole(action.status, latestTask) ?? latestTask.status
+            const storedStatus = recoverStoredTaskStatusFromLegacyBlocked({
+                goalId: latestTask.goalId,
+                status: requestedStatus,
+                blockedSource: latestTask.blockedSource,
+                mergeRuntime: latestTask.mergeRuntime,
+                previewRuntime: latestTask.previewRuntime,
+                initRuntime: latestTask.initRuntime
+            })
+            const source = getUpdateCurrentTaskSourceForRole(requestedStatus, latestTask)
+            const statusChangingToFinished = (requestedStatus === 'finished' || requestedStatus === 'done')
+                && latestTask.status !== 'finished'
+                && latestTask.status !== 'done'
             const nextTitle = action.title === undefined
                 ? undefined
-                : stripLeadingTaskTitleRef(action.title, latest.goalTodoRef)
+                : stripLeadingTaskTitleRef(action.title, latestTask.goalTodoRef)
+            const goalTodoTaskForWrite = latestProjectedTask ?? latestTask
+            const nextGoalTodoRef = defaultWorkspace && latestProjectedTask
+                ? resolveGoalTodoRefForTask({
+                    project,
+                    goal,
+                    defaultWorkspace,
+                    task: latestProjectedTask
+                })
+                : (latestTask.goalTodoRef?.trim() || latestTask.id)
+            const nextGoalTodoTaskState = {
+                ...latestTask,
+                status: storedStatus
+            } as StoredTask
+            const nextGoalTodoBlockedState = buildGoalTodoBlockedStateFromStoredTask(latestTask)
+            const nextBlockedReason = requestedStatus === 'blocked'
+                ? (latestTask.blockedReason?.trim() || getStoredTaskRuntimeBlockedReason(latestTask) || null)
+                : null
+            const nextBlockedSource = requestedStatus === 'blocked'
+                ? (latestTask.blockedSource?.trim() || getStoredTaskRuntimeBlockedSource(latestTask) || null)
+                : null
+            const shouldPersistBlockedMetadata = Boolean(nextBlockedReason || nextBlockedSource)
+            const updateCurrentTaskEvent: GoalTodoEventOptions = {
+                writer: 'hopi-actions',
+                action: 'todo_item_updated_from_action_packet',
+                reason: 'Action packet updated the durable goal task state.',
+                metadata: {
+                    source: 'update_current_task',
+                    sessionId: options.sessionId
+                }
+            }
+            const wroteDocsFirst = defaultWorkspace && !missingPreexistingCanonicalGoalTodoItem
+                ? upsertGoalTodoTaskState({
+                    project,
+                    goal,
+                    defaultWorkspace,
+                    taskId: nextGoalTodoRef,
+                    status: getGoalTodoStatusForStoredTask(nextGoalTodoTaskState),
+                    tag: getGoalTodoTagForStoredTask(nextGoalTodoTaskState),
+                    taskKind: getGoalTodoTaskKindForSource(source ?? latestTask.source),
+                    title: nextTitle ?? goalTodoTaskForWrite.title,
+                    body: action.description !== undefined ? action.description : goalTodoTaskForWrite.description,
+                    blocked: nextGoalTodoBlockedState,
+                    event: updateCurrentTaskEvent
+                })
+                : false
             const updated = options.store.tasks.updateTaskByNamespace(current.id, options.namespace, {
                 title: nextTitle,
+                goalTodoRef: nextGoalTodoRef,
                 description: action.description,
-                status,
+                status: storedStatus,
+                blockedReason: shouldPersistBlockedMetadata ? nextBlockedReason : null,
+                blockedSource: shouldPersistBlockedMetadata ? nextBlockedSource : null,
+                blockedSessionId: shouldPersistBlockedMetadata ? (latest.blockedSessionId ?? undefined) : null,
+                blockedAt: shouldPersistBlockedMetadata ? (latest.blockedAt ?? Date.now()) : null,
                 priority: action.priority,
                 source,
                 contract: action.contract,
@@ -805,14 +1238,21 @@ export function applyGoalActionPacketFromSession(options: {
                 finishedAt: statusChangingToFinished ? Date.now() : undefined
             })
             if (updated) {
-                if (updated.goalTodoRef) {
-                    syncGoalTodoRef({
+                if (!wroteDocsFirst && updated.goalTodoRef) {
+                    const projectedUpdated = getProjectedTaskRuntimeView({
                         store: options.store,
                         namespace: options.namespace,
-                        project,
-                        task: updated,
-                        kind: getGoalTodoKindForTaskStatus(status)
+                        task: updated
                     })
+                    if (projectedUpdated || !missingPreexistingCanonicalGoalTodoItem) {
+                        syncGoalTodoRef({
+                            store: options.store,
+                            namespace: options.namespace,
+                            project,
+                            task: projectedUpdated ?? updated,
+                            event: updateCurrentTaskEvent
+                        })
+                    }
                 }
                 emitTaskUpdated({
                     engine: options.engine,
@@ -825,6 +1265,7 @@ export function applyGoalActionPacketFromSession(options: {
         }
 
         if (action.type === 'update_goal') {
+            const previousGoal = options.store.goals.getGoalByNamespace(goal.id, options.namespace) ?? goal
             const updatedGoal = options.store.goals.updateGoalByNamespace(goal.id, options.namespace, {
                 status: action.status,
                 currentFocus: action.currentFocus,
@@ -833,30 +1274,69 @@ export function applyGoalActionPacketFromSession(options: {
                 deployRequiresApproval: action.deployRequiresApproval
             })
             if (updatedGoal) {
+                const beforeSnapshot = buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal: previousGoal,
+                    defaultWorkspace
+                })
+                syncGoalOwnedDocs({
+                    project,
+                    goal: updatedGoal,
+                    defaultWorkspace
+                })
+                appendGoalMetadataActionPacketEvent({
+                    project,
+                    goalId: updatedGoal.id,
+                    goalKey: updatedGoal.goalKey,
+                    before: beforeSnapshot,
+                    after: buildDocsBackedGoalWorkflowGoalSnapshot({
+                        goal: updatedGoal,
+                        defaultWorkspace
+                    }),
+                    defaultWorkspace,
+                    sessionId: options.sessionId
+                })
+                goal = updatedGoal
                 touchedProject = true
             }
             continue
         }
 
         if (action.type === 'create_decision_topic') {
-            const taskId = action.taskId === null ? null : action.taskId ?? current.id
+            const taskId = action.taskId ?? null
             if (taskId) {
-                const linkedTask = options.store.tasks.getTaskByNamespace(taskId, options.namespace)
+                const linkedTask = findGoalTodoTaskProjectionById({
+                    store: options.store,
+                    namespace: options.namespace,
+                    taskId,
+                    includeArchived: false
+                })
                 if (!linkedTask || linkedTask.projectId !== current.projectId || linkedTask.goalId !== current.goalId) {
                     continue
                 }
             }
 
-            const topic = options.store.goalDecisionTopics.create({
-                id: randomUUID(),
-                projectId: current.projectId,
-                goalId: current.goalId,
-                namespace: options.namespace,
-                taskId,
-                title: action.title,
-                body: action.body,
-                blocking: action.blocking ?? true
-            })
+            let topic: ReturnType<typeof createGoalDecisionTopic>['topic'] | null = null
+            try {
+                topic = createGoalDecisionTopic({
+                    store: options.store,
+                    engine: options.engine,
+                    namespace: options.namespace,
+                    project,
+                    goal,
+                    taskId,
+                    title: action.title,
+                    body: action.body,
+                    blocking: action.blocking ?? true,
+                    writer: 'hopi-actions',
+                    reason: 'Planner action packet created a durable decision topic.',
+                    blockedSessionId: options.sessionId
+                }).topic
+            } catch {
+                continue
+            }
+            if (!topic) {
+                continue
+            }
             touchedProject = true
             notifyProjectController({
                 store: options.store,
@@ -870,35 +1350,6 @@ export function applyGoalActionPacketFromSession(options: {
                 body: topic.body
             })
 
-            if (topic.blocking && topic.taskId) {
-                const linkedTask = options.store.tasks.getTaskByNamespace(topic.taskId, options.namespace)
-                if (linkedTask && linkedTask.status !== 'finished' && linkedTask.status !== 'done' && linkedTask.status !== 'blocked') {
-                    const blocked = options.store.tasks.updateTaskByNamespace(linkedTask.id, options.namespace, {
-                        status: 'blocked',
-                        blockedReason: topic.body,
-                        blockedSource: 'decision_topic',
-                        blockedSessionId: options.sessionId
-                    })
-                    if (blocked) {
-                        syncGoalTodoRef({
-                            store: options.store,
-                            namespace: options.namespace,
-                            project,
-                            task: blocked,
-                            kind: 'blocked'
-                        })
-                        emitTaskUpdated({
-                            engine: options.engine,
-                            namespace: options.namespace,
-                            task: blocked
-                        })
-                    }
-                }
-            } else if (topic.blocking) {
-                options.store.goals.updateGoalByNamespace(goal.id, options.namespace, {
-                    status: 'blocked'
-                })
-            }
         }
     }
 

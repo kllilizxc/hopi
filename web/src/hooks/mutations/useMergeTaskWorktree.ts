@@ -7,6 +7,7 @@ import type {
     TaskWorktreeMergeSkippedReason
 } from '@/types/api'
 import { areTaskActionRuntimesEqual } from '@/lib/task-action-runtime'
+import { getTaskLane } from '@/lib/task-status'
 import { invalidateTaskCaches, updateTaskCaches } from '@/hooks/mutations/taskActionCache'
 import { queryKeys } from '@/lib/query-keys'
 
@@ -36,10 +37,22 @@ function areMergeRuntimesEqual(left: Task['mergeRuntime'] | null | undefined, ri
     return areTaskActionRuntimesEqual(left, right)
 }
 
+function resolveReviewTaskStatus(task: Task): Task['status'] {
+    if (task.status === 'in_review') {
+        return 'in_review'
+    }
+
+    const taskLane = getTaskLane(task)
+    if ((taskLane === 'in_review' || taskLane === 'merging') && task.goalId) {
+        return 'in_review'
+    }
+
+    return 'review'
+}
+
 function shouldMarkFinishedAfterMerge(task: Task): boolean {
-    return task.status === 'review'
-        || task.status === 'in_review'
-        || (task.status === 'blocked' && task.mergeRuntime?.status === 'blocked')
+    const taskLane = getTaskLane(task)
+    return taskLane === 'in_review' || taskLane === 'merging'
 }
 
 function buildRuntimeNoteFromSkippedReason(reason: TaskWorktreeMergeSkippedReason): string {
@@ -111,29 +124,39 @@ function buildOptimisticMergeRuntime(task: Task, result: TaskWorktreeMergeRespon
 }
 
 function applyMergeResultToTask(task: Task, result: TaskWorktreeMergeResponse): Task {
+    if (result.task) {
+        return result.task
+    }
+
     const mergedAt = result.mergedAt ?? task.worktreeMergedAt ?? null
     const mergeCommit = result.commitHash ?? task.worktreeMergeCommit ?? null
     const shouldMarkFinished = shouldMarkFinishedAfterMerge(task) && result.mergedAt !== null
-    const shouldReturnToReview = task.status === 'blocked'
-        && task.mergeRuntime?.status === 'blocked'
+    const shouldReturnToReview = task.mergeRuntime?.status === 'blocked'
         && isActiveMergeSkippedReason(result.skippedReason)
+    const nextMergeRuntime = buildOptimisticMergeRuntime(task, result)
+    const shouldClearMergeBlock = Boolean(
+        (task.blockedSource === 'merge' || task.mergeRuntime?.status === 'blocked')
+        && nextMergeRuntime
+        && nextMergeRuntime.status !== 'blocked'
+        && nextMergeRuntime.status !== 'canceled'
+    )
     const nextStatus = shouldMarkFinished
         ? 'done'
         : shouldReturnToReview
-            ? 'review'
+            ? resolveReviewTaskStatus(task)
             : task.status
     const nextFinishedAt = shouldMarkFinished
         ? (result.mergedAt ?? task.finishedAt ?? Date.now())
         : shouldReturnToReview
             ? null
             : task.finishedAt
-    const nextMergeRuntime = buildOptimisticMergeRuntime(task, result)
 
     if (
         mergedAt === task.worktreeMergedAt
         && mergeCommit === task.worktreeMergeCommit
         && nextStatus === task.status
         && nextFinishedAt === task.finishedAt
+        && (!shouldClearMergeBlock || (task.blockedReason === null && task.blockedSource === null && task.blockedSessionId === null))
         && areMergeRuntimesEqual(nextMergeRuntime, task.mergeRuntime)
     ) {
         return task
@@ -145,11 +168,18 @@ function applyMergeResultToTask(task: Task, result: TaskWorktreeMergeResponse): 
         worktreeMergeCommit: mergeCommit,
         mergeRuntime: nextMergeRuntime,
         status: nextStatus,
-        finishedAt: nextFinishedAt
+        finishedAt: nextFinishedAt,
+        blockedReason: shouldClearMergeBlock ? null : task.blockedReason,
+        blockedSource: shouldClearMergeBlock ? null : task.blockedSource,
+        blockedSessionId: shouldClearMergeBlock ? null : task.blockedSessionId
     }
 }
 
 function applyMergeCancelResultToTask(task: Task, result: TaskWorktreeMergeCancelResponse): Task {
+    if (result.task) {
+        return result.task
+    }
+
     const nextMergeRuntime = result.mergeRuntime ?? null
     if (areMergeRuntimesEqual(nextMergeRuntime, task.mergeRuntime)) {
         return task

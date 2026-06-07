@@ -9,6 +9,7 @@ import type { PermissionMode } from './types';
 import { createOpencodeBackend } from './utils/opencodeBackend';
 import { OpencodePermissionHandler } from './utils/permissionHandler';
 import { TITLE_INSTRUCTION } from './utils/systemPrompt';
+import { buildPromptContentFromFormattedMessage } from '@/utils/attachmentFormatter';
 
 function isAssistantTextCodexMessage(message: unknown): boolean {
     if (!message || typeof message !== 'object') {
@@ -25,15 +26,17 @@ function isAssistantTextCodexMessage(message: unknown): boolean {
 
 class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private readonly session: OpencodeSession;
+    private readonly mcpServers: McpServerStdio[];
     private backend: ReturnType<typeof createOpencodeBackend> | null = null;
     private permissionHandler: OpencodePermissionHandler | null = null;
     private abortController = new AbortController();
     private displayPermissionMode: PermissionMode | null = null;
     private instructionsSent = false;
 
-    constructor(session: OpencodeSession) {
+    constructor(session: OpencodeSession, opts?: { mcpServers?: McpServerStdio[] }) {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.session = session;
+        this.mcpServers = opts?.mcpServers ?? session.mcpServers;
     }
 
     public async launch(): Promise<RemoteLauncherExitReason> {
@@ -78,7 +81,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         await backend.initialize();
 
         const resumeSessionId = session.sessionId;
-        const mcpServerList: McpServerStdio[] = [];
+        const mcpServerList = this.mcpServers;
         let acpSessionId: string;
         if (resumeSessionId) {
             try {
@@ -142,19 +145,29 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             activeTurnHasAssistantReply = false;
             turnInFlight = true;
 
-            // Inject title instructions on first prompt
-            let messageText = batch.message;
+            const promptContent: PromptContent[] = buildPromptContentFromFormattedMessage(batch.message);
             if (!this.instructionsSent) {
-                messageText = TITLE_INSTRUCTION
-                    ? `${TITLE_INSTRUCTION}\n\n${batch.message}`
-                    : batch.message;
+                if (TITLE_INSTRUCTION) {
+                    const firstTextIndex = promptContent.findIndex((item) => item.type === 'text');
+                    if (firstTextIndex >= 0) {
+                        const existing = promptContent[firstTextIndex];
+                        if (existing.type === 'text') {
+                            promptContent[firstTextIndex] = {
+                                type: 'text',
+                                text: existing.text
+                                    ? `${TITLE_INSTRUCTION}\n\n${existing.text}`
+                                    : TITLE_INSTRUCTION
+                            };
+                        }
+                    } else {
+                        promptContent.unshift({
+                            type: 'text',
+                            text: TITLE_INSTRUCTION
+                        });
+                    }
+                }
                 this.instructionsSent = true;
             }
-
-            const promptContent: PromptContent[] = [{
-                type: 'text',
-                text: messageText
-            }];
 
             session.onThinkingChange(true);
 

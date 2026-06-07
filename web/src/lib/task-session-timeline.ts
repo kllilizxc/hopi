@@ -1,4 +1,5 @@
 import type { HopiTaskRole, SessionSummary, Task } from '@/types/api'
+import { getTaskLane } from '@/lib/task-status'
 
 export type TaskSessionTimelineItem = {
     session: SessionSummary
@@ -82,13 +83,17 @@ function inferFallbackRole(task: Task, index: number, total: number): HopiTaskRo
     const source = (task.source ?? '').trim().toLowerCase()
     if (source === 'planner') return 'planner'
     if (source === 'radar') return 'radar'
+    const taskLane = getTaskLane(task)
 
     if (total > 1) {
         if (index === 0) {
             return 'generator'
         }
 
-        const taskReachedReview = task.status === 'in_review' || task.status === 'blocked' || task.status === 'finished' || source === 'evaluator'
+        const taskReachedReview = taskLane === 'in_review'
+            || taskLane === 'merging'
+            || taskLane === 'done'
+            || source === 'evaluator'
         if (taskReachedReview && index === total - 1) {
             return 'evaluator'
         }
@@ -151,11 +156,13 @@ export function resolveTaskSessionSelection(
 }
 
 export function buildTaskReviewStage(task: Task, timeline: TaskSessionTimelineItem[]): TaskReviewStage | null {
-    if (task.mergeRuntime && (task.status === 'in_review' || task.status === 'blocked')) {
+    const taskLane = getTaskLane(task)
+
+    if (task.mergeRuntime && (taskLane === 'in_review' || taskLane === 'merging')) {
         return buildMergeReviewStage(task.mergeRuntime)
     }
 
-    if (task.status !== 'in_review') {
+    if (taskLane !== 'in_review') {
         return null
     }
 

@@ -7,6 +7,7 @@ import { opencodeRemoteLauncher } from './opencodeRemoteLauncher';
 import { ApiClient, ApiSessionClient } from '@/lib';
 import type { OpencodeMode, PermissionMode } from './types';
 import type { OpencodeHookServer } from './utils/startOpencodeHookServer';
+import type { McpServerStdio } from '@/agent/types';
 
 interface OpencodeLoopOptions {
     path: string;
@@ -20,6 +21,7 @@ interface OpencodeLoopOptions {
     resumeSessionId?: string;
     hookServer: OpencodeHookServer;
     hookUrl: string;
+    mcpServers?: McpServerStdio[];
     onSessionReady?: (session: OpencodeSession) => void;
 }
 
@@ -39,7 +41,8 @@ export async function opencodeLoop(opts: OpencodeLoopOptions): Promise<void> {
         mode: startingMode,
         startedBy,
         startingMode,
-        permissionMode: opts.permissionMode ?? 'default'
+        permissionMode: opts.permissionMode ?? 'default',
+        mcpServers: opts.mcpServers
     });
 
     if (opts.resumeSessionId) {
@@ -54,7 +57,7 @@ export async function opencodeLoop(opts: OpencodeLoopOptions): Promise<void> {
             hookServer: opts.hookServer,
             hookUrl: opts.hookUrl
         }),
-        runRemote: (instance) => opencodeRemoteLauncher(instance),
+        runRemote: (instance) => opencodeRemoteLauncher(instance, { mcpServers: opts.mcpServers }),
         onSessionReady: opts.onSessionReady
     });
 }

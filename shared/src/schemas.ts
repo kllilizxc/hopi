@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { MODEL_MODES, PERMISSION_MODES } from './modes'
 import { TaskSessionStartFailureSchema } from './task-session-start'
-import { TASK_STATUS_VALUES } from './tasks'
+import { TASK_STATUS_ORDER, TASK_STATUS_VALUES } from './tasks'
 
 export const PermissionModeSchema = z.enum(PERMISSION_MODES)
 export const ModelModeSchema = z.enum(MODEL_MODES)
@@ -154,6 +154,7 @@ export const MetadataSchema = z.object({
     taskId: z.string().optional(),
     hopiTaskRole: HopiTaskRoleSchema.optional(),
     hopiController: z.boolean().optional(),
+    goalAssistantToolingVersion: z.number().int().optional(),
     controllerBriefingLastAt: z.number().optional(),
     controllerBriefingLastGoalId: z.string().optional(),
     controllerBriefingInFlightAt: z.number().optional(),
@@ -336,9 +337,11 @@ export const GoalDecisionTopicSchema = z.object({
     id: z.string(),
     projectId: z.string(),
     goalId: z.string(),
+    scope: z.enum(['goal', 'task']).optional(),
     taskId: z.string().nullable().optional(),
     title: z.string().trim().min(1),
     body: z.string(),
+    prompt: z.string().nullable().optional(),
     status: GoalDecisionTopicStatusSchema,
     blocking: z.boolean(),
     resolution: z.string().nullable().optional(),
@@ -429,6 +432,9 @@ export type TaskAttachment = z.infer<typeof TaskAttachmentSchema>
 
 export const TaskStatusSchema = z.enum(TASK_STATUS_VALUES)
 export type TaskStatus = z.infer<typeof TaskStatusSchema>
+
+export const GoalTaskCanonicalStatusSchema = z.enum(TASK_STATUS_ORDER)
+export type GoalTaskCanonicalStatus = z.infer<typeof GoalTaskCanonicalStatusSchema>
 
 export const TaskPrioritySchema = z.enum(['high', 'medium', 'low'])
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>
@@ -547,6 +553,7 @@ export const TaskSchema = z.object({
     projectId: z.string(),
     goalId: z.string().nullable().optional(),
     goalTodoRef: z.string().nullable().optional(),
+    goalCanonicalStatus: GoalTaskCanonicalStatusSchema.nullable().optional(),
     title: z.string(),
     description: z.string().nullable().optional(),
     status: TaskStatusSchema,

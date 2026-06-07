@@ -32,6 +32,7 @@ export async function codexLocal(opts: {
     onSessionFound: (id: string) => void;
     codexArgs?: string[];
     mcpServers?: Record<string, { command: string; args: string[] }>;
+    developerInstructions?: string;
 }): Promise<void> {
     const args: string[] = [];
 
@@ -54,7 +55,10 @@ export async function codexLocal(opts: {
     }
 
     // Add developer instructions (system prompt)
-    args.push(...buildDeveloperInstructionsArg(codexSystemPrompt));
+    const developerInstructions = [codexSystemPrompt, opts.developerInstructions]
+        .filter((part): part is string => Boolean(part && part.trim()))
+        .join('\n\n');
+    args.push(...buildDeveloperInstructionsArg(developerInstructions));
 
     if (opts.codexArgs) {
         const safeArgs = filterResumeSubcommand(opts.codexArgs);

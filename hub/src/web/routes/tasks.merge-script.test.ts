@@ -829,7 +829,7 @@ describe('tasks merge route contract workflow', () => {
         expect(sendMessageCalls).toBe(0)
 
         const updatedTask = store.tasks.getTaskByNamespace(taskId, 'default')
-        expect(updatedTask?.status).toBe('blocked')
+        expect(updatedTask?.status).toBe('review')
         expect(updatedTask?.mergeRuntime?.status).toBe('blocked')
         expect(updatedTask?.mergeRuntime?.latestNote).toContain('blocked path')
     })

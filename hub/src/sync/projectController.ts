@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
     DEFAULT_AGENT_FLAVOR,
     DEFAULT_TASK_MODEL,
@@ -6,13 +7,18 @@ import {
 import { createHash } from 'node:crypto'
 import type { AgentFlavor, ModelMode, PermissionMode, Session } from '@hopi/protocol/types'
 import type { Store, StoredGoal, StoredProject, StoredSession, StoredTask, StoredWorkspace } from '../store'
+import { listGoalDecisionTopicsFromDocs } from './goals/goalDecisionStore'
+import { overlayGoalWithCanonicalDoc } from './goals/goalDocs'
+import { getDocsRoot, getGoalDocPath, getGoalTodoPath } from './goals/goalDocPaths'
 import { readGoalTodo } from './goals/goalTodo'
+import { buildGoalAssistantSessionProfile } from './goalAssistant'
 import type { SyncEngine } from './syncEngine'
 
 const CONTROLLER_EVENT_LOCAL_ID_PREFIX = 'controller:event:'
 const CONTROLLER_BRIEFING_LOCAL_ID_PREFIX = 'controller:briefing:'
 const CONTROLLER_BRIEFING_COOLDOWN_MS = 20 * 60 * 60 * 1000
 const CONTROLLER_BRIEFING_IN_FLIGHT_TIMEOUT_MS = 10 * 60 * 1000
+const GOAL_ASSISTANT_TOOLING_VERSION = 9
 
 type ProjectControllerSessionResult =
     | {
@@ -24,6 +30,17 @@ type ProjectControllerSessionResult =
     | {
         ok: false
         status: 400 | 404 | 500 | 503
+        error: string
+    }
+
+type ProjectControllerRetireResult =
+    | {
+        ok: true
+        retiredSessionIds: string[]
+    }
+    | {
+        ok: false
+        status: 400 | 404
         error: string
     }
 
@@ -50,6 +67,10 @@ function getNumber(value: unknown): number | null {
 
 function getString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function isGoalAssistantToolingCompatible(metadata: unknown): boolean {
+    return isRecord(metadata) && metadata.goalAssistantToolingVersion === GOAL_ASSISTANT_TOOLING_VERSION
 }
 
 function compactControllerEventPart(value: string | null | undefined): string {
@@ -91,7 +112,7 @@ function buildUserFacingBlockedReason(reason: string, source?: string | null): s
     if (lower.includes('exited unexpectedly') || lower.includes('crashed')) {
         return '执行中的 agent 异常退出了，当前任务没有自然完成。'
     }
-    if (source === 'decision_topic') {
+    if (source === 'decision') {
         return '这个任务在等用户做一个决定，决定后才能继续推进。'
     }
     return normalized || '任务被标记为 blocked，但没有记录具体原因。'
@@ -99,7 +120,7 @@ function buildUserFacingBlockedReason(reason: string, source?: string | null): s
 
 function buildBlockedNextAction(reason: string, source?: string | null): string {
     const lower = reason.toLowerCase()
-    if (source === 'decision_topic') {
+    if (source === 'decision') {
         return '向用户说明需要决定什么，并等待用户选择。'
     }
     if (lower.includes('context window') || lower.includes('ran out of room')) {
@@ -130,8 +151,12 @@ function buildControllerEventText(options: {
         return [
             '这里有一个需要我决定的问题。',
             '',
-            '请用个人助理的口吻，简短说明需要我决定什么、这个决定会影响什么，然后直接问我该怎么选。',
-            '不要自己代替任务实现、改代码或执行仓库写操作。',
+            '请用 Goal Assistant 的口吻，简短说明需要我决定什么、这个决定会影响什么，然后直接问我该怎么选。',
+            '你不是 coding agent。不要自己代替任务实现、改代码或执行仓库写操作。',
+            '你是这个 Goal 的 Kanban 管家；如果用户随后要求你继续任务、重试、补新任务或解释看板状态，优先自己通过 snapshot + typed tools 处理。',
+            '如果用户直接给出这个决策答案，优先读当前 goal snapshot，找到对应 waiting DecisionTopic，然后用 typed tool 把它 resolve 掉；不要只回口头建议，也不要把现有 decision answer 改写成 planner mail。',
+            '如果用户后续要求继续现有任务、重试、补新任务、或调整偏好，优先使用 HOPI typed operator tools，而不是只给口头建议。',
+            '先按工作流意图判断，不要等用户说出固定关键词；必要时先读当前 goal snapshot 再决定用 lane request 还是 planner mail。',
             '',
             `决策主题：${options.title}`,
             '',
@@ -146,8 +171,11 @@ function buildControllerEventText(options: {
     return [
         `任务「${options.title}」被阻塞了。`,
         '',
-        '请用个人助理的口吻，告诉我发生了什么、会影响当前目标吗、下一步应该怎么处理。不要直接复制原始报错，先翻译成人话。',
-        '不要自己代替任务实现、改代码或执行仓库写操作。',
+        '请用 Goal Assistant 的口吻，告诉我发生了什么、会影响当前目标吗、下一步应该怎么处理。不要直接复制原始报错，先翻译成人话。',
+        '你不是 coding agent。不要自己代替任务实现、改代码或执行仓库写操作。',
+        '你是这个 Goal 的 Kanban 管家；如果用户随后问看板状态、原因或要求你代操作看板，优先自己通过 snapshot + typed tools 处理。',
+        '如果后续用户表达的是操作意图，比如继续、重试、重新排回计划、补新任务、保存偏好、回答现有 decision，或恢复已暂停 automation，优先使用 HOPI typed operator tools，并且只有工具成功后才能说动作已完成。',
+        '按工作流意图理解请求，不要只盯关键词；如果需要 task id、lane、blocker 或 pending planner mail，先读 goal snapshot。',
         '',
         '已整理的信息：',
         options.body.trim() || '没有记录更多信息。',
@@ -165,19 +193,70 @@ function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorksp
     return store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
+function overlayProjectGoal(store: Store, project: StoredProject, goal: StoredGoal): StoredGoal {
+    return overlayGoalWithCanonicalDoc({
+        goal,
+        defaultWorkspace: getDefaultWorkspace(store, project)
+    })
+}
+
+function hasDocsBackedGoalState(store: Store, project: StoredProject, goal: StoredGoal): boolean {
+    const docsRoot = getDocsRoot(getDefaultWorkspace(store, project))
+    if (!docsRoot) {
+        return true
+    }
+    return existsSync(getGoalDocPath(docsRoot, goal.goalKey))
+        || existsSync(getGoalTodoPath(docsRoot, goal.goalKey))
+}
+
+function getProjectGoalById(options: {
+    store: Store
+    project: StoredProject
+    namespace: string
+    goalId: string
+}): StoredGoal | null {
+    const goal = options.store.goals.getGoalByNamespace(options.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id || goal.archivedAt !== null) {
+        return null
+    }
+    if (!hasDocsBackedGoalState(options.store, options.project, goal)) {
+        return null
+    }
+    return overlayProjectGoal(options.store, options.project, goal)
+}
+
+function listProjectGoals(options: {
+    store: Store
+    project: StoredProject
+    namespace: string
+}): StoredGoal[] {
+    return options.store.goals
+        .listGoalsByProjectAndNamespace(options.project.id, options.namespace, {
+            includeArchived: false
+        })
+        .filter((goal) => hasDocsBackedGoalState(options.store, options.project, goal))
+        .map((goal) => overlayProjectGoal(options.store, options.project, goal))
+}
+
 function isProjectControllerMetadata(metadata: unknown, projectId: string, goalId: string): boolean {
     if (!isRecord(metadata)) return false
     return metadata.projectId === projectId && metadata.goalId === goalId && metadata.hopiController === true
 }
 
 function findStoredProjectControllerSession(store: Store, namespace: string, projectId: string, goalId: string): StoredSession | null {
-    const sessions = store.sessions.getSessionsByNamespace(namespace)
-        .filter((session) => isProjectControllerMetadata(session.metadata, projectId, goalId))
+    const sessions = listStoredProjectControllerSessions(store, namespace, projectId, goalId)
+        .filter((session) => isGoalAssistantToolingCompatible(session.metadata))
         .sort((a, b) => {
             if (a.active !== b.active) return a.active ? -1 : 1
             return b.updatedAt - a.updatedAt
         })
     return sessions[0] ?? null
+}
+
+function listStoredProjectControllerSessions(store: Store, namespace: string, projectId: string, goalId: string): StoredSession[] {
+    return store.sessions.getSessionsByNamespace(namespace)
+        .filter((session) => isProjectControllerMetadata(session.metadata, projectId, goalId))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 function mergeControllerMetadata(input: {
@@ -197,6 +276,7 @@ function mergeControllerMetadata(input: {
         projectId: input.project.id,
         goalId: input.goal.id,
         hopiController: true,
+        goalAssistantToolingVersion: GOAL_ASSISTANT_TOOLING_VERSION,
         flavor: typeof base.flavor === 'string' ? base.flavor : input.agent,
         machineId: typeof base.machineId === 'string' ? base.machineId : input.project.machineId
     }
@@ -248,7 +328,7 @@ function markProjectControllerSession(options: {
 
 function updateControllerMetadata(options: {
     store: Store
-    engine: SyncEngine
+    engine?: SyncEngine | null
     namespace: string
     sessionId: string
     projectId: string
@@ -267,7 +347,7 @@ function updateControllerMetadata(options: {
             { touchUpdatedAt: false }
         )
         if (result.result === 'success') {
-            options.engine.handleRealtimeEvent({
+            options.engine?.handleRealtimeEvent({
                 type: 'session-updated',
                 sessionId: options.sessionId,
                 projectId: options.projectId,
@@ -279,6 +359,63 @@ function updateControllerMetadata(options: {
         if (result.result === 'error') return false
     }
     return false
+}
+
+export function retireProjectControllerSessions(options: {
+    store: Store
+    engine?: SyncEngine | null
+    namespace: string
+    projectId: string
+    goalId?: string | null
+    reason?: string
+}): ProjectControllerRetireResult {
+    const project = options.store.projects.getProjectByNamespace(options.projectId, options.namespace)
+    if (!project) {
+        return { ok: false, status: 404, error: 'Project not found' }
+    }
+
+    const goal = getRequestedActiveGoal({
+        store: options.store,
+        project,
+        namespace: options.namespace,
+        goalId: options.goalId
+    })
+    if (!goal) {
+        return { ok: false, status: 400, error: 'Controller requires an active goal' }
+    }
+
+    const retiredSessionIds: string[] = []
+    const retiredAt = Date.now()
+    const sessions = listStoredProjectControllerSessions(options.store, options.namespace, project.id, goal.id)
+
+    for (const session of sessions) {
+        const updated = updateControllerMetadata({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            sessionId: session.id,
+            projectId: project.id,
+            update: (current) => {
+                const next: Record<string, unknown> = {
+                    ...current,
+                    hopiController: false,
+                    controllerRetiredAt: retiredAt,
+                    controllerRetiredReason: options.reason ?? 'manual_reset'
+                }
+                delete next.controllerBriefingInFlightAt
+                delete next.controllerBriefingInFlightGoalId
+                return next
+            }
+        })
+        if (updated) {
+            retiredSessionIds.push(session.id)
+        }
+    }
+
+    return {
+        ok: true,
+        retiredSessionIds
+    }
 }
 
 function resolveControllerAgent(project: StoredProject): AgentFlavor {
@@ -334,15 +471,18 @@ async function applyControllerSessionPolicy(options: {
 function buildGoalSummary(store: Store, project: StoredProject, goal: StoredGoal, workspace: StoredWorkspace | null, namespace: string): string {
     const todo = readGoalTodo({ project, goal, defaultWorkspace: workspace })
     const counts = new Map<string, number>()
-    for (const section of todo.sections) {
-        const key = `${section.status}${section.tag ? `/${section.tag}` : ''}`
+    for (const item of todo.board.items) {
+        const key = item.status
         counts.set(key, (counts.get(key) ?? 0) + 1)
     }
     const countText = counts.size > 0
         ? Array.from(counts.entries()).map(([key, count]) => `${key}: ${count}`).join(', ')
         : 'no todo items'
-    const waitingTopics = store.goalDecisionTopics
-        .listByGoalAndNamespace(goal.id, namespace)
+    const waitingTopics = listGoalDecisionTopicsFromDocs({
+        project,
+        goal,
+        defaultWorkspace: workspace
+    })
         .filter((topic) => topic.status === 'waiting')
     const topicText = waitingTopics.length > 0
         ? `; waiting decisions: ${waitingTopics.map((topic) => `${topic.title}${topic.blocking ? ' (blocking)' : ''}`).join('; ')}`
@@ -358,15 +498,15 @@ function resolveBriefingGoal(options: {
 }): StoredGoal | null {
     const requestedGoalId = options.goalId?.trim()
     if (requestedGoalId) {
-        const goal = options.store.goals.getGoalByNamespace(requestedGoalId, options.namespace)
-        if (goal && goal.projectId === options.project.id && goal.archivedAt === null) {
-            return goal
-        }
+        return getProjectGoalById({
+            store: options.store,
+            project: options.project,
+            namespace: options.namespace,
+            goalId: requestedGoalId
+        })
     }
 
-    return options.store.goals.listGoalsByProjectAndNamespace(options.project.id, options.namespace, {
-        includeArchived: false
-    })[0] ?? null
+    return listProjectGoals(options)[0] ?? null
 }
 
 function getRequestedActiveGoal(options: {
@@ -377,9 +517,12 @@ function getRequestedActiveGoal(options: {
 }): StoredGoal | null {
     const requestedGoalId = options.goalId?.trim()
     if (!requestedGoalId) return null
-    const goal = options.store.goals.getGoalByNamespace(requestedGoalId, options.namespace)
-    if (!goal || goal.projectId !== options.project.id || goal.archivedAt !== null) return null
-    return goal
+    return getProjectGoalById({
+        store: options.store,
+        project: options.project,
+        namespace: options.namespace,
+        goalId: requestedGoalId
+    })
 }
 
 function buildGoalDocsSummary(goal: StoredGoal | null): string {
@@ -408,7 +551,7 @@ function buildProjectControllerBriefingPrompt(options: {
     return [
         `Goal Assistant briefing request for project "${options.project.name}".`,
         '',
-        'Review the current project state and send the user one concise personal-assistant greeting.',
+        'Review the current goal state and send the user one concise Goal Assistant greeting.',
         '',
         'Start only from this current goal docs:',
         buildGoalDocsSummary(options.goal),
@@ -417,8 +560,18 @@ function buildProjectControllerBriefingPrompt(options: {
         goalLine,
         '',
         'Rules:',
-        '- Do not edit files, implement code, or run shell/tool actions that mutate the repo.',
-        '- Stay in an operator-console role: explain current state, blockers, likely next lane/planner action, and what user input is needed.',
+        '- You are not a coding agent. Do not edit files, implement code, or run shell/tool actions that mutate the repo.',
+        '- Stay in an operator-console role: be the user\'s Kanban butler for this Goal, explain current state, blockers, likely next lane/planner action, and what user input is needed.',
+        '- Treat this assistant as the default surface for Goal/Kanban questions and Goal/Kanban instructions.',
+        '- When the user intent is operational, prefer HOPI typed operator tools over prose. Use task-lane requests for retry/continue/requeue, decision resolution when the user answers an open decision, goal automation resume when the user wants paused automation running again, planner mail for new work requests, and preference tool for durable operator preferences.',
+        '- Infer tool choice from workflow intent, not exact phrasing. Existing work usually maps to task-lane requests; an answered waiting decision usually maps to decision resolution; scope expansion or new work usually maps to planner mail.',
+        '- Treat concrete repo failures such as build errors, test failures, stack traces, broken behavior reports, and regressions as operational by default, not just informational.',
+        '- For a concrete repo failure, first decide whether it belongs to an existing task on the board. If yes, prefer a task-lane request. If not, prefer planner mail so it becomes tracked work.',
+        '- For Kanban questions or Kanban instructions, prefer goal snapshot state as the source of truth before repo spelunking.',
+        '- Don\'t bounce a Kanban question or board operation back to the user when you can answer or operationalize it yourself from the snapshot and typed tools.',
+        '- If the user only wants an explanation of the failure, answering advisory-only is fine. Otherwise do not stop at diagnosis alone when the typed tool bridge can operationalize it.',
+        '- If you need task ids, lane state, planner mail, or preferences before answering, read the goal snapshot first.',
+        '- Never claim that a retry, decision resolution, planner mail, resume, or preference change happened unless the typed tool call succeeded.',
         '- Focus only on the current goal above. Do not inspect or summarize other goals unless the user asks.',
         '- Mention only useful status: what changed, what is blocked or waiting for a decision, and the best next action.',
         '- Keep it short and natural, like a project assistant greeting the user after they came back.',
@@ -461,6 +614,7 @@ export async function ensureProjectControllerSession(options: {
     namespace: string
     projectId: string
     goalId?: string | null
+    forceNew?: boolean
 }): Promise<ProjectControllerSessionResult> {
     const project = options.store.projects.getProjectByNamespace(options.projectId, options.namespace)
     if (!project) {
@@ -478,6 +632,20 @@ export async function ensureProjectControllerSession(options: {
     const workspace = getDefaultWorkspace(options.store, project)
     if (!workspace) {
         return { ok: false, status: 400, error: 'Project has no workspace' }
+    }
+
+    if (options.forceNew) {
+        const retired = retireProjectControllerSessions({
+            store: options.store,
+            engine: options.engine,
+            namespace: options.namespace,
+            projectId: project.id,
+            goalId: goal.id,
+            reason: 'force_new'
+        })
+        if (!retired.ok) {
+            return retired
+        }
     }
 
     const existing = findStoredProjectControllerSession(options.store, options.namespace, project.id, goal.id)
@@ -544,7 +712,11 @@ export async function ensureProjectControllerSession(options: {
         model,
         false,
         'simple',
-        undefined
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        buildGoalAssistantSessionProfile(project.id, goal.id)
     )
     if (spawned.type === 'error') {
         return { ok: false, status: 503, error: spawned.message }
@@ -762,16 +934,25 @@ function isBlockedTaskStatus(status: string | null | undefined): boolean {
     return status === 'blocked'
 }
 
+function hasPersistedTaskBlock(task: Pick<BlockedTaskTransitionSnapshot, 'status' | 'blockedReason' | 'blockedSource' | 'blockedSessionId'> | null | undefined): boolean {
+    return Boolean(
+        isBlockedTaskStatus(task?.status)
+        || task?.blockedReason
+        || task?.blockedSource
+        || task?.blockedSessionId
+    )
+}
+
 export function notifyProjectControllerTaskBlockedTransition(options: {
     store: Store
     engine: SyncEngine | null
     namespace: string
-    previousTask?: Pick<BlockedTaskTransitionSnapshot, 'status'> | null
+    previousTask?: Pick<BlockedTaskTransitionSnapshot, 'status' | 'blockedReason' | 'blockedSource' | 'blockedSessionId'> | null
     task: BlockedTaskTransitionSnapshot
 }): void {
     if (!options.task.goalId) return
-    if (!isBlockedTaskStatus(options.task.status)) return
-    if (isBlockedTaskStatus(options.previousTask?.status)) return
+    if (!hasPersistedTaskBlock(options.task)) return
+    if (hasPersistedTaskBlock(options.previousTask)) return
 
     const reason = options.task.blockedReason?.trim() || 'No blocked reason recorded.'
     const userFacingReason = buildUserFacingBlockedReason(reason, options.task.blockedSource)

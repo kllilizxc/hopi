@@ -3,7 +3,13 @@ import type { AgentFlavor, PermissionMode } from '@/types/api'
 
 const TASK_PLAN_MODE_FLAVORS: ReadonlySet<AgentFlavor> = new Set(['codex'])
 
-export function getTaskPermissionModeOptionsForFlavor(flavor?: AgentFlavor | null) {
+export type TaskPermissionModeOption = {
+    mode: PermissionMode
+    label: string
+    tone: ReturnType<typeof getPermissionModeTone>
+}
+
+export function getTaskPermissionModeOptionsForFlavor(flavor?: AgentFlavor | null): TaskPermissionModeOption[] {
     const baseOptions = getPermissionModeOptionsForFlavor(flavor)
 
     if (!flavor || !TASK_PLAN_MODE_FLAVORS.has(flavor) || baseOptions.some((option) => option.mode === 'plan')) {

@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import type { SyncEvent } from '@hopi/protocol/types'
 import { Store } from '../store'
-import { startSessionFromTask } from './taskSessionService'
+import { continueTaskInLinkedSession, startSessionFromTask } from './taskSessionService'
 import type { SyncEngine } from './syncEngine'
+
+const tempDirs: string[] = []
 
 function tick(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 0))
@@ -64,6 +70,43 @@ function withValidContract<T extends Record<string, unknown>>(engine: T, manifes
         }
     }
 }
+
+function createTempWorkspacePath(): string {
+    const path = mkdtempSync(join(tmpdir(), 'hopi-task-session-'))
+    tempDirs.push(path)
+    return path
+}
+
+function seedCanonicalGoalTodo(workspacePath: string, options: {
+    goalKey: string
+    goalId: string
+    todoRef: string
+    title: string
+}): void {
+    const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', options.goalKey)
+    mkdirSync(goalDir, { recursive: true })
+    writeFileSync(join(goalDir, 'todo.yml'), [
+        'version: 1',
+        'goal:',
+        `  goalKey: ${options.goalKey}`,
+        `  goalId: ${options.goalId}`,
+        `  title: Goal ${options.goalKey}`,
+        'items:',
+        `  - ref: ${options.todoRef}`,
+        '    kind: engineering',
+        '    status: planned',
+        `    title: ${options.title}`,
+        '    description: Seeded from test.',
+        '    acceptanceCriteria: []',
+        '    blockedBy: []'
+    ].join('\n'), 'utf8')
+}
+
+afterEach(() => {
+    for (const path of tempDirs.splice(0)) {
+        rmSync(path, { recursive: true, force: true })
+    }
+})
 
 describe('startSessionFromTask', () => {
     it('uses setup workflow from actions manifest before kickoff when contract exists', async () => {
@@ -301,6 +344,9 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).toContain('Involved Files / Areas')
         expect(kickoffText).toContain('bugfix, feature, refactor, test, content, infra, or performance')
         expect(kickoffText).toContain('Do not mark the Goal paused, done, or archived')
+        expect(kickoffText).not.toContain('operator/planner-mail.yml')
+        expect(kickoffText).not.toContain('legacy candidate/deferred notes')
+        expect(kickoffText).not.toContain('old `goals[]` / `tag` shape')
         expect(kickoffText).not.toContain('Mark this Goal active, paused, blocked')
     })
 
@@ -2024,6 +2070,7 @@ describe('startSessionFromTask', () => {
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('docs maintenance')
+        expect(kickoffText).not.toContain('operator/planner-mail.yml')
     })
 
     it('lets planner goal tasks inherit project-configured Claude bypassPermissions mode', async () => {
@@ -2793,6 +2840,1272 @@ describe('startSessionFromTask', () => {
         expect(kickoffText).not.toContain('raw previous generator transcript')
     })
 
+    it('writes goal todo docs first when starting a goal task session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-start'
+        const goalId = 'goal-docs-start'
+        const goalKey = 'goal-docs-start'
+        const taskId = 'task-goal-docs-start'
+        const todoRef = 'T-100'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Start through todo docs'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs start'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Start through todo docs',
+            description: 'Verify docs-first session start.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-docs-start',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('status: in_progress')
+        const eventLog = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_started')
+    })
+
+    it('keeps the docs-backed goal task view when session start finishes after the canonical board item disappears', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-start-missing-projection'
+        const goalId = 'goal-docs-start-missing-projection'
+        const goalKey = 'goal-docs-start-missing-projection'
+        const taskId = 'task-goal-docs-start-missing-projection'
+        const todoRef = 'T-100b'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Start after missing projection'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs start missing projection'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stale start overlay title',
+            description: 'Stale start overlay description.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-docs-start-missing-projection',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+                writeFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), [
+                    'version: 1',
+                    'goal:',
+                    `  goalKey: ${goalKey}`,
+                    `  goalId: ${goalId}`,
+                    '  title: Start after missing projection',
+                    'items: []'
+                ].join('\n'), 'utf8')
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(result.task.title).toBe('Start after missing projection')
+        expect(result.task.description).toBe('Seeded from test.')
+        expect(result.task.status).toBe('running')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
+
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain('items: []')
+        expect(goalTodo).not.toContain(`ref: ${todoRef}`)
+    })
+
+    it('uses docs-projected goal task fields at session start without rewriting stale overlay metadata first', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-projected-start'
+        const goalId = 'goal-docs-projected-start'
+        const goalKey = 'goal-docs-projected-start'
+        const taskId = 'task-goal-docs-projected-start'
+        const todoRef = 'T-101'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', goalKey)
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'todo.yml'), [
+            'version: 1',
+            'goal:',
+            `  goalKey: ${goalKey}`,
+            `  goalId: ${goalId}`,
+            `  title: Goal ${goalKey}`,
+            'items:',
+            `  - ref: ${todoRef}`,
+            '    kind: engineering',
+            '    status: planned',
+            '    title: Canonical docs title',
+            '    description: Canonical docs description.',
+            '    acceptanceCriteria: []',
+            '    blockedBy: []'
+        ].join('\n'), 'utf8')
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs projected start'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stale overlay title',
+            description: 'Stale overlay description.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-docs-projected-start',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let kickoffText = ''
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                kickoffText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+            expect(result.task.title).toBe('Canonical docs title')
+            expect(result.task.description).toBe('Canonical docs description.')
+        }
+        expect(kickoffText).toContain('Task: Canonical docs title')
+        expect(kickoffText).toContain('Canonical docs description.')
+        expect(kickoffText).not.toContain('Stale overlay title')
+        expect(kickoffText).not.toContain('Stale overlay description.')
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.title).toBe('Stale overlay title')
+        expect(updatedTask?.description).toBe('Stale overlay description.')
+        expect(updatedTask?.status).toBe('running')
+    })
+
+    it('returns docs-projected goal task fields when setup contract blocks session start', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-blocked-start'
+        const goalId = 'goal-docs-blocked-start'
+        const goalKey = 'goal-docs-blocked-start'
+        const taskId = 'task-goal-docs-blocked-start'
+        const todoRef = 'T-102'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', goalKey)
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'todo.yml'), [
+            'version: 1',
+            'goal:',
+            `  goalKey: ${goalKey}`,
+            `  goalId: ${goalId}`,
+            `  title: Goal ${goalKey}`,
+            'items:',
+            `  - ref: ${todoRef}`,
+            '    kind: engineering',
+            '    status: planned',
+            '    title: Canonical blocked docs title',
+            '    description: Canonical blocked docs description.',
+            '    acceptanceCriteria: []',
+            '    blockedBy: []'
+        ].join('\n'), 'utf8')
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs blocked start'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stale blocked overlay title',
+            description: 'Stale blocked overlay description.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-docs-blocked-start',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let runBashCalled = false
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace() {
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async readSessionFile() {
+                return {
+                    success: true,
+                    content: encodeBase64([
+                        'version: 1',
+                        'setup:',
+                        '  steps: []',
+                        'preview:',
+                        '  services: []',
+                        'merge:',
+                        '  targetBranch: ""'
+                    ].join('\n'))
+                }
+            },
+            async runBash() {
+                runBashCalled = true
+                return { success: true, stdout: '', stderr: '' }
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(runBashCalled).toBe(false)
+        expect(result.task.title).toBe('Canonical blocked docs title')
+        expect(result.task.description).toBe('Canonical blocked docs description.')
+        expect(result.task.status).toBe('running')
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.title).toBe('Stale blocked overlay title')
+        expect(updatedTask?.description).toBe('Stale blocked overlay description.')
+        expect(updatedTask?.status).toBe('running')
+
+        const goalTodo = readFileSync(join(goalDir, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain('title: Canonical blocked docs title')
+        expect(goalTodo).not.toContain('Stale blocked overlay title')
+        expect(goalTodo).toContain('status: in_progress')
+
+        const eventLog = readFileSync(join(goalDir, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_started')
+    })
+
+    it('starts a docs-only goal todo item from its canonical ref', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-only-start-ref'
+        const goalId = 'goal-docs-only-start-ref'
+        const goalKey = 'goal-docs-only-start-ref'
+        const todoRef = 'T-150'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Docs-only goal start task'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs-only start ref'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-docs-only-start-ref',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== spawned.id) {
+                    return null
+                }
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { path: workspacePath, host: 'localhost' },
+                    agentState: null
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId: todoRef
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(result.task.id).toBe(todoRef)
+        expect(result.task.goalTodoRef).toBe(todoRef)
+        expect(result.task.title).toBe('Docs-only goal start task')
+        expect(result.task.description).toBe('Seeded from test.')
+        expect(result.task.status).toBe('running')
+        expect(result.sessionId).toBe(spawned.id)
+
+        const storedTask = store.tasks.getTaskByNamespace(todoRef, namespace)
+        expect(storedTask?.goalTodoRef).toBe(todoRef)
+        expect(storedTask?.activeSessionId).toBe(spawned.id)
+        expect(storedTask?.status).toBe('running')
+
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('status: in_progress')
+        const eventLog = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_started')
+    })
+
+    it('rejects a stale DB-only goal row when starting a session directly by raw task id', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-db-only-start-reject'
+        const goalId = 'goal-db-only-start-reject'
+        const goalKey = 'goal-db-only-start-reject'
+        const taskId = 'legacy-db-only-goal-start-task'
+        const workspacePath = createTempWorkspacePath()
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal stale DB-only start reject'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Stale DB-only start title',
+            description: 'Stale DB-only start description.',
+            status: 'planning',
+            source: 'manual'
+        })
+
+        const result = await startSessionFromTask({
+            store,
+            engine: {} as SyncEngine,
+            namespace,
+            taskId
+        })
+
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+            expect(result.error.code).toBe('task_not_found')
+        }
+    })
+
+    it('repairs a missing goal todo ref when starting a canonical-ref goal task from a stale overlay row', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-start-ref-repairs-missing-todo-ref'
+        const goalId = 'goal-start-ref-repairs-missing-todo-ref'
+        const goalKey = 'goal-start-ref-repairs-missing-todo-ref'
+        const todoRef = 'T-151'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Canonical ref repair start task'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal ref repair start'
+        })
+        store.tasks.createTask({
+            id: todoRef,
+            projectId,
+            goalId,
+            title: 'Stale overlay start title',
+            description: 'Stale overlay start description.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-ref-repair-start',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        const engine = {
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            getSessionByNamespace(sessionId: string) {
+                if (sessionId !== spawned.id) {
+                    return null
+                }
+                return {
+                    id: spawned.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { path: workspacePath, host: 'localhost' },
+                    agentState: null
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId: todoRef
+        })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+            return
+        }
+        expect(result.task.id).toBe(todoRef)
+        expect(result.task.goalTodoRef).toBe(todoRef)
+        expect(result.task.title).toBe('Canonical ref repair start task')
+        expect(result.task.description).toBe('Seeded from test.')
+        expect(result.task.status).toBe('running')
+
+        const storedTask = store.tasks.getTaskByNamespace(todoRef, namespace)
+        expect(storedTask?.goalTodoRef).toBe(todoRef)
+        expect(storedTask?.activeSessionId).toBe(spawned.id)
+        expect(storedTask?.status).toBe('running')
+
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('title: Canonical ref repair start task')
+        expect(goalTodo).not.toContain('Stale overlay start title')
+    })
+
+    it('writes goal todo docs first when continuing an existing goal task session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-continue'
+        const goalId = 'goal-docs-continue'
+        const goalKey = 'goal-docs-continue'
+        const taskId = 'task-goal-docs-continue'
+        const todoRef = 'T-200'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Continue through todo docs'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs continue'
+        })
+        const linkedSession = store.sessions.getOrCreateSession(
+            'linked-session-goal-docs-continue',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Continue through todo docs',
+            description: 'Verify docs-first session continuation.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId,
+            activeSessionId: linkedSession.id
+        })
+
+        const engine = {
+            getSessionByNamespace() {
+                return {
+                    id: linkedSession.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await continueTaskInLinkedSession({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result?.ok).toBe(true)
+        if (result?.ok) {
+            expect(result.task.title).toBe('Continue through todo docs')
+            expect(result.task.description).toBe('Seeded from test.')
+        }
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('status: in_progress')
+        const eventLog = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_continued')
+    })
+
+    it('does not recreate a removed goal todo item when linked-session continuation runs after the canonical board item disappears', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-continue-missing-projection'
+        const goalId = 'goal-docs-continue-missing-projection'
+        const goalKey = 'goal-docs-continue-missing-projection'
+        const taskId = 'task-goal-docs-continue-missing-projection'
+        const todoRef = 'T-201b'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Continue after missing projection'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs continue missing projection'
+        })
+
+        const linkedSession = store.sessions.getOrCreateSession(
+            'linked-session-goal-docs-continue-missing-projection',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Continue through todo docs',
+            description: 'Verify docs-first session continuation.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId,
+            activeSessionId: linkedSession.id
+        })
+
+        const engine = {
+            getSessionByNamespace() {
+                return {
+                    id: linkedSession.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async sendMessage() {
+                writeFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), [
+                    'version: 1',
+                    'goal:',
+                    `  goalKey: ${goalKey}`,
+                    `  goalId: ${goalId}`,
+                    '  title: Continue after missing projection',
+                    'items: []'
+                ].join('\n'), 'utf8')
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await continueTaskInLinkedSession({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result?.ok).toBe(true)
+        if (result?.ok) {
+            expect(result.task.title).toBe('Continue after missing projection')
+            expect(result.task.description).toBe('Seeded from test.')
+        }
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('running')
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain('items: []')
+        expect(goalTodo).not.toContain(`ref: ${todoRef}`)
+        const eventLogPath = join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl')
+        if (existsSync(eventLogPath)) {
+            const eventLog = readFileSync(eventLogPath, 'utf8')
+            expect(eventLog).not.toContain('task_session_continued')
+        }
+    })
+
+    it('continues an existing goal task session when addressed by canonical todo ref', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-continue-ref'
+        const goalId = 'goal-docs-continue-ref'
+        const goalKey = 'goal-docs-continue-ref'
+        const taskId = 'task-goal-docs-continue-ref'
+        const todoRef = 'T-202'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Continue through canonical ref'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs continue ref'
+        })
+        const linkedSession = store.sessions.getOrCreateSession(
+            'linked-session-goal-docs-continue-ref',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Stale continue overlay title',
+            description: 'Stale continue overlay description.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId,
+            activeSessionId: linkedSession.id
+        })
+
+        const engine = {
+            getSessionByNamespace() {
+                return {
+                    id: linkedSession.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await continueTaskInLinkedSession({
+            store,
+            engine,
+            namespace,
+            taskId: todoRef
+        })
+
+        expect(result?.ok).toBe(true)
+        if (!result?.ok) {
+            return
+        }
+        expect(result.task.id).toBe(taskId)
+        expect(result.task.goalTodoRef).toBe(todoRef)
+        expect(result.task.title).toBe('Continue through canonical ref')
+        expect(result.task.description).toBe('Seeded from test.')
+        expect(result.task.status).toBe('running')
+
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.status).toBe('running')
+        expect(updatedTask?.goalTodoRef).toBe(todoRef)
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('status: in_progress')
+        expect(goalTodo).toContain('title: Continue through canonical ref')
+        expect(goalTodo).not.toContain('Stale continue overlay title')
+        const eventLog = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_continued')
+    })
+
+    it('rejects a stale DB-only goal row when continuing a linked session directly by raw task id', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-db-only-continue-reject'
+        const goalId = 'goal-db-only-continue-reject'
+        const goalKey = 'goal-db-only-continue-reject'
+        const taskId = 'legacy-db-only-goal-continue-task'
+        const workspacePath = createTempWorkspacePath()
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: 'workspace-1',
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal stale DB-only continue reject'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Stale DB-only continue title',
+            description: 'Stale DB-only continue description.',
+            status: 'planning',
+            source: 'manual',
+            activeSessionId: 'session-stale-db-only-continue'
+        })
+
+        const result = await continueTaskInLinkedSession({
+            store,
+            engine: {} as SyncEngine,
+            namespace,
+            taskId
+        })
+
+        expect(result).not.toBeNull()
+        expect(result?.ok).toBe(false)
+        if (result && !result.ok) {
+            expect(result.error.code).toBe('task_not_found')
+        }
+    })
+
+    it('clears stale goal init blockers when continuing an existing goal task session', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-docs-continue-clears-init'
+        const goalId = 'goal-docs-continue-clears-init'
+        const goalKey = 'goal-docs-continue-clears-init'
+        const taskId = 'task-goal-docs-continue-clears-init'
+        const todoRef = 'T-201'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef,
+            title: 'Continue clears init blocker'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Goal docs continue clears init blocker'
+        })
+        const linkedSession = store.sessions.getOrCreateSession(
+            'linked-session-goal-docs-continue-clears-init',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: todoRef,
+            title: 'Continue clears init blocker',
+            description: 'Verify stale init blockers are cleared on continue.',
+            status: 'planning',
+            source: 'manual',
+            workspaceId,
+            activeSessionId: linkedSession.id,
+            blockedReason: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+            blockedSource: 'init',
+            blockedSessionId: linkedSession.id,
+            initRuntime: {
+                status: 'blocked',
+                sessionId: linkedSession.id,
+                updatedAt: Date.now(),
+                requestedAt: Date.now() - 1_000,
+                startedAt: Date.now() - 500,
+                completedAt: Date.now(),
+                retryCount: 1,
+                failureFingerprint: 'init:stale',
+                latestNote: 'Starter scaffold missing before kickoff.',
+                blockedReason: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+                failure: {
+                    code: 'init_script_failed',
+                    message: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+                    blockedReason: `Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`,
+                    retry: {
+                        count: 1,
+                        action: 'manual_fix_then_retry_start',
+                        available: true
+                    }
+                }
+            }
+        })
+
+        const engine = {
+            getSessionByNamespace() {
+                return {
+                    id: linkedSession.id,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    agentState: null,
+                    metadata: { path: workspacePath, host: 'localhost' }
+                }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const result = await continueTaskInLinkedSession({
+            store,
+            engine,
+            namespace,
+            taskId
+        })
+
+        expect(result?.ok).toBe(true)
+        const updatedTask = store.tasks.getTaskByNamespace(taskId, namespace)
+        expect(updatedTask?.status).toBe('running')
+        expect(updatedTask?.blockedReason).toBeNull()
+        expect(updatedTask?.blockedSource).toBeNull()
+        expect(updatedTask?.blockedSessionId).toBeNull()
+        expect(updatedTask?.initRuntime?.status).toBe('succeeded')
+
+        const goalTodo = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'todo.yml'), 'utf8')
+        expect(goalTodo).toContain(`ref: ${todoRef}`)
+        expect(goalTodo).toContain('status: in_progress')
+        expect(goalTodo).not.toContain(`summary: Missing ${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}`)
+        const eventLog = readFileSync(join(workspacePath, '.hopi', 'docs', 'goals', goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('task_session_continued')
+    })
+
     it('starts goal review sessions in the generator worktree without creating a new worktree', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
@@ -2926,11 +4239,19 @@ describe('startSessionFromTask', () => {
         const namespace = 'default'
         const projectId = 'project-goal-generator-rework'
         const goalId = 'goal-generator-rework'
+        const goalKey = 'goal-generator-rework'
         const taskId = 'task-goal-generator-rework'
         const machineId = 'machine-1'
         const workspaceId = 'workspace-1'
-        const workspacePath = '/tmp/workspace'
+        const workspacePath = createTempWorkspacePath()
         const generatorWorktreePath = '/tmp/workspace-worktrees/task-rework'
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef: taskId,
+            title: 'Revise implementation'
+        })
 
         store.projects.createProject({
             id: projectId,
@@ -2949,6 +4270,7 @@ describe('startSessionFromTask', () => {
             id: goalId,
             projectId,
             namespace,
+            goalKey,
             title: 'Ship checked work',
             status: 'active',
             autopilotEnabled: true
@@ -3046,6 +4368,145 @@ describe('startSessionFromTask', () => {
         expect(spawnedWorktreeWorkspacePaths).toBeUndefined()
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.activeSessionId).toBe(spawned.id)
         expect(kickoffText).toContain('Role: Generator')
+    })
+
+    it('can force goal continuations through project worktree policy instead of the previous session path', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-generator-forced-project-policy'
+        const goalId = 'goal-generator-forced-project-policy'
+        const goalKey = 'goal-generator-forced-project-policy'
+        const taskId = 'task-goal-generator-forced-project-policy'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+        const workspacePath = createTempWorkspacePath()
+        const oldWorktreePath = '/tmp/workspace-worktrees/old-rework'
+
+        seedCanonicalGoalTodo(workspacePath, {
+            goalKey,
+            goalId,
+            todoRef: taskId,
+            title: 'Revise implementation'
+        })
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project',
+            defaultSessionType: 'worktree',
+            worktreeTargetBranch: 'main'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey,
+            title: 'Ship checked work',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        const previousSession = store.sessions.getOrCreateSession(
+            'previous-goal-generator-forced-project-policy',
+            {
+                path: oldWorktreePath,
+                host: 'localhost',
+                worktree: {
+                    basePath: workspacePath,
+                    branch: 'old-branch',
+                    name: 'old-rework',
+                    worktreePath: oldWorktreePath,
+                    createdAt: 123
+                }
+            },
+            null,
+            namespace
+        )
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Revise implementation',
+            status: 'planning',
+            source: 'manual',
+            activeSessionId: previousSession.id,
+            workspaceId,
+            contract: '## Acceptance\n- Fix review feedback.'
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-goal-generator-forced-project-policy',
+            { path: workspacePath, host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let spawnedPath = ''
+        let spawnedSessionType: 'simple' | 'worktree' | undefined
+        let spawnedWorktreeName: string | undefined
+        let spawnedWorktreeTargetBranch: string | undefined
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession(
+                _machineId: string,
+                path: string,
+                _agent: string,
+                _model?: string,
+                _yolo?: boolean,
+                sessionType?: 'simple' | 'worktree',
+                worktreeName?: string,
+                _resumeSessionId?: string,
+                _worktreeWorkspacePaths?: string[],
+                worktreeTargetBranch?: string
+            ) {
+                spawnedPath = path
+                spawnedSessionType = sessionType
+                spawnedWorktreeName = worktreeName
+                spawnedWorktreeTargetBranch = worktreeTargetBranch
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId,
+            overrides: {
+                forceProjectSessionSettings: true
+            }
+        })
+
+        expect(result.ok).toBe(true)
+        expect(spawnedPath).toBe(workspacePath)
+        expect(spawnedSessionType).toBe('worktree')
+        expect(spawnedWorktreeName).toContain('task-task-goa')
+        expect(spawnedWorktreeTargetBranch).toBe('main')
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.activeSessionId).toBe(spawned.id)
     })
 
     it('passes all project workspace paths for multi-workspace worktree sessions', async () => {
@@ -3247,13 +4708,13 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(kickoffText).toContain('Previous session messages:')
+        expect(kickoffText).toContain('Previous session messages (recent, budgeted):')
         expect(kickoffText).toContain('User:\nPlease keep this context.')
         expect(kickoffText).toContain('Assistant:\nAcknowledged and implemented.')
         expect(kickoffText).not.toContain('skip kickoff payload')
     })
 
-    it('includes message history across all pages when previous session is long', async () => {
+    it('keeps restart history recent and budgeted when previous session is long', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-1'
@@ -3282,9 +4743,29 @@ describe('startSessionFromTask', () => {
         for (let index = 1; index <= 205; index += 1) {
             store.messages.addMessage(previousSession.id, {
                 role: 'user',
-                content: { type: 'text', text: `history message ${index}` }
+                content: { type: 'text', text: index === 1 ? 'oldest history marker' : `history message ${index}` }
             })
         }
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'tool-call-result',
+                    output: 'tool-output-should-not-carry'.repeat(4_000)
+                }
+            }
+        })
+        store.messages.addMessage(previousSession.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'message',
+                    message: 'large assistant carryover message '.repeat(500)
+                }
+            }
+        })
 
         store.tasks.createTask({
             id: taskId,
@@ -3338,8 +4819,11 @@ describe('startSessionFromTask', () => {
         })
 
         expect(result.ok).toBe(true)
-        expect(kickoffText).toContain('history message 1')
+        expect(kickoffText.length).toBeLessThan(40_000)
+        expect(kickoffText).not.toContain('oldest history marker')
         expect(kickoffText).toContain('history message 205')
+        expect(kickoffText).toContain('[message truncated for restart context budget]')
+        expect(kickoffText).not.toContain('tool-output-should-not-carry')
     })
 
     it('uses task permission mode before project defaults when starting session', async () => {
@@ -3735,6 +5219,98 @@ describe('startSessionFromTask', () => {
         expect(result.ok).toBe(true)
         expect(payloadText).toBe('Merge this worktree now.')
         expect(payloadLocalId).toBe('custom-merge-kickoff')
+    })
+
+    it('can include the task contract before custom continuation text', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-custom-kickoff-contract'
+        const taskId = 'task-custom-kickoff-contract'
+        const goalId = 'goal-custom-kickoff-contract'
+        const machineId = 'machine-1'
+        const workspaceId = 'workspace-1'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId,
+            name: 'Project'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: '/tmp/workspace'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            goalKey: 'goal-custom-kickoff-contract',
+            title: 'Goal'
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Task',
+            description: 'Default kickoff should remain present',
+            status: 'planning',
+            workspaceId
+        })
+
+        const spawned = store.sessions.getOrCreateSession(
+            'spawned-session-custom-kickoff-contract',
+            { path: '/tmp/workspace', host: 'localhost' },
+            null,
+            namespace
+        )
+
+        let payloadText = ''
+        const engine = withValidContract({
+            getMachineByNamespace() {
+                return {
+                    id: machineId,
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                return { type: 'success' as const, sessionId: spawned.id }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async uploadFile() {
+                return { success: true, path: '/tmp/attachment' }
+            },
+            async sendMessage(_sessionId: string, payload: { text: string }) {
+                payloadText = payload.text
+            },
+            handleRealtimeEvent() {
+            }
+        }) as unknown as SyncEngine
+
+        const result = await startSessionFromTask({
+            store,
+            engine,
+            namespace,
+            taskId,
+            kickoff: {
+                kind: 'custom',
+                text: 'Continue the compile-error repair.',
+                includeTaskKickoffSummary: true
+            }
+        })
+
+        expect(result.ok).toBe(true)
+        expect(payloadText).toContain('Task: Task')
+        expect(payloadText).toContain('Default kickoff should remain present')
+        expect(payloadText).toContain('Final HOPI_ACTIONS packet:')
+        expect(payloadText).toContain('Operator continuation request:')
+        expect(payloadText).toContain('Continue the compile-error repair.')
     })
 
     it('can skip kickoff message entirely', async () => {

@@ -23,6 +23,8 @@ export type AgentEvent =
     | { type: 'compact'; trigger: string; preTokens: number }
     | ({ type: string } & Record<string, unknown>)
 
+type AgentErrorReason = Extract<AgentEvent, { type: 'error' }>['reason']
+
 export type ToolResultPermission = {
     date: number
     result: 'approved' | 'denied'
@@ -546,6 +548,33 @@ export function normalizeAgentRecord(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'reasoning', text: data.message, uuid: messageId, parentUUID: null }],
+                meta,
+            }
+        }
+
+        if (data.type === 'error' && typeof data.message === 'string') {
+            const lowered = data.message.toLowerCase()
+            let reason: AgentErrorReason = 'unknown'
+            if (lowered.includes('aborted by user')) {
+                reason = 'aborted'
+            } else if (lowered.includes('process exited unexpectedly') || lowered.includes('timeout waiting for child process to exit')) {
+                reason = 'process-exited'
+            } else if (lowered.includes('prompt failed')) {
+                reason = 'prompt-failed'
+            } else if (lowered.includes('task failed')) {
+                reason = 'task-failed'
+            }
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'error',
+                    message: data.message,
+                    reason,
+                },
                 meta,
             }
         }

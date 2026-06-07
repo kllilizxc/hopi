@@ -246,7 +246,7 @@ export class SessionCache {
                 type: 'session-updated',
                 sessionId: session.id,
                 ...buildSessionEventScope(session),
-                data: { active: false }
+                data: { active: false, thinking: false }
             })
         }
     }

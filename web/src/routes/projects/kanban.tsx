@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProper
 import { useMatchRoute, useNavigate } from '@tanstack/react-router'
 import { DEFAULT_AGENT_FLAVOR } from '@hopi/protocol'
 import { productStorageKey } from '@hopi/protocol/brand'
-import type { Task, TaskPriority } from '@/types/api'
+import type { GoalTodoBoardItem, Task, TaskPriority } from '@/types/api'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { LoadingState } from '@/components/LoadingState'
@@ -14,6 +14,7 @@ import { useDeleteTask } from '@/hooks/mutations/useDeleteTask'
 import { useUpdateTask } from '@/hooks/mutations/useUpdateTask'
 import { useProject } from '@/hooks/queries/useProject'
 import { useTasks } from '@/hooks/queries/useTasks'
+import { useGoalTodo } from '@/hooks/queries/useGoalTodo'
 import { KANBAN_COLUMNS, type GoalTaskLane, getTaskLane } from '@/lib/task-status'
 import { isMobileViewport } from '@/lib/device'
 import { isOptimisticTaskId } from '@/lib/optimistic-task'
@@ -208,10 +209,11 @@ function getTaskSubTasks(task: Task): KanbanTaskSubTask[] {
     if (!Array.isArray(task.subTasks)) return []
     return task.subTasks.filter((item: unknown): item is KanbanTaskSubTask => {
         if (!item || typeof item !== 'object') return false
-        if (typeof item.id !== 'string') return false
-        if (typeof item.content !== 'string') return false
-        if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return false
-        if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') return false
+        const record = item as Partial<KanbanTaskSubTask>
+        if (typeof record.id !== 'string') return false
+        if (typeof record.content !== 'string') return false
+        if (record.status !== 'pending' && record.status !== 'in_progress' && record.status !== 'completed') return false
+        if (record.priority !== 'high' && record.priority !== 'medium' && record.priority !== 'low') return false
         return true
     })
 }
@@ -244,12 +246,38 @@ function sortTasksInLane(tasks: Task[]): Task[] {
 
 type KanbanColumnsByStatus = Record<GoalTaskLane, Task[]>
 
+function isReservoirPlanningNote(task: Task): boolean {
+    const tag = typeof task.tag === 'string' ? task.tag.trim().toLowerCase() : null
+    return getTaskLane(task) === 'planned'
+        && (tag === 'candidate' || tag === 'deferred')
+}
+
+type GoalReservoirNote = {
+    id: string
+    kind: 'candidate' | 'deferred'
+    title: string
+    body: string
+}
+
+function boardItemToReservoirNote(item: GoalTodoBoardItem): GoalReservoirNote | null {
+    if (item.status !== 'planned' || (item.tag !== 'candidate' && item.tag !== 'deferred')) {
+        return null
+    }
+    return {
+        id: item.ref,
+        kind: item.tag,
+        title: item.title,
+        body: item.description
+    }
+}
+
 function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
     const grouped = Object.fromEntries(
         KANBAN_COLUMNS.map((column) => [column.status, [] as Task[]])
     ) as KanbanColumnsByStatus
 
     for (const task of tasks) {
+        if (isReservoirPlanningNote(task)) continue
         grouped[getTaskLane(task)].push(task)
     }
 
@@ -258,6 +286,53 @@ function buildKanbanColumns(tasks: Task[]): KanbanColumnsByStatus {
     }
 
     return grouped
+}
+
+function GoalReservoirPanel(props: { notes: GoalReservoirNote[] }) {
+    const { t } = useTranslation()
+    if (props.notes.length === 0) return null
+
+    return (
+        <div className="px-3 pt-2">
+            <div className="rounded-2xl border border-dashed border-[var(--app-divider)] bg-[var(--app-secondary-bg)] px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[var(--app-text)]">
+                            {t('projects.todo.title')}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-[var(--app-hint)]">
+                            {t('projects.todo.boardHint')}
+                        </div>
+                    </div>
+                    <Tag size="xs" variant="default">
+                        {t('projects.todo.count', { n: props.notes.length })}
+                    </Tag>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                    {props.notes.map((note) => (
+                        <div
+                            key={note.id}
+                            className="max-w-[22rem] rounded-xl bg-[var(--app-bg)] px-2.5 py-2 app-shadow-control"
+                        >
+                            <div className="flex items-center gap-2">
+                                <div className="min-w-0 truncate text-xs font-medium text-[var(--app-text)]">
+                                    {note.title}
+                                </div>
+                                <Tag size="xs" variant={note.kind === 'deferred' ? 'warning' : 'default'}>
+                                    {t(`projects.todo.kind.${note.kind}`)}
+                                </Tag>
+                            </div>
+                            {note.body ? (
+                                <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-[var(--app-hint)]">
+                                    {note.body}
+                                </div>
+                            ) : null}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    )
 }
 
 type KanbanTaskCardProps = {
@@ -471,7 +546,12 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
     const { addToast } = useToast()
     const { t } = useTranslation()
     const { project } = useProject(api, props.projectId)
-    const { tasks, isLoading, error } = useTasks(api, props.goalId ? props.projectId : null, props.goalId)
+    const { tasks, isLoading: isTasksLoading, error: tasksError } = useTasks(
+        api,
+        props.goalId ? null : props.projectId,
+        null
+    )
+    const { todo, isLoading: isGoalTodoLoading, error: goalTodoError } = useGoalTodo(api, props.projectId, props.goalId)
     const { deleteTask } = useDeleteTask(api)
     const { updateTask } = useUpdateTask(api)
 
@@ -489,7 +569,17 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
         saveCollapsedColumnsToStorage(collapsedColumns)
     }, [collapsedColumns])
 
-    const columns = useMemo(() => buildKanbanColumns(tasks), [tasks])
+    const isLoading = props.goalId ? isGoalTodoLoading : isTasksLoading
+    const error = props.goalId ? goalTodoError : tasksError
+    const effectiveTasks = useMemo(() => (
+        props.goalId ? (todo?.tasks ?? []) : tasks
+    ), [props.goalId, todo?.tasks, tasks])
+    const columns = useMemo(() => buildKanbanColumns(effectiveTasks), [effectiveTasks])
+    const reservoirNotes = useMemo(() => (
+        todo?.board?.items
+            ?.map(boardItemToReservoirNote)
+            .filter((note): note is GoalReservoirNote => Boolean(note)) ?? []
+    ), [todo])
 
     const toggleColumnCollapsed = useCallback((status: GoalTaskLane) => {
         setCollapsedColumns((current) => ({
@@ -583,6 +673,7 @@ export const ProjectKanbanBoard = memo(function ProjectKanbanBoard(props: {
             <div className="px-3 pt-3 text-xs text-[var(--app-hint)]">
                 {t('projects.board.projectedHint')}
             </div>
+            <GoalReservoirPanel notes={reservoirNotes} />
 
             <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
                 <div className="h-full w-max mx-auto flex gap-3 p-3">

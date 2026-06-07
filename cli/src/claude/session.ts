@@ -26,6 +26,7 @@ export class Session extends AgentSessionBase<EnhancedMode> {
     readonly mcpServers: Record<string, any>;
     readonly allowedTools?: string[];
     readonly hookSettingsPath: string;
+    readonly profileAppendSystemPrompt?: string;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -47,6 +48,7 @@ export class Session extends AgentSessionBase<EnhancedMode> {
         startedBy: 'runner' | 'terminal';
         startingMode: 'local' | 'remote';
         hookSettingsPath: string;
+        profileAppendSystemPrompt?: string;
         permissionMode?: PermissionMode;
         modelMode?: SessionModelMode;
     }) {
@@ -74,6 +76,7 @@ export class Session extends AgentSessionBase<EnhancedMode> {
         this.mcpServers = opts.mcpServers;
         this.allowedTools = opts.allowedTools;
         this.hookSettingsPath = opts.hookSettingsPath;
+        this.profileAppendSystemPrompt = opts.profileAppendSystemPrompt;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

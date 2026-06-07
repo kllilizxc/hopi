@@ -1,5 +1,7 @@
 import type { TodoItem } from '@hopi/protocol/types'
 import type { Store, StoredSession, StoredTask } from '../store'
+import { getDocsRoot } from './goals/goalDocPaths'
+import { findGoalTodoTaskProjectionById, materializeGoalTodoTaskOverlayForWrite } from './goals/goalTodoProjection'
 
 function extractTaskLinkFromMetadata(metadata: unknown): { taskId?: string; projectId?: string } {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
@@ -36,12 +38,41 @@ function pickTaskCandidate(candidates: StoredTask[], projectId?: string): Stored
     return inProgress ?? pool[0]
 }
 
+function isDocsBackedGoalProjectionMissing(store: Store, namespace: string, task: StoredTask): boolean {
+    if (!task.goalId) {
+        return false
+    }
+    const project = store.projects.getProjectByNamespace(task.projectId, namespace)
+    if (!project) {
+        return false
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    if (!getDocsRoot(defaultWorkspace)) {
+        return false
+    }
+    return !findGoalTodoTaskProjectionById({
+        store,
+        namespace,
+        taskId: task.goalTodoRef?.trim() || task.id,
+        includeArchived: true
+    })
+}
+
 function resolveLinkedTask(store: Store, session: Pick<StoredSession, 'id' | 'namespace' | 'metadata'>): StoredTask | null {
     const metadataLink = extractTaskLinkFromMetadata(session.metadata)
 
     if (metadataLink.taskId) {
-        const byMetadata = store.tasks.getTaskByNamespace(metadataLink.taskId, session.namespace)
+        const byMetadata = materializeGoalTodoTaskOverlayForWrite({
+            store,
+            namespace: session.namespace,
+            taskId: metadataLink.taskId
+        }) ?? store.tasks.getTaskByNamespace(metadataLink.taskId, session.namespace)
         if (byMetadata && byMetadata.archivedAt === null) {
+            if (isDocsBackedGoalProjectionMissing(store, session.namespace, byMetadata)) {
+                return null
+            }
             if (!metadataLink.projectId || byMetadata.projectId === metadataLink.projectId) {
                 return byMetadata
             }
@@ -49,6 +80,7 @@ function resolveLinkedTask(store: Store, session: Pick<StoredSession, 'id' | 'na
     }
 
     const candidates = store.tasks.listTasksByActiveSessionIdAndNamespace(session.id, session.namespace)
+        .filter((task) => !isDocsBackedGoalProjectionMissing(store, session.namespace, task))
     return pickTaskCandidate(candidates, metadataLink.projectId)
 }
 

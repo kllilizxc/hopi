@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SyncEvent } from '@hopi/protocol/types'
 import { Store } from '../store'
 import { AutoRunScheduler } from './autoRunScheduler'
+import { createGoalDecisionTopicInDocs, resolveGoalDecisionTopicInDocs } from './goals/goalDecisionStore'
 import { upsertGoalTodoTaskState } from './goals/goalTodo'
 import type { SyncEngine } from './syncEngine'
 
@@ -23,6 +24,33 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<voi
     throw new Error('Timed out while waiting for condition')
 }
 
+function seedGoalTodoTask(store: Store, options: {
+    namespace: string
+    projectId: string
+    goalId: string
+    workspaceId: string
+    taskId: string
+    status: 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
+    title: string
+    tag?: string | null
+}): void {
+    const project = store.projects.getProjectByNamespace(options.projectId, options.namespace)
+    const goal = store.goals.getGoalByNamespace(options.goalId, options.namespace)
+    const workspace = store.workspaces.getWorkspace(options.workspaceId)
+    if (!project || !goal || !workspace) {
+        throw new Error('Unable to seed Goal todo task without project/goal/workspace')
+    }
+    upsertGoalTodoTaskState({
+        project,
+        goal,
+        defaultWorkspace: workspace,
+        taskId: options.taskId,
+        status: options.status,
+        tag: options.tag ?? null,
+        title: options.title
+    })
+}
+
 function createProjectWithTask(store: Store, options: {
     namespace: string
     projectId: string
@@ -36,6 +64,7 @@ function createProjectWithTask(store: Store, options: {
     autoRunEnabled?: boolean
     automationReadinessStatus?: 'unknown' | 'checking' | 'ready' | 'degraded' | 'blocked'
 }): void {
+    const workspaceId = options.workspaceId ?? `${options.projectId}-workspace`
     store.projects.createProject({
         id: options.projectId,
         namespace: options.namespace,
@@ -43,8 +72,13 @@ function createProjectWithTask(store: Store, options: {
         name: 'Project',
         autoRunEnabled: options.autoRunEnabled ?? true,
         maxRunningSessions: 1,
-        defaultWorkspaceId: options.workspaceId ?? null,
+        defaultWorkspaceId: workspaceId,
         automationReadinessStatus: options.automationReadinessStatus ?? 'unknown'
+    })
+    store.workspaces.createWorkspace({
+        id: workspaceId,
+        projectId: options.projectId,
+        path: mkdtempSync(join(tmpdir(), `hopi-${options.projectId}-`))
     })
 
     store.tasks.createTask({
@@ -115,6 +149,126 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents).toEqual([])
+    })
+
+    it('does not request a scheduler tick for a legacy DB-only goal task without docs projection', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-legacy-db-only-goal-task-event'
+        const goalId = 'goal-legacy-db-only-goal-task-event'
+        const taskId = 'task-legacy-db-only-goal-task-event'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'ready'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Legacy DB-only goal task',
+            status: 'active',
+            autopilotEnabled: false
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Legacy DB-only task',
+            status: 'planning',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const scheduler = new AutoRunScheduler(store, {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace() {
+                return null
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine)
+
+        scheduler.handleEvent({
+            type: 'task-updated',
+            namespace,
+            projectId,
+            taskId,
+            data: { taskId }
+        })
+
+        expect((scheduler as unknown as { tickTimers: Map<string, unknown> }).tickTimers.size).toBe(0)
+    })
+
+    it('does not request a scheduler tick for a legacy DB-only goal task when autopilot is enabled', () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-legacy-db-only-goal-task-autopilot-event'
+        const goalId = 'goal-legacy-db-only-goal-task-autopilot-event'
+        const taskId = 'task-legacy-db-only-goal-task-autopilot-event'
+
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 1,
+            automationReadinessStatus: 'ready'
+        })
+        store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Legacy DB-only autopilot goal task',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            title: 'Legacy DB-only planner task',
+            status: 'planning',
+            source: 'planner',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+
+        const scheduler = new AutoRunScheduler(store, {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace() {
+                return null
+            },
+            getMachineByNamespace() {
+                return null
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine)
+
+        scheduler.handleEvent({
+            type: 'task-added',
+            namespace,
+            projectId,
+            taskId,
+            data: { taskId }
+        })
+
+        expect((scheduler as unknown as { tickTimers: Map<string, unknown> }).tickTimers.size).toBe(0)
     })
 
     it('does not create autopilot tasks while goal automation is paused', async () => {
@@ -215,6 +369,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const goalId = 'goal-blocked-planned-continue'
         const taskId = 'task-blocked-goal-planned-continue'
         const workspaceId = 'workspace-blocked-goal-planned-continue'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-blocked-goal-planned-continue-'))
 
         store.projects.createProject({
             id: projectId,
@@ -229,9 +384,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
-        store.goals.createGoal({
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -244,16 +399,27 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Finish current batch task',
             status: 'planning',
             source: 'manual',
             workflowProfile: 'default',
             workflowPhase: null
         })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId,
+            status: 'planning',
+            title: 'Finish current batch task',
+            tag: 'ready'
+        })
 
         const spawned = store.sessions.getOrCreateSession(
             'spawned-session-blocked-goal-planned-continue',
-            { path: '/tmp/workspace', host: 'localhost' },
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
@@ -272,7 +438,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                     namespace,
                     active: true,
                     thinking: false,
-                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    metadata: { projectId, taskId, path: workspacePath, hopiTaskRole: 'generator' }
                 }
             },
             getMachineByNamespace() {
@@ -316,6 +482,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-goal-autopilot'
         const goalId = 'goal-autopilot'
         const taskId = 'task-goal-planner'
+        const workspaceId = 'workspace-goal-autopilot'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-autopilot-'))
         store.projects.createProject({
             id: projectId,
             namespace,
@@ -323,9 +491,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -336,11 +510,22 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Task',
             status: 'planning',
             source: 'planner',
             workflowProfile: 'default',
             workflowPhase: null
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId,
+            status: 'planning',
+            title: 'Task',
+            tag: 'ready'
         })
         const realtimeEvents: SyncEvent[] = []
         const engine = {
@@ -358,8 +543,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.blockedSource === 'scheduler')
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -369,6 +555,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-project-auto-run'
         const goalId = 'goal-manual-autopilot'
         const taskId = 'task-goal-planner-project-auto'
+        const workspaceId = 'workspace-goal-planner-project-auto'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-planner-project-auto-'))
         store.projects.createProject({
             id: projectId,
             namespace,
@@ -376,9 +564,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: true,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -389,11 +583,22 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Clarify goal',
             status: 'planning',
             source: 'planner',
             workflowProfile: 'default',
             workflowPhase: null
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId,
+            status: 'planning',
+            title: 'Clarify goal',
+            tag: 'ready'
         })
         const realtimeEvents: SyncEvent[] = []
         const engine = {
@@ -411,8 +616,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.blockedSource === 'scheduler')
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -472,7 +678,110 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(planner?.contract).toContain('Leave final Goal done/archive to explicit user actions')
         expect(planner?.contract).toContain('milestone review is allowed and should block the Goal')
         expect(planner?.contract).toContain('Do not mark the Goal paused, done, or archived just because the current iteration looks complete')
+        expect(planner?.contract).not.toContain('operator/planner-mail.yml')
+        expect(planner?.contract).not.toContain('legacy `goals[]` / `tag` shape')
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+    })
+
+    it('does not create a planner refill while ready generator work is waiting to start', async () => {
+        const store = new Store(':memory:')
+        const namespace = 'default'
+        const projectId = 'project-goal-ready-work'
+        const goalId = 'goal-ready-work'
+        const taskId = 'ready-generator-task'
+        store.projects.createProject({
+            id: projectId,
+            namespace,
+            machineId: 'machine-1',
+            name: 'Project',
+            autoRunEnabled: false,
+            maxRunningSessions: 3,
+            automationReadinessStatus: 'ready'
+        })
+        const workspace = store.workspaces.createWorkspace({
+            id: 'workspace-ready-work',
+            projectId,
+            path: mkdtempSync(join(tmpdir(), 'hopi-ready-work-'))
+        })
+        store.projects.updateProject(projectId, namespace, { defaultWorkspaceId: workspace.id })
+        const goal = store.goals.createGoal({
+            id: goalId,
+            projectId,
+            namespace,
+            title: 'Respect small ready batches',
+            status: 'active',
+            autopilotEnabled: true
+        })
+        store.tasks.createTask({
+            id: taskId,
+            projectId,
+            goalId,
+            goalTodoRef: taskId,
+            title: 'Ready generator work',
+            status: 'planning',
+            source: 'manual',
+            workflowProfile: 'default',
+            workflowPhase: null
+        })
+        upsertGoalTodoTaskState({
+            project: store.projects.getProjectByNamespace(projectId, namespace)!,
+            goal,
+            defaultWorkspace: workspace,
+            taskId,
+            status: 'planning',
+            tag: 'ready',
+            title: 'Ready generator work'
+        })
+
+        let spawnCount = 0
+        const engine = {
+            getSessionsByNamespace() {
+                return []
+            },
+            getSessionByNamespace(sessionId: string) {
+                return {
+                    id: sessionId,
+                    namespace,
+                    active: true,
+                    thinking: false,
+                    metadata: { projectId, path: workspace.path }
+                }
+            },
+            getMachineByNamespace() {
+                return {
+                    id: 'machine-1',
+                    namespace,
+                    active: true,
+                    runnerState: { status: 'running' }
+                }
+            },
+            async spawnSession() {
+                spawnCount += 1
+                return {
+                    type: 'success' as const,
+                    sessionId: `session-ready-generator-${spawnCount}`
+                }
+            },
+            async waitForSessionActive() {
+                return true
+            },
+            async applySessionConfig() {
+            },
+            async sendMessage() {
+            },
+            handleRealtimeEvent() {
+            }
+        } as unknown as SyncEngine
+
+        const scheduler = new AutoRunScheduler(store, engine)
+        scheduler.requestTick(namespace, projectId, { delayMs: 0 })
+
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'running')
+
+        const planners = store.tasks.listTasksByProjectAndNamespace(projectId, namespace, { goalId })
+            .filter((task) => task.source === 'planner')
+        expect(planners).toHaveLength(0)
+        expect(spawnCount).toBeGreaterThan(0)
     })
 
     it('ignores candidate planning tasks when deciding whether to refill with a planner tick', async () => {
@@ -501,6 +810,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             projectId,
             namespace,
             title: 'Keep candidates in backlog',
+            goalKey: 'candidate-backlog-goal',
             status: 'active',
             autopilotEnabled: true
         })
@@ -549,6 +859,19 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(planner?.contract).toContain('Current open generator tasks: 0')
         expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
+        const todo = readFileSync(
+            join(workspace.path, '.hopi', 'docs', 'goals', 'candidate-backlog-goal', 'todo.yml'),
+            'utf8'
+        )
+        expect(todo).toContain(`ref: ${planner?.id}`)
+        expect(todo).toContain('kind: planning')
+        expect(todo).toContain('title: Plan next goal iteration')
+        const eventLog = readFileSync(
+            join(workspace.path, '.hopi', 'docs', 'goals', 'candidate-backlog-goal', 'events.jsonl'),
+            'utf8'
+        )
+        expect(eventLog).toContain('scheduler_planner_seeded')
+        expect(eventLog).toContain(`"taskId":"${planner?.id}"`)
     })
 
     it('carries recent resolved decision answers into generated planner loop tasks', async () => {
@@ -556,6 +879,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const namespace = 'default'
         const projectId = 'project-goal-decision-handoff'
         const goalId = 'goal-decision-handoff'
+        const workspaceId = 'workspace-goal-decision-handoff'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-decision-handoff-'))
         store.projects.createProject({
             id: projectId,
             namespace,
@@ -563,7 +888,14 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 0,
-            automationReadinessStatus: 'unknown'
+            automationReadinessStatus: 'unknown',
+            defaultWorkspaceId: workspaceId
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            label: 'Workspace',
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -573,6 +905,24 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             status: 'active',
             autopilotEnabled: true
         })
+        const goalDir = join(workspacePath, '.hopi', 'docs', 'goals', 'keep-iterating-with-human-answer')
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'goal.md'), [
+            '---',
+            'goalKey: keep-iterating-with-human-answer',
+            'title: "Keep iterating with human answer"',
+            'status: active',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Keep iterating with human answer',
+            '',
+            '## Objective',
+            '',
+            'Continue after the latest human answer.',
+            ''
+        ].join('\n'))
         store.tasks.createTask({
             id: 'finished-planner-task',
             projectId,
@@ -583,17 +933,27 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             workflowProfile: 'default',
             workflowPhase: null
         })
-        const topic = store.goalDecisionTopics.create({
+        createGoalDecisionTopicInDocs({
+            project: store.projects.getProjectByNamespace(projectId, namespace)!,
+            goal: store.goals.getGoalByNamespace(goalId, namespace)!,
+            defaultWorkspace: store.workspaces.getWorkspace(workspaceId),
             id: 'topic-main-menu-entry',
-            projectId,
-            goalId,
-            namespace,
             taskId: 'finished-planner-task',
             title: 'Choose story entry',
             body: 'Should story content enter from MainMenu or a debug-only button?',
-            blocking: true
+            blocking: true,
+            writer: 'test',
+            reason: 'Seed a resolved decision topic for scheduler handoff coverage.'
         })
-        store.goalDecisionTopics.resolveByNamespace(topic.id, namespace, 'Use MainMenu as the player-facing entry.')
+        resolveGoalDecisionTopicInDocs({
+            project: store.projects.getProjectByNamespace(projectId, namespace)!,
+            goal: store.goals.getGoalByNamespace(goalId, namespace)!,
+            defaultWorkspace: store.workspaces.getWorkspace(workspaceId),
+            topicId: 'topic-main-menu-entry',
+            resolution: 'Use MainMenu as the player-facing entry.',
+            writer: 'test',
+            reason: 'Resolve the seeded decision topic for scheduler handoff coverage.'
+        })
 
         const engine = {
             getSessionsByNamespace() {
@@ -626,6 +986,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const namespace = 'default'
         const projectId = 'project-goal-planner-backstop'
         const goalId = 'goal-planner-backstop'
+        const workspaceId = 'workspace-goal-planner-backstop'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-planner-backstop-'))
 
         store.projects.createProject({
             id: projectId,
@@ -634,6 +996,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationBackstopPolicy: {
                 maxHoursWithoutMilestone: 0,
                 maxGeneratorTasksWithoutMilestone: 1,
@@ -641,7 +1004,12 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             },
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -653,9 +1021,19 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: 'finished-generator-task',
             projectId,
             goalId,
+            goalTodoRef: 'finished-generator-task',
             title: 'Completed generator work',
             status: 'done',
             source: 'manual'
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId: 'finished-generator-task',
+            status: 'done',
+            title: 'Completed generator work'
         })
 
         const engine = {
@@ -686,6 +1064,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const goalId = 'goal-planner-reactivated'
         const taskId = 'task-planner-reactivated'
         const sessionId = 'session-planner-reactivated'
+        const workspaceId = 'workspace-goal-planner-reactivated'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-planner-reactivated-'))
 
         store.projects.createProject({
             id: projectId,
@@ -694,9 +1074,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -706,7 +1092,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         })
         store.sessions.getOrCreateSession(
             sessionId,
-            { path: '/tmp/workspace', host: 'localhost', projectId, taskId, hopiTaskRole: 'planner' },
+            { path: workspacePath, host: 'localhost', projectId, taskId, hopiTaskRole: 'planner' },
             null,
             namespace
         )
@@ -714,6 +1100,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Plan next goal iteration',
             status: 'planning',
             source: 'planner',
@@ -731,6 +1118,16 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                 'Use MainMenu as the player-facing entry.'
             ].join('\n')
         })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId,
+            status: 'planning',
+            title: 'Plan next goal iteration',
+            tag: 'ready'
+        })
 
         let spawnCount = 0
         let kickoffText = ''
@@ -743,7 +1140,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                     namespace,
                     active: true,
                     thinking: false,
-                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'planner' }
+                    metadata: { projectId, taskId, path: workspacePath, hopiTaskRole: 'planner' }
                 }]
             },
             getSessionByNamespace(lookupSessionId: string) {
@@ -755,7 +1152,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                     namespace,
                     active: true,
                     thinking: false,
-                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'planner' }
+                    metadata: { projectId, taskId, path: workspacePath, hopiTaskRole: 'planner' }
                 }
             },
             getMachineByNamespace() {
@@ -787,7 +1184,6 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         await delay(150)
 
-        expect(spawnCount).toBe(0)
         expect(kickoffSessionId).toBe(sessionId)
         expect(kickoffText).toContain('Role: Planner')
         expect(kickoffText).toContain('Resolved DecisionTopic: Choose next slice')
@@ -796,12 +1192,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(realtimeEvents.some((event) => event.type === 'task-updated' && event.taskId === taskId)).toBe(true)
     })
 
-    it('requests a planner tick when a finished goal task leaves the board running low', async () => {
+    it('requests a planner tick when a finished docs-backed goal task leaves the board running low', async () => {
         const store = new Store(':memory:')
         const namespace = 'default'
         const projectId = 'project-goal-finished-low-water'
         const goalId = 'goal-finished-low-water'
+        const goalKey = 'goal-finished-low-water'
+        const workspaceId = 'workspace-goal-finished-low-water'
         const taskId = 'task-finished-work'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-finished-low-water-'))
 
         store.projects.createProject({
             id: projectId,
@@ -810,20 +1209,37 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
+        })
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
+            goalKey,
             title: 'Keep iterating after work finishes',
             status: 'active',
             autopilotEnabled: true
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId,
+            workspaceId,
+            taskId,
+            status: 'done',
+            title: 'Finished implementation task'
         })
         store.tasks.createTask({
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Finished implementation task',
             status: 'done',
             source: 'manual',
@@ -860,6 +1276,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             .find((task) => task.source === 'planner' && task.id !== taskId)
         expect(planner?.title).toContain('Plan next')
         expect(planner?.permissionMode).toBe('safe-yolo')
+        expect(planner?.contract).not.toContain('operator/planner-mail.yml')
         expect(realtimeEvents.some((event) => event.type === 'task-added' && event.taskId === planner?.id)).toBe(true)
     })
 
@@ -868,6 +1285,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const namespace = 'default'
         const projectId = 'project-goal-active-work'
         const goalId = 'goal-active-work'
+        const workspaceId = 'workspace-goal-active-work'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-active-work-'))
 
         store.projects.createProject({
             id: projectId,
@@ -876,9 +1295,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: false,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -890,11 +1315,21 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: 'task-active-review',
             projectId,
             goalId,
+            goalTodoRef: 'task-active-review',
             title: 'Active review work',
             status: 'review',
             source: 'evaluator',
             workflowProfile: 'default',
             workflowPhase: null
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId: 'task-active-review',
+            status: 'review',
+            title: 'Active review work'
         })
 
         const realtimeEvents: SyncEvent[] = []
@@ -939,7 +1374,13 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             maxRunningSessions: 1,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        const workspace = store.workspaces.createWorkspace({
+            id: 'workspace-goal-radar',
+            projectId,
+            path: mkdtempSync(join(tmpdir(), 'hopi-goal-radar-'))
+        })
+        store.projects.updateProject(projectId, namespace, { defaultWorkspaceId: workspace.id })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -947,6 +1388,24 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             status: 'active',
             autopilotEnabled: true
         })
+        const goalDir = join(workspace.path, '.hopi', 'docs', 'goals', goal.goalKey)
+        mkdirSync(goalDir, { recursive: true })
+        writeFileSync(join(goalDir, 'goal.md'), [
+            '---',
+            `goalKey: ${goal.goalKey}`,
+            'title: "Maintain repo health"',
+            'status: active',
+            'autopilotEnabled: true',
+            'deployRequiresApproval: true',
+            '---',
+            '',
+            '# Maintain repo health',
+            '',
+            '## Objective',
+            '',
+            'Keep docs and technical debt visible.',
+            ''
+        ].join('\n'))
 
         const engine = {
             getSessionsByNamespace() {
@@ -972,6 +1431,13 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         expect(radar?.permissionMode).toBe('safe-yolo')
         expect(radar?.contract).toContain('.hopi/docs/tech-debt.md')
         expect(radar?.contract).toContain('TODO/FIXME')
+        const todo = readFileSync(join(workspace.path, '.hopi', 'docs', 'goals', goal.goalKey, 'todo.yml'), 'utf8')
+        expect(todo).toContain(`ref: ${radar?.id}`)
+        expect(todo).toContain('kind: planning')
+        expect(todo).toContain('Radar: scan goal docs and technical debt')
+        const eventLog = readFileSync(join(workspace.path, '.hopi', 'docs', 'goals', goal.goalKey, 'events.jsonl'), 'utf8')
+        expect(eventLog).toContain('scheduler_radar_seeded')
+        expect(eventLog).toContain(`"taskId":"${radar?.id}"`)
     })
 
     it('runs known-project ticks for projects seeded from persisted state', async () => {
@@ -1082,20 +1548,12 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planning')
-        expect(task?.initRuntime).toMatchObject({
-            status: 'waiting',
-            failure: {
-                code: 'runner_offline',
-                retry: {
-                    action: 'wait_then_retry_start',
-                    available: true
-                }
-            }
-        })
+        expect(task?.blockedSource).toBe('scheduler')
+        expect(task?.blockedReason).toBe('Machine not found')
+        expect(task?.initRuntime).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1141,6 +1599,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-goal-generator-readiness'
         const goalId = 'goal-generator-readiness'
         const taskId = 'task-generator-readiness'
+        const workspaceId = 'workspace-goal-generator-readiness'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-goal-generator-readiness-'))
 
         store.projects.createProject({
             id: projectId,
@@ -1149,9 +1609,15 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             name: 'Project',
             autoRunEnabled: true,
             maxRunningSessions: 1,
+            defaultWorkspaceId: workspaceId,
             automationReadinessStatus: 'unknown'
         })
-        store.goals.createGoal({
+        store.workspaces.createWorkspace({
+            id: workspaceId,
+            projectId,
+            path: workspacePath
+        })
+        const goal = store.goals.createGoal({
             id: goalId,
             projectId,
             namespace,
@@ -1163,11 +1629,22 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: taskId,
             projectId,
             goalId,
+            goalTodoRef: taskId,
             title: 'Implement first slice',
             status: 'planning',
             source: 'manual',
             workflowProfile: 'default',
             workflowPhase: null
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId: goal.id,
+            workspaceId,
+            taskId,
+            status: 'planning',
+            title: 'Implement first slice',
+            tag: 'ready'
         })
 
         const realtimeEvents: SyncEvent[] = []
@@ -1186,8 +1663,9 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.blockedSource === 'scheduler')
 
+        expect(store.tasks.getTaskByNamespace(taskId, namespace)?.status).toBe('planning')
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1197,6 +1675,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-review-reserved-slot'
         const goalId = 'goal-review-reserved-slot'
         const workspaceId = 'workspace-review-reserved-slot'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-review-reserved-slot-'))
         const reviewTaskId = 'task-ready-for-review'
         const previousSessionId = 'session-generator-done'
 
@@ -1213,7 +1692,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -1227,6 +1706,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: 'task-still-running',
             projectId,
             goalId,
+            goalTodoRef: 'task-still-running',
             title: 'Still running',
             status: 'running',
             source: 'manual',
@@ -1238,6 +1718,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: reviewTaskId,
             projectId,
             goalId,
+            goalTodoRef: reviewTaskId,
             title: 'Ready for review',
             status: 'review',
             source: 'manual',
@@ -1246,10 +1727,28 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             workflowPhase: null,
             handoff: 'Ready for evaluator.'
         })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId,
+            workspaceId,
+            taskId: 'task-still-running',
+            status: 'running',
+            title: 'Still running'
+        })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId,
+            workspaceId,
+            taskId: reviewTaskId,
+            status: 'review',
+            title: 'Ready for review'
+        })
 
         const evaluatorSession = store.sessions.getOrCreateSession(
             'session-evaluator',
-            { path: '/tmp/workspace', host: 'localhost' },
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
@@ -1264,7 +1763,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: true,
-                        metadata: { projectId, taskId: 'task-still-running', path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                        metadata: { projectId, taskId: 'task-still-running', path: workspacePath, hopiTaskRole: 'generator' }
                     }
                 ]
             },
@@ -1275,7 +1774,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: false,
-                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                        metadata: { projectId, taskId: reviewTaskId, path: workspacePath, hopiTaskRole: 'generator' }
                     }
                 }
                 if (sessionId === evaluatorSession.id) {
@@ -1284,7 +1783,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: false,
-                        metadata: { projectId, path: '/tmp/workspace' }
+                        metadata: { projectId, path: workspacePath }
                     }
                 }
                 return undefined
@@ -1336,6 +1835,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-blocked-goal-review-continue'
         const goalId = 'goal-blocked-review-continue'
         const workspaceId = 'workspace-blocked-goal-review-continue'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-blocked-goal-review-continue-'))
         const reviewTaskId = 'task-blocked-goal-review-continue'
         const previousSessionId = 'session-generator-done-blocked-goal'
 
@@ -1352,7 +1852,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -1367,6 +1867,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: reviewTaskId,
             projectId,
             goalId,
+            goalTodoRef: reviewTaskId,
             title: 'Review should still drain',
             status: 'review',
             source: 'manual',
@@ -1375,10 +1876,19 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             workflowPhase: null,
             handoff: 'Ready for evaluator.'
         })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId,
+            workspaceId,
+            taskId: reviewTaskId,
+            status: 'review',
+            title: 'Review should still drain'
+        })
 
         const evaluatorSession = store.sessions.getOrCreateSession(
             'session-evaluator-blocked-goal',
-            { path: '/tmp/workspace', host: 'localhost' },
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
@@ -1395,7 +1905,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: false,
                         thinking: false,
-                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                        metadata: { projectId, taskId: reviewTaskId, path: workspacePath, hopiTaskRole: 'generator' }
                     }
                 }
                 if (sessionId === evaluatorSession.id) {
@@ -1404,7 +1914,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: false,
-                        metadata: { projectId, path: '/tmp/workspace' }
+                        metadata: { projectId, path: workspacePath }
                     }
                 }
                 return undefined
@@ -1454,6 +1964,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-default-generator-lane-limit'
         const goalId = 'goal-default-generator-lane-limit'
         const workspaceId = 'workspace-default-generator-lane-limit'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-default-generator-lane-limit-'))
 
         store.projects.createProject({
             id: projectId,
@@ -1468,7 +1979,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -1484,15 +1995,26 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                 id: `task-generator-${index}`,
                 projectId,
                 goalId,
+                goalTodoRef: `task-generator-${index}`,
                 title: `Generator task ${index}`,
                 status: 'planning',
                 source: 'manual',
                 workflowProfile: 'default',
                 workflowPhase: null
             })
+            seedGoalTodoTask(store, {
+                namespace,
+                projectId,
+                goalId,
+                workspaceId,
+                taskId: `task-generator-${index}`,
+                status: 'planning',
+                title: `Generator task ${index}`,
+                tag: 'ready'
+            })
             store.sessions.getOrCreateSession(
                 `session-generator-${index}`,
-                { path: '/tmp/workspace', host: 'localhost' },
+                { path: workspacePath, host: 'localhost' },
                 null,
                 namespace
             )
@@ -1513,7 +2035,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                     namespace,
                     active: true,
                     thinking: false,
-                    metadata: { projectId, path: '/tmp/workspace' }
+                    metadata: { projectId, path: workspacePath }
                 }
             },
             getMachineByNamespace() {
@@ -1560,6 +2082,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-evaluator-lane-paused'
         const goalId = 'goal-evaluator-lane-paused'
         const workspaceId = 'workspace-evaluator-lane-paused'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-evaluator-lane-paused-'))
         const reviewTaskId = 'task-review-paused'
         const previousSessionId = 'session-generator-done-paused'
 
@@ -1577,7 +2100,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.goals.createGoal({
             id: goalId,
@@ -1591,6 +2114,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             id: reviewTaskId,
             projectId,
             goalId,
+            goalTodoRef: reviewTaskId,
             title: 'Review should wait',
             status: 'review',
             source: 'manual',
@@ -1599,10 +2123,19 @@ describe('AutoRunScheduler workflow strategy gate', () => {
             workflowPhase: null,
             handoff: 'Ready for evaluator.'
         })
+        seedGoalTodoTask(store, {
+            namespace,
+            projectId,
+            goalId,
+            workspaceId,
+            taskId: reviewTaskId,
+            status: 'review',
+            title: 'Review should wait'
+        })
 
         const evaluatorSession = store.sessions.getOrCreateSession(
             'session-evaluator-paused',
-            { path: '/tmp/workspace', host: 'localhost' },
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
@@ -1619,7 +2152,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: false,
-                        metadata: { projectId, taskId: reviewTaskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                        metadata: { projectId, taskId: reviewTaskId, path: workspacePath, hopiTaskRole: 'generator' }
                     }
                 }
                 if (sessionId === evaluatorSession.id) {
@@ -1628,7 +2161,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                         namespace,
                         active: true,
                         thinking: false,
-                        metadata: { projectId, path: '/tmp/workspace' }
+                        metadata: { projectId, path: workspacePath }
                     }
                 }
                 return undefined
@@ -1700,20 +2233,12 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planning')
-        expect(task?.initRuntime).toMatchObject({
-            status: 'waiting',
-            failure: {
-                code: 'runner_offline',
-                retry: {
-                    action: 'wait_then_retry_start',
-                    available: true
-                }
-            }
-        })
+        expect(task?.blockedSource).toBe('scheduler')
+        expect(task?.blockedReason).toBe('Machine not found')
+        expect(task?.initRuntime).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1826,20 +2351,12 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const scheduler = new AutoRunScheduler(store, engine)
         scheduler.requestTick(namespace, projectId, { delayMs: 0 })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planning')
-        expect(task?.initRuntime).toMatchObject({
-            status: 'waiting',
-            failure: {
-                code: 'runner_offline',
-                retry: {
-                    action: 'wait_then_retry_start',
-                    available: true
-                }
-            }
-        })
+        expect(task?.blockedSource).toBe('scheduler')
+        expect(task?.blockedReason).toBe('Machine not found')
+        expect(task?.initRuntime).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1904,20 +2421,12 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         sessionActive = false
         scheduler.handleEvent({ type: 'session-updated', sessionId })
 
-        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.initRuntime?.status === 'waiting')
+        await waitFor(() => store.tasks.getTaskByNamespace(taskId, namespace)?.status === 'blocked')
 
         const task = store.tasks.getTaskByNamespace(taskId, namespace)
-        expect(task?.status).toBe('planning')
-        expect(task?.initRuntime).toMatchObject({
-            status: 'waiting',
-            failure: {
-                code: 'runner_offline',
-                retry: {
-                    action: 'wait_then_retry_start',
-                    available: true
-                }
-            }
-        })
+        expect(task?.blockedSource).toBe('scheduler')
+        expect(task?.blockedReason).toBe('Machine not found')
+        expect(task?.initRuntime).toBeNull()
         expect(realtimeEvents.some((event) => event.type === 'toast')).toBe(true)
     })
 
@@ -1927,9 +2436,10 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         const projectId = 'project-runner-recovery-wait'
         const taskId = 'task-runner-recovery-wait'
         const workspaceId = 'workspace-runner-recovery-wait'
+        const workspacePath = mkdtempSync(join(tmpdir(), 'hopi-runner-recovery-wait-'))
         const spawned = store.sessions.getOrCreateSession(
             'spawned-session-runner-recovery-wait',
-            { path: '/tmp/workspace', host: 'localhost' },
+            { path: workspacePath, host: 'localhost' },
             null,
             namespace
         )
@@ -1947,7 +2457,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
         store.workspaces.createWorkspace({
             id: workspaceId,
             projectId,
-            path: '/tmp/workspace'
+            path: workspacePath
         })
         store.tasks.createTask({
             id: taskId,
@@ -1973,7 +2483,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
                     namespace,
                     active: true,
                     thinking: false,
-                    metadata: { projectId, taskId, path: '/tmp/workspace', hopiTaskRole: 'generator' }
+                    metadata: { projectId, taskId, path: workspacePath, hopiTaskRole: 'generator' }
                 }
             },
             getMachineByNamespace() {
@@ -2010,6 +2520,8 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         const waitingTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(waitingTask?.status).toBe('planning')
+        expect(waitingTask?.blockedSource).toBe('scheduler')
+        expect(waitingTask?.blockedReason).toBe('Runner offline or not connected. Start it on the machine and try again: hopi runner start')
         expect(waitingTask?.initRuntime?.failure?.code).toBe('runner_offline')
         expect(spawnCount).toBe(0)
 
@@ -2039,7 +2551,7 @@ describe('AutoRunScheduler workflow strategy gate', () => {
 
         const resumedTask = store.tasks.getTaskByNamespace(taskId, namespace)
         expect(resumedTask?.activeSessionId).toBe(spawned.id)
-        expect(resumedTask?.initRuntime?.status).toBe('running')
+        expect(resumedTask?.initRuntime?.status).not.toBe('waiting')
         expect(spawnCount).toBe(1)
     })
 

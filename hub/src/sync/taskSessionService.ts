@@ -26,11 +26,25 @@ import { buildTaskInitRuntime as buildSharedTaskInitRuntime } from '../utils/tas
 import type { SyncEngine } from './syncEngine'
 import { loadProjectActionContractFromSession, parseProjectActionContract } from './actionContract'
 import { buildAgentOutputLanguageSection, resolveAgentOutputLocale } from './agentOutputLanguage'
-import { resolveSessionPreferredRootPath, resolveSessionRootPathCandidates, type SessionRootPathLike } from './sessionRootPaths'
+import {
+    resolveSessionPreferredRootPath,
+    resolveSessionRootPathCandidates,
+    resolveSessionWorktreePath,
+    type SessionRootPathLike
+} from './sessionRootPaths'
 import { setSessionTaskLink } from './sessionTaskLink'
 import { runSetupWorkflow, type SetupWorkflowRunResult } from './setupWorkflowRunner'
 import { getWorkflowStrategy } from './workflowStrategy'
-import { upsertGoalTodoTaskState, type GoalTodoStatus } from './goals/goalTodo'
+import { upsertGoalTodoTaskState, type GoalTodoEventOptions } from './goals/goalTodo'
+import {
+    buildGoalTodoBlockedStateFromStoredTask,
+    getGoalTodoStatusForStoredTask,
+    getGoalTodoTagForStoredTask
+} from './goals/goalTaskState'
+import {
+    getTaskByNamespaceOrGoalTodoProjection,
+    materializeGoalTodoTaskOverlayForWrite
+} from './goals/goalTodoProjection'
 import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 
 function dataUrlToBase64(dataUrl: string): string {
@@ -40,7 +54,10 @@ function dataUrlToBase64(dataUrl: string): string {
 
 const KICKOFF_LOCAL_ID_PREFIX = 'auto:kickoff:'
 const AUTO_WORKFLOW_LOCAL_ID_PREFIX = 'auto:workflow:'
-const MESSAGE_HISTORY_PAGE_SIZE = 200
+const CARRYOVER_HISTORY_SCAN_LIMIT = 80
+const CARRYOVER_HISTORY_MESSAGE_LIMIT = 12
+const CARRYOVER_HISTORY_CHAR_BUDGET = 24_000
+const CARRYOVER_HISTORY_MESSAGE_CHAR_BUDGET = 2_000
 
 function toRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -233,35 +250,48 @@ function extractMessageText(content: unknown): string | null {
 }
 
 function getCarryoverMessages(store: Store, previousSessionId: string): StoredMessage[] {
-    const pages: StoredMessage[][] = []
-    let beforeSeq: number | undefined
+    return store.messages.getMessages(previousSessionId, CARRYOVER_HISTORY_SCAN_LIMIT)
+}
 
-    while (true) {
-        const page = store.messages.getMessages(previousSessionId, MESSAGE_HISTORY_PAGE_SIZE, beforeSeq)
-        if (page.length === 0) {
-            break
-        }
-
-        pages.push(page)
-        const oldestSeq = page[0]?.seq
-        if (page.length < MESSAGE_HISTORY_PAGE_SIZE || typeof oldestSeq !== 'number' || oldestSeq <= 1) {
-            break
-        }
-        beforeSeq = oldestSeq
+function shouldSkipCarryoverContent(content: unknown): boolean {
+    const record = toRecord(content)
+    if (!record) {
+        return false
     }
-
-    const messages: StoredMessage[] = []
-    for (let index = pages.length - 1; index >= 0; index -= 1) {
-        messages.push(...pages[index])
+    if (record.type === 'event') {
+        return true
     }
-    return messages
+    if (record.type === 'codex') {
+        const data = toRecord(record.data)
+        const dataType = data?.type
+        return dataType !== 'message' && dataType !== 'summary'
+    }
+    if (record.type === 'output') {
+        const data = toRecord(record.data)
+        const dataType = data?.type
+        return dataType !== 'assistant' && dataType !== 'user' && dataType !== 'summary'
+    }
+    return false
+}
+
+function truncateCarryoverText(text: string): string {
+    if (text.length <= CARRYOVER_HISTORY_MESSAGE_CHAR_BUDGET) {
+        return text
+    }
+    return `${text.slice(0, CARRYOVER_HISTORY_MESSAGE_CHAR_BUDGET).trimEnd()}\n...[message truncated for restart context budget]`
 }
 
 function buildCarryoverHistorySection(store: Store, previousSessionId: string): string {
     const messages = getCarryoverMessages(store, previousSessionId)
     const lines: string[] = []
+    let remainingBudget = CARRYOVER_HISTORY_CHAR_BUDGET
+    let omittedCount = 0
 
-    for (const message of messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index]
+        if (!message) {
+            continue
+        }
         if (message.localId?.startsWith(KICKOFF_LOCAL_ID_PREFIX) || message.localId?.startsWith(AUTO_WORKFLOW_LOCAL_ID_PREFIX)) {
             continue
         }
@@ -274,16 +304,30 @@ function buildCarryoverHistorySection(store: Store, previousSessionId: string): 
                 ? 'Assistant'
                 : 'Message'
         const sourceContent = record ? record.content : message.content
+        if (shouldSkipCarryoverContent(sourceContent)) {
+            continue
+        }
         const text = extractMessageText(sourceContent)
         if (!text) continue
-        lines.push(`${roleLabel}:\n${text}`)
+        const line = `${roleLabel}:\n${truncateCarryoverText(text)}`
+        const cost = line.length + 2
+        if (lines.length >= CARRYOVER_HISTORY_MESSAGE_LIMIT || cost > remainingBudget) {
+            omittedCount += 1
+            continue
+        }
+        lines.push(line)
+        remainingBudget -= cost
     }
 
     if (lines.length === 0) {
         return ''
     }
 
-    return `\n\nPrevious session messages:\n${lines.join('\n\n')}`
+    lines.reverse()
+    const omittedLine = omittedCount > 0
+        ? `\nOmitted ${omittedCount} older or oversized messages to keep restart context under budget.\n`
+        : '\n'
+    return `\n\nPrevious session messages (recent, budgeted):${omittedLine}${lines.join('\n\n')}`
 }
 
 export type StartSessionOverrides = {
@@ -293,6 +337,7 @@ export type StartSessionOverrides = {
     yolo?: boolean
     permissionMode?: z.infer<typeof PermissionModeSchema>
     modelMode?: z.infer<typeof ModelModeSchema>
+    forceProjectSessionSettings?: boolean
 }
 
 export type StartSessionKickoffOptions =
@@ -303,6 +348,7 @@ export type StartSessionKickoffOptions =
         text: string
         localId?: string
         includeCarryoverHistory?: boolean
+        includeTaskKickoffSummary?: boolean
     }
 
 type SessionConfigPatch = {
@@ -435,8 +481,21 @@ function resolveWorkflowKickoff(options: {
     kickoff: StartSessionKickoffOptions
     agentOutputLocale?: string
 }): StartSessionKickoffOptions {
-    if (options.kickoff.kind === 'skip' || options.kickoff.kind === 'custom') {
+    if (options.kickoff.kind === 'skip') {
         return options.kickoff
+    }
+    if (options.kickoff.kind === 'custom') {
+        if (!options.kickoff.includeTaskKickoffSummary) {
+            return options.kickoff
+        }
+        const customText = normalizeText(options.kickoff.text)
+        const baseKickoff = buildTaskKickoffSummary(options.task, { agentOutputLocale: options.agentOutputLocale })
+        return {
+            ...options.kickoff,
+            text: customText
+                ? `${baseKickoff}\n\nOperator continuation request:\n${customText}`
+                : baseKickoff
+        }
     }
 
     const workflowProfile = options.task.workflowProfile?.trim().toLowerCase()
@@ -485,48 +544,74 @@ function getGoalTaskRole(task: Pick<StoredTask, 'goalId' | 'status' | 'source'>)
     return 'Generator'
 }
 
-function normalizeGoalTodoStatusForTask(status: string | null | undefined): GoalTodoStatus {
-    switch ((status ?? '').trim().toLowerCase()) {
-        case 'planning':
-        case 'planned':
-            return 'planning'
-        case 'running':
-        case 'in_progress':
-            return 'running'
-        case 'review':
-        case 'in_review':
-            return 'review'
-        case 'blocked':
-            return 'blocked'
-        case 'done':
-        case 'finished':
-            return 'done'
-        default:
-            return 'planning'
-    }
-}
-
-function defaultGoalTodoTagForStatus(status: GoalTodoStatus): string | null {
-    switch (status) {
-        case 'planning':
-            return 'ready'
-        case 'running':
-            return 'promoted'
-        case 'review':
-            return 'in_review'
-        case 'blocked':
-            return 'unknown'
-        case 'done':
-            return 'accepted'
-        case 'unknown':
-            return null
-    }
-}
-
 function getDefaultProjectWorkspace(store: Store, project: StoredProject): StoredWorkspace | null {
     return project.defaultWorkspaceId
         ? store.workspaces.getWorkspace(project.defaultWorkspaceId)
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+}
+
+function syncGoalTodoForTaskSessionState(options: {
+    store: Store
+    namespace: string
+    project: StoredProject
+    defaultWorkspace: StoredWorkspace | null
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'title' | 'description'>
+    status: string | null | undefined
+    blockedReason?: string | null
+    blockedSource?: string | null
+    event: GoalTodoEventOptions
+}): boolean {
+    if (!options.task.goalId) {
+        return false
+    }
+    const projectedTask = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.goalTodoRef?.trim() || options.task.id
+    })
+    if (!projectedTask || projectedTask.goalId !== options.task.goalId) {
+        return false
+    }
+
+    const goal = options.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+    if (!goal || goal.projectId !== options.project.id) {
+        return false
+    }
+
+    const nextTaskState = {
+        status: options.status ?? 'planning',
+        blockedReason: options.blockedReason ?? null,
+        blockedSource: options.blockedSource ?? null,
+        blockedAt: Date.now(),
+        mergeRuntime: null,
+        previewRuntime: null,
+        initRuntime: null
+    }
+    const goalStatus = getGoalTodoStatusForStoredTask({
+        status: options.status ?? 'planning',
+        blockedSource: options.blockedSource ?? null,
+        mergeRuntime: null,
+        previewRuntime: null,
+        initRuntime: null
+    })
+    return upsertGoalTodoTaskState({
+        project: options.project,
+        goal,
+        defaultWorkspace: options.defaultWorkspace,
+        taskId: options.task.goalTodoRef?.trim() || options.task.id,
+        status: goalStatus,
+        tag: getGoalTodoTagForStoredTask({
+            status: options.status ?? 'planning',
+            blockedSource: options.blockedSource ?? null,
+            mergeRuntime: null,
+            previewRuntime: null,
+            initRuntime: null
+        }),
+        title: options.task.title,
+        body: options.task.description,
+        blocked: buildGoalTodoBlockedStateFromStoredTask(nextTaskState),
+        event: options.event
+    })
 }
 
 function toHopiTaskRole(role: GoalTaskRole | null): HopiTaskRole | undefined {
@@ -560,8 +645,8 @@ function buildGoalActionPacketSection(role: GoalTaskRole): string {
         'Final HOPI_ACTIONS packet:',
         '- HOPI applies this JSON after your turn; do not call separate HOPI state mutation tools.',
         '- If no HOPI state change is needed, omit the packet.',
-        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goals[].goalKey`, and `goals[].items[]` with `id`, `status`, `title`, optional `tag`, optional `body`, and optional `blocked.summary`.',
-        '- Todo item status values match Kanban: planning, running, review, blocked, done. Use tag for planning substate: ready, candidate, or deferred.',
+        '- Canonical .hopi/docs/goals/<goalKey>/todo.yml shape is `version: 1`, `goal.goalKey`, and `items[]` with stable `ref`, `kind`, `status`, `title`, optional `description`, optional `acceptanceCriteria`, optional `dependencyTaskList`, and optional `blockedBy`.',
+        '- Prefer canonical todo statuses: planned, in_progress, in_review, merging, done.',
         '- Task titles are user-visible text only. Do not prefix or include ids or yaml keys in `title`.',
         '- Put `HOPI_ACTIONS:` on its own line before the fenced JSON block. Do not put `HOPI_ACTIONS:` inside the fenced block.',
         ...commonActions,
@@ -593,9 +678,9 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Role: Planner',
             '',
             'Context strategy:',
-            '- Read .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.md, and the current Goal kanban snapshot.',
-            '- Keep docs maintenance durable: update repo docs when strategy, decisions, or todo state changes.',
-            '- When promoting todo work into kanban, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: running`, keep its stable `id`, and set `tag: promoted`; HOPI also attempts this from create_goal_task, but the doc is the source of truth.',
+            '- Read .hopi/preference.md, .hopi/docs/index.md, .hopi/docs/decisions.md, .hopi/docs/goals/<goalKey>/goal.md, .hopi/docs/goals/<goalKey>/design.md, .hopi/docs/goals/<goalKey>/todo.yml, .hopi/docs/goals/<goalKey>/decisions.yml, .hopi/docs/goals/<goalKey>/planning-requests.yml, and the current Goal kanban snapshot.',
+            '- Keep docs maintenance durable: update repo docs when strategy, design, decisions, planning requests, or todo state changes.',
+            '- When materializing todo work into kanban, keep the matching `.hopi/docs/goals/<goalKey>/todo.yml` item on its stable `ref`, set `kind` explicitly, and advance canonical status such as `planned` -> `in_progress` -> `in_review` -> `done`; HOPI still mirrors runtime overlay, but the doc is the source of truth.',
             '',
             'Task creation quality bar:',
             '- Create tasks that a Generator can execute without re-planning the whole Goal.',
@@ -626,7 +711,7 @@ function buildGoalRoleSection(task: Pick<StoredTask, 'goalId' | 'status' | 'sour
             'Context strategy:',
             '- Read the Task Contract, Generator Handoff, Evidence Packet, full diff, relevant docs, and affected files.',
             '- Judge acceptance with evidence; do not trust Generator self-assessment without checking.',
-            '- When accepting linked todo work, update the matching .hopi/docs/goals/<goalKey>/todo.yml item to `status: done` and keep its stable `id`; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
+            '- When accepting linked todo work, update the matching `.hopi/docs/goals/<goalKey>/todo.yml` item to canonical completion state and keep its stable `ref`; HOPI also attempts this from the stored task link, but the doc is the source of truth.',
             '',
             'Allowed transitions:',
             '- Record evidence and move accepted work to done; HOPI will request the existing worktree merge flow before closing accepted work.',
@@ -1317,13 +1402,30 @@ function resolveGoalPreviousRootPath(options: {
     const runtimeSession = typeof engineWithLookup.getSessionByNamespace === 'function'
         ? engineWithLookup.getSessionByNamespace.call(options.engine, options.previousSessionId, options.namespace)
         : undefined
-    const runtimePath = resolveSessionPreferredRootPath(toSessionRootPathLike(runtimeSession) ?? {})
+    const runtimeRootPath = toSessionRootPathLike(runtimeSession)
+    const storedSession = options.store.sessions.getSessionByNamespace(options.previousSessionId, options.namespace)
+    const storedRootPath = toSessionRootPathLike(storedSession)
+
+    const storedWorktreePath = storedRootPath
+        ? resolveSessionWorktreePath(storedRootPath)
+        : null
+    if (storedWorktreePath) {
+        return storedWorktreePath
+    }
+
+    const runtimeWorktreePath = runtimeRootPath
+        ? resolveSessionWorktreePath(runtimeRootPath)
+        : null
+    if (runtimeWorktreePath) {
+        return runtimeWorktreePath
+    }
+
+    const runtimePath = resolveSessionPreferredRootPath(runtimeRootPath ?? {})
     if (runtimePath) {
         return runtimePath
     }
 
-    const storedSession = options.store.sessions.getSessionByNamespace(options.previousSessionId, options.namespace)
-    return resolveSessionPreferredRootPath(toSessionRootPathLike(storedSession) ?? {})
+    return resolveSessionPreferredRootPath(storedRootPath ?? {})
 }
 
 function sessionHasPendingRequests(session: Pick<Session, 'agentState'> | null | undefined): boolean {
@@ -1333,6 +1435,84 @@ function sessionHasPendingRequests(session: Pick<Session, 'agentState'> | null |
     }
     const requests = (agentState as { requests?: unknown }).requests
     return Boolean(requests && typeof requests === 'object' && Object.keys(requests).length > 0)
+}
+
+function getTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    }) ?? options.task
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function buildTaskRuntimeFallback(options: {
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    return {
+        ...options.updatedTask,
+        title: options.previousTask.title,
+        description: options.previousTask.description,
+        goalTodoRef: options.previousTask.goalTodoRef,
+        subTasks: options.previousTask.subTasks,
+        subTasksUpdatedAt: options.previousTask.subTasksUpdatedAt,
+        attachments: options.previousTask.attachments
+    }
+}
+
+function getTaskRuntimeViewOrFallback(options: {
+    store: Store
+    namespace: string
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    const runtimeTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.updatedTask
+    })
+    if (!options.updatedTask.goalId || runtimeTask !== options.updatedTask) {
+        return runtimeTask
+    }
+
+    return buildTaskRuntimeFallback({
+        previousTask: options.previousTask,
+        updatedTask: options.updatedTask
+    })
 }
 
 export type StartTaskSessionResult =
@@ -1345,14 +1525,40 @@ export type StartTaskSessionResult =
     }
     | { ok: false; error: TaskSessionStartFailure }
 
+function resolveWritableTaskForSessionStart(options: {
+    store: Store
+    namespace: string
+    taskId: string
+}): StoredTask | null {
+    const materialized = materializeGoalTodoTaskOverlayForWrite({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (materialized) {
+        return materialized
+    }
+
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (stored?.goalId) {
+        return null
+    }
+    return stored
+}
+
 async function continueTaskInLinkedSessionInternal(options: {
     store: Store
     engine: SyncEngine
     namespace: string
     taskId: string
+    kickoff?: StartSessionKickoffOptions
 }): Promise<StartTaskSessionResult | null> {
-    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (!task) {
+    const storedTask = resolveWritableTaskForSessionStart({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (!storedTask) {
         return {
             ok: false,
             error: createTaskSessionStartFailure({
@@ -1362,6 +1568,11 @@ async function continueTaskInLinkedSessionInternal(options: {
             })
         }
     }
+    const task = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: storedTask
+    })
 
     if ((task.status !== 'planning' && task.status !== 'planned') || !task.goalId || !task.activeSessionId) {
         return null
@@ -1401,7 +1612,7 @@ async function continueTaskInLinkedSessionInternal(options: {
     })
     const kickoff = resolveWorkflowKickoff({
         task,
-        kickoff: { kind: 'default' },
+        kickoff: options.kickoff ?? { kind: 'default' },
         agentOutputLocale
     })
     const kickoffText = (() => {
@@ -1426,10 +1637,37 @@ async function continueTaskInLinkedSessionInternal(options: {
 
     const strategy = getWorkflowStrategy(task)
     const workflowPatch = strategy.getTaskPatchForTransition('task_prompted', task) ?? { status: 'running' }
+    const continueWorkspace = task.workspaceId
+        ? options.store.workspaces.getWorkspace(task.workspaceId)
+        : getDefaultProjectWorkspace(options.store, project)
+    const shouldClearInitBlock = task.blockedSource === 'init' || task.initRuntime?.status === 'blocked'
+    syncGoalTodoForTaskSessionState({
+        store: options.store,
+        namespace: options.namespace,
+        project,
+        defaultWorkspace: continueWorkspace,
+        task,
+        status: workflowPatch.status ?? 'running',
+        blockedReason: shouldClearInitBlock ? null : undefined,
+        blockedSource: shouldClearInitBlock ? null : undefined,
+        event: {
+            writer: 'task-session-service',
+            action: 'task_session_continued',
+            reason: 'Continued the existing Goal task session and updated the todo item.',
+            metadata: {
+                source: 'continueTaskInLinkedSession',
+                taskId: task.id,
+                sessionId: linkedSession.id
+            }
+        }
+    })
     const updatedTask = options.store.tasks.updateTaskByNamespace(task.id, options.namespace, {
         activeSessionId: linkedSession.id,
         status: workflowPatch.status ?? 'running',
         workflowPhase: workflowPatch.workflowPhase,
+        blockedReason: shouldClearInitBlock ? null : undefined,
+        blockedSource: shouldClearInitBlock ? null : undefined,
+        blockedSessionId: shouldClearInitBlock ? null : undefined,
         initRuntime: buildTaskInitRuntime({
             task,
             status: 'succeeded',
@@ -1450,27 +1688,6 @@ async function continueTaskInLinkedSessionInternal(options: {
         }
     }
 
-    if (updatedTask.goalId && updatedTask.goalTodoRef) {
-        const goal = options.store.goals.getGoalByNamespace(updatedTask.goalId, options.namespace)
-        if (goal && goal.projectId === project.id) {
-            const goalStatus = normalizeGoalTodoStatusForTask(updatedTask.status)
-            const defaultWorkspace = updatedTask.workspaceId
-                ? options.store.workspaces.getWorkspace(updatedTask.workspaceId)
-                : getDefaultProjectWorkspace(options.store, project)
-            upsertGoalTodoTaskState({
-                project,
-                goal,
-                defaultWorkspace,
-                taskId: updatedTask.goalTodoRef,
-                status: goalStatus,
-                tag: defaultGoalTodoTagForStatus(goalStatus),
-                title: updatedTask.title,
-                body: updatedTask.description,
-                blocked: null
-            })
-        }
-    }
-
     options.engine.handleRealtimeEvent({
         type: 'task-updated',
         taskId: updatedTask.id,
@@ -1482,10 +1699,16 @@ async function continueTaskInLinkedSessionInternal(options: {
             initRuntime: updatedTask.initRuntime
         }
     })
+    const runtimeTask = getTaskRuntimeViewOrFallback({
+        store: options.store,
+        namespace: options.namespace,
+        previousTask: task,
+        updatedTask
+    })
 
     return {
         ok: true,
-        task: updatedTask,
+        task: runtimeTask,
         sessionId: linkedSession.id
     }
 }
@@ -1495,6 +1718,7 @@ export async function continueTaskInLinkedSession(options: {
     engine: SyncEngine
     namespace: string
     taskId: string
+    kickoff?: StartSessionKickoffOptions
 }): Promise<StartTaskSessionResult | null> {
     try {
         return await continueTaskInLinkedSessionInternal(options)
@@ -1521,8 +1745,12 @@ async function startSessionFromTaskInternal(options: {
     const overrides = options.overrides ?? {}
     const requestedKickoff: StartSessionKickoffOptions = options.kickoff ?? { kind: 'default' }
 
-    const task = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
-    if (!task) {
+    const storedTask = resolveWritableTaskForSessionStart({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (!storedTask) {
         return {
             ok: false,
             error: createTaskSessionStartFailure({
@@ -1532,6 +1760,11 @@ async function startSessionFromTaskInternal(options: {
             })
         }
     }
+    const task = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: storedTask
+    })
     const previousSessionId = task.activeSessionId
 
     const project = options.store.projects.getProjectByNamespace(task.projectId, options.namespace)
@@ -1587,18 +1820,26 @@ async function startSessionFromTaskInternal(options: {
         ?? projectDefaultModel
         ?? (agent === DEFAULT_AGENT_FLAVOR ? DEFAULT_TASK_MODEL : undefined)
 
+    const rawTaskPermissionMode = task.permissionMode as z.infer<typeof PermissionModeSchema> | null
+    const rawProjectPermissionMode = project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null
     const taskPermissionMode = coercePermissionModeForFlavor(
-        task.permissionMode as z.infer<typeof PermissionModeSchema> | null,
+        rawTaskPermissionMode,
         agent
     )
     const projectPermissionMode = coercePermissionModeForFlavor(
-        project.defaultPermissionMode as z.infer<typeof PermissionModeSchema> | null,
+        rawProjectPermissionMode,
         agent
     )
     let permissionMode = overrides.permissionMode
         ?? taskPermissionMode
         ?? projectPermissionMode
         ?? undefined
+    if (!overrides.permissionMode && agent === 'codex') {
+        const legacyStoredPermissionMode = rawTaskPermissionMode ?? rawProjectPermissionMode
+        if (legacyStoredPermissionMode === 'plan') {
+            permissionMode = 'safe-yolo'
+        }
+    }
 
     const workflowProfile = (task.workflowProfile ?? '').trim().toLowerCase()
     const workflowPhase = (task.workflowPhase ?? '').trim().toLowerCase()
@@ -1655,7 +1896,8 @@ async function startSessionFromTaskInternal(options: {
         && task.source !== 'planner'
         && task.source !== 'radar'
         && Boolean(previousSessionId)
-    const goalPreviousRootPath = isGoalReviewRole || isGoalGeneratorContinuation
+    const allowPreviousSessionRoot = overrides.forceProjectSessionSettings !== true
+    const goalPreviousRootPath = allowPreviousSessionRoot && (isGoalReviewRole || isGoalGeneratorContinuation)
         ? resolveGoalPreviousRootPath({
             store: options.store,
             engine: options.engine,
@@ -1821,9 +2063,49 @@ async function startSessionFromTaskInternal(options: {
             ? previousSessionId
             : spawn.sessionId
         const previousTask = runtimeTask
+        const nextStatus = patch?.status ?? workflowPatch.status ?? 'running'
+        const shouldClearInitBlock = patch?.blockedReason === undefined
+            && patch?.blockedSource === undefined
+            && patch?.initRuntime?.status !== 'blocked'
+            && (runtimeTask.blockedSource === 'init' || runtimeTask.initRuntime?.status === 'blocked')
+        const nextBlockedReason = patch?.blockedReason !== undefined
+            ? patch.blockedReason
+            : shouldClearInitBlock
+                ? null
+                : undefined
+        const nextBlockedSource = patch?.blockedSource !== undefined
+            ? patch.blockedSource
+            : shouldClearInitBlock
+                ? null
+                : undefined
+        const nextBlockedSessionId = patch?.blockedSessionId !== undefined
+            ? patch.blockedSessionId
+            : shouldClearInitBlock
+                ? null
+                : undefined
+        syncGoalTodoForTaskSessionState({
+            store: options.store,
+            namespace: options.namespace,
+            project,
+            defaultWorkspace: workspace,
+            task: runtimeTask,
+            status: nextStatus,
+            blockedReason: nextBlockedReason,
+            blockedSource: nextBlockedSource,
+            event: {
+                writer: 'task-session-service',
+                action: 'task_session_started',
+                reason: 'Started a Goal task session and updated the todo item.',
+                metadata: {
+                    source: 'startSessionFromTask',
+                    taskId: runtimeTask.id,
+                    sessionId: spawn.sessionId
+                }
+            }
+        })
         const updatedTask = options.store.tasks.updateTaskByNamespace(options.taskId, options.namespace, {
             activeSessionId: patch?.activeSessionId !== undefined ? patch.activeSessionId : defaultActiveSessionId,
-            status: patch?.status ?? workflowPatch.status ?? 'running',
+            status: nextStatus,
             workflowPhase: patch?.workflowPhase !== undefined ? patch.workflowPhase : workflowPatch.workflowPhase,
             source: patch?.source !== undefined
                 ? patch.source
@@ -1832,43 +2114,27 @@ async function startSessionFromTaskInternal(options: {
                     : task.source === 'improvements_scan'
                         ? 'manual'
                         : undefined,
-            blockedReason: patch?.blockedReason,
-            blockedSource: patch?.blockedSource,
-            blockedSessionId: patch?.blockedSessionId,
+            blockedReason: nextBlockedReason,
+            blockedSource: nextBlockedSource,
+            blockedSessionId: nextBlockedSessionId,
             initRuntime: patch?.initRuntime
         })
         if (updatedTask) {
-            runtimeTask = updatedTask
-            if (updatedTask.goalId && updatedTask.goalTodoRef) {
-                const goal = options.store.goals.getGoalByNamespace(updatedTask.goalId, options.namespace)
-                if (goal && goal.projectId === project.id) {
-                    const goalStatus = normalizeGoalTodoStatusForTask(updatedTask.status)
-                    upsertGoalTodoTaskState({
-                        project,
-                        goal,
-                        defaultWorkspace: workspace,
-                        taskId: updatedTask.goalTodoRef,
-                        status: goalStatus,
-                        tag: defaultGoalTodoTagForStatus(goalStatus),
-                        title: updatedTask.title,
-                        body: updatedTask.description,
-                        blocked: goalStatus === 'blocked'
-                            ? {
-                                kind: updatedTask.blockedSource ?? 'task_session_start',
-                                summary: updatedTask.blockedReason,
-                                updatedAt: Date.now()
-                            }
-                            : null
-                    })
-                }
-            }
+            const resolvedTask = getTaskRuntimeViewOrFallback({
+                store: options.store,
+                namespace: options.namespace,
+                previousTask,
+                updatedTask
+            })
+            runtimeTask = resolvedTask
             notifyProjectControllerTaskBlockedTransition({
                 store: options.store,
                 engine: options.engine,
                 namespace: options.namespace,
                 previousTask,
-                task: updatedTask
+                task: resolvedTask
             })
+            return resolvedTask
         }
         return updatedTask
     }
@@ -1878,6 +2144,9 @@ async function startSessionFromTaskInternal(options: {
         failureFingerprint: string
     }): StoredTask | null => {
         return updateStartedTask({
+            blockedReason: options.failure.blockedReason,
+            blockedSource: 'init',
+            blockedSessionId: spawn.sessionId,
             initRuntime: buildTaskInitRuntime({
                 task: runtimeTask,
                 status: 'blocked',
@@ -2169,9 +2438,15 @@ async function startSessionFromTaskInternal(options: {
                 return `${baseKickoff}${historySection}`
             }
 
-            const baseKickoff = buildTaskKickoffSummary(updatedTask, { agentOutputLocale })
+            const kickoffTask = getTaskRuntimeViewOrFallback({
+                store: options.store,
+                namespace: options.namespace,
+                previousTask: runtimeTask,
+                updatedTask
+            })
+            const baseKickoff = buildTaskKickoffSummary(kickoffTask, { agentOutputLocale })
 
-            if (!previousSessionId || previousSessionId === spawn.sessionId || updatedTask.goalId) {
+            if (!previousSessionId || previousSessionId === spawn.sessionId || kickoffTask.goalId) {
                 return baseKickoff
             }
 
@@ -2194,9 +2469,16 @@ async function startSessionFromTaskInternal(options: {
         }
     }
 
+    const returnedTask = getTaskRuntimeViewOrFallback({
+        store: options.store,
+        namespace: options.namespace,
+        previousTask: runtimeTask,
+        updatedTask
+    })
+
     return {
         ok: true,
-        task: updatedTask,
+        task: returnedTask,
         sessionId: spawn.sessionId,
         initRecoveryAttempted,
         initRecoveryError

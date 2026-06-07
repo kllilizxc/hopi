@@ -20,6 +20,8 @@ This design rebuilds the system around one simple direction:
 
 The assistant is not a hidden controller, not a text parser in the hub, and not a coding agent. It is a goal-scoped operator console backed by real typed tools and read-only repo inspection.
 
+For the user, Assistant is the canonical Kanban butler for that Goal: questions about the board and instructions to operate the board should route through Assistant first.
+
 The orchestrator is not an agent. It is deterministic control-plane logic.
 
 ## Design Principles
@@ -358,7 +360,7 @@ When a decision is task-scoped, the usual recovery path is:
 
 1. assistant explains the open decision
 2. user answers in assistant chat
-3. assistant requests the task back into `planned` or `in_progress` with the user answer
+3. assistant requests the task back into `planned` with the user answer as continuation context
 4. scheduler records the answer and clears the waiting decision topic
 
 Goal-level or multi-task decisions should usually generate Planner mail instead of direct task resumption.
@@ -444,6 +446,8 @@ These are runtime identities, not workflow ownership units.
 
 Assistant is bound to exactly one Goal.
 
+For that Goal, it is the canonical user-facing Kanban operator surface.
+
 It sees:
 
 - Goal summary
@@ -490,15 +494,17 @@ Assistant-side request, not direct mutation.
 Allowed lanes:
 
 - `planned`
-- `in_progress`
 - `merging`
+
+Assistant does not request `in_progress`.
+`in_progress` is observed runtime state owned by Scheduler after a task actually starts.
+For retry/resume/continue/requeue, assistant requests `planned` and supplies the current problem/context in `message`.
 
 This tool appends operator intent for one task.
 
 If `message` is omitted, the system synthesizes a natural-language continuation message:
 
-- for `planned`: “The user re-added this task to the execution plan. Re-evaluate the current state and continue when conditions are satisfied.”
-- for `in_progress`: “The user asked to continue this task. Resume using the existing context.”
+- for `planned`: “The user re-added this task to the execution plan. Re-evaluate the current state and continue when scheduler conditions are satisfied.”
 - for `merging`: “The user asked to retry merging this task. Re-check the current base state before continuing.”
 
 This single tool covers:
@@ -508,6 +514,10 @@ This single tool covers:
 - retry after dependency completion
 - retry after decision reply
 - requeue a stalled task
+
+If a completed card later proves to own a new concrete failure, this request may reopen that existing card instead of forcing Planner mail for duplicate work.
+
+Assistant should describe `request_task_lane(...)` success as a queued/requested transition unless a fresh snapshot confirms the board has already moved.
 
 Assistant does not need a separate `retry_merge` or `unblock_task` tool.
 
@@ -574,11 +584,16 @@ Forbidden:
 
 The prompt and tool policy should push assistant toward the typed operator tools when the user intent is operational.
 
+For Kanban questions and Kanban instructions, assistant should default to the current Goal snapshot as the workflow source of truth. Read-only repo inspection is supplemental context, not the first workflow authority.
+
 Examples:
 
 - user says “重试” under a merge-block intervention -> assistant reads snapshot, identifies target task, calls `request_task_lane(taskId, "merging")`
 - user says “前置 block 解除了” -> assistant identifies downstream tasks and requests them back to `planned`
 - user says “新加一个任务” -> assistant does not create task directly; it sends `mail_to_planner(...)`
+- user pastes a concrete build/test/runtime failure -> assistant treats that as operational by default; it reads snapshot, maps the failure to an existing task and requests a lane when ownership is clear, otherwise it sends `mail_to_planner(...)` so the bug becomes tracked work
+- user asks “why is this card here”, “what is still blocked”, “what is running now”, or “what should happen next” -> assistant answers from the Goal snapshot and current Goal state, only using repo inspection when workflow state alone is not enough
+- user asks assistant to operate the board, such as requeueing a task, continuing work, retrying merge, or adding follow-up work -> assistant should carry that through with the typed operator tools when possible instead of only giving advice
 - if the typed operator tool bridge is missing, assistant must say that clearly and remain advisory; it must not act as if prose alone completed the workflow action
 
 ## Scheduler / Orchestrator
@@ -687,6 +702,9 @@ Scheduler handles it:
 - if request is eligible now, consume it and move the task into the requested execution path
 - if dependencies or decisions still block it, keep the request pending
 - if a continuation message exists, deliver it to the resumed runtime when that runtime starts or resumes
+- when reopening completed/merged work into `planned`, clear stale completion and merge-result fields before projecting the lane; otherwise the board can keep showing `done` even though the task has been requeued
+- for `planned` operator requests, Scheduler must start a new runtime through the same Project session policy as normal auto-run, including agent flavor, permission mode, and worktree settings; it must not bypass policy by resuming an arbitrary old linked session
+- restart context must be budgeted: include the task contract, handoff/evidence, operator continuation message, and a small recent semantic slice of prior chat; never paste full old session transcripts or tool outputs into kickoff
 
 This keeps assistant state-based and makes the system resilient to out-of-order events.
 
@@ -858,7 +876,7 @@ No hub-side text parser. No task-session chat hijack.
 1. Upstream tasks reach `done`.
 2. Scheduler recomputes derived dependency blockers.
 3. Downstream `planned` task becomes eligible automatically.
-4. If assistant had already requested `planned` or `in_progress`, that pending intent is consumed on the next tick.
+4. If assistant had already requested `planned`, that pending intent is consumed on the next tick.
 5. Generator starts when capacity is available.
 
 No manual unblock tool is required.
@@ -871,6 +889,16 @@ No manual unblock tool is required.
 4. Assistant calls `mail_to_planner(body, relatedTaskIds?)`.
 5. Scheduler leaves current execution unchanged.
 6. Next Planner pass consumes the mail and updates `todo.yml`.
+
+## E. User reports a concrete repo failure in assistant
+
+1. User pastes a build error, failing test, stack trace, or broken-behavior report.
+2. Assistant treats this as operational by default unless the user is clearly asking for explanation only.
+3. Assistant reads the current Goal snapshot.
+4. If the failure clearly belongs to an existing task already on the board, assistant calls `request_task_lane(...)` for that task.
+   If that task is currently `done`, the request may reopen the existing card for follow-up repair rather than creating a duplicate new task.
+5. Otherwise assistant calls `mail_to_planner(...)` so the failure is turned into tracked work.
+6. Assistant may still summarize the root cause briefly, but it should not stop at diagnosis alone when the typed operator tools are available.
 
 ## D. User gives durable preference feedback
 

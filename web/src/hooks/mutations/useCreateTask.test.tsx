@@ -31,6 +31,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     return {
         id: overrides.id ?? 'task-existing',
         projectId: overrides.projectId ?? 'project-1',
+        goalCanonicalStatus: overrides.goalCanonicalStatus ?? null,
         title: overrides.title ?? 'Existing task',
         description: overrides.description ?? null,
         status: overrides.status ?? 'planned',
@@ -215,6 +216,7 @@ describe('useCreateTask', () => {
             const cached = queryClient.getQueryData<TasksResponse>(goalScopedKey)
             const optimisticTask = cached?.tasks.find((task) => task.id.startsWith('temp:'))
             expect(optimisticTask?.goalId).toBe('goal-1')
+            expect(optimisticTask?.goalCanonicalStatus).toBe('planned')
             expect(optimisticTask?.contract).toBe('Ship the first slice')
         })
 
@@ -243,6 +245,61 @@ describe('useCreateTask', () => {
             const cached = queryClient.getQueryData<TasksResponse>(goalScopedKey)
             expect(cached?.tasks.map((task) => task.id)).toEqual(expect.arrayContaining(['task-existing', 'task-goal-created']))
             expect(cached?.tasks.some((task) => task.id.startsWith('temp:'))).toBe(false)
+        })
+    })
+
+    it('derives canonical merge lane for optimistic goal-scoped review tasks', async () => {
+        const queryClient = createTestQueryClient()
+        const existingTask = createTask()
+        const goalScopedKey = queryKeys.tasks(existingTask.projectId, 'goal-1')
+        queryClient.setQueryData<TasksResponse>(goalScopedKey, { tasks: [existingTask] })
+
+        let resolveRequest: ((value: { task: Task }) => void) | null = null
+        const api = {
+            createProjectTask: vi.fn(() => new Promise<{ task: Task }>((resolve) => {
+                resolveRequest = resolve
+            }))
+        } as unknown as ApiClient
+
+        const { result } = renderHook(() => useCreateTask(api), {
+            wrapper: createWrapper(queryClient)
+        })
+
+        let requestPromise: Promise<Task>
+        await act(async () => {
+            requestPromise = result.current.createTask({
+                projectId: existingTask.projectId,
+                title: 'Merge review task',
+                workflowProfile: 'default',
+                goalId: 'goal-1',
+                status: 'review',
+                tag: 'merging'
+            })
+        })
+
+        await waitFor(() => {
+            const cached = queryClient.getQueryData<TasksResponse>(goalScopedKey)
+            const optimisticTask = cached?.tasks.find((task) => task.id.startsWith('temp:'))
+            expect(optimisticTask?.goalCanonicalStatus).toBe('merging')
+        })
+
+        if (!resolveRequest) {
+            throw new Error('expected pending createProjectTask request')
+        }
+        ;(resolveRequest as (value: { task: Task }) => void)({
+            task: createTask({
+                id: 'task-goal-merge',
+                projectId: existingTask.projectId,
+                goalId: 'goal-1',
+                status: 'review',
+                goalCanonicalStatus: 'merging',
+                tag: 'merging',
+                title: 'Merge review task'
+            })
+        })
+
+        await act(async () => {
+            await requestPromise!
         })
     })
 })

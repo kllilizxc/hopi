@@ -747,7 +747,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             });
         }
 
-        const mcpServers = {};
+        const mcpServers = session.mcpServers;
 
         this.setupAbortHandlers(session.client.rpcHandlerManager, {
             onAbort: () => this.handleAbort(),
@@ -872,7 +872,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             mode: effectiveMode,
                             cwd: session.path,
                             mcpServers,
-                            cliOverrides: session.codexCliOverrides
+                            cliOverrides: session.codexCliOverrides,
+                            developerInstructions: session.developerInstructions
                         });
 
                         const resumeCandidate = session.sessionId;
@@ -961,7 +962,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             first,
                             cwd: session.path,
                             mcpServers,
-                            cliOverrides: session.codexCliOverrides
+                            cliOverrides: session.codexCliOverrides,
+                            developerInstructions: session.developerInstructions
                         });
 
                         await mcpClient.startSession(startConfig, { signal: this.abortController.signal });

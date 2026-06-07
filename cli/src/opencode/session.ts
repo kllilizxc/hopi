@@ -3,6 +3,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { AgentSessionBase } from '@/agent/sessionBase';
 import type { OpencodeHookEvent, OpencodeMode, PermissionMode } from './types';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import type { McpServerStdio } from '@/agent/types';
 
 type LocalLaunchFailure = {
     message: string;
@@ -10,6 +11,7 @@ type LocalLaunchFailure = {
 };
 
 export class OpencodeSession extends AgentSessionBase<OpencodeMode, PermissionMode> {
+    readonly mcpServers: McpServerStdio[];
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -27,6 +29,7 @@ export class OpencodeSession extends AgentSessionBase<OpencodeMode, PermissionMo
         mode?: 'local' | 'remote';
         startedBy: 'runner' | 'terminal';
         startingMode: 'local' | 'remote';
+        mcpServers?: McpServerStdio[];
         permissionMode?: PermissionMode;
     }) {
         super({
@@ -47,6 +50,7 @@ export class OpencodeSession extends AgentSessionBase<OpencodeMode, PermissionMo
             permissionMode: opts.permissionMode
         });
 
+        this.mcpServers = opts.mcpServers ?? [];
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

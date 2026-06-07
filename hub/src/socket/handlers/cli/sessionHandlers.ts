@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
+import { recordGoalWriteTraceFromSessionMessage } from '../../../sync/goals/goalWriteTrace'
 import { extractTaskToolsFromMessage } from '../../../sync/taskTools'
 import { syncTaskSubTasksFromSessionTodos } from '../../../sync/taskSubtasks'
 import type { CliSocketWithData } from '../../socketTypes'
@@ -87,6 +88,11 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const session = sessionAccess.value
 
         const msg = store.messages.addMessage(sid, content, localId)
+        recordGoalWriteTraceFromSessionMessage({
+            store,
+            session,
+            message: msg
+        })
 
         const taskToolResult = extractTaskToolsFromMessage(content)
         if (taskToolResult) {

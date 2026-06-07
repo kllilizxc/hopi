@@ -18,6 +18,9 @@ export type AgentSessionConfig = {
 export type PromptContent = {
     type: 'text';
     text: string;
+} | {
+    type: 'localImage';
+    path: string;
 };
 
 export type PlanItem = {

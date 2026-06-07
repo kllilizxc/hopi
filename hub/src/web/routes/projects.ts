@@ -11,7 +11,8 @@ import type { Store, StoredWorkspace } from '../../store'
 import {
     ensureProjectControllerSession,
     getProjectControllerSession,
-    maybeRefreshProjectControllerBriefing
+    maybeRefreshProjectControllerBriefing,
+    retireProjectControllerSessions
 } from '../../sync/projectController'
 import { verifyProjectAutomationReadiness } from '../../sync/projectAutomationReadiness'
 import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
@@ -71,6 +72,11 @@ const listQuerySchema = z.object({
 
 const controllerBriefingSchema = z.object({
     goalId: z.string().min(1).nullable().optional()
+})
+
+const controllerSessionBodySchema = z.object({
+    goalId: z.string().min(1).nullable().optional(),
+    forceNew: z.boolean().optional()
 })
 
 const controllerSessionQuerySchema = z.object({
@@ -355,7 +361,7 @@ export function createProjectsRoutes(options: {
         const namespace = c.get('namespace')
         const projectId = c.req.param('projectId')
         const json = await c.req.json().catch(() => ({}))
-        const parsed = controllerBriefingSchema.safeParse(json)
+        const parsed = controllerSessionBodySchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
@@ -369,7 +375,8 @@ export function createProjectsRoutes(options: {
             engine,
             namespace,
             projectId,
-            goalId: parsed.data.goalId ?? null
+            goalId: parsed.data.goalId ?? null,
+            forceNew: parsed.data.forceNew === true
         })
         if (!result.ok) {
             return c.json({ error: result.error }, result.status)
@@ -378,6 +385,33 @@ export function createProjectsRoutes(options: {
             sessionId: result.sessionId,
             session: result.session,
             created: result.created
+        })
+    })
+
+    app.post('/projects/:projectId/controller-session/reset', async (c) => {
+        const namespace = c.get('namespace')
+        const projectId = c.req.param('projectId')
+        const json = await c.req.json().catch(() => ({}))
+        const parsed = controllerBriefingSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const result = retireProjectControllerSessions({
+            store: options.store,
+            engine: options.getSyncEngine(),
+            namespace,
+            projectId,
+            goalId: parsed.data.goalId ?? null,
+            reason: 'manual_reset'
+        })
+        if (!result.ok) {
+            return c.json({ error: result.error }, result.status)
+        }
+
+        return c.json({
+            ok: true,
+            retiredSessionIds: result.retiredSessionIds
         })
     })
 

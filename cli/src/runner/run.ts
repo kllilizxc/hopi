@@ -22,6 +22,7 @@ import { PreviewManager } from './previewManager';
 import { basename, dirname, join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { PRODUCT_ENV, PRODUCT_SLUG, PRODUCT_STARTING_MODE_FLAG } from '@hopi/protocol/brand';
+import { HOPI_SESSION_PROFILE_ENV } from '@/sessionProfiles';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -406,6 +407,13 @@ export async function startRunner(): Promise<void> {
             [PRODUCT_ENV.WORKTREE_PATH]: primaryWorktreeInfo.worktreePath,
             [PRODUCT_ENV.WORKTREE_CREATED_AT]: String(primaryWorktreeInfo.createdAt),
             ...(primaryWorktreeInfo.baseCommit ? { [PRODUCT_ENV.WORKTREE_BASE_COMMIT]: primaryWorktreeInfo.baseCommit } : {})
+          };
+        }
+
+        if (options.sessionProfile) {
+          extraEnv = {
+            ...extraEnv,
+            [HOPI_SESSION_PROFILE_ENV]: JSON.stringify(options.sessionProfile)
           };
         }
 

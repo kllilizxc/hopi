@@ -1,11 +1,23 @@
 import { unwrapRoleWrappedRecordEnvelope } from '@hopi/protocol/messages'
 import { PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH } from '@hopi/protocol/brand'
 import type { DecryptedMessage, SyncEvent } from '@hopi/protocol/types'
-import type { Store } from '../store'
+import type { Store, StoredTask } from '../store'
 import { buildTaskInitRuntime, buildTaskPreviewRuntime } from '../utils/taskActionRuntime'
 import { loadProjectActionContractFromSession } from './actionContract'
 import { applyGoalActionPacketFromSession } from './goals/goalActionPacket'
-import { syncTaskStateToGoalTodo } from './goals/goalTodoTaskSync'
+import { getDocsRoot } from './goals/goalDocPaths'
+import {
+    findGoalTodoTaskProjectionById,
+    getTaskByNamespaceOrGoalTodoProjection,
+    materializeGoalTodoTaskOverlayForWrite
+} from './goals/goalTodoProjection'
+import {
+    buildGoalTodoBlockedStateFromStoredTask,
+    getGoalTodoStatusForStoredTask,
+    getGoalTodoTagForStoredTask,
+    recoverStoredTaskStatusFromLegacyBlocked
+} from './goals/goalTaskState'
+import { type GoalTodoEventOptions, upsertGoalTodoTaskState } from './goals/goalTodo'
 import { notifyProjectControllerTaskBlockedTransition } from './projectController'
 import { requestAutoMergeAcceptedTask } from './taskAutoMerge'
 import {
@@ -30,6 +42,158 @@ const BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS = 2
 const BOOTSTRAP_PREVIEW_POLL_INTERVAL_MS = 1_000
 const BOOTSTRAP_PREVIEW_TIMEOUT_MS = 120_000
 const EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS = 1
+const GOAL_ACTION_PACKET_INACTIVE_BLOCKED_REASON = 'Agent session became inactive before applying its final HOPI_ACTIONS packet.'
+const RUNNER_OFFLINE_BLOCKED_REASON = 'Runner offline or not connected. Start it on the machine and try again: hopi runner start'
+
+function buildGoalTodoAutomationEvent(
+    action: string,
+    reason: string,
+    metadata?: Record<string, unknown>
+): GoalTodoEventOptions {
+    return {
+        writer: 'task-automation',
+        action,
+        reason,
+        metadata
+    }
+}
+
+function isSameAutomationBlock(task: Pick<StoredTask, 'status' | 'blockedReason' | 'blockedSource' | 'blockedSessionId'>, next: {
+    status: StoredTask['status']
+    blockedReason: string
+    blockedSource: string
+    blockedSessionId: string
+}): boolean {
+    return task.status === next.status
+        && task.blockedReason === next.blockedReason
+        && task.blockedSource === next.blockedSource
+        && task.blockedSessionId === next.blockedSessionId
+}
+
+function getTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    }) ?? options.task
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function getProjectedTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | null {
+    if (!options.task.goalId) {
+        return options.task
+    }
+
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+    if (!projected) {
+        return null
+    }
+
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    const projectionAlreadyCarriesBlock = Boolean(
+        projected.blockedReason
+        || projected.blockedSource
+        || projected.blockedSessionId
+        || projected.blockedAt
+    )
+    if (!hasExplicitOverlayBlock || projectionAlreadyCarriesBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function buildTaskRuntimeFallback(options: {
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    return {
+        ...options.updatedTask,
+        title: options.previousTask.title,
+        description: options.previousTask.description,
+        goalTodoRef: options.previousTask.goalTodoRef,
+        subTasks: options.previousTask.subTasks,
+        subTasksUpdatedAt: options.previousTask.subTasksUpdatedAt,
+        attachments: options.previousTask.attachments
+    }
+}
+
+function getTaskRuntimeViewOrFallback(options: {
+    store: Store
+    namespace: string
+    previousTask: StoredTask
+    updatedTask: StoredTask
+}): StoredTask {
+    const runtimeTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.updatedTask
+    })
+    if (!options.updatedTask.goalId || runtimeTask !== options.updatedTask) {
+        return runtimeTask
+    }
+
+    return buildTaskRuntimeFallback({
+        previousTask: options.previousTask,
+        updatedTask: options.updatedTask
+    })
+}
 
 function getMessageRole(message: DecryptedMessage): 'user' | 'assistant' | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
@@ -45,6 +209,20 @@ function getMessageSentFrom(message: DecryptedMessage): string | null {
     if (!('sentFrom' in record.meta)) return null
     const sentFrom = (record.meta as { sentFrom?: unknown }).sentFrom
     return typeof sentFrom === 'string' ? sentFrom : null
+}
+
+function containsText(value: unknown, needle: string): boolean {
+    if (typeof value === 'string') return value.includes(needle)
+    if (!value || typeof value !== 'object') return false
+    if (Array.isArray(value)) return value.some((item) => containsText(item, needle))
+    return Object.values(value).some((item) => containsText(item, needle))
+}
+
+function messageContainsGoalActionMarker(message: DecryptedMessage): boolean {
+    const record = unwrapRoleWrappedRecordEnvelope(message.content)
+    if (!record) return false
+    if (record.role !== 'assistant' && record.role !== 'agent') return false
+    return containsText(record.content, 'HOPI_ACTIONS')
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -400,6 +578,129 @@ function isDoneTaskStatus(status: string | null | undefined): boolean {
     return status === 'done' || status === 'finished'
 }
 
+function isTaskAlreadyMerged(task: Pick<StoredTask, 'finishedAt' | 'worktreeMergedAt' | 'mergeRuntime'>): boolean {
+    return task.finishedAt !== null
+        || task.worktreeMergedAt !== null
+        || task.mergeRuntime?.status === 'succeeded'
+}
+
+function buildMergeResultResetPatch(task: Pick<StoredTask, 'finishedAt' | 'worktreeMergedAt' | 'worktreeMergeCommit' | 'mergedDiffSnapshot' | 'mergeRuntime'>): {
+    finishedAt: null
+    worktreeMergedAt: null
+    worktreeMergeCommit: null
+    mergedDiffSnapshot: null
+    mergeRuntime: null
+} | null {
+    const hasMergeResult = task.finishedAt !== null
+        || task.worktreeMergedAt !== null
+        || task.worktreeMergeCommit !== null
+        || task.mergedDiffSnapshot !== null
+        || task.mergeRuntime !== null
+
+    if (!hasMergeResult) {
+        return null
+    }
+
+    return {
+        finishedAt: null,
+        worktreeMergedAt: null,
+        worktreeMergeCommit: null,
+        mergedDiffSnapshot: null,
+        mergeRuntime: null
+    }
+}
+
+function isRecoverableGoalActionPacketBlock(task: Pick<StoredTask, 'blockedReason' | 'blockedSource' | 'mergeRuntime' | 'previewRuntime' | 'initRuntime'>): boolean {
+    return (
+        task.blockedReason === GOAL_ACTION_PACKET_INACTIVE_BLOCKED_REASON
+        && task.blockedSource === 'agent'
+    ) || (
+        task.blockedReason === RUNNER_OFFLINE_BLOCKED_REASON
+        && task.blockedSource === 'scheduler'
+    ) || task.blockedSource === 'merge'
+        || task.blockedSource === 'preview'
+        || task.blockedSource === 'init'
+        || task.blockedSource === 'evaluator'
+        || task.mergeRuntime?.status === 'blocked'
+        || task.previewRuntime?.status === 'blocked'
+        || task.initRuntime?.status === 'blocked'
+    
+}
+
+function isRecoverableInactiveLiveMessageBlock(task: Pick<StoredTask, 'blockedReason' | 'blockedSource'>): boolean {
+    return task.blockedReason === GOAL_ACTION_PACKET_INACTIVE_BLOCKED_REASON
+        && task.blockedSource === 'agent'
+}
+
+function sessionHasPendingRequests(session: { agentState?: unknown } | null | undefined): boolean {
+    const agentState = session?.agentState
+    if (!agentState || typeof agentState !== 'object') return false
+    const requests = (agentState as { requests?: unknown }).requests
+    return Boolean(requests && typeof requests === 'object' && Object.keys(requests).length > 0)
+}
+
+function isStaleDbOnlyGoalTaskForSource(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+    source: StoredTask['source']
+}): boolean {
+    if (!options.task.goalId) {
+        return false
+    }
+    if (options.task.source !== options.source) {
+        return false
+    }
+    if (typeof options.task.goalTodoRef === 'string' && options.task.goalTodoRef.trim().length > 0) {
+        return false
+    }
+    const project = options.store.projects.getProjectByNamespace(options.task.projectId, options.namespace)
+    if (!project) {
+        return false
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    if (!getDocsRoot(defaultWorkspace)) {
+        return false
+    }
+    return !findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+}
+
+function isStaleDbOnlyManualGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'manual'
+    })
+}
+
+function isStaleDbOnlyBootstrapGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'project_init'
+    })
+}
+
+function isStaleDbOnlyRuntimeGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyManualGoalTask(options) || isStaleDbOnlyBootstrapGoalTask(options)
+}
+
 function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: string): LinkedTask | null {
     const session = engine.getSession(sessionId)
     const namespace = session?.namespace
@@ -412,6 +713,40 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
         : undefined
 
     if (namespace && typeof projectId === 'string' && typeof taskId === 'string') {
+        const projected = getTaskByNamespaceOrGoalTodoProjection({
+            store,
+            namespace,
+            taskId
+        })
+        if (projected && projected.projectId === projectId) {
+            if (isStaleDbOnlyRuntimeGoalTask({
+                store,
+                namespace,
+                task: projected
+            })) {
+                return null
+            }
+            if (projected.goalId) {
+                const writable = materializeGoalTodoTaskOverlayForWrite({
+                    store,
+                    namespace,
+                    taskId
+                })
+                if (writable && writable.projectId === projectId) {
+                    return { namespace, projectId, taskId: writable.id }
+                }
+            }
+            return { namespace, projectId, taskId: projected.id }
+        }
+
+        const stored = store.tasks.getTaskByNamespace(taskId, namespace)
+        if (stored && stored.projectId === projectId && isStaleDbOnlyRuntimeGoalTask({
+            store,
+            namespace,
+            task: stored
+        })) {
+            return null
+        }
         return { namespace, projectId, taskId }
     }
 
@@ -420,6 +755,11 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
     }
 
     const candidates = store.tasks.listTasksByActiveSessionIdAndNamespace(sessionId, namespace)
+        .filter((task) => !isStaleDbOnlyRuntimeGoalTask({
+            store,
+            namespace,
+            task
+        }))
     if (candidates.length === 0) {
         return null
     }
@@ -431,7 +771,14 @@ function getLinkedTaskFromSession(engine: SyncEngine, store: Store, sessionId: s
         }
     }
 
-    const inProgress = candidates.filter((task) => isRunningTaskStatus(task.status))
+    const inProgress = candidates.filter((task) => {
+        const runtimeView = getTaskRuntimeView({
+            store,
+            namespace,
+            task
+        })
+        return isRunningTaskStatus(runtimeView.status)
+    })
     if (inProgress.length === 1) {
         return { namespace, projectId: inProgress[0].projectId, taskId: inProgress[0].id }
     }
@@ -455,23 +802,166 @@ export class TaskAutomation {
     ) {
     }
 
+    private resolveRuntimeTask(
+        task: StoredTask | null | undefined,
+        namespace: string,
+        previousTask?: StoredTask | null
+    ): StoredTask | null {
+        if (!task) {
+            return null
+        }
+        if (previousTask) {
+            return getTaskRuntimeViewOrFallback({
+                store: this.store,
+                namespace,
+                previousTask,
+                updatedTask: task
+            })
+        }
+        return getTaskRuntimeView({
+            store: this.store,
+            namespace,
+            task
+        })
+    }
+
+    reconcileIdleGoalActionSessions(namespace: string, projectId: string): boolean {
+        let reconciled = false
+        for (const session of this.engine.getSessionsByNamespace(namespace)) {
+            const metadata = toRecord(session.metadata)
+            if (metadata?.projectId !== projectId) continue
+            if (session.active === false || session.thinking) continue
+            if (sessionHasPendingRequests(session)) continue
+
+            const linked = getLinkedTaskFromSession(this.engine, this.store, session.id)
+            if (!linked || linked.namespace !== namespace || linked.projectId !== projectId) continue
+
+            const stored = this.store.tasks.getTaskByNamespace(linked.taskId, namespace)
+            const task = stored ? getTaskRuntimeView({ store: this.store, namespace, task: stored }) : null
+            if (!task || task.archivedAt || !task.goalId) continue
+            if (
+                !isRunningTaskStatus(task.status)
+                && !isReviewTaskStatus(task.status)
+                && !isRecoverableGoalActionPacketBlock(task)
+            ) {
+                continue
+            }
+
+            if (this.tryReplayIdleSessionCompletion(session.id)) {
+                reconciled = true
+            }
+        }
+        return reconciled
+    }
+
     private syncGoalTodo(
         updatedTask: ReturnType<Store['tasks']['getTaskByNamespace']>,
         namespace: string,
-        previousTask?: Pick<NonNullable<ReturnType<Store['tasks']['getTaskByNamespace']>>, 'status'> | null
+        previousTask?: Pick<
+            NonNullable<ReturnType<Store['tasks']['getTaskByNamespace']>>,
+            'status' | 'blockedReason' | 'blockedSource' | 'blockedSessionId'
+        > | null,
+        event?: GoalTodoEventOptions
     ): void {
-        if (!updatedTask) return
-        syncTaskStateToGoalTodo({
-            store: this.store,
+        const runtimeTask = this.resolveRuntimeTask(updatedTask, namespace)
+        if (!runtimeTask) return
+        this.writeGoalTodoStateForTask({
+            task: runtimeTask,
             namespace,
-            task: updatedTask
+            event
         })
         notifyProjectControllerTaskBlockedTransition({
             store: this.store,
             engine: this.engine,
             namespace,
             previousTask,
-            task: updatedTask
+            task: runtimeTask
+        })
+    }
+
+    private syncGoalTodoBeforeTaskUpdate(options: {
+        currentTask: StoredTask
+        namespace: string
+        patch: Partial<StoredTask>
+        event?: GoalTodoEventOptions
+    }): boolean {
+        const currentTask = getProjectedTaskRuntimeView({
+            store: this.store,
+            namespace: options.namespace,
+            task: options.currentTask
+        })
+        if (!currentTask || !currentTask.goalId || !currentTask.goalTodoRef) {
+            return false
+        }
+
+        const nextTask = {
+            ...currentTask,
+            ...options.patch
+        } as StoredTask
+
+        return this.writeGoalTodoStateForResolvedTask({
+            task: nextTask,
+            namespace: options.namespace,
+            event: options.event
+        })
+    }
+
+    private writeGoalTodoStateForTask(options: {
+        task: StoredTask
+        namespace: string
+        event?: GoalTodoEventOptions
+    }): boolean {
+        if (!options.task.goalId || !options.task.goalTodoRef) {
+            return false
+        }
+        const task = getProjectedTaskRuntimeView({
+            store: this.store,
+            namespace: options.namespace,
+            task: options.task
+        })
+        if (!task || !task.goalId || !task.goalTodoRef) {
+            return false
+        }
+
+        return this.writeGoalTodoStateForResolvedTask({
+            task,
+            namespace: options.namespace,
+            event: options.event
+        })
+    }
+
+    private writeGoalTodoStateForResolvedTask(options: {
+        task: StoredTask
+        namespace: string
+        event?: GoalTodoEventOptions
+    }): boolean {
+        if (!options.task.goalId || !options.task.goalTodoRef) {
+            return false
+        }
+
+        const project = this.store.projects.getProjectByNamespace(options.task.projectId, options.namespace)
+        const goal = this.store.goals.getGoalByNamespace(options.task.goalId, options.namespace)
+        if (!project || !goal || goal.projectId !== project.id) {
+            return false
+        }
+
+        const defaultWorkspace = project.defaultWorkspaceId
+            ? this.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+            : this.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+        const blocked = buildGoalTodoBlockedStateFromStoredTask(options.task)
+
+        return upsertGoalTodoTaskState({
+            project,
+            goal,
+            defaultWorkspace,
+            taskId: options.task.goalTodoRef,
+            status: getGoalTodoStatusForStoredTask(options.task),
+            tag: getGoalTodoTagForStoredTask(options.task),
+            taskKind: options.task.source === 'planner' || options.task.source === 'radar' ? 'planning' : 'engineering',
+            title: options.task.title,
+            body: options.task.description,
+            blocked,
+            event: options.event
         })
     }
 
@@ -486,6 +976,8 @@ export class TaskAutomation {
                 this.lastThinkingBySessionId.set(event.sessionId, Boolean(session.thinking))
                 if (!session.active) {
                     this.tryResolveInactiveSession(event.sessionId)
+                } else if (!session.thinking) {
+                    this.tryReplayIdleSessionCompletion(event.sessionId)
                 }
             }
             return
@@ -513,6 +1005,7 @@ export class TaskAutomation {
         const session = this.engine.getSession(sessionId)
         if (!session) return
 
+        const previousThinking = this.lastThinkingBySessionId.get(sessionId)
         const currentThinking = Boolean(session.thinking)
         const hasPendingRequests = Boolean(session.agentState?.requests && Object.keys(session.agentState.requests).length > 0)
 
@@ -533,51 +1026,212 @@ export class TaskAutomation {
 
         if (hasPendingRequests) {
             this.tryMoveToInReviewForPermissionRequest(sessionId)
+        } else if (!currentThinking && previousThinking !== false) {
+            this.tryReplayIdleSessionCompletion(sessionId)
         }
 
         this.lastThinkingBySessionId.set(sessionId, currentThinking)
     }
 
+    private getLatestReplayableReadyMessage(sessionId: string): DecryptedMessage | null {
+        const messages = this.store.messages.getMessages(sessionId, 50)
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index]!
+            const candidate: DecryptedMessage = {
+                id: message.id,
+                seq: message.seq,
+                localId: message.localId,
+                content: message.content,
+                createdAt: message.createdAt
+            }
+            if (!isReadyEventMessage(candidate)) continue
+            const details = getReadyEventDetails(candidate)
+            if (details?.hasAssistantReply === false) continue
+            return candidate
+        }
+        return null
+    }
+
+    private getIdleReplayGoalActionMarkerSeq(sessionId: string): number | null {
+        const messages = this.store.messages.getMessages(sessionId, 50)
+        let latestTaskPromptSeq: number | null = null
+        let latestGoalActionMarkerSeq: number | null = null
+        for (const message of messages) {
+            const candidate: DecryptedMessage = {
+                id: message.id,
+                seq: message.seq,
+                localId: message.localId,
+                content: message.content,
+                createdAt: message.createdAt
+            }
+            if (isTaskProgressPromptMessage(candidate)) {
+                latestTaskPromptSeq = candidate.seq
+            }
+            if (messageContainsGoalActionMarker(candidate)) {
+                latestGoalActionMarkerSeq = candidate.seq
+            }
+        }
+
+        if (latestGoalActionMarkerSeq === null) {
+            return null
+        }
+        if (latestTaskPromptSeq !== null && latestGoalActionMarkerSeq <= latestTaskPromptSeq) {
+            return null
+        }
+        return latestGoalActionMarkerSeq
+    }
+
+    private tryReplayIdleSessionCompletion(sessionId: string): boolean {
+        const readyMessage = this.getLatestReplayableReadyMessage(sessionId)
+        let goalActionResult: 'applied' | 'already_applied' | 'goal_task' | 'not_goal_task' = 'not_goal_task'
+        if (this.getIdleReplayGoalActionMarkerSeq(sessionId) !== null) {
+            goalActionResult = this.tryApplyGoalActionPacketFromSession(sessionId)
+        } else {
+            const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+            const stored = linked ? this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace) : null
+            const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked!.namespace, task: stored }) : null
+            if (current?.goalId) {
+                goalActionResult = 'goal_task'
+            }
+        }
+        if (goalActionResult === 'applied' || goalActionResult === 'already_applied') {
+            this.maybeRequestAutoMergeAcceptedTask(sessionId)
+            if (readyMessage) {
+                this.maybeAutoCommitWorktreeFromReady(sessionId, readyMessage)
+            }
+            return true
+        }
+
+        if (!readyMessage) {
+            return false
+        }
+
+        if (goalActionResult === 'goal_task') {
+            const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
+            const stored = linked ? this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace) : null
+            const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked!.namespace, task: stored }) : null
+            if (current?.source === 'project_init' && isRunningTaskStatus(current.status)) {
+                this.tryMoveToInReviewFromReady(sessionId, readyMessage)
+                return true
+            }
+            if (isMergeRuntimeReadyEvent(readyMessage)) {
+                this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                return true
+            }
+            if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
+                return true
+            }
+            return false
+        }
+
+        this.tryMoveToInReviewFromReady(sessionId, readyMessage)
+        if (isMergeRuntimeReadyEvent(readyMessage)) {
+            this.maybeRequestAutoMergeAcceptedTask(sessionId)
+        }
+        this.maybeAutoCommitWorktreeFromReady(sessionId, readyMessage)
+        return true
+    }
+
     private handleMessageReceived(sessionId: string, message: DecryptedMessage): void {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
+        if (!current || current.archivedAt) return
+        let taskForMessage = current
+        const recovered = this.tryRecoverInactiveGoalTaskFromLiveMessage(current, linked.namespace, sessionId)
+        if (recovered) {
+            taskForMessage = recovered
+        }
 
         if (isTaskProgressPromptMessage(message)) {
-            const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
-            if (!current) return
-            if (current.archivedAt) return
-            if (current.goalId && isReviewTaskStatus(current.status) && isTaskKickoffLocalId(message.localId)) return
+            if (isStaleDbOnlyManualGoalTask({
+                store: this.store,
+                namespace: linked.namespace,
+                task: taskForMessage
+            })) {
+                return
+            }
+            if (taskForMessage.goalId && isReviewTaskStatus(taskForMessage.status) && isTaskKickoffLocalId(message.localId)) return
 
-            const strategy = getWorkflowStrategy(current)
-            const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', current) ?? { status: 'running' }
-            const shouldApplyTransition = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
-                || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
-            const shouldResetMergeState = current.worktreeMergedAt !== null
-                || current.worktreeMergeCommit !== null
-                || current.finishedAt !== null
-                || current.mergedDiffSnapshot !== null
+            const strategy = getWorkflowStrategy(taskForMessage)
+            const transitionPatch = strategy.getTaskPatchForTransition('task_prompted', taskForMessage) ?? { status: 'running' }
+            const shouldApplyTransition = (transitionPatch.status !== undefined && transitionPatch.status !== taskForMessage.status)
+                || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== taskForMessage.workflowPhase)
+            const shouldResetMergeState = taskForMessage.worktreeMergedAt !== null
+                || taskForMessage.worktreeMergeCommit !== null
+                || taskForMessage.finishedAt !== null
+                || taskForMessage.mergedDiffSnapshot !== null
 
             if (shouldApplyTransition || shouldResetMergeState) {
+                const event = buildGoalTodoAutomationEvent(
+                    'automation_task_prompted',
+                    'A follow-up automation prompt moved the todo item back into active execution.',
+                    { sessionId, taskId: taskForMessage.id }
+                )
+                const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                    currentTask: taskForMessage,
+                    namespace: linked.namespace,
+                    patch: {
+                        status: transitionPatch.status ?? 'running',
+                        workflowPhase: transitionPatch.workflowPhase,
+                        worktreeMergedAt: null,
+                        worktreeMergeCommit: null,
+                        mergedDiffSnapshot: null,
+                        mergeRuntime: null,
+                        finishedAt: null,
+                        blockedReason: null,
+                        blockedSource: null,
+                        blockedSessionId: null
+                    },
+                    event
+                })
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
                     status: transitionPatch.status ?? 'running',
                     workflowPhase: transitionPatch.workflowPhase,
                     worktreeMergedAt: null,
                     worktreeMergeCommit: null,
                     mergedDiffSnapshot: null,
-                    finishedAt: null
+                    mergeRuntime: null,
+                    finishedAt: null,
+                    blockedReason: null,
+                    blockedSource: null,
+                    blockedSessionId: null
                 })
                 if (updated) {
-                    this.syncGoalTodo(updated, linked.namespace, current)
+                    const resumedTask = this.resolveRuntimeTask(updated, linked.namespace, taskForMessage)
+                    if (!resumedTask) {
+                        return
+                    }
+                    if (!wroteDocsFirst) {
+                        this.syncGoalTodo(resumedTask, linked.namespace, taskForMessage, event)
+                    } else {
+                        notifyProjectControllerTaskBlockedTransition({
+                            store: this.store,
+                            engine: this.engine,
+                            namespace: linked.namespace,
+                            previousTask: taskForMessage,
+                            task: resumedTask
+                        })
+                    }
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
-                        taskId: updated.id,
-                        projectId: updated.projectId,
+                        taskId: resumedTask.id,
+                        projectId: resumedTask.projectId,
                         namespace: linked.namespace,
-                        data: { taskId: updated.id }
+                        data: { taskId: resumedTask.id }
                     })
                 }
             }
             return
+        }
+
+        if (messageContainsGoalActionMarker(message)) {
+            const goalActionResult = this.tryApplyGoalActionPacketFromSession(sessionId)
+            if (goalActionResult === 'applied' || goalActionResult === 'already_applied') {
+                this.maybeRequestAutoMergeAcceptedTask(sessionId)
+                return
+            }
         }
 
         if (getMessageRole(message) === 'assistant' && isReadyEventMessage(message)) {
@@ -592,6 +1246,17 @@ export class TaskAutomation {
                 return
             }
             if (goalActionResult === 'goal_task') {
+                if (isStaleDbOnlyManualGoalTask({
+                    store: this.store,
+                    namespace: linked.namespace,
+                    task: taskForMessage
+                })) {
+                    return
+                }
+                if (taskForMessage.source === 'project_init' && isRunningTaskStatus(taskForMessage.status)) {
+                    this.tryMoveToInReviewFromReady(sessionId, message)
+                    return
+                }
                 if (isMergeRuntimeReadyEvent(message)) {
                     this.maybeRequestAutoMergeAcceptedTask(sessionId)
                     return
@@ -599,6 +1264,13 @@ export class TaskAutomation {
                 if (this.tryRecoverMissingEvaluatorActionPacket(sessionId)) {
                     return
                 }
+                return
+            }
+            if (isStaleDbOnlyManualGoalTask({
+                store: this.store,
+                namespace: linked.namespace,
+                task: taskForMessage
+            })) {
                 return
             }
             this.tryMoveToInReviewFromReady(sessionId, message)
@@ -612,6 +1284,65 @@ export class TaskAutomation {
         if (getMessageRole(message) === 'assistant' && getTaskInterruptionDetails(message)) {
             this.tryBlockTaskFromInterruptionEvent(sessionId, message)
         }
+    }
+
+    private tryRecoverInactiveGoalTaskFromLiveMessage(task: StoredTask, namespace: string, sessionId: string): StoredTask | null {
+        if (!isRecoverableInactiveLiveMessageBlock(task)) return null
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace,
+            task
+        })) return null
+        if (task.blockedSessionId && task.blockedSessionId !== sessionId) return null
+
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_recovered',
+            'A live session message cleared an inactive automation block and resumed execution.',
+            { sessionId, taskId: task.id }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: task,
+            namespace,
+            patch: {
+                status: 'running',
+                blockedReason: null,
+                blockedSource: null,
+                blockedSessionId: null,
+                finishedAt: null
+            },
+            event
+        })
+        const updated = this.store.tasks.updateTaskByNamespace(task.id, namespace, {
+            status: 'running',
+            blockedReason: null,
+            blockedSource: null,
+            blockedSessionId: null,
+            finishedAt: null
+        })
+        if (!updated) return null
+
+        const resumedTask = this.resolveRuntimeTask(updated, namespace, task)
+        if (!resumedTask) return null
+
+        if (!wroteDocsFirst) {
+            this.syncGoalTodo(resumedTask, namespace, task, event)
+        } else {
+            notifyProjectControllerTaskBlockedTransition({
+                store: this.store,
+                engine: this.engine,
+                namespace,
+                previousTask: task,
+                task: resumedTask
+            })
+        }
+        this.engine.handleRealtimeEvent({
+            type: 'task-updated',
+            taskId: resumedTask.id,
+            projectId: resumedTask.projectId,
+            namespace,
+            data: { taskId: resumedTask.id }
+        })
+        return resumedTask
     }
 
     private tryResolveInactiveSession(sessionId: string): boolean {
@@ -630,14 +1361,19 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return 'not_goal_task'
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current || current.archivedAt || !current.goalId) {
             return 'not_goal_task'
         }
         if (this.appliedGoalActionPacketBySessionId.has(sessionId)) {
             return 'already_applied'
         }
-        if (!isRunningTaskStatus(current.status) && !isReviewTaskStatus(current.status)) {
+        if (
+            !isRunningTaskStatus(current.status)
+            && !isReviewTaskStatus(current.status)
+            && !isRecoverableGoalActionPacketBlock(current)
+        ) {
             return 'goal_task'
         }
 
@@ -659,7 +1395,8 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return false
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current || current.archivedAt || !current.goalId) return false
         if (!isReviewTaskStatus(current.status) || current.source !== 'evaluator') return false
 
@@ -668,15 +1405,103 @@ export class TaskAutomation {
         if (metadata?.hopiTaskRole !== 'evaluator') return false
 
         const blockedReason = 'Evaluator finished without a HOPI_ACTIONS packet.'
+        if (isTaskAlreadyMerged(current)) {
+            const finishedAt = current.finishedAt
+                ?? current.worktreeMergedAt
+                ?? current.mergeRuntime?.completedAt
+                ?? Date.now()
+            const event = buildGoalTodoAutomationEvent(
+                'automation_task_completed',
+                'Evaluator output was missing, but the task was already merged and was finalized as done.',
+                { sessionId, taskId: current.id }
+            )
+            const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                currentTask: current,
+                namespace: linked.namespace,
+                patch: {
+                    status: 'done',
+                    source: 'manual',
+                    blockedReason: null,
+                    blockedSource: null,
+                    blockedSessionId: null,
+                    finishedAt
+                },
+                event
+            })
+            const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
+                status: 'done',
+                source: 'manual',
+                blockedReason: null,
+                blockedSource: null,
+                blockedSessionId: null,
+                finishedAt,
+                initRuntime: buildTaskInitRuntime({
+                    current: current.initRuntime,
+                    activeSessionId: current.activeSessionId,
+                    status: 'succeeded',
+                    sessionId,
+                    completedAt: finishedAt,
+                    latestNote: `${blockedReason} Ignored because the task already merged successfully.`
+                })
+            })
+            if (!updated) return false
+
+            const finishedTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+            if (!finishedTask) return false
+
+            if (!wroteDocsFirst) {
+                this.syncGoalTodo(finishedTask, linked.namespace, current, event)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: linked.namespace,
+                    previousTask: current,
+                    task: finishedTask
+                })
+            }
+            this.engine.handleRealtimeEvent({
+                type: 'task-updated',
+                taskId: finishedTask.id,
+                projectId: finishedTask.projectId,
+                namespace: linked.namespace,
+                data: { taskId: finishedTask.id }
+            })
+            return true
+        }
+
         const currentRetryCount = current.initRuntime?.retryCount ?? 0
         const shouldBlock = currentRetryCount >= EVALUATOR_MISSING_ACTION_RETRY_MAX_ATTEMPTS
+        const blockedStatus = recoverStoredTaskStatusFromLegacyBlocked(current)
+        const mergeResultResetPatch = buildMergeResultResetPatch(current)
+        const event = buildGoalTodoAutomationEvent(
+            shouldBlock ? 'automation_task_blocked' : 'automation_review_requeued',
+            shouldBlock
+                ? 'Evaluator finished without a HOPI_ACTIONS packet and the task was blocked.'
+                : 'Evaluator finished without a HOPI_ACTIONS packet and review was requeued.',
+            { sessionId, taskId: current.id }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: shouldBlock ? blockedStatus : 'review',
+                source: 'manual',
+                blockedReason: shouldBlock ? blockedReason : null,
+                blockedSource: shouldBlock ? 'evaluator' : null,
+                blockedSessionId: shouldBlock ? sessionId : null,
+                ...mergeResultResetPatch
+            },
+            event
+        })
 
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: shouldBlock ? 'blocked' : 'review',
+            status: shouldBlock ? blockedStatus : 'review',
             source: 'manual',
             blockedReason: shouldBlock ? blockedReason : null,
             blockedSource: shouldBlock ? 'evaluator' : null,
             blockedSessionId: shouldBlock ? sessionId : null,
+            ...(mergeResultResetPatch ?? {}),
             initRuntime: buildTaskInitRuntime({
                 current: current.initRuntime,
                 activeSessionId: current.activeSessionId,
@@ -691,22 +1516,35 @@ export class TaskAutomation {
         })
         if (!updated) return false
 
-        this.syncGoalTodo(updated, linked.namespace, current)
+        const reviewTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+        if (!reviewTask) return false
+
+        if (!wroteDocsFirst) {
+            this.syncGoalTodo(reviewTask, linked.namespace, current, event)
+        } else {
+            notifyProjectControllerTaskBlockedTransition({
+                store: this.store,
+                engine: this.engine,
+                namespace: linked.namespace,
+                previousTask: current,
+                task: reviewTask
+            })
+        }
         this.engine.handleRealtimeEvent({
             type: 'task-updated',
-            taskId: updated.id,
-            projectId: updated.projectId,
+            taskId: reviewTask.id,
+            projectId: reviewTask.projectId,
             namespace: linked.namespace,
-            data: { taskId: updated.id }
+            data: { taskId: reviewTask.id }
         })
         if (shouldBlock) {
             appendTaskBlockedMessage({
                 store: this.store,
                 engine: this.engine,
                 sessionId,
-                taskId: updated.id,
+                taskId: reviewTask.id,
                 reason: blockedReason,
-                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:missing-evaluator-action`
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${reviewTask.id}:${sessionId}:missing-evaluator-action`
             })
         }
 
@@ -730,7 +1568,8 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        const task = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const task = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!task) return
         if (task.archivedAt) return
         if (isDoneTaskStatus(task.status)) return
@@ -806,9 +1645,20 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return
         if (current.archivedAt) return
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
+        if (isStaleDbOnlyBootstrapGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
         if (!isRunningTaskStatus(current.status)) return
 
         if (current.source === 'project_init') {
@@ -837,22 +1687,54 @@ export class TaskAutomation {
 
         const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'review' }
+        const mergeResultResetPatch = buildMergeResultResetPatch(current)
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
+            || mergeResultResetPatch !== null
         if (!shouldApply) return
 
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_ready',
+            'The agent reported ready and the todo item advanced to review.',
+            { sessionId, taskId: current.id }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: transitionPatch.status ?? 'review',
+                workflowPhase: transitionPatch.workflowPhase,
+                ...mergeResultResetPatch
+            },
+            event
+        })
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: transitionPatch.status ?? 'review',
-            workflowPhase: transitionPatch.workflowPhase
+            workflowPhase: transitionPatch.workflowPhase,
+            ...(mergeResultResetPatch ?? {})
         })
         if (updated) {
-            this.syncGoalTodo(updated, linked.namespace, current)
+            const readyTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+            if (!readyTask) {
+                return
+            }
+            if (!wroteDocsFirst) {
+                this.syncGoalTodo(readyTask, linked.namespace, current, event)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: linked.namespace,
+                    previousTask: current,
+                    task: readyTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+                taskId: readyTask.id,
+                projectId: readyTask.projectId,
                 namespace: linked.namespace,
-                data: { taskId: updated.id }
+                data: { taskId: readyTask.id }
             })
         }
     }
@@ -862,9 +1744,20 @@ export class TaskAutomation {
         readyMessage: DecryptedMessage,
         linked: LinkedTask
     ): Promise<void> {
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return
         if (current.archivedAt) return
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
+        if (isStaleDbOnlyBootstrapGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
         if (!isRunningTaskStatus(current.status)) return
         if (current.source !== 'project_init') return
 
@@ -884,9 +1777,20 @@ export class TaskAutomation {
             })
         })
 
-        const refreshed = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const refreshedStored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const refreshed = refreshedStored ? getTaskRuntimeViewOrFallback({
+            store: this.store,
+            namespace: linked.namespace,
+            previousTask: current,
+            updatedTask: refreshedStored
+        }) : null
         if (!refreshed) return
         if (refreshed.archivedAt) return
+        if (isStaleDbOnlyBootstrapGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: refreshed
+        })) return
         if (!isRunningTaskStatus(refreshed.status)) return
         if (refreshed.source !== 'project_init') return
 
@@ -899,6 +1803,19 @@ export class TaskAutomation {
 
             if (contractLoad.kind === 'invalid' && nextRetryCount <= BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS) {
                 const latestNote = `Bootstrap contract still invalid after ready; asked the agent to continue repairing it (${nextRetryCount}/${BOOTSTRAP_CONTRACT_REPAIR_MAX_ATTEMPTS}).`
+                const retryEvent = buildGoalTodoAutomationEvent(
+                    'automation_bootstrap_contract_retry',
+                    'Bootstrap contract validation failed and the task was kept running for another repair attempt.',
+                    { sessionId, taskId: refreshed.id, attempt: nextRetryCount }
+                )
+                const wroteRetryDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                    currentTask: refreshed,
+                    namespace: linked.namespace,
+                    patch: {
+                        status: 'running'
+                    },
+                    event: retryEvent
+                })
                 const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
                     status: 'running',
                     initRuntime: buildTaskInitRuntime({
@@ -913,30 +1830,64 @@ export class TaskAutomation {
                 if (!updated) {
                     return
                 }
+                const retryTask = this.resolveRuntimeTask(updated, linked.namespace, refreshed)
+                if (!retryTask) {
+                    return
+                }
 
-                this.syncGoalTodo(updated, linked.namespace, refreshed)
+                if (!wroteRetryDocsFirst) {
+                    this.syncGoalTodo(retryTask, linked.namespace, refreshed, retryEvent)
+                } else {
+                    notifyProjectControllerTaskBlockedTransition({
+                        store: this.store,
+                        engine: this.engine,
+                        namespace: linked.namespace,
+                        previousTask: refreshed,
+                        task: retryTask
+                    })
+                }
                 this.engine.handleRealtimeEvent({
                     type: 'task-updated',
-                    taskId: updated.id,
-                    projectId: updated.projectId,
+                    taskId: retryTask.id,
+                    projectId: retryTask.projectId,
                     namespace: linked.namespace,
-                    data: { taskId: updated.id }
+                    data: { taskId: retryTask.id }
                 })
 
                 try {
                     await this.engine.sendMessage(sessionId, {
                         text: buildBootstrapContractRepairPrompt(contractLoad.error, nextRetryCount),
-                        localId: `${AUTO_BOOTSTRAP_REPAIR_LOCAL_ID_PREFIX}${updated.id}:${Date.now()}`,
+                        localId: `${AUTO_BOOTSTRAP_REPAIR_LOCAL_ID_PREFIX}${retryTask.id}:${Date.now()}`,
                         sentFrom: 'webapp'
                     })
                     return
                 } catch (error) {
                     const sendError = error instanceof Error ? error.message : String(error)
+                    const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(retryTask)
+                    const blockedEvent = buildGoalTodoAutomationEvent(
+                        'automation_task_blocked',
+                        'Bootstrap contract repair prompt could not be sent, so the todo item was blocked.',
+                        { sessionId, taskId: retryTask.id, attempt: nextRetryCount }
+                    )
+                    const wroteBlockedDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                        currentTask: retryTask,
+                        namespace: linked.namespace,
+                        patch: {
+                            status: nextBlockedStatus,
+                            blockedReason: sendError,
+                            blockedSource: retryTask.blockedSource ?? 'bootstrap_contract',
+                            blockedSessionId: sessionId
+                        },
+                        event: blockedEvent
+                    })
                     const blocked = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                        status: 'blocked',
+                        status: nextBlockedStatus,
+                        blockedReason: sendError,
+                        blockedSource: retryTask.blockedSource ?? 'bootstrap_contract',
+                        blockedSessionId: sessionId,
                         initRuntime: buildTaskInitRuntime({
-                            current: updated.initRuntime,
-                            activeSessionId: updated.activeSessionId,
+                            current: retryTask.initRuntime,
+                            activeSessionId: retryTask.activeSessionId,
                             status: 'blocked',
                             sessionId,
                             retryCount: nextRetryCount,
@@ -944,23 +1895,34 @@ export class TaskAutomation {
                             blockedReason: sendError
                         })
                     })
-                    if (!blocked) {
+                    const blockedTask = this.resolveRuntimeTask(blocked, linked.namespace, retryTask)
+                    if (!blockedTask) {
                         return
                     }
-                    this.syncGoalTodo(blocked, linked.namespace, updated)
+                    if (!wroteBlockedDocsFirst) {
+                        this.syncGoalTodo(blockedTask, linked.namespace, retryTask, blockedEvent)
+                    } else {
+                        notifyProjectControllerTaskBlockedTransition({
+                            store: this.store,
+                            engine: this.engine,
+                            namespace: linked.namespace,
+                            previousTask: retryTask,
+                            task: blockedTask
+                        })
+                    }
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
-                        taskId: blocked.id,
-                        projectId: blocked.projectId,
+                        taskId: blockedTask.id,
+                        projectId: blockedTask.projectId,
                         namespace: linked.namespace,
-                        data: { taskId: blocked.id }
+                        data: { taskId: blockedTask.id }
                     })
                     this.engine.handleRealtimeEvent({
                         type: 'toast',
                         namespace: linked.namespace,
                         data: {
                             title: 'Bootstrap repair failed',
-                            body: `${blocked.title}: ${sendError}`,
+                            body: `${blockedTask.title}: ${sendError}`,
                             sessionId,
                             url: ''
                         }
@@ -973,8 +1935,28 @@ export class TaskAutomation {
                 ? `Bootstrap task reached ready, but \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` is still missing. Finish the contract before retrying the bootstrap task.`
                 : `Bootstrap task reached ready, but \`${PRODUCT_ACTIONS_MANIFEST_RELATIVE_PATH}\` is still invalid after ${currentRetryCount} repair attempt(s): ${contractLoad.error}. Finish the contract before retrying the bootstrap task.`
 
+            const blockedEvent = buildGoalTodoAutomationEvent(
+                'automation_task_blocked',
+                'Bootstrap contract validation failed after retries and the todo item was blocked.',
+                { sessionId, taskId: refreshed.id, blockedReason }
+            )
+            const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(refreshed)
+            const wroteBlockedDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                currentTask: refreshed,
+                namespace: linked.namespace,
+                patch: {
+                    status: nextBlockedStatus,
+                    blockedReason,
+                    blockedSource: refreshed.blockedSource ?? 'bootstrap_contract',
+                    blockedSessionId: sessionId
+                },
+                event: blockedEvent
+            })
             const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-                status: 'blocked',
+                status: nextBlockedStatus,
+                blockedReason,
+                blockedSource: refreshed.blockedSource ?? 'bootstrap_contract',
+                blockedSessionId: sessionId,
                 initRuntime: refreshed.initRuntime?.sessionId === sessionId
                     ? buildTaskInitRuntime({
                         current: refreshed.initRuntime,
@@ -987,24 +1969,40 @@ export class TaskAutomation {
                     })
                     : undefined
             })
-            if (!updated) {
+            const blockedTask = updated ? getTaskRuntimeViewOrFallback({
+                store: this.store,
+                namespace: linked.namespace,
+                previousTask: refreshed,
+                updatedTask: updated
+            }) : null
+            if (!blockedTask) {
                 return
             }
 
-            this.syncGoalTodo(updated, linked.namespace, refreshed)
+            if (!wroteBlockedDocsFirst) {
+                this.syncGoalTodo(blockedTask, linked.namespace, refreshed, blockedEvent)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: linked.namespace,
+                    previousTask: refreshed,
+                    task: blockedTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+                taskId: blockedTask.id,
+                projectId: blockedTask.projectId,
                 namespace: linked.namespace,
-                data: { taskId: updated.id }
+                data: { taskId: blockedTask.id }
             })
             this.engine.handleRealtimeEvent({
                 type: 'toast',
                 namespace: linked.namespace,
                 data: {
                     title: 'Bootstrap contract is not ready',
-                    body: `${updated.title}: ${blockedReason}`,
+                    body: `${blockedTask.title}: ${blockedReason}`,
                     sessionId,
                     url: ''
                 }
@@ -1043,7 +2041,15 @@ export class TaskAutomation {
                 error: string
                 preview: RpcPreviewStatus
             }): Promise<void> => {
-                const latestTask = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
+                const latestStored = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
+                const latestTask = latestStored
+                    ? getTaskRuntimeViewOrFallback({
+                        store: this.store,
+                        namespace: options.linked.namespace,
+                        previousTask: options.task,
+                        updatedTask: latestStored
+                    })
+                    : null
                 if (!latestTask || latestTask.archivedAt || !isRunningTaskStatus(latestTask.status) || latestTask.source !== 'project_init') {
                     return
                 }
@@ -1057,6 +2063,19 @@ export class TaskAutomation {
                 }
 
                 if (nextRetryCount <= BOOTSTRAP_PREVIEW_REPAIR_MAX_ATTEMPTS) {
+                    const retryEvent = buildGoalTodoAutomationEvent(
+                        'automation_bootstrap_preview_retry',
+                        'Bootstrap preview probing failed and the task was kept running for another repair attempt.',
+                        { sessionId: options.sessionId, taskId: latestTask.id, attempt: nextRetryCount }
+                    )
+                    const wroteRetryDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                        currentTask: latestTask,
+                        namespace: options.linked.namespace,
+                        patch: {
+                            status: 'running'
+                        },
+                        event: retryEvent
+                    })
                     const updated = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
                         status: 'running',
                         initRuntime: buildTaskInitRuntime({
@@ -1080,14 +2099,33 @@ export class TaskAutomation {
                     if (!updated) {
                         return
                     }
+                    const retryTask = updated ? getTaskRuntimeViewOrFallback({
+                        store: this.store,
+                        namespace: options.linked.namespace,
+                        previousTask: latestTask,
+                        updatedTask: updated
+                    }) : null
+                    if (!retryTask) {
+                        return
+                    }
 
-                    this.syncGoalTodo(updated, options.linked.namespace, latestTask)
+                    if (!wroteRetryDocsFirst) {
+                        this.syncGoalTodo(retryTask, options.linked.namespace, latestTask, retryEvent)
+                    } else {
+                        notifyProjectControllerTaskBlockedTransition({
+                            store: this.store,
+                            engine: this.engine,
+                            namespace: options.linked.namespace,
+                            previousTask: latestTask,
+                            task: retryTask
+                        })
+                    }
                     this.engine.handleRealtimeEvent({
                         type: 'task-updated',
-                        taskId: updated.id,
-                        projectId: updated.projectId,
+                        taskId: retryTask.id,
+                        projectId: retryTask.projectId,
                         namespace: options.linked.namespace,
-                        data: { taskId: updated.id }
+                        data: { taskId: retryTask.id }
                     })
 
                     try {
@@ -1099,16 +2137,36 @@ export class TaskAutomation {
                                 mode,
                                 preview: failure.preview
                             }),
-                            localId: `${AUTO_BOOTSTRAP_PREVIEW_REPAIR_LOCAL_ID_PREFIX}${updated.id}:${Date.now()}`,
+                            localId: `${AUTO_BOOTSTRAP_PREVIEW_REPAIR_LOCAL_ID_PREFIX}${retryTask.id}:${Date.now()}`,
                             sentFrom: 'webapp'
                         })
                     } catch (error) {
                         const sendError = error instanceof Error ? error.message : String(error)
+                        const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(retryTask)
+                        const blockedEvent = buildGoalTodoAutomationEvent(
+                            'automation_task_blocked',
+                            'Bootstrap preview repair prompt could not be sent, so the todo item was blocked.',
+                            { sessionId: options.sessionId, taskId: retryTask.id, attempt: nextRetryCount }
+                        )
+                        const wroteBlockedDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                            currentTask: retryTask,
+                            namespace: options.linked.namespace,
+                            patch: {
+                                status: nextBlockedStatus,
+                                blockedReason: sendError,
+                                blockedSource: retryTask.blockedSource ?? 'bootstrap_preview',
+                                blockedSessionId: options.sessionId
+                            },
+                            event: blockedEvent
+                        })
                         const blocked = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
-                            status: 'blocked',
+                            status: nextBlockedStatus,
+                            blockedReason: sendError,
+                            blockedSource: retryTask.blockedSource ?? 'bootstrap_preview',
+                            blockedSessionId: options.sessionId,
                             initRuntime: buildTaskInitRuntime({
-                                current: updated.initRuntime,
-                                activeSessionId: updated.activeSessionId,
+                                current: retryTask.initRuntime,
+                                activeSessionId: retryTask.activeSessionId,
                                 status: 'blocked',
                                 sessionId: options.sessionId,
                                 retryCount: nextRetryCount,
@@ -1116,8 +2174,8 @@ export class TaskAutomation {
                                 blockedReason: sendError
                             }),
                             previewRuntime: buildTaskPreviewRuntime({
-                                current: updated.previewRuntime,
-                                activeSessionId: updated.activeSessionId,
+                                current: retryTask.previewRuntime,
+                                activeSessionId: retryTask.activeSessionId,
                                 status: 'blocked',
                                 sessionId: options.sessionId,
                                 retryCount: nextRetryCount,
@@ -1125,23 +2183,59 @@ export class TaskAutomation {
                                 blockedReason: sendError
                             })
                         })
-                        if (!blocked) {
+                        const blockedTask = blocked ? getTaskRuntimeViewOrFallback({
+                            store: this.store,
+                            namespace: options.linked.namespace,
+                            previousTask: retryTask,
+                            updatedTask: blocked
+                        }) : null
+                        if (!blockedTask) {
                             return
                         }
-                        this.syncGoalTodo(blocked, options.linked.namespace, updated)
+                        if (!wroteBlockedDocsFirst) {
+                            this.syncGoalTodo(blockedTask, options.linked.namespace, retryTask, blockedEvent)
+                        } else {
+                            notifyProjectControllerTaskBlockedTransition({
+                                store: this.store,
+                                engine: this.engine,
+                                namespace: options.linked.namespace,
+                                previousTask: retryTask,
+                                task: blockedTask
+                            })
+                        }
                         this.engine.handleRealtimeEvent({
                             type: 'task-updated',
-                            taskId: blocked.id,
-                            projectId: blocked.projectId,
+                            taskId: blockedTask.id,
+                            projectId: blockedTask.projectId,
                             namespace: options.linked.namespace,
-                            data: { taskId: blocked.id }
+                            data: { taskId: blockedTask.id }
                         })
                     }
                     return
                 }
 
+                const blockedEvent = buildGoalTodoAutomationEvent(
+                    'automation_task_blocked',
+                    'Bootstrap preview probing failed after retries and the todo item was blocked.',
+                    { sessionId: options.sessionId, taskId: latestTask.id, blockedReason: failure.error }
+                )
+                const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(latestTask)
+                const wroteBlockedDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                    currentTask: latestTask,
+                    namespace: options.linked.namespace,
+                    patch: {
+                        status: nextBlockedStatus,
+                        blockedReason: failure.error,
+                        blockedSource: latestTask.blockedSource ?? 'bootstrap_preview',
+                        blockedSessionId: options.sessionId
+                    },
+                    event: blockedEvent
+                })
                 const blocked = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
-                    status: 'blocked',
+                    status: nextBlockedStatus,
+                    blockedReason: failure.error,
+                    blockedSource: latestTask.blockedSource ?? 'bootstrap_preview',
+                    blockedSessionId: options.sessionId,
                     initRuntime: buildTaskInitRuntime({
                         current: latestTask.initRuntime,
                         activeSessionId: latestTask.activeSessionId,
@@ -1164,21 +2258,40 @@ export class TaskAutomation {
                 if (!blocked) {
                     return
                 }
+                const blockedTask = getTaskRuntimeViewOrFallback({
+                    store: this.store,
+                    namespace: options.linked.namespace,
+                    previousTask: latestTask,
+                    updatedTask: blocked
+                })
+                if (!blockedTask) {
+                    return
+                }
 
-                this.syncGoalTodo(blocked, options.linked.namespace, latestTask)
+                if (!wroteBlockedDocsFirst) {
+                    this.syncGoalTodo(blockedTask, options.linked.namespace, latestTask, blockedEvent)
+                } else {
+                    notifyProjectControllerTaskBlockedTransition({
+                        store: this.store,
+                        engine: this.engine,
+                        namespace: options.linked.namespace,
+                        previousTask: latestTask,
+                        task: blockedTask
+                    })
+                }
                 this.engine.handleRealtimeEvent({
                     type: 'task-updated',
-                    taskId: blocked.id,
-                    projectId: blocked.projectId,
+                    taskId: blockedTask.id,
+                    projectId: blockedTask.projectId,
                     namespace: options.linked.namespace,
-                    data: { taskId: blocked.id }
+                    data: { taskId: blockedTask.id }
                 })
                 this.engine.handleRealtimeEvent({
                     type: 'toast',
                     namespace: options.linked.namespace,
                     data: {
                         title: 'Bootstrap preview failed',
-                        body: `${blocked.title}: ${failure.error}`,
+                        body: `${blockedTask.title}: ${failure.error}`,
                         sessionId: options.sessionId,
                         url: ''
                     }
@@ -1199,6 +2312,19 @@ export class TaskAutomation {
                 return
             }
 
+            const startedEvent = buildGoalTodoAutomationEvent(
+                'automation_bootstrap_preview_started',
+                'Bootstrap contract validation succeeded and preview readiness probing started.',
+                { sessionId: options.sessionId, taskId: options.task.id }
+            )
+            const wroteStartedDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                currentTask: options.task,
+                namespace: options.linked.namespace,
+                patch: {
+                    status: 'running'
+                },
+                event: startedEvent
+            })
             const runningTask = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
                 status: 'running',
                 initRuntime: buildTaskInitRuntime({
@@ -1220,13 +2346,28 @@ export class TaskAutomation {
                 return
             }
 
-            this.syncGoalTodo(runningTask, options.linked.namespace, options.task)
+            const runtimeTask = this.resolveRuntimeTask(runningTask, options.linked.namespace, options.task)
+            if (!runtimeTask) {
+                return
+            }
+
+            if (!wroteStartedDocsFirst) {
+                this.syncGoalTodo(runtimeTask, options.linked.namespace, options.task, startedEvent)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: options.linked.namespace,
+                    previousTask: options.task,
+                    task: runtimeTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: runningTask.id,
-                projectId: runningTask.projectId,
+                taskId: runtimeTask.id,
+                projectId: runtimeTask.projectId,
                 namespace: options.linked.namespace,
-                data: { taskId: runningTask.id }
+                data: { taskId: runtimeTask.id }
             })
 
             let preview: RpcPreviewStatus
@@ -1287,16 +2428,41 @@ export class TaskAutomation {
                 return
             }
 
-            const latestTask = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
+            const latestStored = this.store.tasks.getTaskByNamespace(options.linked.taskId, options.linked.namespace)
+            const latestTask = latestStored
+                ? getTaskRuntimeViewOrFallback({
+                    store: this.store,
+                    namespace: options.linked.namespace,
+                    previousTask: options.task,
+                    updatedTask: latestStored
+                })
+                : null
             if (!latestTask || latestTask.archivedAt || !isRunningTaskStatus(latestTask.status) || latestTask.source !== 'project_init') {
                 return
             }
 
             const strategy = getWorkflowStrategy(latestTask)
             const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', latestTask) ?? { status: 'review' }
+            const mergeResultResetPatch = buildMergeResultResetPatch(latestTask)
+            const readyEvent = buildGoalTodoAutomationEvent(
+                'automation_bootstrap_preview_ready',
+                'Bootstrap preview became ready and the todo item advanced to review.',
+                { sessionId: options.sessionId, taskId: latestTask.id, previewUrl: preview.url ?? null }
+            )
+            const wroteReadyDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+                currentTask: latestTask,
+                namespace: options.linked.namespace,
+                patch: {
+                    status: transitionPatch.status ?? 'review',
+                    workflowPhase: transitionPatch.workflowPhase,
+                    ...mergeResultResetPatch
+                },
+                event: readyEvent
+            })
             const updated = this.store.tasks.updateTaskByNamespace(options.linked.taskId, options.linked.namespace, {
                 status: transitionPatch.status ?? 'review',
                 workflowPhase: transitionPatch.workflowPhase,
+                ...(mergeResultResetPatch ?? {}),
                 initRuntime: buildTaskInitRuntime({
                     current: latestTask.initRuntime,
                     activeSessionId: latestTask.activeSessionId,
@@ -1323,13 +2489,33 @@ export class TaskAutomation {
                 return
             }
 
-            this.syncGoalTodo(updated, options.linked.namespace, latestTask)
+            const readyTask = updated ? getTaskRuntimeViewOrFallback({
+                store: this.store,
+                namespace: options.linked.namespace,
+                previousTask: latestTask,
+                updatedTask: updated
+            }) : null
+            if (!readyTask) {
+                return
+            }
+
+            if (!wroteReadyDocsFirst) {
+                this.syncGoalTodo(readyTask, options.linked.namespace, latestTask, readyEvent)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: options.linked.namespace,
+                    previousTask: latestTask,
+                    task: readyTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+                taskId: readyTask.id,
+                projectId: readyTask.projectId,
                 namespace: options.linked.namespace,
-                data: { taskId: updated.id }
+                data: { taskId: readyTask.id }
             })
         } finally {
             this.bootstrapPreviewInFlightByTaskKey.delete(previewTaskKey)
@@ -1340,29 +2526,67 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return
         if (current.archivedAt) return
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
         if (!isRunningTaskStatus(current.status)) return
 
         const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('assistant_ready', current) ?? { status: 'review' }
+        const mergeResultResetPatch = buildMergeResultResetPatch(current)
         const shouldApply = (transitionPatch.status !== undefined && transitionPatch.status !== current.status)
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
+            || mergeResultResetPatch !== null
         if (!shouldApply) return
 
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_ready',
+            'Pending permission/approval moved the todo item into review.',
+            { sessionId, taskId: current.id }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: transitionPatch.status ?? 'review',
+                workflowPhase: transitionPatch.workflowPhase,
+                ...mergeResultResetPatch
+            },
+            event
+        })
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: transitionPatch.status ?? 'review',
-            workflowPhase: transitionPatch.workflowPhase
+            workflowPhase: transitionPatch.workflowPhase,
+            ...(mergeResultResetPatch ?? {})
         })
         if (updated) {
-            this.syncGoalTodo(updated, linked.namespace, current)
+            const reviewTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+            if (!reviewTask) {
+                return
+            }
+            if (!wroteDocsFirst) {
+                this.syncGoalTodo(reviewTask, linked.namespace, current, event)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: linked.namespace,
+                    previousTask: current,
+                    task: reviewTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+                taskId: reviewTask.id,
+                projectId: reviewTask.projectId,
                 namespace: linked.namespace,
-                data: { taskId: updated.id }
+                data: { taskId: reviewTask.id }
             })
         }
     }
@@ -1371,11 +2595,16 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return
         if (current.archivedAt) return
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
         if (!isReviewTaskStatus(current.status)) return
-        if (current.goalId) return
 
         const strategy = getWorkflowStrategy(current)
         const transitionPatch = strategy.getTaskPatchForTransition('thinking_resumed', current) ?? { status: 'running' }
@@ -1383,18 +2612,46 @@ export class TaskAutomation {
             || (transitionPatch.workflowPhase !== undefined && transitionPatch.workflowPhase !== current.workflowPhase)
         if (!shouldApply) return
 
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_resumed',
+            'Agent resumed thinking and the todo item moved back into active execution.',
+            { sessionId, taskId: current.id }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: transitionPatch.status ?? 'running',
+                workflowPhase: transitionPatch.workflowPhase
+            },
+            event
+        })
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
             status: transitionPatch.status ?? 'running',
             workflowPhase: transitionPatch.workflowPhase
         })
         if (updated) {
-            this.syncGoalTodo(updated, linked.namespace, current)
+            const resumedTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+            if (!resumedTask) {
+                return
+            }
+            if (!wroteDocsFirst) {
+                this.syncGoalTodo(resumedTask, linked.namespace, current, event)
+            } else {
+                notifyProjectControllerTaskBlockedTransition({
+                    store: this.store,
+                    engine: this.engine,
+                    namespace: linked.namespace,
+                    previousTask: current,
+                    task: resumedTask
+                })
+            }
             this.engine.handleRealtimeEvent({
                 type: 'task-updated',
-                taskId: updated.id,
-                projectId: updated.projectId,
+                taskId: resumedTask.id,
+                projectId: resumedTask.projectId,
                 namespace: linked.namespace,
-                data: { taskId: updated.id }
+                data: { taskId: resumedTask.id }
             })
         }
     }
@@ -1403,17 +2660,30 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return
         if (current.archivedAt) return
         if (isDoneTaskStatus(current.status)) return
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return
 
         const details = getTaskInterruptionDetails(errorMessage)
         if (!details) return
 
         const reportedBlockedReason = details.message ?? 'Agent session reported an error'
         const blockedReason = chooseBlockedReason(current.blockedReason, reportedBlockedReason)
-        const shouldAppendBlockedMessage = current.status !== 'blocked' || blockedReason !== current.blockedReason
+        const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(current)
+        const alreadyBlocked = isSameAutomationBlock(current, {
+            status: nextBlockedStatus,
+            blockedReason,
+            blockedSource: 'agent',
+            blockedSessionId: sessionId
+        })
+        const shouldAppendBlockedMessage = !alreadyBlocked
         const isBootstrapTask = current.source === 'project_init'
         const shouldBlockInitRuntime = current.initRuntime?.sessionId === sessionId
             && (current.initRuntime.status === 'running'
@@ -1434,8 +2704,25 @@ export class TaskAutomation {
             })
             : undefined
 
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_blocked',
+            'The agent session reported an interruption and the todo item was blocked.',
+            { sessionId, taskId: current.id, blockedReason }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: nextBlockedStatus,
+                blockedReason,
+                blockedSource: 'agent',
+                blockedSessionId: sessionId,
+                initRuntime
+            },
+            event
+        })
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'blocked',
+            status: nextBlockedStatus,
             blockedReason,
             blockedSource: 'agent',
             blockedSessionId: sessionId,
@@ -1445,20 +2732,35 @@ export class TaskAutomation {
             return
         }
 
-        this.syncGoalTodo(updated, linked.namespace, current)
+        const blockedTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+        if (!blockedTask) {
+            return
+        }
+
+        if (!wroteDocsFirst) {
+            this.syncGoalTodo(blockedTask, linked.namespace, current, event)
+        } else {
+            notifyProjectControllerTaskBlockedTransition({
+                store: this.store,
+                engine: this.engine,
+                namespace: linked.namespace,
+                previousTask: current,
+                task: blockedTask
+            })
+        }
         this.engine.handleRealtimeEvent({
             type: 'task-updated',
-            taskId: updated.id,
-            projectId: updated.projectId,
+            taskId: blockedTask.id,
+            projectId: blockedTask.projectId,
             namespace: linked.namespace,
-            data: { taskId: updated.id }
+            data: { taskId: blockedTask.id }
         })
         this.engine.handleRealtimeEvent({
             type: 'toast',
             namespace: linked.namespace,
             data: {
                 title: 'Task blocked',
-                body: `${updated.title}: ${blockedReason}`,
+                body: `${blockedTask.title}: ${blockedReason}`,
                 sessionId,
                 url: ''
             }
@@ -1468,9 +2770,9 @@ export class TaskAutomation {
                 store: this.store,
                 engine: this.engine,
                 sessionId,
-                taskId: updated.id,
+                taskId: blockedTask.id,
                 reason: blockedReason,
-                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:${errorMessage.id}`
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${blockedTask.id}:${sessionId}:${errorMessage.id}`
             })
         }
     }
@@ -1479,16 +2781,30 @@ export class TaskAutomation {
         const linked = getLinkedTaskFromSession(this.engine, this.store, sessionId)
         if (!linked) return false
 
-        const current = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const stored = this.store.tasks.getTaskByNamespace(linked.taskId, linked.namespace)
+        const current = stored ? getTaskRuntimeView({ store: this.store, namespace: linked.namespace, task: stored }) : null
         if (!current) return false
         if (current.archivedAt) return false
-        if (isDoneTaskStatus(current.status) || current.status === 'blocked') return false
+        if (isDoneTaskStatus(current.status)) return false
+        if (isStaleDbOnlyManualGoalTask({
+            store: this.store,
+            namespace: linked.namespace,
+            task: current
+        })) return false
 
         const reportedBlockedReason = current.goalId
-            ? 'Agent session became inactive before applying its final HOPI_ACTIONS packet.'
+            ? GOAL_ACTION_PACKET_INACTIVE_BLOCKED_REASON
             : 'Agent session became inactive before updating the task status.'
         const blockedReason = chooseBlockedReason(current.blockedReason, reportedBlockedReason)
-        const shouldAppendBlockedMessage = current.status !== 'blocked' || blockedReason !== current.blockedReason
+        const nextBlockedStatus = recoverStoredTaskStatusFromLegacyBlocked(current)
+        const alreadyBlocked = isSameAutomationBlock(current, {
+            status: nextBlockedStatus,
+            blockedReason,
+            blockedSource: 'agent',
+            blockedSessionId: sessionId
+        })
+        if (alreadyBlocked) return false
+        const shouldAppendBlockedMessage = true
         const isBootstrapTask = current.source === 'project_init'
         const shouldBlockInitRuntime = current.initRuntime?.sessionId === sessionId
             && (current.initRuntime.status === 'running'
@@ -1509,8 +2825,25 @@ export class TaskAutomation {
             })
             : undefined
 
+        const event = buildGoalTodoAutomationEvent(
+            'automation_task_blocked',
+            'The agent session became inactive before completion and the todo item was blocked.',
+            { sessionId, taskId: current.id, blockedReason }
+        )
+        const wroteDocsFirst = this.syncGoalTodoBeforeTaskUpdate({
+            currentTask: current,
+            namespace: linked.namespace,
+            patch: {
+                status: nextBlockedStatus,
+                blockedReason,
+                blockedSource: 'agent',
+                blockedSessionId: sessionId,
+                initRuntime
+            },
+            event
+        })
         const updated = this.store.tasks.updateTaskByNamespace(linked.taskId, linked.namespace, {
-            status: 'blocked',
+            status: nextBlockedStatus,
             blockedReason,
             blockedSource: 'agent',
             blockedSessionId: sessionId,
@@ -1520,20 +2853,35 @@ export class TaskAutomation {
             return false
         }
 
-        this.syncGoalTodo(updated, linked.namespace, current)
+        const blockedTask = this.resolveRuntimeTask(updated, linked.namespace, current)
+        if (!blockedTask) {
+            return false
+        }
+
+        if (!wroteDocsFirst) {
+            this.syncGoalTodo(blockedTask, linked.namespace, current, event)
+        } else {
+            notifyProjectControllerTaskBlockedTransition({
+                store: this.store,
+                engine: this.engine,
+                namespace: linked.namespace,
+                previousTask: current,
+                task: blockedTask
+            })
+        }
         this.engine.handleRealtimeEvent({
             type: 'task-updated',
-            taskId: updated.id,
-            projectId: updated.projectId,
+            taskId: blockedTask.id,
+            projectId: blockedTask.projectId,
             namespace: linked.namespace,
-            data: { taskId: updated.id }
+            data: { taskId: blockedTask.id }
         })
         this.engine.handleRealtimeEvent({
             type: 'toast',
             namespace: linked.namespace,
             data: {
                 title: 'Task blocked',
-                body: `${updated.title}: ${blockedReason}`,
+                body: `${blockedTask.title}: ${blockedReason}`,
                 sessionId,
                 url: ''
             }
@@ -1543,9 +2891,9 @@ export class TaskAutomation {
                 store: this.store,
                 engine: this.engine,
                 sessionId,
-                taskId: updated.id,
+                taskId: blockedTask.id,
                 reason: blockedReason,
-                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${updated.id}:${sessionId}:inactive`
+                localId: `${AUTO_TASK_BLOCKED_LOCAL_ID_PREFIX}${blockedTask.id}:${sessionId}:inactive`
             })
         }
 

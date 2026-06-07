@@ -1,14 +1,22 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { buildUniqueGoalKey } from '@hopi/protocol'
 import { GoalStatusSchema } from '@hopi/protocol/schemas'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { Store, StoredGoal, StoredProject, StoredTask, StoredWorkspace } from '../../store'
-import { prependTaskHandoffDecisionContext } from '../../sync/goals/decisionHandoff'
-import { bootstrapGoalDocs } from '../../sync/goals/goalDocs'
+import { bootstrapGoalDocs, overlayGoalWithCanonicalDoc, syncGoalOwnedDocs } from '../../sync/goals/goalDocs'
 import { buildGoalDocsImportPreview, importGoalDocs } from '../../sync/goals/goalDocsImport'
+import { createGoalDecisionTopic, resolveGoalDecisionTopic, resumeGoalAutomation } from '../../sync/goals/goalControl'
+import { listGoalDecisionTopicsFromDocs } from '../../sync/goals/goalDecisionStore'
+import { appendGoalWorkflowEvent, buildDocsBackedGoalWorkflowGoalSnapshot } from '../../sync/goals/goalEventLog'
+import { getDocsRoot, getGoalDocPath, getGoalEventsPath, getGoalTodoPath } from '../../sync/goals/goalDocPaths'
 import { createGoalTodoTaskId, readGoalTodo, upsertGoalTodoTaskState } from '../../sync/goals/goalTodo'
-import { syncTaskStateToGoalTodo } from '../../sync/goals/goalTodoTaskSync'
+import {
+    buildGoalTodoTaskProjection,
+    findGoalTodoTaskProjectionById,
+    getTaskByNamespaceOrGoalTodoProjection
+} from '../../sync/goals/goalTodoProjection'
 import { notifyProjectController } from '../../sync/projectController'
 import { getProjectDefaultTaskRuntimeSettings } from '../../sync/projectTaskDefaults'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -71,21 +79,6 @@ function emitTaskAdded(options: {
     })
 }
 
-function emitTaskUpdated(options: {
-    engine: SyncEngine | null
-    projectId: string
-    namespace: string
-    taskId: string
-}): void {
-    options.engine?.handleRealtimeEvent({
-        type: 'task-updated',
-        taskId: options.taskId,
-        projectId: options.projectId,
-        namespace: options.namespace,
-        data: { taskId: options.taskId }
-    })
-}
-
 function buildPlannerSeedTaskContract(goal: {
     id: string
     goalKey: string
@@ -104,7 +97,9 @@ function buildPlannerSeedTaskContract(goal: {
         '## Acceptance',
         '',
         `- Read and update .hopi/docs/goals/${goal.goalKey}/goal.md.`,
-        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml as structured YAML with planning items tagged ready/candidate/deferred.`,
+        `- Read and update .hopi/docs/goals/${goal.goalKey}/design.md before reshaping substantial engineering work.`,
+        `- Update .hopi/docs/goals/${goal.goalKey}/todo.yml as canonical YAML with \`goal\` + \`items[]\`, stable \`ref\`, \`kind\`, and statuses such as \`planned\` / \`in_progress\` / \`in_review\` / \`done\`.`,
+        `- Use .hopi/docs/goals/${goal.goalKey}/planning-requests.yml for durable planner follow-through instead of creating new candidate/deferred reservoir status.`,
         '- Create the first small batch of goal-scoped kanban tasks when the Goal is clear enough, usually 2-3 independent tasks when the lane is empty.',
         '- Create fewer tasks when candidates depend on each other, would edit the same files, or need a human decision.',
         '- If product intent is unclear, create one blocking DecisionTopic with a concrete question and stop.',
@@ -139,6 +134,67 @@ function getDefaultWorkspace(store: Store, project: StoredProject): StoredWorksp
         : store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
 }
 
+function buildGoalRouteResponseGoal(options: {
+    store: Store
+    goal: StoredGoal
+}): StoredGoal {
+    const project = options.store.projects.getProjectByNamespace(options.goal.projectId, options.goal.namespace)
+    if (!project) {
+        return options.goal
+    }
+
+    return overlayGoalWithCanonicalDoc({
+        goal: options.goal,
+        defaultWorkspace: getDefaultWorkspace(options.store, project)
+    })
+}
+
+function hasDocsBackedGoalState(options: {
+    store: Store
+    project: StoredProject
+    goal: StoredGoal
+}): boolean {
+    const docsRoot = getDocsRoot(getDefaultWorkspace(options.store, options.project))
+    if (!docsRoot) {
+        return true
+    }
+    return existsSync(getGoalDocPath(docsRoot, options.goal.goalKey))
+        || existsSync(getGoalTodoPath(docsRoot, options.goal.goalKey))
+}
+
+function appendGoalRouteWorkflowEvent(options: {
+    project: StoredProject
+    goalId: string
+    goalKey: string
+    before: Record<string, unknown> | null
+    after: Record<string, unknown> | null
+    defaultWorkspace: StoredWorkspace | null
+    action: string
+    reason: string
+    metadata?: Record<string, unknown>
+}): void {
+    const docsRoot = getDocsRoot(options.defaultWorkspace)
+    if (!docsRoot) {
+        return
+    }
+
+    appendGoalWorkflowEvent(getGoalEventsPath(docsRoot, options.goalKey), {
+        writer: 'hopi-api',
+        action: options.action,
+        entity: {
+            type: 'goal',
+            id: options.goalId
+        },
+        before: options.before,
+        after: options.after,
+        reason: options.reason,
+        metadata: {
+            projectId: options.project.id,
+            ...(options.metadata ?? {})
+        }
+    })
+}
+
 function ensurePlannerSeedTask(options: {
     store: Store
     project: StoredProject
@@ -153,14 +209,19 @@ function ensurePlannerSeedTask(options: {
         return null
     }
 
-    const existingTasks = options.store.tasks.listTasksByProjectAndNamespace(options.project.id, options.namespace, {
-        goalId: options.goal.id
+    const defaultWorkspace = getDefaultWorkspace(options.store, options.project)
+    const existingTodo = readGoalTodo({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace
     })
-    if (existingTasks.length > 0) {
+    const hasNonReservoirTodoItem = existingTodo.board.items.some((item) => !(
+        item.status === 'planned' && (item.tag === 'candidate' || item.tag === 'deferred')
+    ))
+    if (hasNonReservoirTodoItem) {
         return null
     }
 
-    const defaultWorkspace = getDefaultWorkspace(options.store, options.project)
     bootstrapGoalDocs({
         project: options.project,
         goal: options.goal,
@@ -174,13 +235,35 @@ function ensurePlannerSeedTask(options: {
         defaultWorkspace,
         title: taskTitle
     })
+    const taskDescription = 'Clarify the Goal, update repo memory, and create the first small batch of executable tasks.'
+    const wroteDocsFirst = Boolean(defaultWorkspace) && upsertGoalTodoTaskState({
+        project: options.project,
+        goal: options.goal,
+        defaultWorkspace,
+        taskId,
+        status: 'planning',
+        tag: 'ready',
+        taskKind: 'planning',
+        title: taskTitle,
+        body: taskDescription,
+        blocked: null,
+        event: {
+            writer: 'hopi-goals-api',
+            action: 'goal_planner_seed_backfilled',
+            reason: 'Backfilled a missing planner seed todo item for an existing planning goal.',
+            metadata: {
+                source: 'ensurePlannerSeedTask',
+                route: '/api/projects/:projectId/goals'
+            }
+        }
+    })
     const task = options.store.tasks.createTask({
         id: taskId,
         projectId: options.project.id,
         goalId: options.goal.id,
         goalTodoRef: taskId,
         title: taskTitle,
-        description: 'Clarify the Goal, update repo memory, and create the first small batch of executable tasks.',
+        description: taskDescription,
         status: 'planning',
         priority: 'high',
         sortKey: Date.now(),
@@ -211,13 +294,29 @@ function ensurePlannerSeedTask(options: {
         ],
         subTasksUpdatedAt: Date.now()
     })
-    syncTaskStateToGoalTodo({
-        store: options.store,
-        namespace: options.namespace,
-        task,
-        project: options.project,
-        defaultWorkspace
-    })
+    if (!wroteDocsFirst) {
+        upsertGoalTodoTaskState({
+            project: options.project,
+            goal: options.goal,
+            defaultWorkspace,
+            taskId: task.goalTodoRef ?? task.id,
+            status: 'planning',
+            tag: 'ready',
+            taskKind: 'planning',
+            title: task.title,
+            body: task.description,
+            blocked: null,
+            event: {
+                writer: 'hopi-goals-api',
+                action: 'goal_planner_seed_backfilled',
+                reason: 'Backfilled a missing planner seed todo item for an existing planning goal.',
+                metadata: {
+                    source: 'ensurePlannerSeedTask',
+                    route: '/api/projects/:projectId/goals'
+                }
+            }
+        })
+    }
     return task
 }
 
@@ -236,13 +335,15 @@ export function createGoalsRoutes(options: {
         }
 
         const engine = options.getSyncEngine()
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
         const imported = importGoalDocs({
             store: options.store,
             project,
             namespace,
-            defaultWorkspace: getDefaultWorkspace(options.store, project)
+            defaultWorkspace
         })
-        const goals = options.store.goals.listGoalsByProjectAndNamespace(projectId, namespace)
+        const storedGoals = options.store.goals.listGoalsByProjectAndNamespace(projectId, namespace)
+        const goals = storedGoals.map((goal) => overlayGoalWithCanonicalDoc({ goal, defaultWorkspace }))
         let repaired = false
         for (const goal of goals) {
             const seedTask = ensurePlannerSeedTask({
@@ -269,7 +370,20 @@ export function createGoalsRoutes(options: {
                 namespace
             })
         }
-        return c.json({ goals })
+        const docsPreview = buildGoalDocsImportPreview({
+            store: options.store,
+            project,
+            namespace,
+            defaultWorkspace
+        })
+        const docsBackedGoalKeys = new Set(docsPreview.goals.map((goal) => goal.goalKey))
+        const visibleGoals = docsPreview.docsRoot
+            ? options.store.goals
+                .listGoalsByProjectAndNamespace(projectId, namespace)
+                .filter((goal) => docsBackedGoalKeys.has(goal.goalKey))
+                .map((goal) => overlayGoalWithCanonicalDoc({ goal, defaultWorkspace }))
+            : goals
+        return c.json({ goals: visibleGoals })
     })
 
     app.get('/projects/:projectId/goals/:goalId/todo', (c) => {
@@ -285,12 +399,26 @@ export function createGoalsRoutes(options: {
         if (!goal || goal.projectId !== project.id) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal })) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
 
-        return c.json(readGoalTodo({
+        const todo = readGoalTodo({
             project,
             goal,
             defaultWorkspace: getDefaultWorkspace(options.store, project)
-        }))
+        })
+
+        return c.json({
+            board: todo.board,
+            tasks: buildGoalTodoTaskProjection({
+                store: options.store,
+                project,
+                goalId: goal.id,
+                namespace,
+                includeArchived: false
+            })
+        })
     })
 
     app.get('/projects/:projectId/goal-docs/import-preview', (c) => {
@@ -367,6 +495,29 @@ export function createGoalsRoutes(options: {
             autopilotEnabled: parsed.data.autopilotEnabled ?? true,
             deployRequiresApproval: parsed.data.deployRequiresApproval ?? true
         })
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
+        bootstrapGoalDocs({
+            project,
+            goal,
+            defaultWorkspace
+        })
+        appendGoalRouteWorkflowEvent({
+            project,
+            goalId: goal.id,
+            goalKey: goal.goalKey,
+            before: null,
+            after: buildDocsBackedGoalWorkflowGoalSnapshot({
+                goal,
+                defaultWorkspace
+            }),
+            defaultWorkspace,
+            action: 'goal_created_from_goals_api',
+            reason: 'Goal creation route created a durable goal.',
+            metadata: {
+                source: 'goals_create',
+                route: '/api/projects/:projectId/goals'
+            }
+        })
         const plannerTask = ensurePlannerSeedTask({
             store: options.store,
             project,
@@ -389,7 +540,12 @@ export function createGoalsRoutes(options: {
             namespace
         })
 
-        return c.json({ goal })
+        return c.json({
+            goal: buildGoalRouteResponseGoal({
+                store: options.store,
+                goal
+            })
+        })
     })
 
     app.patch('/goals/:goalId', async (c) => {
@@ -397,6 +553,13 @@ export function createGoalsRoutes(options: {
         const goalId = c.req.param('goalId')
         const existing = options.store.goals.getGoalByNamespace(goalId, namespace)
         if (!existing) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal: existing })) {
             return c.json({ error: 'Goal not found' }, 404)
         }
 
@@ -418,6 +581,35 @@ export function createGoalsRoutes(options: {
         if (!goal) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        if (project) {
+            const defaultWorkspace = getDefaultWorkspace(options.store, project)
+            const beforeSnapshot = buildDocsBackedGoalWorkflowGoalSnapshot({
+                goal: existing,
+                defaultWorkspace
+            })
+            syncGoalOwnedDocs({
+                project,
+                goal,
+                defaultWorkspace
+            })
+            appendGoalRouteWorkflowEvent({
+                project,
+                goalId: goal.id,
+                goalKey: goal.goalKey,
+                before: beforeSnapshot,
+                after: buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal,
+                    defaultWorkspace
+                }),
+                defaultWorkspace,
+                action: 'goal_updated_from_goals_api',
+                reason: 'Goal patch route updated the durable goal metadata.',
+                metadata: {
+                    source: 'goals_patch',
+                    route: '/api/goals/:goalId'
+                }
+            })
+        }
 
         emitProjectUpdated({
             engine: options.getSyncEngine(),
@@ -425,7 +617,12 @@ export function createGoalsRoutes(options: {
             namespace
         })
 
-        return c.json({ goal })
+        return c.json({
+            goal: buildGoalRouteResponseGoal({
+                store: options.store,
+                goal
+            })
+        })
     })
 
     app.post('/goals/:goalId/automation/pause', (c) => {
@@ -435,12 +632,42 @@ export function createGoalsRoutes(options: {
         if (!existing) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal: existing })) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
 
         const goal = options.store.goals.updateGoalByNamespace(goalId, namespace, {
             automationPausedAt: Date.now()
         })
         if (!goal) {
             return c.json({ error: 'Goal not found' }, 404)
+        }
+        if (project) {
+            const defaultWorkspace = getDefaultWorkspace(options.store, project)
+            appendGoalRouteWorkflowEvent({
+                project,
+                goalId: goal.id,
+                goalKey: goal.goalKey,
+                before: buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal: existing,
+                    defaultWorkspace
+                }),
+                after: buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal,
+                    defaultWorkspace
+                }),
+                defaultWorkspace,
+                action: 'goal_automation_paused_from_goals_api',
+                reason: 'Goal automation pause route updated the automation pause state.',
+                metadata: {
+                    source: 'goal_automation_pause',
+                    route: '/api/goals/:goalId/automation/pause'
+                }
+            })
         }
 
         emitProjectUpdated({
@@ -449,7 +676,12 @@ export function createGoalsRoutes(options: {
             namespace
         })
 
-        return c.json({ goal })
+        return c.json({
+            goal: buildGoalRouteResponseGoal({
+                store: options.store,
+                goal
+            })
+        })
     })
 
     app.post('/goals/:goalId/automation/resume', (c) => {
@@ -459,23 +691,53 @@ export function createGoalsRoutes(options: {
         if (!existing) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        const project = options.store.projects.getProjectByNamespace(existing.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal: existing })) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
 
-        const goal = options.store.goals.updateGoalByNamespace(goalId, namespace, {
-            automationPausedAt: null
+        const goal = resumeGoalAutomation({
+            store: options.store,
+            engine: options.getSyncEngine(),
+            namespace,
+            goalId
         })
         if (!goal) {
             return c.json({ error: 'Goal not found' }, 404)
         }
+        if (project) {
+            const defaultWorkspace = getDefaultWorkspace(options.store, project)
+            appendGoalRouteWorkflowEvent({
+                project,
+                goalId: goal.id,
+                goalKey: goal.goalKey,
+                before: buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal: existing,
+                    defaultWorkspace
+                }),
+                after: buildDocsBackedGoalWorkflowGoalSnapshot({
+                    goal,
+                    defaultWorkspace
+                }),
+                defaultWorkspace,
+                action: 'goal_automation_resumed_from_goals_api',
+                reason: 'Goal automation resume route updated the automation pause state.',
+                metadata: {
+                    source: 'goal_automation_resume',
+                    route: '/api/goals/:goalId/automation/resume'
+                }
+            })
+        }
 
-        const engine = options.getSyncEngine()
-        emitProjectUpdated({
-            engine,
-            projectId: existing.projectId,
-            namespace
+        return c.json({
+            goal: buildGoalRouteResponseGoal({
+                store: options.store,
+                goal
+            })
         })
-        engine?.requestAutoRunTick(namespace, existing.projectId)
-
-        return c.json({ goal })
     })
 
     app.get('/goals/:goalId/topics', (c) => {
@@ -485,8 +747,22 @@ export function createGoalsRoutes(options: {
         if (!goal) {
             return c.json({ error: 'Goal not found' }, 404)
         }
-
-        const topics = options.store.goalDecisionTopics.listByGoalAndNamespace(goalId, namespace)
+        const project = options.store.projects.getProjectByNamespace(goal.projectId, namespace)
+        if (!project) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal })) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
+        if (!getDocsRoot(defaultWorkspace)) {
+            return c.json({ error: 'Workspace docs root unavailable' }, 400)
+        }
+        const topics = listGoalDecisionTopicsFromDocs({
+            project,
+            goal,
+            defaultWorkspace
+        })
         return c.json({ topics })
     })
 
@@ -501,6 +777,13 @@ export function createGoalsRoutes(options: {
         if (!project) {
             return c.json({ error: 'Project not found' }, 404)
         }
+        if (!hasDocsBackedGoalState({ store: options.store, project, goal })) {
+            return c.json({ error: 'Goal not found' }, 404)
+        }
+        const defaultWorkspace = getDefaultWorkspace(options.store, project)
+        if (!getDocsRoot(defaultWorkspace)) {
+            return c.json({ error: 'Workspace docs root unavailable' }, 400)
+        }
 
         const json = await c.req.json().catch(() => null)
         const parsed = createTopicSchema.safeParse(json)
@@ -509,64 +792,32 @@ export function createGoalsRoutes(options: {
         }
 
         if (parsed.data.taskId) {
-            const task = options.store.tasks.getTaskByNamespace(parsed.data.taskId, namespace)
+            const task = findGoalTodoTaskProjectionById({
+                store: options.store,
+                namespace,
+                taskId: parsed.data.taskId,
+                includeArchived: false
+            })
             if (!task || task.projectId !== goal.projectId || task.goalId !== goalId) {
                 return c.json({ error: 'Task not found' }, 404)
             }
         }
 
-        const topic = options.store.goalDecisionTopics.create({
-            id: randomUUID(),
-            projectId: goal.projectId,
-            goalId,
+        const engine = options.getSyncEngine()
+        const created = createGoalDecisionTopic({
+            store: options.store,
+            engine,
             namespace,
+            project,
+            goal,
             taskId: parsed.data.taskId ?? null,
             title: parsed.data.title,
             body: parsed.data.body,
-            blocking: parsed.data.blocking ?? true
+            blocking: parsed.data.blocking ?? true,
+            writer: 'hopi-api',
+            reason: 'Created a durable decision topic from the goals API.'
         })
-
-        const engine = options.getSyncEngine()
-        if (topic.blocking && topic.taskId) {
-            const task = options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
-            if (task && task.status !== 'done' && task.status !== 'finished' && task.status !== 'blocked') {
-                const blockedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
-                    status: 'blocked',
-                    blockedReason: parsed.data.body,
-                    blockedSource: 'decision_topic',
-                    blockedSessionId: null
-                })
-                if (blockedTask) {
-                    if (blockedTask.goalId && blockedTask.goalTodoRef) {
-                        upsertGoalTodoTaskState({
-                            project,
-                            goal,
-                            defaultWorkspace: getDefaultWorkspace(options.store, project),
-                            taskId: blockedTask.goalTodoRef,
-                            status: 'blocked',
-                            tag: 'unknown',
-                            title: blockedTask.title,
-                            body: blockedTask.description,
-                            blocked: {
-                                kind: 'decision_topic',
-                                summary: parsed.data.body,
-                                updatedAt: Date.now()
-                            }
-                        })
-                    }
-                    emitTaskUpdated({
-                        engine,
-                        projectId: blockedTask.projectId,
-                        namespace,
-                        taskId: blockedTask.id
-                    })
-                }
-            }
-        } else if (topic.blocking) {
-            options.store.goals.updateGoalByNamespace(goal.id, namespace, {
-                status: 'blocked'
-            })
-        }
+        const topic = created.topic
 
         notifyProjectController({
             store: options.store,
@@ -578,12 +829,6 @@ export function createGoalsRoutes(options: {
             kind: 'decision',
             title: topic.title,
             body: topic.body
-        })
-
-        emitProjectUpdated({
-            engine,
-            projectId: goal.projectId,
-            namespace
         })
 
         return c.json({ topic })
@@ -598,75 +843,18 @@ export function createGoalsRoutes(options: {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        const topic = options.store.goalDecisionTopics.resolveByNamespace(topicId, namespace, parsed.data.resolution)
-        if (!topic) {
+        const resolved = resolveGoalDecisionTopic({
+            store: options.store,
+            engine: options.getSyncEngine(),
+            namespace,
+            topicId,
+            resolution: parsed.data.resolution
+        })
+        if (!resolved) {
             return c.json({ error: 'Topic not found' }, 404)
         }
 
-        const engine = options.getSyncEngine()
-        const remainingBlockingGoalTopics = topic.blocking
-            ? options.store.goalDecisionTopics
-                .listByGoalAndNamespace(topic.goalId, namespace)
-                .filter((candidate) => candidate.blocking && candidate.status === 'waiting')
-            : []
-        if (topic.blocking && topic.taskId) {
-            const stillBlocked = remainingBlockingGoalTopics
-                .some((candidate) => (
-                    candidate.taskId === topic.taskId &&
-                    candidate.blocking &&
-                    candidate.status === 'waiting'
-                ))
-            if (!stillBlocked) {
-                const task = options.store.tasks.getTaskByNamespace(topic.taskId, namespace)
-                if (task) {
-                    const plannedTask = options.store.tasks.updateTaskByNamespace(task.id, namespace, {
-                        status: task.status === 'blocked' ? 'planning' : task.status,
-                        handoff: prependTaskHandoffDecisionContext(task, topic)
-                    })
-                    if (plannedTask) {
-                        if (task.status === 'blocked' && plannedTask.goalId && plannedTask.goalTodoRef) {
-                            const project = options.store.projects.getProjectByNamespace(plannedTask.projectId, namespace)
-                            const goal = options.store.goals.getGoalByNamespace(plannedTask.goalId, namespace)
-                            if (project && goal) {
-                                upsertGoalTodoTaskState({
-                                    project,
-                                    goal,
-                                    defaultWorkspace: getDefaultWorkspace(options.store, project),
-                                    taskId: plannedTask.goalTodoRef,
-                                    status: 'planning',
-                                    tag: 'ready',
-                                    title: plannedTask.title,
-                                    body: plannedTask.description,
-                                    blocked: null
-                                })
-                            }
-                        }
-                        emitTaskUpdated({
-                            engine,
-                            projectId: plannedTask.projectId,
-                            namespace,
-                            taskId: plannedTask.id
-                        })
-                    }
-                }
-            }
-        }
-        if (topic.blocking && remainingBlockingGoalTopics.length === 0) {
-            const goal = options.store.goals.getGoalByNamespace(topic.goalId, namespace)
-            if (goal?.status === 'blocked') {
-                options.store.goals.updateGoalByNamespace(goal.id, namespace, {
-                    status: 'active'
-                })
-            }
-        }
-
-        emitProjectUpdated({
-            engine,
-            projectId: topic.projectId,
-            namespace
-        })
-
-        return c.json({ topic })
+        return c.json({ topic: resolved.topic })
     })
 
     return app

@@ -13,6 +13,11 @@ import { PermissionModeSchema } from '@hopi/protocol/schemas';
 import { startOpencodeHookServer } from './utils/startOpencodeHookServer';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import {
+    buildSessionProfileAcpMcpServers,
+    getSessionProfileFromEnv,
+    injectSessionProfileUserPrefix
+} from '@/sessionProfiles';
 
 export async function runOpencode(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -22,6 +27,8 @@ export async function runOpencode(opts: {
 } = {}): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
     const startedBy = opts.startedBy ?? 'terminal';
+    const sessionProfile = getSessionProfileFromEnv();
+    const sessionProfileMcpServers = buildSessionProfileAcpMcpServers(sessionProfile);
 
     logger.debug(`[opencode] Starting with options: startedBy=${startedBy}, startingMode=${opts.startingMode}`);
 
@@ -86,10 +93,11 @@ export async function runOpencode(opts: {
 
     session.onUserMessage((message) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
+        const profiledText = injectSessionProfileUserPrefix(sessionProfile, formattedText);
         const mode: OpencodeMode = {
             permissionMode: currentPermissionMode
         };
-        messageQueue.push(formattedText, mode, message.localKey ?? null);
+        messageQueue.push(profiledText, mode, message.localKey ?? null);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {
@@ -126,6 +134,7 @@ export async function runOpencode(opts: {
             resumeSessionId: opts.resumeSessionId,
             hookServer,
             hookUrl,
+            mcpServers: sessionProfileMcpServers,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

@@ -2,6 +2,8 @@ import type { HopiTaskRole, Session } from '@hopi/protocol/types'
 
 import type { StoredSession, StoredTask, Store } from '../store'
 import { syncTaskActionRuntimeSession } from '../utils/taskActionRuntime'
+import { getDocsRoot } from './goals/goalDocPaths'
+import { findGoalTodoTaskProjectionById, getTaskByNamespaceOrGoalTodoProjection } from './goals/goalTodoProjection'
 import type { SyncEngine } from './syncEngine'
 
 export type SessionTaskLinkMetadata = {
@@ -48,8 +50,143 @@ function trimString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 }
 
+function getCanonicalSessionLinkTaskId(task: Pick<StoredTask, 'id' | 'goalTodoRef'>): string {
+    return trimString(task.goalTodoRef) ?? task.id
+}
+
+function resolveCanonicalSessionLinkTaskId(options: {
+    store: Store
+    namespace: string
+    projectId: string
+    taskId: string
+}): string | null {
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.taskId
+    })
+    if (projected && projected.projectId === options.projectId) {
+        return getCanonicalSessionLinkTaskId(projected)
+    }
+
+    const stored = options.store.tasks.getTaskByNamespace(options.taskId, options.namespace)
+    if (stored && stored.projectId === options.projectId) {
+        if (!getTaskRuntimeView({
+            store: options.store,
+            namespace: options.namespace,
+            task: stored
+        })) {
+            return null
+        }
+        return getCanonicalSessionLinkTaskId(stored)
+    }
+
+    return options.taskId
+}
+
 function isSessionActive(session: Session | null | undefined): boolean {
     return session ? session.active !== false : false
+}
+
+function getTaskRuntimeView(options: {
+    store: Store
+    namespace: string
+    task: StoredTask
+}): StoredTask | null {
+    if (!options.task.goalId) {
+        return options.task
+    }
+    const projected = getTaskByNamespaceOrGoalTodoProjection({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+    if (!projected) {
+        return null
+    }
+    if (projected === options.task) {
+        return options.task
+    }
+
+    const hasExplicitOverlayBlock = Boolean(
+        options.task.blockedReason
+        || options.task.blockedSource
+        || options.task.blockedSessionId
+        || options.task.blockedAt
+    )
+    if (!hasExplicitOverlayBlock) {
+        return projected
+    }
+
+    return {
+        ...projected,
+        blockedReason: options.task.blockedReason,
+        blockedSource: options.task.blockedSource,
+        blockedSessionId: options.task.blockedSessionId,
+        blockedAt: options.task.blockedAt
+    }
+}
+
+function isStaleDbOnlyGoalTaskForSource(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+    source: StoredTask['source']
+}): boolean {
+    if (!options.task.goalId) {
+        return false
+    }
+    if (options.task.source !== options.source) {
+        return false
+    }
+    if (trimString(options.task.goalTodoRef)) {
+        return false
+    }
+    const project = options.store.projects.getProjectByNamespace(options.task.projectId, options.namespace)
+    if (!project) {
+        return false
+    }
+    const defaultWorkspace = project.defaultWorkspaceId
+        ? options.store.workspaces.getWorkspace(project.defaultWorkspaceId)
+        : options.store.workspaces.listWorkspacesByProject(project.id)[0] ?? null
+    if (!getDocsRoot(defaultWorkspace)) {
+        return false
+    }
+    return !findGoalTodoTaskProjectionById({
+        store: options.store,
+        namespace: options.namespace,
+        taskId: options.task.id
+    })
+}
+
+function isStaleDbOnlyManualGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'manual'
+    })
+}
+
+function isStaleDbOnlyBootstrapGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyGoalTaskForSource({
+        ...options,
+        source: 'project_init'
+    })
+}
+
+function isStaleDbOnlyRuntimeGoalTask(options: {
+    store: Store
+    namespace: string
+    task: Pick<StoredTask, 'id' | 'goalId' | 'goalTodoRef' | 'source' | 'projectId'>
+}): boolean {
+    return isStaleDbOnlyManualGoalTask(options) || isStaleDbOnlyBootstrapGoalTask(options)
 }
 
 export function readSessionTaskLinkMetadata(current: unknown): SessionTaskLinkMetadata | null {
@@ -89,6 +226,18 @@ export function mergeSessionTaskLinkMetadata(current: unknown, patch: SessionTas
 export function sessionMetadataMatchesTaskLink(current: unknown, projectId: string, taskId: string): boolean {
     const metadata = readSessionTaskLinkMetadata(current)
     return metadata?.projectId === projectId && metadata.taskId === taskId
+}
+
+function sessionMetadataMatchesTask(options: {
+    current: unknown
+    task: Pick<StoredTask, 'id' | 'goalTodoRef' | 'projectId'>
+}): boolean {
+    const metadata = readSessionTaskLinkMetadata(options.current)
+    if (!metadata || metadata.projectId !== options.task.projectId) {
+        return false
+    }
+    return metadata.taskId === options.task.id
+        || metadata.taskId === getCanonicalSessionLinkTaskId(options.task)
 }
 
 function updateStoredSessionTaskLink(options: {
@@ -134,13 +283,23 @@ export function syncTaskSessionLink(options: {
     name?: string
     hopiTaskRole?: HopiTaskRole
 }): boolean {
+    const canonicalTaskId = resolveCanonicalSessionLinkTaskId({
+        store: options.store,
+        namespace: options.namespace,
+        projectId: options.projectId,
+        taskId: options.taskId
+    })
+    if (!canonicalTaskId) {
+        return false
+    }
+
     const ok = updateStoredSessionTaskLink({
         store: options.store,
         sessionId: options.sessionId,
         namespace: options.namespace,
         patch: {
             projectId: options.projectId,
-            taskId: options.taskId,
+            taskId: canonicalTaskId,
             name: options.name,
             hopiTaskRole: options.hopiTaskRole
         }
@@ -180,6 +339,20 @@ export function relinkTaskToSession(options: {
     sessionId: string
     preserveMergeResultOnSessionChange?: boolean
 }): StoredTask | null {
+    if (isStaleDbOnlyRuntimeGoalTask({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })) {
+        return null
+    }
+    if (!getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })) {
+        return null
+    }
     const nextTask = options.store.tasks.updateTaskByNamespace(options.task.id, options.namespace, {
         activeSessionId: options.sessionId,
         mergeRuntime: syncTaskActionRuntimeSession(options.task.mergeRuntime, options.sessionId),
@@ -190,26 +363,34 @@ export function relinkTaskToSession(options: {
     if (!nextTask) {
         return null
     }
+    const runtimeTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: nextTask
+    })
+    if (!runtimeTask) {
+        return null
+    }
 
     syncTaskSessionLink({
         store: options.store,
         engine: options.engine,
         sessionId: options.sessionId,
         namespace: options.namespace,
-        projectId: nextTask.projectId,
-        taskId: nextTask.id,
-        name: nextTask.title
+        projectId: runtimeTask.projectId,
+        taskId: runtimeTask.id,
+        name: runtimeTask.title
     })
 
     options.engine.handleRealtimeEvent({
         type: 'task-updated',
-        taskId: nextTask.id,
-        projectId: nextTask.projectId,
+        taskId: runtimeTask.id,
+        projectId: runtimeTask.projectId,
         namespace: options.namespace,
-        data: { taskId: nextTask.id, activeSessionId: options.sessionId }
+        data: { taskId: runtimeTask.id, activeSessionId: options.sessionId }
     })
 
-    return nextTask
+    return runtimeTask
 }
 
 function getRuntimeSession(engine: SyncEngine, sessionId: string, namespace: string): Session | null {
@@ -332,9 +513,15 @@ function resolveMetadataSession(options: {
     requireActive?: boolean
 }): FoundBestTaskSessionResolution | null {
     const runtimeMatches = getRuntimeSessionsByNamespace(options.engine, options.namespace)
-        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
+        .filter((session) => sessionMetadataMatchesTask({
+            current: session.metadata,
+            task: options.task
+        }))
     const storedMatches = options.store.sessions.getSessionsByNamespace(options.namespace)
-        .filter((session) => sessionMetadataMatchesTaskLink(session.metadata, options.task.projectId, options.task.id))
+        .filter((session) => sessionMetadataMatchesTask({
+            current: session.metadata,
+            task: options.task
+        }))
     const metadataCandidates = sortMetadataCandidates(runtimeMatches, storedMatches)
     const bestMetadataMatch = metadataCandidates.find((candidate) => {
         return !options.requireActive || isSessionActive(candidate.session)
@@ -358,6 +545,13 @@ export function resolveBestTaskSession(options: {
     namespace: string
     task: StoredTask
 }): BestTaskSessionResolution {
+    if (isStaleDbOnlyRuntimeGoalTask({
+        store: options.store,
+        namespace: options.namespace,
+        task: options.task
+    })) {
+        return { ok: false, reason: 'not-found' }
+    }
     const linkedSessionId = trimString(options.task.activeSessionId)
     if (linkedSessionId) {
         const linked = resolveExplicitSession({
@@ -475,9 +669,18 @@ export async function resolveBestUsableTaskSession(options: {
         })
         : options.task
 
+    const runtimeTask = getTaskRuntimeView({
+        store: options.store,
+        namespace: options.namespace,
+        task: relinkedTask ?? options.task
+    })
+    if (!runtimeTask) {
+        return { ok: false, reason: 'session_not_found' }
+    }
+
     return {
         ok: true,
-        task: relinkedTask ?? options.task,
+        task: runtimeTask,
         sessionId,
         session,
         relinked: Boolean(relinkedTask && relinkedTask.activeSessionId === sessionId && sessionId !== options.task.activeSessionId),

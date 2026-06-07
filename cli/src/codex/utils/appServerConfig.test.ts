@@ -72,6 +72,19 @@ describe('appServerConfig', () => {
         expect(params.model).toBe('o3');
     });
 
+    it('upgrades pasted image attachment refs into localImage inputs', () => {
+        const params = buildTurnStartParams({
+            threadId: 'thread-1',
+            message: '@/tmp/repro.png @/tmp/notes.txt\n\nwhat is wrong here?',
+            mode: { permissionMode: 'default' }
+        });
+
+        expect(params.input).toEqual([
+            { type: 'localImage', path: '/tmp/repro.png' },
+            { type: 'text', text: '@/tmp/notes.txt\n\nwhat is wrong here?' }
+        ]);
+    });
+
     it('puts collaboration mode in turn params with model settings', () => {
         const params = buildTurnStartParams({
             threadId: 'thread-1',

@@ -1,7 +1,7 @@
 import React from 'react';
 import { logger } from '@/ui/logger';
 import { convertAgentMessage } from '@/agent/messageConverter';
-import type { AgentMessage, PromptContent } from '@/agent/types';
+import type { AgentMessage, McpServerStdio, PromptContent } from '@/agent/types';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext, type RemoteLauncherExitReason } from '@/modules/common/remote/RemoteLauncherBase';
 import { GeminiDisplay } from '@/ui/ink/GeminiDisplay';
 import type { GeminiSession } from './session';
@@ -9,6 +9,7 @@ import type { PermissionMode } from './types';
 import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
+import { buildPromptContentFromFormattedMessage } from '@/utils/attachmentFormatter';
 
 function isAssistantTextCodexMessage(message: unknown): boolean {
     if (!message || typeof message !== 'object') {
@@ -27,17 +28,19 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly session: GeminiSession;
     private readonly model?: string;
     private readonly hookSettingsPath?: string;
+    private readonly mcpServers: McpServerStdio[];
     private backend: ReturnType<typeof createGeminiBackend> | null = null;
     private permissionHandler: GeminiPermissionHandler | null = null;
     private abortController = new AbortController();
     private displayModel: string | null = null;
     private displayPermissionMode: PermissionMode | null = null;
 
-    constructor(session: GeminiSession, opts: { model?: string; hookSettingsPath?: string }) {
+    constructor(session: GeminiSession, opts: { model?: string; hookSettingsPath?: string; mcpServers?: McpServerStdio[] }) {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.session = session;
         this.model = opts.model;
         this.hookSettingsPath = opts.hookSettingsPath;
+        this.mcpServers = opts.mcpServers ?? session.mcpServers;
     }
 
     public async launch(): Promise<RemoteLauncherExitReason> {
@@ -89,7 +92,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
 
         const acpSessionId = await backend.newSession({
             cwd: session.path,
-            mcpServers: []
+            mcpServers: this.mcpServers
         });
         session.onSessionFound(acpSessionId);
 
@@ -128,10 +131,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             activeTurnHasAssistantReply = false;
             turnInFlight = true;
 
-            const promptContent: PromptContent[] = [{
-                type: 'text',
-                text: batch.message
-            }];
+            const promptContent: PromptContent[] = buildPromptContentFromFormattedMessage(batch.message);
 
             session.onThinkingChange(true);
 

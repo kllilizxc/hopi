@@ -91,12 +91,12 @@ export default {
   'projects.decisions.answerLabel': '答案',
 
   'projects.todo.title': 'Todo / Backlog',
+  'projects.todo.boardHint': 'Candidate / Deferred 只是备忘池，等 Planner 提升后才算待执行；不会计入 Planned。',
   'projects.todo.loading': '正在加载 todo…',
   'projects.todo.count': '{n} 项',
   'projects.todo.missing': '缺失',
   'projects.todo.missingDocs': '未找到当前 Goal 的 todo.yml。',
   'projects.todo.empty': '未解析到 todo 项。',
-  'projects.todo.rawYaml': '原始 YAML',
   'projects.todo.linkedTask': '任务 {id}',
   'projects.todo.kind.ready': 'Ready',
   'projects.todo.kind.candidate': 'Candidate',
@@ -323,7 +323,7 @@ export default {
   'projects.controller.openFailed': '打开 Goal 助手失败',
   'projects.controller.unavailable': 'Goal 助手不可用',
   'projects.controller.emptyGreetingTitle': 'Goal 助手已就绪。',
-  'projects.controller.emptyGreetingBody': '这个 Goal 即使还没有任务，也可以先在这里澄清方向、补充 planner mail，或查看当前 Goal 状态。',
+  'projects.controller.emptyGreetingBody': '把 Goal Assistant 当成这个 Goal 的 Kanban 管家来用：无论是问看板状态、继续或重排任务、补 planner mail，还是查看当前 Goal 状态，都可以在这里处理。',
 
   'projects.create.title': '创建项目',
   'projects.create.description': '项目用于管理任务，并绑定一个或多个工作区目录。',

@@ -12,6 +12,7 @@ export type {
     DirectoryEntryType,
     DecryptedMessage,
     Goal,
+    GoalTaskCanonicalStatus,
     GoalDecisionTopic,
     GoalDecisionTopicListResponse,
     GoalDecisionTopicResponse,

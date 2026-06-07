@@ -125,6 +125,18 @@ function resolveTaskBlockedSessionId(task: {
         ?? getRuntimeBlockedSessionId(task.initRuntime)
 }
 
+function shouldPersistTaskBlockedState(blocked: {
+    status?: string | null
+    blockedReason?: string | null
+    blockedSource?: string | null
+    blockedSessionId?: string | null
+}): boolean {
+    return blocked.status === 'blocked'
+        || blocked.blockedReason !== null
+        || blocked.blockedSource !== null
+        || blocked.blockedSessionId !== null
+}
+
 type TaskRuntimeNormalizer<Runtime extends TaskRuntimeWithSession> = (
     value: Runtime | null | undefined,
     updatedAt: number
@@ -361,17 +373,17 @@ export function createTask(
     const mergeRuntime = prepareTaskRuntime(task.mergeRuntime, task.activeSessionId, now, normalizeTaskMergeRuntime)
     const previewRuntime = prepareTaskRuntime(task.previewRuntime, task.activeSessionId, now, normalizeTaskPreviewRuntime)
     const initRuntime = prepareTaskRuntime(task.initRuntime, task.activeSessionId, now, normalizeTaskInitRuntime)
-    const isBlocked = task.status === 'blocked'
-    const blockedReason = isBlocked
-        ? normalizeTaskBlockedText(task.blockedReason) ?? resolveTaskBlockedReason({ mergeRuntime, previewRuntime, initRuntime })
+    const blockedReason = normalizeTaskBlockedText(task.blockedReason) ?? resolveTaskBlockedReason({ mergeRuntime, previewRuntime, initRuntime })
+    const blockedSource = normalizeTaskBlockedText(task.blockedSource, 64) ?? resolveTaskBlockedSource({ mergeRuntime, previewRuntime, initRuntime })
+    const blockedSessionId = normalizeTaskBlockedText(task.blockedSessionId, 128) ?? resolveTaskBlockedSessionId({ mergeRuntime, previewRuntime, initRuntime })
+    const blockedAt = shouldPersistTaskBlockedState({
+        status: task.status,
+        blockedReason,
+        blockedSource,
+        blockedSessionId
+    })
+        ? task.blockedAt ?? now
         : null
-    const blockedSource = isBlocked
-        ? normalizeTaskBlockedText(task.blockedSource, 64) ?? resolveTaskBlockedSource({ mergeRuntime, previewRuntime, initRuntime })
-        : null
-    const blockedSessionId = isBlocked
-        ? normalizeTaskBlockedText(task.blockedSessionId, 128) ?? resolveTaskBlockedSessionId({ mergeRuntime, previewRuntime, initRuntime })
-        : null
-    const blockedAt = isBlocked ? task.blockedAt ?? now : null
     db.prepare(`
         INSERT INTO tasks (
             id, project_id, goal_id, goal_todo_ref, title, description, status, priority,
@@ -557,19 +569,29 @@ export function updateTaskByNamespace(
     const explicitBlockedSessionId = patch.blockedSessionId !== undefined
         ? normalizeTaskBlockedText(patch.blockedSessionId, 128)
         : undefined
+    const shouldClearLegacyBlockedState = current.status === 'blocked'
+        && patch.status !== undefined
+        && patch.status !== 'blocked'
+        && explicitBlockedReason === undefined
+        && explicitBlockedSource === undefined
+        && explicitBlockedSessionId === undefined
+        && runtimeBlockedReason === null
+        && runtimeBlockedSource === null
+        && runtimeBlockedSessionId === null
 
-    if (next.status === 'blocked') {
-        next.blockedReason = explicitBlockedReason !== undefined
-            ? explicitBlockedReason
-            : runtimeBlockedReason ?? current.blockedReason
-        next.blockedSource = explicitBlockedSource !== undefined
-            ? explicitBlockedSource
-            : runtimeBlockedSource ?? current.blockedSource
-        next.blockedSessionId = explicitBlockedSessionId !== undefined
-            ? explicitBlockedSessionId
-            : runtimeBlockedSessionId ?? current.blockedSessionId
+    next.blockedReason = explicitBlockedReason !== undefined
+        ? explicitBlockedReason
+        : runtimeBlockedReason ?? (shouldClearLegacyBlockedState ? null : current.blockedReason)
+    next.blockedSource = explicitBlockedSource !== undefined
+        ? explicitBlockedSource
+        : runtimeBlockedSource ?? (shouldClearLegacyBlockedState ? null : current.blockedSource)
+    next.blockedSessionId = explicitBlockedSessionId !== undefined
+        ? explicitBlockedSessionId
+        : runtimeBlockedSessionId ?? (shouldClearLegacyBlockedState ? null : current.blockedSessionId)
 
+    if (shouldPersistTaskBlockedState(next)) {
         const blockerChanged = current.status !== 'blocked'
+            && !shouldPersistTaskBlockedState(current)
             || next.blockedReason !== current.blockedReason
             || next.blockedSource !== current.blockedSource
             || next.blockedSessionId !== current.blockedSessionId

@@ -15,6 +15,12 @@ import { isPermissionModeAllowedForFlavor } from '@hopi/protocol';
 import { PermissionModeSchema } from '@hopi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
+import {
+    buildSessionProfileAcpMcpServers,
+    getSessionProfileFromEnv,
+    getSessionProfileStartingPermissionMode,
+    injectSessionProfileUserPrefix
+} from '@/sessionProfiles';
 
 export async function runGemini(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -24,6 +30,9 @@ export async function runGemini(opts: {
 } = {}): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
     const startedBy = opts.startedBy ?? 'terminal';
+    const sessionProfile = getSessionProfileFromEnv();
+    const sessionProfileMcpServers = buildSessionProfileAcpMcpServers(sessionProfile);
+    const sessionProfileStartingPermissionMode = getSessionProfileStartingPermissionMode(sessionProfile, 'gemini');
 
     logger.debug(`[gemini] Starting with options: startedBy=${startedBy}, startingMode=${opts.startingMode}`);
 
@@ -54,7 +63,11 @@ export async function runGemini(opts: {
     }));
 
     const sessionWrapperRef: { current: GeminiSession | null } = { current: null };
-    let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
+    let currentPermissionMode: PermissionMode = (
+        sessionProfileStartingPermissionMode && isPermissionModeAllowedForFlavor(sessionProfileStartingPermissionMode, 'gemini')
+            ? sessionProfileStartingPermissionMode
+            : opts.permissionMode
+    ) ?? 'default';
     const resolvedModel = resolveGeminiRuntimeConfig({ model: opts.model }).model;
 
     const hookServer = await startHookServer({
@@ -103,11 +116,12 @@ export async function runGemini(opts: {
 
     session.onUserMessage((message) => {
         const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
+        const profiledText = injectSessionProfileUserPrefix(sessionProfile, formattedText);
         const mode: GeminiMode = {
             permissionMode: currentPermissionMode,
             model: resolvedModel
         };
-        messageQueue.push(formattedText, mode, message.localKey ?? null);
+        messageQueue.push(profiledText, mode, message.localKey ?? null);
     });
 
     const resolvePermissionMode = (value: unknown): PermissionMode => {
@@ -143,6 +157,7 @@ export async function runGemini(opts: {
             permissionMode: currentPermissionMode,
             model: resolvedModel,
             hookSettingsPath,
+            mcpServers: sessionProfileMcpServers,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

@@ -29,22 +29,27 @@ afterEach(() => {
 })
 
 describe('useGoalTodo', () => {
-    it('loads todo sections for a selected goal', async () => {
+    it('loads the canonical todo board for a selected goal', async () => {
         const queryClient = createTestQueryClient()
         const response = {
-            exists: true,
-            path: '/repo/.hopi/docs/goals/goal-1/todo.yml',
-            rawYaml: 'version: 1\ngoals: []\n',
-            updatedAt: 1_700_000_000_000,
-            sections: [
-                {
-                    kind: 'ready',
+            board: {
+                goal: {
+                    goalKey: 'goal-1',
+                    goalId: 'goal-1',
+                    title: 'Goal 1'
+                },
+                items: [{
+                    ref: 'first-slice',
+                    kind: 'engineering',
+                    status: 'planned',
                     title: 'Implement first slice',
-                    body: 'Acceptance details',
-                    taskId: null,
-                    todoRef: 'first-slice'
-                }
-            ]
+                    description: 'Acceptance details',
+                    acceptanceCriteria: [],
+                    dependencyTaskList: [],
+                    blockedBy: [],
+                    taskId: null
+                }]
+            }
         }
         const api = {
             getGoalTodo: vi.fn(async () => response)

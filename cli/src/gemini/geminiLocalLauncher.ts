@@ -1,6 +1,7 @@
 import { geminiLocal } from './geminiLocal';
 import { GeminiSession } from './session';
 import { createGeminiSessionScanner } from './utils/sessionScanner';
+import { convertGeminiTranscriptMessage } from './utils/transcriptMessageConverter';
 import type { PermissionMode } from './types';
 import { randomUUID } from 'node:crypto';
 import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
@@ -53,18 +54,19 @@ export async function geminiLocalLauncher(
 
     let scanner: GeminiScannerHandle | null = null;
 
-    const handleTranscriptMessage = (message: { type?: string; content?: string }) => {
-        if (message.type === 'user' && typeof message.content === 'string') {
-            session.sendUserMessage(message.content);
+    const handleTranscriptMessage = (message: { type?: string; content?: unknown }) => {
+        const converted = convertGeminiTranscriptMessage(message);
+        if (!converted) {
             return;
         }
-        if (message.type === 'gemini' && typeof message.content === 'string') {
-            session.sendCodexMessage({
-                type: 'message',
-                message: message.content,
-                id: randomUUID()
-            });
+        if (converted.kind === 'user') {
+            session.sendUserMessage(converted.text);
+            return;
         }
+        session.sendCodexMessage({
+            ...converted.message,
+            id: randomUUID()
+        });
     };
 
     const ensureScanner = async (transcriptPath: string): Promise<void> => {

@@ -4,7 +4,6 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { OmcRuntimeStore } from '../sync/omc/runtimeStore'
-import { GoalDecisionTopicStore } from './goalDecisionTopicStore'
 import { GoalStore } from './goalStore'
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
@@ -40,7 +39,6 @@ export type {
     StoredWorkspace,
     VersionedUpdateResult
 } from './types'
-export { GoalDecisionTopicStore } from './goalDecisionTopicStore'
 export { GoalStore } from './goalStore'
 export { MachineStore } from './machineStore'
 export { MessageStore } from './messageStore'
@@ -52,7 +50,7 @@ export { TaskStore } from './taskStore'
 export { UserStore } from './userStore'
 export { WorkspaceStore } from './workspaceStore'
 
-const SCHEMA_VERSION: number = 29
+const SCHEMA_VERSION: number = 32
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -63,7 +61,6 @@ const REQUIRED_TABLES = [
     'workspaces',
     'tasks',
     'goals',
-    'goal_decision_topics',
     'omc_programs',
     'omc_planning_runs',
     'omc_plan_runtimes',
@@ -89,7 +86,6 @@ export class Store {
     readonly workspaces: WorkspaceStore
     readonly tasks: TaskStore
     readonly goals: GoalStore
-    readonly goalDecisionTopics: GoalDecisionTopicStore
     readonly omcRuntime: OmcRuntimeStore
     readonly users: UserStore
     readonly push: PushStore
@@ -136,7 +132,6 @@ export class Store {
         this.workspaces = new WorkspaceStore(this.db)
         this.tasks = new TaskStore(this.db)
         this.goals = new GoalStore(this.db)
-        this.goalDecisionTopics = new GoalDecisionTopicStore(this.db)
         this.omcRuntime = new OmcRuntimeStore(this.db)
         this.users = new UserStore(this.db)
         this.push = new PushStore(this.db)
@@ -218,6 +213,46 @@ export class Store {
         if (currentVersion === 19 && SCHEMA_VERSION === 20) {
             this.migrateFromV19ToV20()
             this.ensureLatestSchemaColumns()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 29 && SCHEMA_VERSION === 30) {
+            this.migrateFromV29ToV30()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 30 && SCHEMA_VERSION === 31) {
+            this.migrateFromV30ToV31()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 29 && SCHEMA_VERSION === 31) {
+            this.migrateFromV29ToV30()
+            this.migrateFromV30ToV31()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 31 && SCHEMA_VERSION === 32) {
+            this.migrateFromV31ToV32()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 30 && SCHEMA_VERSION === 32) {
+            this.migrateFromV30ToV31()
+            this.migrateFromV31ToV32()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
+        if (currentVersion === 29 && SCHEMA_VERSION === 32) {
+            this.migrateFromV29ToV30()
+            this.migrateFromV30ToV31()
+            this.migrateFromV31ToV32()
             this.setUserVersion(SCHEMA_VERSION)
             return
         }
@@ -519,25 +554,6 @@ export class Store {
             CREATE INDEX IF NOT EXISTS idx_tasks_project_source_status ON tasks(project_id, source, status);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
-
-            CREATE TABLE IF NOT EXISTS goal_decision_topics (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                goal_id TEXT NOT NULL,
-                task_id TEXT,
-                namespace TEXT NOT NULL DEFAULT 'default',
-                title TEXT NOT NULL,
-                body TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'waiting',
-                blocking INTEGER NOT NULL DEFAULT 1,
-                resolution TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
-                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
 
             CREATE TABLE IF NOT EXISTS omc_programs (
                 id TEXT PRIMARY KEY,
@@ -945,6 +961,15 @@ export class Store {
         }
         if (SCHEMA_VERSION >= 29) {
             this.migrateFromV28ToV29()
+        }
+        if (SCHEMA_VERSION >= 30) {
+            this.migrateFromV29ToV30()
+        }
+        if (SCHEMA_VERSION >= 31) {
+            this.migrateFromV30ToV31()
+        }
+        if (SCHEMA_VERSION >= 32) {
+            this.migrateFromV31ToV32()
         }
     }
 
@@ -1443,25 +1468,6 @@ export class Store {
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_tasks_project_goal ON tasks(project_id, goal_id, archived_at);
             CREATE INDEX IF NOT EXISTS idx_tasks_project_goal_status ON tasks(project_id, goal_id, status);
-
-            CREATE TABLE IF NOT EXISTS goal_decision_topics (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                goal_id TEXT NOT NULL,
-                task_id TEXT,
-                namespace TEXT NOT NULL DEFAULT 'default',
-                title TEXT NOT NULL,
-                body TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'waiting',
-                blocking INTEGER NOT NULL DEFAULT 1,
-                resolution TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
-                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_goal_topics_goal_status ON goal_decision_topics(goal_id, status);
         `)
     }
 
@@ -1574,8 +1580,8 @@ export class Store {
             init_runtime?: string | null
         }>
         const update = taskColumns.has('finished_at')
-            ? this.db.prepare("UPDATE tasks SET status = 'blocked', finished_at = NULL WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
-            : this.db.prepare("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status NOT IN ('blocked', 'done', 'finished')")
+            ? this.db.prepare("UPDATE tasks SET finished_at = NULL WHERE id = ? AND status NOT IN ('done', 'finished')")
+            : null
 
         for (const row of rows) {
             const hasBlockedRuntime = runtimeColumns.some((column) => {
@@ -1594,8 +1600,8 @@ export class Store {
                     return false
                 }
             })
-            if (hasBlockedRuntime && row.status !== 'blocked' && row.status !== 'done' && row.status !== 'finished') {
-                update.run(row.id)
+            if (hasBlockedRuntime && row.status !== 'done' && row.status !== 'finished') {
+                update?.run(row.id)
             }
         }
     }
@@ -1714,12 +1720,16 @@ export class Store {
         }
 
         const rows = this.db.prepare(`
-            SELECT id, active_session_id, updated_at, blocked_reason, blocked_source, blocked_session_id, blocked_at,
+            SELECT id, status, active_session_id, updated_at, blocked_reason, blocked_source, blocked_session_id, blocked_at,
                    merge_runtime, preview_runtime, init_runtime
             FROM tasks
             WHERE status = 'blocked'
+               OR merge_runtime IS NOT NULL
+               OR preview_runtime IS NOT NULL
+               OR init_runtime IS NOT NULL
         `).all() as Array<{
             id: string
+            status: string
             active_session_id: string | null
             updated_at: number
             blocked_reason: string | null
@@ -1744,6 +1754,9 @@ export class Store {
             const previewRuntime = blockedRuntime(parseRuntime(row.preview_runtime))
             const initRuntime = blockedRuntime(parseRuntime(row.init_runtime))
             const runtime = mergeRuntime ?? previewRuntime ?? initRuntime
+            if (row.status !== 'blocked' && !runtime) {
+                continue
+            }
             const messageReason = findMessageBlockedReason(row.active_session_id)
             const source = mergeRuntime
                 ? 'merge'
@@ -1760,6 +1773,40 @@ export class Store {
                 row.id
             )
         }
+    }
+
+    private migrateFromV29ToV30(): void {
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS goal_operator_intents (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL,
+                lane TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_goal_operator_intents_project_status ON goal_operator_intents(project_id, namespace, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_goal_operator_intents_goal_status ON goal_operator_intents(goal_id, namespace, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_goal_operator_intents_task_status ON goal_operator_intents(task_id, namespace, status, created_at);
+        `)
+    }
+
+    private migrateFromV30ToV31(): void {
+        this.db.exec('DROP TABLE IF EXISTS goal_decision_topics')
+    }
+
+    private migrateFromV31ToV32(): void {
+        this.db.exec('DROP TABLE IF EXISTS goal_operator_intents')
     }
 
     private ensureGoalKeyColumnAndIndex(): void {

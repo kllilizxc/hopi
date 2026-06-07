@@ -25,6 +25,7 @@ export type {
     DirectoryEntry,
     Goal,
     GoalDecisionTopic,
+    GoalTaskCanonicalStatus,
     HopiTaskRole,
     ListDirectoryResponse,
     ModelMode,
@@ -125,29 +126,36 @@ export type GoalsResponse = { goals: Goal[] }
 export type GoalResponse = { goal: Goal }
 export type GoalDecisionTopicsResponse = { topics: GoalDecisionTopic[] }
 export type GoalDecisionTopicResponse = { topic: GoalDecisionTopic }
-export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
-export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
-export type GoalTodoSection = {
-    id: string
-    status: GoalTodoStatus
-    tag: string | null
-    kind: GoalTodoSectionKind
+export type GoalTodoCanonicalStatus = 'planned' | 'in_progress' | 'in_review' | 'merging' | 'done'
+export type GoalTodoCompatTag = 'candidate' | 'deferred'
+export type GoalTodoTaskKind = 'planning' | 'engineering'
+export type GoalTodoBoardItem = {
+    ref: string
+    kind: GoalTodoTaskKind
+    status: GoalTodoCanonicalStatus
+    tag?: GoalTodoCompatTag | null
     title: string
-    body: string
-    taskId: string | null
-    todoRef: string | null
-    blocked: {
+    description: string
+    acceptanceCriteria: string[]
+    dependencyTaskList: Array<{ ref: string }>
+    blockedBy: Array<{
         kind: string | null
+        ref: string | null
         summary: string | null
-        updatedAt: number | null
-    } | null
+    }>
+    taskId: string | null
+}
+export type GoalTodoBoard = {
+    goal: {
+        goalKey: string | null
+        goalId: string | null
+        title: string | null
+    }
+    items: GoalTodoBoardItem[]
 }
 export type GoalTodoResponse = {
-    exists: boolean
-    path: string | null
-    rawYaml: string | null
-    sections: GoalTodoSection[]
-    updatedAt: number | null
+    board: GoalTodoBoard
+    tasks: Task[]
 }
 export type TasksResponse = { tasks: Task[] }
 export type TaskResponse = { task: Task }
@@ -178,6 +186,7 @@ export type TaskWorktreeMergeResponse = {
     commitHash: string | null
     skippedReason: TaskWorktreeMergeSkippedReason | null
     mergedAt: number | null
+    task?: Task
     autoResolved?: boolean | null
     autoRetryScheduled?: boolean | null
 }
@@ -185,6 +194,7 @@ export type TaskWorktreeMergeResponse = {
 export type TaskWorktreeMergeCancelResponse = {
     ok: true
     canceled: boolean
+    task?: Task
     mergeRuntime: Task['mergeRuntime'] | null | undefined
 }
 
@@ -238,6 +248,7 @@ export type TaskPreviewKickoffSkippedReason =
     | 'retrying'
 
 export type TaskPreviewResponse = {
+    task?: Task
     preview: TaskPreviewStatus
     previewRuntime: TaskPreviewRuntime | null | undefined
     skippedReason?: TaskPreviewKickoffSkippedReason | null

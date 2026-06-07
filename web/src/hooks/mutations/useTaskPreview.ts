@@ -45,6 +45,10 @@ function arePreviewStatesEqual(left: TaskPreviewStatus | null | undefined, right
 }
 
 function applyPreviewResponseToTask(task: Task, result: TaskPreviewResponse): Task {
+    if (result.task) {
+        return result.task
+    }
+
     const nextPreviewRuntime = result.previewRuntime ?? task.previewRuntime ?? null
     if (arePreviewRuntimesEqual(task.previewRuntime, nextPreviewRuntime)) {
         return task
@@ -65,6 +69,9 @@ function updatePreviewQueryCache(options: {
 
     queryClient.setQueryData<TaskPreviewResponse | undefined>(queryKeys.taskPreview(taskId), (prev) => {
         if (!prev) {
+            return result
+        }
+        if (result.task || prev.task) {
             return result
         }
         if (

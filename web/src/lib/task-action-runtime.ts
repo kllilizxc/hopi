@@ -1,6 +1,6 @@
 import { areTaskSessionStartFailuresEqual } from '@hopi/protocol/task-session-start'
 import type { Task, TaskActionRuntimeEnvelope, TaskActionRuntimeCoreStatus, TaskPreviewStatus, TaskWorktreeMergeStateResponse } from '@/types/api'
-import { hasTaskDerivedBlocker } from '@/lib/task-status'
+import { getTaskLane, hasTaskDerivedBlocker } from '@/lib/task-status'
 
 export type TaskActionStatusSummary = {
     title: string
@@ -118,11 +118,12 @@ export function shouldShowMergeActionButton(options: {
     canStartMerge: boolean
 }): boolean {
     const { task, hasActiveMergeRuntime, mergeRuntimeStatus, canStartMerge } = options
-    const canRetryBlockedMerge = task?.status === 'blocked' && isRetryableMergeRuntimeStatus(mergeRuntimeStatus)
+    const canRetryBlockedMerge = task?.mergeRuntime?.status === 'blocked' && isRetryableMergeRuntimeStatus(mergeRuntimeStatus)
+    const taskLane = task ? getTaskLane(task) : null
 
     return Boolean(
         task
-        && (task.status === 'review' || task.status === 'in_review' || canRetryBlockedMerge)
+        && (taskLane === 'in_review' || taskLane === 'merging' || canRetryBlockedMerge)
         && !task.archivedAt
         && !task.finishedAt
         && (hasActiveMergeRuntime || isRetryableMergeRuntimeStatus(mergeRuntimeStatus) || canStartMerge)
@@ -441,6 +442,7 @@ export function buildTaskBlockedStatusSummary(task: Task | null | undefined): Ta
         return null
     }
 
+    const taskLane = getTaskLane(task)
     const source = task.blockedSource
         ?? (task.mergeRuntime?.status === 'blocked' || task.mergeRuntime?.status === 'canceled'
             ? 'merge'
@@ -448,7 +450,11 @@ export function buildTaskBlockedStatusSummary(task: Task | null | undefined): Ta
                 ? 'preview'
                 : task.initRuntime?.status === 'blocked'
                     ? 'init'
-                    : null)
+                    : taskLane === 'merging'
+                        ? 'merge'
+                        : taskLane === 'in_review'
+                            ? 'evaluator'
+                            : null)
     const title = source === 'merge'
         ? 'Merge 受阻'
         : source === 'preview'

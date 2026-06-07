@@ -8,6 +8,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
         id: overrides.id ?? 'task-1',
         projectId: overrides.projectId ?? 'project-1',
         goalId: overrides.goalId ?? 'goal-1',
+        goalCanonicalStatus: overrides.goalCanonicalStatus ?? null,
         title: overrides.title ?? 'Task',
         description: overrides.description ?? null,
         status: overrides.status ?? 'finished',
@@ -60,8 +61,8 @@ function createSession(overrides: Partial<SessionSummary> & { id: string; taskId
 }
 
 describe('buildTaskSessionTimeline', () => {
-    it('filters task sessions by metadata taskId, sorts by creation time, and identifies review fallback sessions', () => {
-        const task = createTask()
+    it('filters task sessions by metadata taskId, sorts by creation time, and identifies review-lane fallback sessions', () => {
+        const task = createTask({ status: 'review', source: 'manual' })
         const timeline = buildTaskSessionTimeline(task, [
             createSession({ id: 'other-session', taskId: 'other-task', createdAt: 30 }),
             createSession({ id: 'review-session', createdAt: 20 }),
@@ -92,6 +93,21 @@ describe('buildTaskSessionTimeline', () => {
         ])
 
         expect(timeline[0]?.roleLabel).toBe('Evaluator')
+    })
+
+    it('uses the canonical goal lane instead of a legacy blocked status when inferring evaluator fallback', () => {
+        const task = createTask({
+            status: 'blocked',
+            goalCanonicalStatus: 'in_review',
+            source: 'manual'
+        })
+        const timeline = buildTaskSessionTimeline(task, [
+            createSession({ id: 'generator-session', createdAt: 10 }),
+            createSession({ id: 'review-session', createdAt: 20 })
+        ])
+
+        expect(timeline[0]?.roleLabel).toBe('Generator')
+        expect(timeline[1]?.roleLabel).toBe('Evaluator')
     })
 
     it('defaults session selection to the latest task session when no current selection exists', () => {
@@ -181,8 +197,8 @@ describe('buildTaskSessionTimeline', () => {
 })
 
 describe('buildTaskReviewStage', () => {
-    it('reports review queued when an in-review task has no evaluator session yet', () => {
-        const task = createTask({ status: 'in_review', source: 'manual' })
+    it('reports review queued when a review-lane task has no evaluator session yet', () => {
+        const task = createTask({ status: 'review', source: 'manual' })
         const timeline = buildTaskSessionTimeline(task, [
             createSession({
                 id: 'generator-session',
@@ -327,7 +343,7 @@ describe('buildTaskReviewStage', () => {
 
     it('reports merge blocked when auto-merge needs manual intervention', () => {
         const task = createTask({
-            status: 'blocked',
+            status: 'review',
             source: 'evaluator',
             mergeRuntime: {
                 status: 'blocked',

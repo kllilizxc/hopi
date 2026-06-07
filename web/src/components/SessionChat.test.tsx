@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { Task } from '@/types/api'
-import { SESSION_CHAT_SURFACE_CLASS_NAME } from '@/components/SessionChat'
+import type { Session, Task } from '@/types/api'
+import type { NormalizedMessage } from '@/chat/types'
 import {
+    SESSION_CHAT_SURFACE_CLASS_NAME,
+    shouldQuerySessionMergeState,
+    shouldShowContinueActionForTask,
+    shouldTreatSessionAsRunningFallback,
+    shouldTreatSessionThinkingAsRunning
+} from '@/components/SessionChat'
+import {
+    buildTaskBlockedStatusSummary,
     buildInitStatusSummary,
     buildMergeRuntimeSummary,
     buildPreviewStatusSummary,
@@ -26,11 +34,88 @@ function createTask(overrides: Partial<Task> = {}): Task {
     }
 }
 
+function createSession(overrides: Partial<Session> = {}): Session {
+    return {
+        id: 'session-1',
+        namespace: 'default',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: null,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 1,
+        ...overrides,
+    } as Session
+}
+
+function createUserMessage(createdAt: number): NormalizedMessage {
+    return {
+        id: `message-${createdAt}`,
+        localId: `local-${createdAt}`,
+        role: 'user',
+        createdAt,
+        isSidechain: false,
+        content: { type: 'text', text: 'continue' },
+        meta: { sentFrom: 'webapp' }
+    }
+}
+
 describe('SessionChat runtime summaries', () => {
     it('renders the message stream as a raised surface above surrounding project content', () => {
         expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('app-shadow-chat-surface')
         expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('z-10')
         expect(SESSION_CHAT_SURFACE_CLASS_NAME).toContain('bg-[var(--app-bg)]')
+    })
+
+    it('does not keep Goal Assistant controllers loading via the runner fallback', () => {
+        const session = createSession({
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                startedBy: 'runner',
+                startedFromRunner: true,
+                hopiController: true,
+                projectId: 'project-1',
+                goalId: 'goal-1'
+            }
+        })
+
+        expect(shouldTreatSessionAsRunningFallback(session, [createUserMessage(Date.now() - 1_000)])).toBe(false)
+    })
+
+    it('keeps the runner fallback for task sessions that have not reported ready yet', () => {
+        const session = createSession({
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                startedBy: 'runner',
+                startedFromRunner: true,
+                projectId: 'project-1',
+                taskId: 'task-1'
+            }
+        })
+
+        expect(shouldTreatSessionAsRunningFallback(session, [createUserMessage(Date.now() - 1_000)])).toBe(true)
+    })
+
+    it('does not keep detached old task sessions loading when another active session owns the task', () => {
+        const session = createSession({
+            id: 'old-session',
+            thinking: true,
+            metadata: {
+                path: '/repo',
+                host: 'localhost',
+                projectId: 'project-1',
+                taskId: 'task-1'
+            }
+        })
+
+        expect(shouldTreatSessionThinkingAsRunning(session, { activeSessionId: 'new-session' }, false)).toBe(false)
     })
 
     it('builds merge summaries from durable runtime state', () => {
@@ -60,9 +145,11 @@ describe('SessionChat runtime summaries', () => {
         expect(summary?.detail).toContain('retry merge')
     })
 
-    it('keeps retry merge action visible after a merge-blocked task moves to blocked', () => {
+    it('keeps retry merge action visible after a merge-blocked task stays on the review lane', () => {
         const task = createTask({
-            status: 'blocked',
+            status: 'review',
+            blockedSource: 'merge',
+            blockedReason: 'merge conflict',
             mergeRuntime: {
                 status: 'blocked',
                 sessionId: 'session-1',
@@ -83,6 +170,49 @@ describe('SessionChat runtime summaries', () => {
             mergeRuntimeStatus: task.mergeRuntime?.status,
             canStartMerge: false
         })).toBe(true)
+    })
+
+    it('queries merge state for goal tasks from the canonical review lane, not raw status aliases', () => {
+        const task = createTask({
+            status: 'review',
+            goalCanonicalStatus: 'in_review'
+        })
+
+        expect(shouldQuerySessionMergeState(task, false)).toBe(true)
+        expect(shouldQuerySessionMergeState(task, true)).toBe(false)
+    })
+
+    it('shows continue for goal tasks from the canonical review lane, not raw status aliases', () => {
+        const task = createTask({
+            status: 'review',
+            goalCanonicalStatus: 'in_review'
+        })
+
+        expect(shouldShowContinueActionForTask(task, {
+            hasPendingRequests: false,
+            effectiveIsRunning: false
+        })).toBe(true)
+        expect(shouldShowContinueActionForTask(task, {
+            hasPendingRequests: true,
+            effectiveIsRunning: false
+        })).toBe(false)
+    })
+
+    it('keeps blocked summaries scoped to review when only lane-preserving blocker metadata remains', () => {
+        const task = createTask({
+            status: 'review',
+            blockedReason: 'Waiting for evaluator follow-up',
+            blockedSource: null,
+            mergeRuntime: null,
+            previewRuntime: null,
+            initRuntime: null
+        })
+
+        expect(buildTaskBlockedStatusSummary(task)).toEqual({
+            title: 'Review 受阻',
+            detail: 'Waiting for evaluator follow-up',
+            tone: 'error'
+        })
     })
 
     it('describes conflict repair retrying state as agent work, not generic loading', () => {

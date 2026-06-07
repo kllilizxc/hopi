@@ -14,6 +14,12 @@ import { PRODUCT_ENV } from '@hopi/protocol/brand';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { resolveCliWorkingDirectory } from '@/utils/workingDirectory';
 import { normalizeCodexSlashCommand } from './utils/normalizeSlashCommand';
+import {
+    buildSessionProfileMcpServers,
+    getSessionProfileDeveloperPrompt,
+    getSessionProfileFromEnv,
+    getSessionProfileStartingPermissionMode
+} from '@/sessionProfiles';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -25,6 +31,10 @@ export async function runCodex(opts: {
     model?: string;
 }): Promise<void> {
     const workingDirectory = resolveCliWorkingDirectory();
+    const sessionProfile = getSessionProfileFromEnv();
+    const sessionProfileMcpServers = buildSessionProfileMcpServers(sessionProfile);
+    const sessionProfileDeveloperInstructions = getSessionProfileDeveloperPrompt(sessionProfile);
+    const sessionProfileStartingPermissionMode = getSessionProfileStartingPermissionMode(sessionProfile, 'codex');
     const worktreeBaseCommit = process.env[PRODUCT_ENV.WORKTREE_BASE_COMMIT]?.trim();
     const diffBaseRef = worktreeBaseCommit && /^[0-9a-f]{7,64}$/i.test(worktreeBaseCommit)
         ? worktreeBaseCommit
@@ -56,7 +66,11 @@ export async function runCodex(opts: {
     const codexCliOverrides = parseCodexCliOverrides(opts.codexArgs);
     const sessionWrapperRef: { current: CodexSession | null } = { current: null };
 
-    let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
+    let currentPermissionMode: PermissionMode = (
+        sessionProfileStartingPermissionMode && isPermissionModeAllowedForFlavor(sessionProfileStartingPermissionMode, 'codex')
+            ? sessionProfileStartingPermissionMode
+            : opts.permissionMode
+    ) ?? 'default';
     const currentModel = opts.model;
     let currentCollaborationMode: EnhancedMode['collaborationMode'];
 
@@ -152,6 +166,8 @@ export async function runCodex(opts: {
             startedBy,
             permissionMode: currentPermissionMode,
             resumeSessionId: opts.resumeSessionId,
+            mcpServers: sessionProfileMcpServers,
+            developerInstructions: sessionProfileDeveloperInstructions ?? undefined,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

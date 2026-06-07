@@ -8,6 +8,7 @@
  */
 
 import { isModelModeAllowedForFlavor, isPermissionModeAllowedForFlavor } from '@hopi/protocol'
+import { GoalAssistantSessionProfileSchema, type SessionProfile } from '@hopi/protocol/goal-assistant'
 import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
@@ -73,6 +74,22 @@ function shouldRetrySessionConfigApply(error: unknown): boolean {
     return message.startsWith('RPC handler not registered:') || message.startsWith('RPC socket disconnected:')
 }
 
+function resolveSessionProfileFromMetadata(metadata: Session['metadata']): SessionProfile | undefined {
+    if (!metadata || typeof metadata !== 'object') {
+        return undefined
+    }
+    const record = metadata as Record<string, unknown>
+    if (record.hopiController !== true) {
+        return undefined
+    }
+    const parsed = GoalAssistantSessionProfileSchema.safeParse({
+        kind: 'goal_assistant',
+        projectId: record.projectId,
+        goalId: record.goalId
+    })
+    return parsed.success ? parsed.data : undefined
+}
+
 export class SyncEngine {
     private readonly store: Store
     private readonly eventPublisher: EventPublisher
@@ -122,6 +139,10 @@ export class SyncEngine {
 
     requestAutoRunTick(namespace: string, projectId: string): void {
         this.autoRunScheduler.requestTick(namespace, projectId, { delayMs: 0 })
+    }
+
+    reconcileIdleGoalActionSessions(namespace: string, projectId: string): boolean {
+        return this.taskAutomation.reconcileIdleGoalActionSessions(namespace, projectId)
     }
 
     stop(): void {
@@ -459,7 +480,8 @@ export class SyncEngine {
         worktreeName?: string,
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
-        worktreeTargetBranch?: string
+        worktreeTargetBranch?: string,
+        sessionProfile?: SessionProfile
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -471,7 +493,8 @@ export class SyncEngine {
             worktreeName,
             resumeSessionId,
             worktreeWorkspacePaths,
-            worktreeTargetBranch
+            worktreeTargetBranch,
+            sessionProfile
         )
     }
 
@@ -572,7 +595,10 @@ export class SyncEngine {
             resumeWithYolo,
             undefined,
             undefined,
-            resumeToken
+            resumeToken,
+            undefined,
+            undefined,
+            resolveSessionProfileFromMetadata(metadata)
         )
 
         if (spawnResult.type !== 'success') {
@@ -788,6 +814,16 @@ export class SyncEngine {
 
     async readFileOnMachine(machineId: string, path: string, cwd?: string): Promise<RpcReadFileResponse> {
         return await this.rpcGateway.readFileOnMachine(machineId, path, cwd)
+    }
+
+    async writeFileOnMachine(machineId: string, path: string, options: {
+        content: string
+        cwd?: string
+        expectedHash?: string | null
+        createParents?: boolean
+        overwrite?: boolean
+    }): Promise<RpcWriteFileResponse> {
+        return await this.rpcGateway.writeFileOnMachine(machineId, path, options)
     }
 
     async writeSessionFile(sessionId: string, path: string, options: {

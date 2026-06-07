@@ -49,7 +49,7 @@ export function hasTaskDerivedBlocker(task: Task | null | undefined): boolean {
 
     return Boolean(
         task.blockedReason
-        || task.status === 'blocked'
+        || task.blockedSource
         || isMergeBlocked(task)
         || isExecutionBlocked(task)
         || isReviewBlocked(task)
@@ -71,6 +71,11 @@ function resolveBlockedTaskLane(task: Task): GoalTaskLane {
 
 export function getTaskLane(task: Task): GoalTaskLane {
     const status = (task.status ?? '').trim().toLowerCase()
+    const goalCanonicalStatus = task.goalCanonicalStatus ?? null
+
+    if (goalCanonicalStatus) {
+        return goalCanonicalStatus
+    }
 
     if (task.worktreeMergedAt || task.mergeRuntime?.status === 'succeeded' || status === 'done' || status === 'finished') {
         return 'done'

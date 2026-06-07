@@ -1,4 +1,5 @@
 import { ListDirectoryResponseSchema } from '@hopi/protocol/schemas'
+import type { SessionProfile } from '@hopi/protocol/goal-assistant'
 import type { ModelMode, PermissionMode } from '@hopi/protocol/types'
 import type { DirectoryEntry as SharedDirectoryEntry, ListDirectoryResponse as SharedListDirectoryResponse } from '@hopi/protocol/types'
 import type { Server } from 'socket.io'
@@ -202,7 +203,8 @@ export class RpcGateway {
         worktreeName?: string,
         resumeSessionId?: string,
         worktreeWorkspacePaths?: string[],
-        worktreeTargetBranch?: string
+        worktreeTargetBranch?: string,
+        sessionProfile?: SessionProfile
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
@@ -218,7 +220,8 @@ export class RpcGateway {
                     sessionType,
                     worktreeName,
                     resumeSessionId,
-                    worktreeTargetBranch
+                    worktreeTargetBranch,
+                    sessionProfile
                 }
             )
             if (result && typeof result === 'object') {

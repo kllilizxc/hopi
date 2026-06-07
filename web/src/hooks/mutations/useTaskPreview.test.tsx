@@ -26,6 +26,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
 
 function createPreviewResponse(overrides: Partial<TaskPreviewResponse> = {}): TaskPreviewResponse {
     return {
+        task: undefined,
         preview: {
             active: true,
             status: 'starting',
@@ -128,6 +129,80 @@ describe('useTaskPreview', () => {
         expect(cachedPreview).toEqual(response)
     })
 
+    it('prefers the docs-projected task returned by preview responses when updating caches', async () => {
+        const task = createTask({
+            status: 'blocked',
+            blockedReason: 'Old preview blocker',
+            blockedSource: 'preview',
+            previewRuntime: {
+                status: 'blocked',
+                sessionId: 'session-1',
+                updatedAt: 9,
+                requestedAt: 8,
+                startedAt: 9,
+                completedAt: 9,
+                retryCount: 1,
+                failureFingerprint: 'preview-blocked',
+                latestNote: 'Old preview blocker',
+                blockedReason: 'Old preview blocker'
+            }
+        })
+        const queryClient = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false },
+                mutations: { retry: false },
+            },
+        })
+        queryClient.setQueryData(queryKeys.task(task.id), { task })
+        queryClient.setQueryData(queryKeys.tasks(task.projectId), { tasks: [task] })
+
+        const response = createPreviewResponse({
+            task: createTask({
+                status: 'in_progress',
+                blockedReason: null,
+                blockedSource: null,
+                previewRuntime: {
+                    status: 'running',
+                    sessionId: 'session-1',
+                    updatedAt: 10,
+                    requestedAt: 9,
+                    startedAt: 10,
+                    completedAt: null,
+                    retryCount: 0,
+                    failureFingerprint: null,
+                    latestNote: 'Starting preview directly from the task action.',
+                    blockedReason: null
+                }
+            })
+        })
+        const api = {
+            startTaskPreview: vi.fn(async () => response),
+            stopTaskPreview: vi.fn(async () => createPreviewResponse())
+        } as unknown as ApiClient
+
+        let controls: PreviewControls | null = null
+        renderWithProviders(
+            <MutationHarness api={api} onReady={(next) => {
+                controls = next
+            }} />,
+            { queryClient }
+        )
+
+        await waitFor(() => {
+            expect(controls).not.toBeNull()
+        })
+
+        await act(async () => {
+            await controls!.startTaskPreview({ taskId: task.id, payload: { mode: 'auto' } })
+        })
+
+        const cachedTask = queryClient.getQueryData<{ task: Task }>(queryKeys.task(task.id))?.task
+        const cachedPreview = queryClient.getQueryData<TaskPreviewResponse>(queryKeys.taskPreview(task.id))
+
+        expect(cachedTask).toEqual(response.task)
+        expect(cachedPreview).toEqual(response)
+    })
+
     it('writes stop response back into task and preview caches', async () => {
         const runningRuntime = {
             status: 'running' as const,
@@ -201,6 +276,95 @@ describe('useTaskPreview', () => {
         const cachedPreview = queryClient.getQueryData<TaskPreviewResponse>(queryKeys.taskPreview(task.id))
 
         expect(cachedTask?.previewRuntime).toEqual(response.previewRuntime)
+        expect(cachedPreview).toEqual(response)
+    })
+
+    it('prefers the docs-projected task returned by preview stop responses when updating caches', async () => {
+        const task = createTask({
+            goalId: 'goal-1',
+            goalTodoRef: 'goal-ref-1',
+            status: 'blocked',
+            blockedReason: 'Old preview blocker',
+            blockedSource: 'preview',
+            previewRuntime: {
+                status: 'running',
+                sessionId: 'session-1',
+                updatedAt: 10,
+                requestedAt: 9,
+                startedAt: 10,
+                completedAt: null,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Preview started.',
+                blockedReason: null
+            }
+        })
+        const queryClient = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false },
+                mutations: { retry: false },
+            },
+        })
+        queryClient.setQueryData(queryKeys.task(task.id), { task })
+        queryClient.setQueryData(queryKeys.tasks(task.projectId), { tasks: [task] })
+        queryClient.setQueryData(queryKeys.taskPreview(task.id), createPreviewResponse({
+            previewRuntime: task.previewRuntime
+        }))
+
+        const projectedTask = createTask({
+            goalId: 'goal-1',
+            goalTodoRef: 'goal-ref-1',
+            status: 'in_progress',
+            blockedReason: null,
+            blockedSource: null,
+            previewRuntime: {
+                status: 'stopped',
+                sessionId: 'session-1',
+                updatedAt: 30,
+                requestedAt: 9,
+                startedAt: 10,
+                completedAt: 30,
+                retryCount: 0,
+                failureFingerprint: null,
+                latestNote: 'Preview stopped from the task action.',
+                blockedReason: null
+            }
+        })
+        const response = createPreviewResponse({
+            task: projectedTask,
+            preview: {
+                active: false,
+                status: 'stopped',
+                updatedAt: 30,
+                logTail: ['stopped']
+            },
+            previewRuntime: projectedTask.previewRuntime
+        })
+        const api = {
+            startTaskPreview: vi.fn(async () => createPreviewResponse()),
+            stopTaskPreview: vi.fn(async () => response),
+        } as unknown as ApiClient
+
+        let controls: PreviewControls | null = null
+        renderWithProviders(
+            <MutationHarness api={api} onReady={(next) => {
+                controls = next
+            }} />,
+            { queryClient }
+        )
+
+        await waitFor(() => {
+            expect(controls).not.toBeNull()
+        })
+
+        await act(async () => {
+            await controls!.stopTaskPreview(task.id)
+        })
+
+        const cachedTask = queryClient.getQueryData<{ task: Task }>(queryKeys.task(task.id))?.task
+        const cachedPreview = queryClient.getQueryData<TaskPreviewResponse>(queryKeys.taskPreview(task.id))
+
+        expect(cachedTask).toEqual(projectedTask)
         expect(cachedPreview).toEqual(response)
     })
 })

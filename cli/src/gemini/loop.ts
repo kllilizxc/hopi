@@ -6,6 +6,7 @@ import { geminiLocalLauncher } from './geminiLocalLauncher';
 import { geminiRemoteLauncher } from './geminiRemoteLauncher';
 import { ApiClient, ApiSessionClient } from '@/lib';
 import type { GeminiMode, PermissionMode } from './types';
+import type { McpServerStdio } from '@/agent/types';
 
 interface GeminiLoopOptions {
     path: string;
@@ -19,6 +20,7 @@ interface GeminiLoopOptions {
     model?: string;
     hookSettingsPath?: string;
     allowedTools?: string[];
+    mcpServers?: McpServerStdio[];
     onSessionReady?: (session: GeminiSession) => void;
 }
 
@@ -38,7 +40,8 @@ export async function geminiLoop(opts: GeminiLoopOptions): Promise<void> {
         mode: startingMode,
         startedBy,
         startingMode,
-        permissionMode: opts.permissionMode ?? 'default'
+        permissionMode: opts.permissionMode ?? 'default',
+        mcpServers: opts.mcpServers
     });
 
     await runLocalRemoteSession({
@@ -52,7 +55,8 @@ export async function geminiLoop(opts: GeminiLoopOptions): Promise<void> {
         }),
         runRemote: (instance) => geminiRemoteLauncher(instance, {
             model: opts.model,
-            hookSettingsPath: opts.hookSettingsPath
+            hookSettingsPath: opts.hookSettingsPath,
+            mcpServers: opts.mcpServers
         }),
         onSessionReady: opts.onSessionReady
     });

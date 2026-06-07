@@ -7,9 +7,14 @@ function createTask(overrides: Partial<Task> = {}): Task {
         id: overrides.id ?? 'task-1',
         projectId: overrides.projectId ?? 'project-1',
         goalId: overrides.goalId ?? 'goal-1',
+        goalCanonicalStatus: overrides.goalCanonicalStatus ?? null,
         title: overrides.title ?? 'Inspect state projection',
         description: overrides.description ?? null,
         status: overrides.status ?? 'planned',
+        blockedReason: overrides.blockedReason ?? null,
+        blockedAt: overrides.blockedAt ?? null,
+        blockedSource: overrides.blockedSource ?? null,
+        blockedSessionId: overrides.blockedSessionId ?? null,
         priority: overrides.priority ?? null,
         sortKey: overrides.sortKey ?? 1,
         activeSessionId: overrides.activeSessionId ?? null,
@@ -54,6 +59,18 @@ describe('task lane projection', () => {
         expect(getTaskLane(createTask({ status: 'planned' }))).toBe('planned')
     })
 
+    it('prefers explicit canonical goal status over legacy overlay aliases', () => {
+        const task = createTask({
+            status: 'blocked',
+            goalCanonicalStatus: 'in_progress',
+            blockedSource: 'preview',
+            blockedReason: 'Preview process exited with code 1'
+        })
+
+        expect(getTaskLane(task)).toBe('in_progress')
+        expect(hasTaskDerivedBlocker(task)).toBe(true)
+    })
+
     it('projects blocked merge work into the merging lane and keeps blocker state derived', () => {
         const task = createTask({
             status: 'blocked',
@@ -93,6 +110,17 @@ describe('task lane projection', () => {
         })
 
         expect(getTaskLane(task)).toBe('in_progress')
+        expect(hasTaskDerivedBlocker(task)).toBe(true)
+    })
+
+    it('derives blockers from lane-preserving blocker metadata without needing blocked status', () => {
+        const task = createTask({
+            status: 'review',
+            blockedSource: 'evaluator',
+            blockedReason: 'Waiting for evaluator follow-up'
+        })
+
+        expect(getTaskLane(task)).toBe('in_review')
         expect(hasTaskDerivedBlocker(task)).toBe(true)
     })
 

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { ModelMode, PermissionMode, Task, TaskStatus, TasksResponse } from '@/types/api'
+import type { GoalTaskCanonicalStatus, ModelMode, PermissionMode, Task, TaskStatus, TasksResponse } from '@/types/api'
 import { createOptimisticTaskId } from '@/lib/optimistic-task'
 import { queryKeys } from '@/lib/query-keys'
 
@@ -69,11 +69,36 @@ function replaceTask(tasks: Task[], taskId: string, nextTask: Task): Task[] {
     return upsertTask(withoutCurrent, nextTask)
 }
 
+function normalizeGoalCanonicalStatus(input: Pick<CreateTaskInput, 'goalId' | 'status' | 'tag'>): GoalTaskCanonicalStatus | null {
+    if (!input.goalId) {
+        return null
+    }
+
+    const status = (input.status ?? 'planning').trim().toLowerCase()
+    const tag = input.tag?.trim().toLowerCase() ?? null
+
+    if (tag === 'accepted' || status === 'done' || status === 'finished') {
+        return 'done'
+    }
+    if (tag === 'merging') {
+        return 'merging'
+    }
+    if (tag === 'in_review' || status === 'review' || status === 'in_review') {
+        return 'in_review'
+    }
+    if (tag === 'promoted' || status === 'running' || status === 'in_progress') {
+        return 'in_progress'
+    }
+
+    return 'planned'
+}
+
 function buildOptimisticTask(input: CreateTaskInput, temporaryTaskId: string): Task {
     const now = Date.now()
     return {
         id: temporaryTaskId,
         projectId: input.projectId,
+        goalCanonicalStatus: normalizeGoalCanonicalStatus(input),
         title: input.title,
         description: input.description ?? null,
         status: input.status ?? 'planning',

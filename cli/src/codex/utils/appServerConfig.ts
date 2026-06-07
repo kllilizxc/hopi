@@ -2,6 +2,7 @@ import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
 import { resolveCodexModelSpec } from './codexModelConfig';
 import { codexSystemPrompt } from './systemPrompt';
+import { isImageAttachmentPath, splitFormattedMessageAndAttachmentPaths } from '@/utils/attachmentFormatter';
 import type {
     ApprovalPolicy,
     SandboxMode,
@@ -137,9 +138,24 @@ export function buildTurnStartParams(args: {
         model?: string;
     };
 }): TurnStartParams {
+    const { text, attachmentPaths } = splitFormattedMessageAndAttachmentPaths(args.message);
+    const imagePaths = attachmentPaths.filter(isImageAttachmentPath);
+    const filePaths = attachmentPaths.filter((path) => !isImageAttachmentPath(path));
+    const input: TurnStartParams['input'] = imagePaths.map((path) => ({
+        type: 'localImage',
+        path
+    }));
+    const textWithFileRefs = filePaths.length > 0
+        ? `${filePaths.map((path) => `@${path}`).join(' ')}${text ? `\n\n${text}` : ''}`
+        : text;
+
+    if (textWithFileRefs || input.length === 0) {
+        input.push({ type: 'text', text: textWithFileRefs });
+    }
+
     const params: TurnStartParams = {
         threadId: args.threadId,
-        input: [{ type: 'text', text: args.message }]
+        input
     };
 
     if (args.cwd) {

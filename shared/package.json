@@ -10,6 +10,7 @@
         "./actions": "./src/actions.ts",
         "./brand": "./src/brand.ts",
         "./chat": "./src/chat.ts",
+        "./goal-assistant": "./src/goalAssistant.ts",
         "./goal-keys": "./src/goalKeys.ts",
         "./messages": "./src/messages.ts",
         "./modes": "./src/modes.ts",

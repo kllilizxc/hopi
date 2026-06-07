@@ -1,6 +1,7 @@
 export * from './actions'
 export * from './brand'
 export * from './chat'
+export * from './goalAssistant'
 export * from './goalKeys'
 export * from './messages'
 export * from './models'

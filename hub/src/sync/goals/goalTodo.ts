@@ -5,14 +5,15 @@ import type { StoredGoal, StoredProject, StoredWorkspace } from '../../store'
 import {
     getDocsRoot,
     getGoalDocsDir,
-    getGoalTodoPath,
-    getLegacyTodoMarkdownPath,
-    getLegacyTodoYamlPath
+    getGoalEventsPath,
+    getGoalTodoPath
 } from './goalDocPaths'
+import { appendGoalWorkflowEvent } from './goalEventLog'
 
 export type GoalTodoStatus = 'planning' | 'running' | 'review' | 'blocked' | 'done' | 'unknown'
-export type GoalTodoTag = string | null
-export type GoalTodoSectionKind = 'ready' | 'candidate' | 'promoted' | 'in_review' | 'blocked' | 'deferred' | 'done' | 'unknown'
+export type GoalTodoCanonicalStatus = 'planned' | 'in_progress' | 'in_review' | 'merging' | 'done'
+export type GoalTodoTaskKind = 'planning' | 'engineering'
+export type GoalTodoCompatTag = 'candidate' | 'deferred'
 
 export type GoalTodoBlocked = {
     kind: string | null
@@ -20,24 +21,50 @@ export type GoalTodoBlocked = {
     updatedAt: number | null
 }
 
-export type GoalTodoSection = {
-    id: string
-    status: GoalTodoStatus
-    tag: GoalTodoTag
-    kind: GoalTodoSectionKind
-    title: string
-    body: string
-    taskId: string | null
-    todoRef: string | null
-    blocked: GoalTodoBlocked | null
+export type GoalTodoBlockedRef = {
+    kind: string | null
+    ref: string | null
+    summary: string | null
 }
 
-export type GoalTodoResponse = {
-    exists: boolean
-    path: string | null
-    rawYaml: string | null
-    sections: GoalTodoSection[]
+export type GoalTodoDependencyRef = {
+    ref: string
+}
+
+type GoalTodoCanonicalLaneStatus = GoalTodoCanonicalStatus
+
+export type GoalTodoBoardItem = {
+    ref: string
+    kind: GoalTodoTaskKind
+    status: GoalTodoCanonicalStatus
+    tag?: GoalTodoCompatTag | null
+    title: string
+    description: string
+    acceptanceCriteria: string[]
+    dependencyTaskList: GoalTodoDependencyRef[]
+    blockedBy: GoalTodoBlockedRef[]
+    taskId: string | null
+}
+
+export type GoalTodoBoard = {
+    goal: {
+        goalKey: string | null
+        goalId: string | null
+        title: string | null
+    }
+    items: GoalTodoBoardItem[]
+}
+
+export type GoalTodoReadResult = {
+    board: GoalTodoBoard
     updatedAt: number | null
+}
+
+export type GoalTodoEventOptions = {
+    writer?: string
+    action?: string
+    reason?: string
+    metadata?: Record<string, unknown> | null
 }
 
 type GoalTodoScope = {
@@ -45,63 +72,87 @@ type GoalTodoScope = {
     goalKey?: string | null
 }
 
-export type GoalTodoUpdateKind = 'promoted' | 'in_review' | 'blocked' | 'done' | 'planning' | 'running' | 'review'
+type GoalTodoCanonicalYamlDependency = {
+    ref: string
+}
 
-type GoalTodoYamlItem = {
-    id: string
-    ref?: string | null
-    status: GoalTodoStatus
-    tag?: string | null
-    title: string
-    taskId?: string | null
-    body?: string | null
-    blocked?: GoalTodoBlocked | null
+type GoalTodoCanonicalYamlBlockedRef = {
+    kind: string | null
+    ref: string | null
+    summary: string | null
     [key: string]: unknown
 }
 
-type GoalTodoYamlGoal = {
+type GoalTodoCanonicalYamlItem = {
+    ref: string
+    kind: GoalTodoTaskKind
+    status: GoalTodoCanonicalStatus
+    tag?: GoalTodoCompatTag | null
+    title: string
+    description?: string | null
+    acceptanceCriteria?: string[]
+    dependencyTaskList?: GoalTodoCanonicalYamlDependency[]
+    blockedBy?: GoalTodoCanonicalYamlBlockedRef[]
+    taskId?: string | null
+    [key: string]: unknown
+}
+
+type GoalTodoCanonicalYamlGoal = {
     goalKey?: string | null
     goalId?: string | null
     title?: string | null
-    items: GoalTodoYamlItem[]
-    [key: string]: unknown
 }
 
-type GoalTodoYamlDocument = {
+type GoalTodoCanonicalYamlDocument = {
+    format: 'canonical'
     version: 1
-    goals: GoalTodoYamlGoal[]
+    goal: GoalTodoCanonicalYamlGoal
+    items: GoalTodoCanonicalYamlItem[]
 }
 
 const yamlItemStatusSchema = z.enum(['planning', 'running', 'review', 'blocked', 'done'])
-const legacyYamlItemStatusSchema = z.enum(['ready', 'candidate', 'promoted', 'in_review', 'deferred'])
+const canonicalYamlItemStatusSchema = z.enum(['planned', 'in_progress', 'in_review', 'merging', 'done'])
+const canonicalYamlItemKindSchema = z.enum(['planning', 'engineering'])
 const yamlBlockedSchema = z.object({
     kind: z.string().trim().min(1).nullable().optional(),
     summary: z.string().trim().min(1).nullable().optional(),
     updatedAt: z.number().nullable().optional()
 }).passthrough()
-const yamlItemSchema = z.object({
-    id: z.string().trim().min(1).optional(),
+const canonicalYamlBlockedRefSchema = z.object({
+    kind: z.string().trim().min(1).nullable().optional(),
     ref: z.string().trim().min(1).nullable().optional(),
-    status: z.string().trim().min(1).optional(),
-    tag: z.string().trim().min(1).nullable().optional(),
-    title: z.string().trim().min(1).optional(),
-    taskId: z.string().trim().min(1).nullable().optional(),
-    body: z.string().nullable().optional(),
-    blocked: yamlBlockedSchema.nullable().optional(),
-    notes: z.string().nullable().optional(),
-    description: z.string().nullable().optional()
+    summary: z.string().trim().min(1).nullable().optional()
 }).passthrough()
-const yamlGoalSchema = z.object({
+const canonicalYamlDependencySchema = z.union([
+    z.string().trim().min(1),
+    z.object({
+        ref: z.string().trim().min(1)
+    }).passthrough()
+])
+const canonicalYamlItemSchema = z.object({
+    ref: z.string().trim().min(1).optional(),
+    kind: z.string().trim().min(1).optional(),
+    status: z.string().trim().min(1).optional(),
+    title: z.string().trim().min(1).optional(),
+    description: z.string().nullable().optional(),
+    body: z.string().nullable().optional(),
+    acceptanceCriteria: z.array(z.string()).optional(),
+    dependencyTaskList: z.array(canonicalYamlDependencySchema).optional(),
+    blockedBy: z.array(canonicalYamlBlockedRefSchema).optional(),
+    blockers: z.array(canonicalYamlBlockedRefSchema).optional(),
+    blocked: yamlBlockedSchema.nullable().optional(),
+    taskId: z.string().trim().min(1).nullable().optional()
+}).passthrough()
+const canonicalYamlGoalSchema = z.object({
     goalKey: z.string().trim().min(1).nullable().optional(),
     goalId: z.string().trim().min(1).nullable().optional(),
-    title: z.string().trim().min(1).nullable().optional(),
-    items: z.array(yamlItemSchema).optional()
+    title: z.string().trim().min(1).nullable().optional()
 }).passthrough()
-const yamlDocumentSchema = z.object({
+const canonicalYamlDocumentSchema = z.object({
     version: z.union([z.literal(1), z.number()]).optional(),
-    goals: z.array(yamlGoalSchema).optional()
+    goal: canonicalYamlGoalSchema.optional(),
+    items: z.array(canonicalYamlItemSchema).optional()
 }).passthrough()
-
 function normalizeNewlines(value: string): string {
     return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
@@ -110,43 +161,59 @@ function normalizeKey(value: string | null | undefined): string {
     return (value ?? '').trim().toLowerCase()
 }
 
-function normalizeStatusAndTag(value: unknown, rawTag: unknown): { status: GoalTodoStatus; tag: string | null; kind: GoalTodoSectionKind } {
-    const normalizedTag = cleanNullableString(rawTag)
+function normalizeCanonicalStatus(value: unknown): GoalTodoCanonicalStatus {
     if (typeof value !== 'string') {
-        return { status: 'planning', tag: normalizedTag ?? 'candidate', kind: 'candidate' }
+        return 'planned'
     }
     const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
-    const statusParsed = yamlItemStatusSchema.safeParse(normalized)
-    if (statusParsed.success) {
-        return {
-            status: statusParsed.data,
-            tag: normalizedTag ?? defaultTagForStatus(statusParsed.data),
-            kind: kindFromStatusTag(statusParsed.data, normalizedTag)
-        }
+    switch (normalized) {
+        case 'candidate':
+        case 'deferred':
+            return 'planned'
+        case 'planned':
+        case 'planning':
+        case 'ready':
+            return 'planned'
+        case 'running':
+        case 'in_progress':
+        case 'active':
+            return 'in_progress'
+        case 'review':
+        case 'in_review':
+        case 'inreview':
+            return 'in_review'
+        case 'merging':
+            return 'merging'
+        case 'blocked':
+            return 'planned'
+        case 'finished':
+        case 'completed':
+        case 'complete':
+        case 'done':
+            return 'done'
+        default:
+            return 'planned'
     }
+}
 
-    const legacyNormalized = normalized === 'active'
-        ? 'promoted'
-        : normalized === 'review' || normalized === 'inreview'
-            ? 'in_review'
-            : normalized === 'completed' || normalized === 'complete'
-                ? 'done'
-                : normalized
-    const legacyParsed = legacyYamlItemStatusSchema.safeParse(legacyNormalized)
-    if (legacyParsed.success) {
-        const mapped = mapLegacyKindToStatusTag(legacyParsed.data)
-        return { ...mapped, tag: normalizedTag ?? mapped.tag, kind: legacyParsed.data }
+function normalizePlanningCompatTag(value: unknown): GoalTodoCompatTag | null {
+    const normalized = cleanNullableString(value)?.toLowerCase()
+    if (normalized === 'candidate' || normalized === 'deferred') {
+        return normalized
     }
-    if (legacyNormalized === 'done') {
-        return { status: 'done', tag: normalizedTag ?? 'accepted', kind: 'done' }
-    }
-    return { status: 'planning', tag: normalizedTag ?? 'candidate', kind: 'unknown' }
+    return null
+}
+
+function normalizeCanonicalTaskKind(value: unknown): GoalTodoTaskKind {
+    return typeof value === 'string' && value.trim().toLowerCase() === 'planning'
+        ? 'planning'
+        : 'engineering'
 }
 
 function defaultTagForStatus(status: GoalTodoStatus): string | null {
     switch (status) {
         case 'planning':
-            return 'candidate'
+            return 'ready'
         case 'running':
             return 'promoted'
         case 'review':
@@ -160,53 +227,202 @@ function defaultTagForStatus(status: GoalTodoStatus): string | null {
     }
 }
 
-function kindFromStatusTag(status: GoalTodoStatus, tag: string | null | undefined): GoalTodoSectionKind {
-    if (status === 'planning') {
-        if (tag === 'ready' || tag === 'deferred') return tag
-        return 'candidate'
-    }
-    if (status === 'running') return 'promoted'
-    if (status === 'review') return 'in_review'
-    if (status === 'blocked') return 'blocked'
-    if (status === 'done') return 'done'
-    return 'unknown'
-}
-
-function mapLegacyKindToStatusTag(kind: Exclude<GoalTodoSectionKind, 'blocked' | 'done' | 'unknown'>): {
-    status: GoalTodoStatus
-    tag: string
-} {
-    switch (kind) {
-        case 'ready':
-        case 'candidate':
-        case 'deferred':
-            return { status: 'planning', tag: kind }
-        case 'promoted':
-            return { status: 'running', tag: 'promoted' }
-        case 'in_review':
-            return { status: 'review', tag: 'in_review' }
-    }
-}
-
-function normalizeStatus(value: unknown): GoalTodoSectionKind {
-    if (typeof value !== 'string') return 'unknown'
-    const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_')
-    if (normalized === 'planning') return 'candidate'
-    if (normalized === 'running') return 'promoted'
-    if (normalized === 'review') return 'in_review'
-    if (normalized === 'active') return 'promoted'
-    if (normalized === 'inreview') return 'in_review'
-    if (normalized === 'completed' || normalized === 'complete') return 'done'
-    const parsed = yamlItemStatusSchema.safeParse(normalized)
-    if (parsed.success) return kindFromStatusTag(parsed.data, null)
-    if (normalized === 'done') return 'done'
-    if (normalized === 'blocked') return 'blocked'
-    const legacyParsed = legacyYamlItemStatusSchema.safeParse(normalized)
-    return legacyParsed.success ? legacyParsed.data : 'unknown'
-}
-
 function cleanNullableString(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function normalizeCanonicalBlockedKind(value: unknown): string | null {
+    const normalized = cleanNullableString(value)?.toLowerCase().replace(/[\s-]+/g, '_')
+    if (!normalized) {
+        return null
+    }
+    if (normalized === 'decision' || normalized === 'decision_topic') {
+        return 'decision'
+    }
+    if (normalized === 'task' || normalized === 'dependency' || normalized === 'depends_on_task') {
+        return 'task'
+    }
+    if (normalized === 'merge_conflict' || normalized === 'mergeconflict' || normalized === 'conflict') {
+        return 'merge_conflict'
+    }
+    return 'intervention'
+}
+
+function normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return []
+    }
+    return value
+        .map((item) => typeof item === 'string' ? item.trim() : '')
+        .filter((item) => item.length > 0)
+}
+
+function normalizeCanonicalDependencyTaskList(value: unknown): GoalTodoCanonicalYamlDependency[] {
+    if (!Array.isArray(value)) {
+        return []
+    }
+    const dependencies: GoalTodoCanonicalYamlDependency[] = []
+    for (const item of value) {
+        if (typeof item === 'string' && item.trim()) {
+            dependencies.push({ ref: item.trim() })
+            continue
+        }
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+            const ref = cleanNullableString((item as Record<string, unknown>).ref)
+            if (ref) {
+                dependencies.push({ ref })
+            }
+        }
+    }
+    return dependencies
+}
+
+function normalizeBlockedRef(value: unknown): GoalTodoBlockedRef | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null
+    }
+    const record = value as Record<string, unknown>
+    const kind = normalizeCanonicalBlockedKind(record.kind)
+    const ref = cleanNullableString(record.ref)
+    const summary = cleanNullableString(record.summary)
+    if (!kind && !ref && !summary) {
+        return null
+    }
+    return { kind, ref, summary }
+}
+
+function normalizeCanonicalBlockedBy(input: {
+    blockedBy: unknown
+    blockers: unknown
+    blocked: unknown
+}): GoalTodoCanonicalYamlBlockedRef[] {
+    const candidates = Array.isArray(input.blockedBy)
+        ? input.blockedBy
+        : Array.isArray(input.blockers)
+            ? input.blockers
+            : []
+    const blockedRefs = candidates
+        .map(normalizeBlockedRef)
+        .filter((item): item is GoalTodoBlockedRef => Boolean(item))
+        .map((item) => ({
+            kind: item.kind,
+            ref: item.ref,
+            summary: item.summary
+        }))
+    if (blockedRefs.length > 0) {
+        return blockedRefs
+    }
+
+    const legacyBlocked = normalizeBlocked(input.blocked)
+    if (!legacyBlocked) {
+        return []
+    }
+    return [{
+        kind: legacyBlocked.kind,
+        ref: null,
+        summary: legacyBlocked.summary
+    }]
+}
+
+function blockedRefSummary(blocked: GoalTodoBlockedRef): string | null {
+    if (blocked.summary) {
+        return blocked.summary
+    }
+    if (blocked.kind && blocked.ref) {
+        return `${blocked.kind}: ${blocked.ref}`
+    }
+    return blocked.ref ?? blocked.kind ?? null
+}
+
+function canonicalStatusFromTag(tag: string | null | undefined): GoalTodoCanonicalStatus {
+    const normalized = cleanNullableString(tag)?.toLowerCase()
+    switch (normalized) {
+        case 'candidate':
+        case 'deferred':
+            return 'planned'
+        case 'promoted':
+            return 'in_progress'
+        case 'in_review':
+            return 'in_review'
+        case 'merging':
+            return 'merging'
+        case 'accepted':
+            return 'done'
+        case 'ready':
+        case 'unknown':
+        default:
+            return 'planned'
+    }
+}
+
+function resolveBlockedCanonicalStatus(input: {
+    tag?: string | null | undefined
+    blockedBy?: Array<{ kind: string | null | undefined }> | null
+    taskKind?: GoalTodoTaskKind | null | undefined
+}): GoalTodoCanonicalLaneStatus {
+    const normalizedTag = cleanNullableString(input.tag)
+    if (normalizedTag) {
+        return canonicalStatusFromTag(normalizedTag)
+    }
+
+    const hasMergeConflictBlocker = (input.blockedBy ?? [])
+        .some((blocked) => normalizeCanonicalBlockedKind(blocked.kind) === 'merge_conflict')
+    if (hasMergeConflictBlocker) {
+        return 'merging'
+    }
+
+    if (input.taskKind === 'planning') {
+        return 'planned'
+    }
+
+    return 'planned'
+}
+
+function resolveCanonicalStatusForTaskWrite(input: {
+    previousStatus: GoalTodoCanonicalStatus | null
+    status: GoalTodoStatus
+    tag: string | null | undefined
+    title: string
+}): GoalTodoCanonicalStatus {
+    if (input.status !== 'blocked') {
+        switch (input.status) {
+            case 'running':
+                return 'in_progress'
+            case 'review':
+                return input.tag === 'merging' ? 'merging' : 'in_review'
+            case 'done':
+                return 'done'
+            case 'planning':
+            case 'unknown':
+            default:
+                return 'planned'
+        }
+    }
+
+    if (input.previousStatus) {
+        return input.previousStatus
+    }
+
+    return canonicalStatusFromTag(input.tag ?? defaultTagForStatus(input.status))
+}
+
+function canonicalItemToBoardItem(item: GoalTodoCanonicalYamlItem): GoalTodoBoardItem {
+    return {
+        ref: item.ref,
+        kind: item.kind,
+        status: item.status,
+        tag: normalizePlanningCompatTag(item.tag),
+        title: item.title,
+        description: item.description?.trim() ?? '',
+        acceptanceCriteria: [...(item.acceptanceCriteria ?? [])],
+        dependencyTaskList: (item.dependencyTaskList ?? []).map((dependency) => ({ ref: dependency.ref })),
+        blockedBy: (item.blockedBy ?? []).map((blocked) => ({
+            kind: blocked.kind,
+            ref: blocked.ref,
+            summary: blocked.summary
+        })),
+        taskId: item.taskId?.trim() || null
+    }
 }
 
 function getCanonicalGoalTodoYamlPath(defaultWorkspace: StoredWorkspace | null, scope: GoalTodoScope): string | null {
@@ -215,7 +431,10 @@ function getCanonicalGoalTodoYamlPath(defaultWorkspace: StoredWorkspace | null, 
     return docsRoot ? getGoalTodoPath(docsRoot, goalKey) : null
 }
 
-function goalMatchesScope(goal: Pick<GoalTodoYamlGoal, 'goalId' | 'goalKey'>, scope: GoalTodoScope): boolean {
+function goalMatchesScope(goal: {
+    goalId?: string | null
+    goalKey?: string | null
+}, scope: GoalTodoScope): boolean {
     const goalId = normalizeKey(goal.goalId)
     const goalKey = normalizeKey(goal.goalKey)
     const scopeGoalId = normalizeKey(scope.goalId)
@@ -228,44 +447,61 @@ function goalMatchesScope(goal: Pick<GoalTodoYamlGoal, 'goalId' | 'goalKey'>, sc
     )
 }
 
-function parseYamlDocument(rawYaml: string): GoalTodoYamlDocument {
-    try {
-        const parsed = YAML.parse(rawYaml)
-        const result = yamlDocumentSchema.safeParse(parsed && typeof parsed === 'object' ? parsed : {})
-        if (!result.success) {
-            return { version: 1, goals: [] }
-        }
-        return {
-            version: 1,
-            goals: (result.data.goals ?? []).map((goal) => ({
-                ...goal,
-                goalKey: cleanNullableString(goal.goalKey),
-                goalId: cleanNullableString(goal.goalId),
-                title: cleanNullableString(goal.title),
-                items: (goal.items ?? []).map((item) => {
-                    const rawId = cleanNullableString(item.id)
-                        ?? cleanNullableString(item.ref)
-                        ?? cleanNullableString(item.taskId)
-                        ?? cleanNullableString(item.title)
-                        ?? 'todo'
-                    const statusAndTag = normalizeStatusAndTag(item.status ?? 'planning', item.tag)
-                    const blocked = normalizeBlocked(item.blocked)
-                    return {
-                        ...item,
-                        id: rawId,
-                        ref: cleanNullableString(item.ref),
-                        status: statusAndTag.status,
-                        tag: statusAndTag.tag,
-                        title: cleanNullableString(item.title) ?? rawId,
-                        taskId: cleanNullableString(item.taskId),
-                        body: cleanNullableString(item.body ?? item.notes ?? item.description),
-                        blocked
-                    }
-                })
-            }))
-        }
-    } catch {
-        return { version: 1, goals: [] }
+function parseCanonicalYamlDocument(parsed: unknown): GoalTodoCanonicalYamlDocument | null {
+    const result = canonicalYamlDocumentSchema.safeParse(parsed && typeof parsed === 'object' ? parsed : {})
+    if (!result.success) {
+        return null
+    }
+    const goal = result.data.goal ?? {}
+    const hasCanonicalShape = Boolean(goal && typeof goal === 'object' && Object.keys(goal).length > 0)
+        || Array.isArray(result.data.items)
+    if (!hasCanonicalShape) {
+        return null
+    }
+    return {
+        format: 'canonical',
+        version: 1,
+        goal: {
+            goalKey: cleanNullableString(goal.goalKey),
+            goalId: cleanNullableString(goal.goalId),
+            title: cleanNullableString(goal.title)
+        },
+        items: (result.data.items ?? []).map((item) => {
+            const ref = cleanNullableString(item.ref)
+                ?? cleanNullableString(item.taskId)
+                ?? cleanNullableString(item.title)
+                ?? 'todo'
+            const kind = normalizeCanonicalTaskKind(item.kind)
+            const blockedBy = normalizeCanonicalBlockedBy({
+                blockedBy: item.blockedBy,
+                blockers: item.blockers,
+                blocked: item.blocked
+            })
+            const compatTag = normalizePlanningCompatTag((item as Record<string, unknown>).tag)
+            const rawStatus = typeof item.status === 'string'
+                ? item.status.trim().toLowerCase().replace(/[\s-]+/g, '_')
+                : null
+            const normalizedStatus = normalizeCanonicalStatus(item.status)
+            return {
+                ...item,
+                ref,
+                kind,
+                tag: compatTag ?? (rawStatus === 'candidate' || rawStatus === 'deferred' ? rawStatus : null),
+                status: rawStatus === 'blocked'
+                    ? resolveBlockedCanonicalStatus({
+                        tag: compatTag,
+                        blockedBy,
+                        taskKind: kind
+                    })
+                    : normalizedStatus,
+                title: cleanNullableString(item.title) ?? ref,
+                description: cleanNullableString(item.description ?? item.body),
+                acceptanceCriteria: normalizeStringList(item.acceptanceCriteria),
+                dependencyTaskList: normalizeCanonicalDependencyTaskList(item.dependencyTaskList),
+                blockedBy,
+                taskId: cleanNullableString(item.taskId)
+            }
+        })
     }
 }
 
@@ -274,7 +510,7 @@ function normalizeBlocked(value: unknown): GoalTodoBlocked | null {
         return null
     }
     const record = value as Record<string, unknown>
-    const kind = cleanNullableString(record.kind)
+    const kind = normalizeCanonicalBlockedKind(record.kind)
     const summary = cleanNullableString(record.summary)
     const updatedAt = typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
         ? record.updatedAt
@@ -285,504 +521,276 @@ function normalizeBlocked(value: unknown): GoalTodoBlocked | null {
     return { kind, summary, updatedAt }
 }
 
-function cleanYamlItem(item: GoalTodoYamlItem): Record<string, unknown> {
+function cleanCanonicalYamlItem(item: GoalTodoCanonicalYamlItem): Record<string, unknown> {
     const next: Record<string, unknown> = {
-        id: item.id,
+        ref: item.ref,
+        kind: item.kind,
         status: item.status,
-        title: item.title
+        title: item.title,
+        acceptanceCriteria: item.acceptanceCriteria ?? [],
+        dependencyTaskList: (item.dependencyTaskList ?? []).map((dependency) => ({ ref: dependency.ref }))
     }
-    if (item.tag) next.tag = item.tag
-    if (item.body) next.body = item.body
-    if (item.blocked) next.blocked = item.blocked
-    for (const [key, value] of Object.entries(item)) {
-        if (['id', 'ref', 'status', 'tag', 'title', 'taskId', 'body', 'blocked', 'notes', 'description'].includes(key)) continue
-        if (value !== undefined && value !== null) next[key] = value
+    if (item.description) next.description = item.description
+    const compatTag = normalizePlanningCompatTag(item.tag)
+    if (compatTag) next.tag = compatTag
+    if (item.taskId?.trim() && item.taskId.trim() !== item.ref) {
+        next.taskId = item.taskId.trim()
+    }
+    if (item.blockedBy && item.blockedBy.length > 0) {
+        next.blockedBy = item.blockedBy.map((blocked) => {
+            const entry: Record<string, unknown> = {}
+            if (blocked.kind) entry.kind = blocked.kind
+            if (blocked.ref) entry.ref = blocked.ref
+            if (blocked.summary) entry.summary = blocked.summary
+            return entry
+        })
     }
     return next
 }
 
-function stringifyYamlDocument(document: GoalTodoYamlDocument): string {
+function stringifyCanonicalYamlDocument(document: GoalTodoCanonicalYamlDocument): string {
+    const goal: Record<string, unknown> = {}
+    if (document.goal.goalKey) goal.goalKey = document.goal.goalKey
+    if (document.goal.goalId) goal.goalId = document.goal.goalId
+    if (document.goal.title) goal.title = document.goal.title
     const serializable = {
         version: 1,
-        goals: document.goals.map((goal) => {
-            const next: Record<string, unknown> = {}
-            if (goal.goalKey) next.goalKey = goal.goalKey
-            if (goal.goalId) next.goalId = goal.goalId
-            if (goal.title) next.title = goal.title
-            next.items = goal.items.map(cleanYamlItem)
-            return next
-        })
+        goal,
+        items: document.items.map(cleanCanonicalYamlItem)
     }
     return YAML.stringify(serializable, { lineWidth: 0 }).trimEnd() + '\n'
 }
 
-function sectionFromYamlItem(item: GoalTodoYamlItem): GoalTodoSection | null {
-    const id = item.id.trim()
-    const title = item.title.trim()
-    if (!id || !title) return null
+type ParsedGoalTodoYaml = {
+    board: GoalTodoBoard
+}
+
+function buildGoalTodoBoardFromCanonicalDocument(
+    document: GoalTodoCanonicalYamlDocument,
+    scope: GoalTodoScope & { goalTitle?: string | null }
+): GoalTodoBoard {
+    const matches = goalMatchesScope(document.goal, scope)
+        || (!document.goal.goalKey && normalizeKey(scope.goalKey) !== '')
+    if (!matches) {
+        return buildFallbackBoard(scope)
+    }
     return {
-        id,
-        status: item.status,
-        tag: item.tag?.trim() || null,
-        kind: kindFromStatusTag(item.status, item.tag),
-        title,
-        body: item.body?.trim() ?? '',
-        taskId: item.taskId?.trim() || id,
-        todoRef: id,
-        blocked: item.blocked ?? null
+        goal: {
+            goalKey: document.goal.goalKey ?? scope.goalKey?.trim() ?? scope.goalId,
+            goalId: document.goal.goalId ?? scope.goalId,
+            title: document.goal.title ?? scope.goalTitle?.trim() ?? null
+        },
+        items: document.items.map(canonicalItemToBoardItem)
     }
 }
 
-export function parseGoalTodoYaml(rawYaml: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'rawYaml' | 'sections'> {
+export function parseGoalTodoYaml(rawYaml: string, scope: GoalTodoScope & {
+    goalTitle?: string | null
+}): ParsedGoalTodoYaml {
     const normalizedYaml = normalizeNewlines(rawYaml)
-    const document = parseYamlDocument(normalizedYaml)
-    const goal = document.goals.find((candidate) => goalMatchesScope(candidate, scope))
-    return {
-        rawYaml: goal ? stringifyYamlDocument({ version: 1, goals: [goal] }) : normalizedYaml,
-        sections: (goal?.items ?? [])
-            .map(sectionFromYamlItem)
-            .filter((section): section is GoalTodoSection => Boolean(section))
+    try {
+        const parsed = YAML.parse(normalizedYaml)
+        const canonical = parseCanonicalYamlDocument(parsed)
+        if (canonical) {
+            return {
+                board: buildGoalTodoBoardFromCanonicalDocument(canonical, scope)
+            }
+        }
+    } catch {
     }
+    return {
+        board: buildFallbackBoard(scope)
+    }
+}
+
+function findGoalTodoBoardItemForEvent(
+    board: GoalTodoBoard,
+    ref: string,
+    taskId?: string | null
+): GoalTodoBoardItem | null {
+    return board.items.find((item) => (
+        item.ref === ref
+        || Boolean(taskId && item.taskId === taskId)
+    )) ?? null
+}
+
+function summarizeGoalTodoBoardItemForEvent(item: GoalTodoBoardItem | null): Record<string, unknown> | null {
+    if (!item) {
+        return null
+    }
+
+    return {
+        ref: item.ref,
+        taskId: item.taskId,
+        kind: item.kind,
+        status: item.status,
+        tag: item.tag,
+        title: item.title,
+        description: item.description,
+        acceptanceCriteria: item.acceptanceCriteria,
+        dependencyTaskList: item.dependencyTaskList,
+        blockedBy: item.blockedBy
+    }
+}
+
+function appendGoalTodoWorkflowEvent(options: {
+    docsRoot: string | null
+    goalKey: string
+    entityId: string
+    before: GoalTodoBoardItem | null
+    after: GoalTodoBoardItem | null
+    defaultAction: string
+    defaultReason: string
+    metadata?: Record<string, unknown> | null
+    event?: GoalTodoEventOptions
+}): void {
+    if (!options.docsRoot) {
+        return
+    }
+
+    appendGoalWorkflowEvent(getGoalEventsPath(options.docsRoot, options.goalKey), {
+        writer: options.event?.writer?.trim() || 'hopi-goal-todo',
+        action: options.event?.action?.trim() || options.defaultAction,
+        entity: {
+            type: 'todo_item',
+            id: options.entityId
+        },
+        before: summarizeGoalTodoBoardItemForEvent(options.before),
+        after: summarizeGoalTodoBoardItemForEvent(options.after),
+        reason: options.event?.reason?.trim() || options.defaultReason,
+        metadata: {
+            ...(options.metadata ?? {}),
+            ...(options.event?.metadata ?? {})
+        }
+    })
 }
 
 function buildEmptyGoalTodoYaml(input: GoalTodoScope & {
     goalTitle?: string | null
 }): string {
-    return stringifyYamlDocument({
+    return stringifyCanonicalYamlDocument({
+        format: 'canonical',
         version: 1,
-        goals: [{
+        goal: {
             goalKey: input.goalKey?.trim() || input.goalId,
-            goalId: input.goalId,
-            title: input.goalTitle?.trim() || null,
-            items: []
-        }]
+            title: input.goalTitle?.trim() || null
+        },
+        items: []
     })
 }
 
-function selectGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
+function buildFallbackBoard(input: GoalTodoScope & {
     goalTitle?: string | null
-}): string {
-    const document = parseYamlDocument(rawYaml)
-    const goal = document.goals.find((candidate) => goalMatchesScope(candidate, input))
-    return goal
-        ? stringifyYamlDocument({ version: 1, goals: [goal] })
-        : buildEmptyGoalTodoYaml(input)
-}
-
-function findOrCreateYamlGoal(document: GoalTodoYamlDocument, input: GoalTodoScope & {
-    goalTitle?: string | null
-}): GoalTodoYamlGoal {
-    const existing = document.goals.find((goal) => goalMatchesScope(goal, input))
-    if (existing) return existing
-
-    const created: GoalTodoYamlGoal = {
-        goalKey: input.goalKey?.trim() || input.goalId,
-        goalId: input.goalId,
-        title: input.goalTitle?.trim() || null,
+}): GoalTodoBoard {
+    return {
+        goal: {
+            goalKey: input.goalKey?.trim() || input.goalId,
+            goalId: input.goalId,
+            title: input.goalTitle?.trim() || null
+        },
         items: []
     }
-    document.goals.push(created)
-    return created
 }
 
-function findYamlItem(goal: GoalTodoYamlGoal, todoRef: string, taskId: string): GoalTodoYamlItem | null {
-    const normalizedRef = normalizeKey(todoRef)
-    return goal.items.find((item) => (
-        normalizeKey(item.id) === normalizedRef
-        || normalizeKey(item.ref) === normalizedRef
-        || Boolean(item.taskId && item.taskId === taskId)
-    )) ?? null
-}
-
-function statusTagFromUpdateKind(kind: GoalTodoUpdateKind): { status: GoalTodoStatus; tag: string | null } {
-    switch (kind) {
-        case 'promoted':
-        case 'running':
-            return { status: 'running', tag: 'promoted' }
-        case 'in_review':
-        case 'review':
-            return { status: 'review', tag: 'in_review' }
-        case 'blocked':
-            return { status: 'blocked', tag: 'unknown' }
-        case 'done':
-            return { status: 'done', tag: 'accepted' }
-        case 'planning':
-            return { status: 'planning', tag: 'ready' }
-    }
-}
-
-export function updateGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
+export function ensureCanonicalGoalTodoYamlAtPath(input: {
+    path: string
+    scope: GoalTodoScope
     goalTitle?: string | null
-    todoRef: string
-    taskId: string
-    kind: GoalTodoUpdateKind
-    title?: string | null
-}): string {
-    const document = parseYamlDocument(rawYaml)
-    const goal = findOrCreateYamlGoal(document, input)
-    const todoRef = input.todoRef.trim()
-    const taskTitle = input.title?.trim() || todoRef
-    const statusTag = statusTagFromUpdateKind(input.kind)
-    let item = findYamlItem(goal, todoRef, input.taskId)
-    if (!item) {
-        item = {
-            id: todoRef,
-            status: statusTag.status,
-            tag: statusTag.tag,
-            title: taskTitle
-        }
-        goal.items.push(item)
-    }
-    item.id = item.id?.trim() || todoRef
-    item.status = statusTag.status
-    item.tag = statusTag.tag ?? item.tag ?? null
-    if (item.status !== 'blocked') {
-        item.blocked = null
-    }
-    if (!item.title?.trim() || item.title.trim() === item.id || input.title?.trim()) {
-        item.title = taskTitle
-    }
-    return stringifyYamlDocument(document)
-}
-
-function classifyLegacyKind(text: string): GoalTodoSectionKind {
-    const normalized = text.toLowerCase()
-    if (/\bpromoted\b|\bactive\b/.test(normalized)) return 'promoted'
-    if (/\bin[_\s-]?review\b/.test(normalized)) return 'in_review'
-    if (/\bblocked\b/.test(normalized)) return 'blocked'
-    if (/\bdone\b|\bcompleted\b/.test(normalized)) return 'done'
-    if (/\bdeferred\b|not ready|later|parked/.test(normalized)) return 'deferred'
-    if (/\bready\b/.test(normalized)) return 'ready'
-    if (/\bcandidate\b|\breservoir\b|\bbacklog\b/.test(normalized)) return 'candidate'
-    return 'unknown'
-}
-
-type LegacyTodoLineMetadata = {
-    kind: GoalTodoSectionKind | null
-    todoRef: string | null
-    text: string
-}
-
-function parseLegacyTodoRefToken(token: string): string | null {
-    const match = /^(?:todoRef|todo-ref|todo_ref)\s*:\s*(.+)$/iu.exec(token.trim())
-    const todoRef = match?.[1]?.trim()
-    return todoRef || null
-}
-
-function sectionFromLegacyTodo(input: {
-    kind: GoalTodoSectionKind
-    title: string
-    body: string
-    taskId: string | null
-    todoRef: string | null
-}): GoalTodoSection {
-    const mapped = input.kind === 'unknown'
-        ? { status: 'planning' as const, tag: 'candidate' }
-        : input.kind === 'blocked'
-            ? { status: 'blocked' as const, tag: 'unknown' }
-            : input.kind === 'done'
-                ? { status: 'done' as const, tag: 'accepted' }
-                : mapLegacyKindToStatusTag(input.kind)
-    const id = input.todoRef ?? input.taskId ?? input.title
-    return {
-        id,
-        status: mapped.status,
-        tag: mapped.tag,
-        kind: input.kind,
-        title: input.title,
-        body: input.body,
-        taskId: input.taskId ?? id,
-        todoRef: id,
-        blocked: null
-    }
-}
-
-function parseLeadingLegacyTodoMetadata(text: string): LegacyTodoLineMetadata {
-    let remaining = text.trim()
-    let kind: GoalTodoSectionKind | null = null
-    let todoRef: string | null = null
-
-    while (remaining.startsWith('[')) {
-        const match = /^\[([^\]]+)\]\s*/u.exec(remaining)
-        if (!match) break
-
-        const token = match[1]!.trim()
-        const tokenTodoRef = parseLegacyTodoRefToken(token)
-        const tokenKind = tokenTodoRef ? 'unknown' : classifyLegacyKind(token)
-        if (tokenKind !== 'unknown') {
-            kind = kind ?? tokenKind
-            remaining = remaining.slice(match[0].length).trimStart()
-            continue
-        }
-        if (tokenTodoRef) {
-            todoRef = tokenTodoRef
-            remaining = remaining.slice(match[0].length).trimStart()
-            continue
-        }
-        break
+}): { rawYaml: string; migrated: boolean } | null {
+    if (!existsSync(input.path)) {
+        return null
     }
 
-    return { kind, todoRef, text: remaining.trim() }
-}
-
-function stripTaskReference(text: string): string {
-    return text
-        .replace(/\s*(?:->|→)\s*task\s+`?[^`\s]+`?.*$/iu, '')
-        .replace(/\s*\(task\s+`?[^`\s)]+`?\).*$/iu, '')
-        .trim()
-}
-
-function cleanLegacyTitle(text: string): string {
-    return stripTaskReference(parseLeadingLegacyTodoMetadata(text).text)
-        .replace(/^\d+[.)]\s+/, '')
-        .replace(/^#+\s+/, '')
-        .replace(/\*\*/g, '')
-        .trim()
-}
-
-function extractLegacyTaskId(text: string): string | null {
-    const backtickMatch = /\btask\s+`([^`]+)`/iu.exec(text)
-    if (backtickMatch?.[1]) return backtickMatch[1].trim()
-    const plainMatch = /\btask\s+([A-Za-z0-9_-]+)/iu.exec(text)
-    return plainMatch?.[1]?.trim() ?? null
-}
-
-function headingLevel(line: string): number | null {
-    const match = /^(#{1,6})\s+\S/.exec(line)
-    return match ? match[1]!.length : null
-}
-
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function legacyHeadingMatchesGoal(line: string, scope: GoalTodoScope): boolean {
-    const goalKey = scope.goalKey?.trim()
-    if (goalKey && new RegExp(`\\b${escapeRegExp(goalKey)}\\b`, 'i').test(line)) return true
-    return line.toLowerCase().includes(scope.goalId.toLowerCase())
-}
-
-function findLegacyGoalScopedRange(markdown: string, scope: GoalTodoScope): { start: number; end: number; markdown: string } | null {
-    const lines = markdown.split('\n')
-    const goalHeadingIndexes: number[] = []
-    for (let index = 0; index < lines.length; index += 1) {
-        if (/^##\s+Goal\b/i.test(lines[index] ?? '')) goalHeadingIndexes.push(index)
-    }
-    if (goalHeadingIndexes.length === 0) {
-        return { start: 0, end: lines.length, markdown: markdown.trim() }
-    }
-    const startHeading = goalHeadingIndexes.find((index) => legacyHeadingMatchesGoal(lines[index] ?? '', scope))
-    if (startHeading === undefined) return null
-    const endHeading = goalHeadingIndexes.find((index) => index > startHeading) ?? lines.length
-    return {
-        start: startHeading,
-        end: endHeading,
-        markdown: lines.slice(startHeading, endHeading).join('\n').trim()
-    }
-}
-
-function collectLegacyBlock(lines: string[], start: number, stop: (line: string) => boolean): { body: string; nextIndex: number } {
-    const bodyLines: string[] = []
-    let index = start
-    while (index < lines.length) {
-        const line = lines[index] ?? ''
-        if (stop(line)) break
-        bodyLines.push(line)
-        index += 1
-    }
-    return {
-        body: bodyLines.join('\n').trim(),
-        nextIndex: index
-    }
-}
-
-export function parseGoalTodoMarkdown(markdown: string, scope: GoalTodoScope): Pick<GoalTodoResponse, 'sections'> {
-    const range = findLegacyGoalScopedRange(normalizeNewlines(markdown), scope)
-    const rawMarkdown = range?.markdown ?? ''
-    const lines = rawMarkdown.split('\n')
-    const sections: GoalTodoSection[] = []
-    let currentKind: GoalTodoSectionKind = 'unknown'
-
-    let index = 0
-    while (index < lines.length) {
-        const line = lines[index] ?? ''
-        const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line)
-        if (headingMatch) {
-            const level = headingMatch[1]!.length
-            const headingText = headingMatch[2]!
-            if (level <= 3) {
-                currentKind = classifyLegacyKind(headingText)
-                index += 1
-                continue
-            }
-            const kindFromHeading = classifyLegacyKind(headingText)
-            const kind = kindFromHeading === 'unknown' ? currentKind : kindFromHeading
-            const collected = collectLegacyBlock(lines, index + 1, (candidate) => {
-                const candidateLevel = headingLevel(candidate)
-                return candidateLevel !== null && candidateLevel <= level
+    const rawYaml = readFileSync(input.path, 'utf8')
+    try {
+        const parsed = YAML.parse(rawYaml)
+        const canonical = parseCanonicalYamlDocument(parsed)
+        if (canonical) {
+            const normalizedCanonical = canonicalizeGoalTodoYaml(rawYaml, {
+                ...input.scope,
+                goalTitle: input.goalTitle
             })
-            const title = cleanLegacyTitle(headingText)
-            if (title) {
-                const metadata = parseLeadingLegacyTodoMetadata(headingText)
-                const joined = `${headingText}\n${collected.body}`
-                sections.push(sectionFromLegacyTodo({
-                    kind,
-                    title,
-                    body: collected.body,
-                    taskId: extractLegacyTaskId(joined),
-                    todoRef: metadata.todoRef
-                }))
+            if (normalizeNewlines(rawYaml) !== normalizedCanonical) {
+                writeFileSync(input.path, normalizedCanonical, 'utf8')
             }
-            index = collected.nextIndex
-            continue
-        }
-
-        const bulletMatch = /^(\s*)[-*]\s+(.+?)\s*$/.exec(line)
-        if (bulletMatch) {
-            const indent = bulletMatch[1]!.length
-            const text = bulletMatch[2]!
-            const metadata = parseLeadingLegacyTodoMetadata(text)
-            const kind = metadata.kind ?? currentKind
-            const collected = collectLegacyBlock(lines, index + 1, (candidate) => {
-                const candidateHeadingLevel = headingLevel(candidate)
-                if (candidateHeadingLevel !== null) return true
-                const candidateBullet = /^(\s*)[-*]\s+\S/.exec(candidate)
-                return Boolean(candidateBullet && candidateBullet[1]!.length <= indent)
-            })
-            const title = cleanLegacyTitle(text)
-            if (title) {
-                const joined = `${text}\n${collected.body}`
-                sections.push(sectionFromLegacyTodo({
-                    kind,
-                    title,
-                    body: collected.body,
-                    taskId: extractLegacyTaskId(joined),
-                    todoRef: metadata.todoRef
-                }))
-            }
-            index = collected.nextIndex
-            continue
-        }
-
-        index += 1
-    }
-
-    return { sections }
-}
-
-function parseLegacyGoalHeading(line: string): { goalKey: string | null; goalId: string | null; title: string | null } {
-    const text = line.replace(/^##\s+Goal\s*/i, '').trim()
-    const backtick = /`([^`]+)`/.exec(text)
-    const token = (backtick?.[1] ?? text.split(/\s+[—-]\s+|\s+/)[0] ?? '').trim()
-    const rest = text
-        .replace(/`[^`]+`/, '')
-        .replace(/^[^\s]+/, '')
-        .replace(/^[\s—-]+/, '')
-        .trim()
-    return {
-        goalKey: token || null,
-        goalId: token || null,
-        title: rest || null
-    }
-}
-
-function findLegacyGoalScopes(markdown: string): Array<{ scope: GoalTodoScope; title: string | null }> {
-    const lines = normalizeNewlines(markdown).split('\n')
-    const scopes: Array<{ scope: GoalTodoScope; title: string | null }> = []
-    for (const line of lines) {
-        if (!/^##\s+Goal\b/i.test(line)) continue
-        const parsed = parseLegacyGoalHeading(line)
-        const goalKey = parsed.goalKey ?? parsed.goalId ?? 'legacy'
-        scopes.push({
-            scope: {
-                goalId: parsed.goalId ?? goalKey,
-                goalKey
-            },
-            title: parsed.title
-        })
-    }
-    return scopes
-}
-
-function uniqueRef(rawRef: string, usedRefs: Set<string>): string {
-    const base = rawRef.trim() || 'todo'
-    let candidate = base
-    let suffix = 2
-    while (usedRefs.has(normalizeKey(candidate))) {
-        candidate = `${base}-${suffix}`
-        suffix += 1
-    }
-    usedRefs.add(normalizeKey(candidate))
-    return candidate
-}
-
-export function convertGoalTodoMarkdownToYaml(markdown: string): string {
-    const scopes = findLegacyGoalScopes(markdown)
-    const targets = scopes.length > 0
-        ? scopes
-        : [{ scope: { goalId: 'legacy', goalKey: 'legacy' }, title: 'Legacy Todo' }]
-    const goals = targets.map(({ scope, title }) => {
-        const parsed = parseGoalTodoMarkdown(markdown, scope)
-        const usedRefs = new Set<string>()
-        const items: GoalTodoYamlItem[] = parsed.sections.map((section) => {
-            const ref = uniqueRef(section.todoRef ?? section.title, usedRefs)
-            const mapped = section.kind === 'unknown'
-                ? { status: 'planning' as const, tag: 'candidate' }
-                : section.kind === 'blocked'
-                    ? { status: 'blocked' as const, tag: 'unknown' }
-                    : section.kind === 'done'
-                        ? { status: 'done' as const, tag: 'accepted' }
-                        : mapLegacyKindToStatusTag(section.kind)
             return {
-                id: ref,
-                status: mapped.status,
-                tag: mapped.tag,
-                title: section.title,
-                taskId: section.taskId,
-                body: section.body || null
+                rawYaml: normalizedCanonical,
+                migrated: normalizeNewlines(rawYaml) !== normalizedCanonical
             }
-        })
-        return {
-            goalKey: scope.goalKey,
-            goalId: scope.goalId,
-            title,
-            items
         }
-    }).filter((goal) => goal.items.length > 0)
-    return stringifyYamlDocument({ version: 1, goals })
+        return {
+            rawYaml,
+            migrated: false
+        }
+    } catch {
+        return {
+            rawYaml,
+            migrated: false
+        }
+    }
 }
 
-function readLegacyGoalTodoYaml(input: {
+export function ensureCanonicalGoalTodoYamlFile(input: {
     defaultWorkspace: StoredWorkspace | null
     scope: GoalTodoScope
     goalTitle?: string | null
-}): { path: string; rawYaml: string; updatedAt: number } | null {
-    const docsRoot = getDocsRoot(input.defaultWorkspace)
-    if (!docsRoot) return null
-
-    const legacyYamlPath = getLegacyTodoYamlPath(docsRoot)
-    if (existsSync(legacyYamlPath)) {
-        return {
-            path: legacyYamlPath,
-            rawYaml: selectGoalTodoYaml(readFileSync(legacyYamlPath, 'utf8'), {
-                ...input.scope,
-                goalTitle: input.goalTitle
-            }),
-            updatedAt: Math.round(statSync(legacyYamlPath).mtimeMs)
+}): { path: string; rawYaml: string; migrated: boolean } | null {
+    const path = getCanonicalGoalTodoYamlPath(input.defaultWorkspace, input.scope)
+    if (!path) {
+        return null
+    }
+    const ensured = ensureCanonicalGoalTodoYamlAtPath({
+        path,
+        scope: input.scope,
+        goalTitle: input.goalTitle
+    })
+    return ensured
+        ? {
+            path,
+            rawYaml: ensured.rawYaml,
+            migrated: ensured.migrated
         }
-    }
+        : null
+}
 
-    const legacyMarkdownPath = getLegacyTodoMarkdownPath(docsRoot)
-    if (!existsSync(legacyMarkdownPath)) return null
-    const converted = convertGoalTodoMarkdownToYaml(readFileSync(legacyMarkdownPath, 'utf8'))
-    return {
-        path: legacyMarkdownPath,
-        rawYaml: selectGoalTodoYaml(converted, {
-            ...input.scope,
-            goalTitle: input.goalTitle
-        }),
-        updatedAt: Math.round(statSync(legacyMarkdownPath).mtimeMs)
+export function canonicalizeGoalTodoYaml(rawYaml: string, input: GoalTodoScope & {
+    goalTitle?: string | null
+}): string {
+    const normalizedYaml = normalizeNewlines(rawYaml)
+    const canonical = parseCanonicalGoalTodoYamlDocument(normalizedYaml)
+    canonical.goal.goalKey = canonical.goal.goalKey ?? input.goalKey?.trim() ?? input.goalId
+    canonical.goal.goalId = canonical.goal.goalId ?? input.goalId
+    canonical.goal.title = canonical.goal.title ?? input.goalTitle?.trim() ?? null
+    return stringifyCanonicalYamlDocument(canonical)
+}
+
+function parseCanonicalGoalTodoYamlDocument(rawYaml: string): GoalTodoCanonicalYamlDocument {
+    try {
+        const parsed = YAML.parse(normalizeNewlines(rawYaml))
+        const canonical = parseCanonicalYamlDocument(parsed)
+        if (canonical) {
+            return canonical
+        }
+    } catch {
     }
+    return {
+        format: 'canonical',
+        version: 1,
+        goal: {
+            goalKey: null,
+            goalId: null,
+            title: null
+        },
+        items: []
+    }
+}
+
+function findCanonicalYamlItem(document: GoalTodoCanonicalYamlDocument, todoRef: string, taskId: string): GoalTodoCanonicalYamlItem | null {
+    const normalizedRef = normalizeKey(todoRef)
+    return document.items.find((item) => (
+        normalizeKey(item.ref) === normalizedRef
+        || Boolean(item.taskId && item.taskId === taskId)
+    )) ?? null
 }
 
 function readWritableGoalTodoYaml(input: {
@@ -793,13 +801,11 @@ function readWritableGoalTodoYaml(input: {
     const yamlPath = getCanonicalGoalTodoYamlPath(input.defaultWorkspace, input.scope)
     if (!yamlPath) return null
     if (existsSync(yamlPath)) {
-        return { path: yamlPath, rawYaml: readFileSync(yamlPath, 'utf8') }
+        return ensureCanonicalGoalTodoYamlFile(input) ?? { path: yamlPath, rawYaml: readFileSync(yamlPath, 'utf8') }
     }
-
-    const legacy = readLegacyGoalTodoYaml(input)
     return {
         path: yamlPath,
-        rawYaml: legacy?.rawYaml ?? buildEmptyGoalTodoYaml({
+        rawYaml: buildEmptyGoalTodoYaml({
             ...input.scope,
             goalTitle: input.goalTitle
         })
@@ -841,15 +847,50 @@ export function createGoalTodoTaskId(input: {
         scope,
         goalTitle: input.goal.title
     })
-    const document = writable ? parseYamlDocument(writable.rawYaml) : { version: 1 as const, goals: [] }
-    const goal = document.goals.find((candidate) => goalMatchesScope(candidate, scope))
-    const used = new Set((goal?.items ?? []).map((item) => normalizeKey(item.id)))
+    const document = writable ? parseCanonicalGoalTodoYamlDocument(writable.rawYaml) : null
+    const used = new Set(
+        document?.items.map((item) => normalizeKey(item.ref)) ?? []
+    )
     const base = slugifyTodoId(input.title)
     let candidate = `${base}-${createShortIdSuffix(`${input.goal.id}:${input.title}:${Date.now()}`)}`
     while (used.has(normalizeKey(candidate))) {
         candidate = `${base}-${createShortIdSuffix(`${candidate}:${used.size}:${Date.now()}`)}`
     }
     return candidate
+}
+
+export function syncGoalTodoMetadata(input: {
+    goal: StoredGoal
+    defaultWorkspace: StoredWorkspace | null
+}): boolean {
+    const scope = {
+        goalId: input.goal.id,
+        goalKey: input.goal.goalKey
+    }
+    const writable = readWritableGoalTodoYaml({
+        defaultWorkspace: input.defaultWorkspace,
+        scope,
+        goalTitle: input.goal.title
+    })
+    if (!writable) return false
+
+    const canonical = parseCanonicalGoalTodoYamlDocument(writable.rawYaml)
+    let changed = false
+    if (canonical.goal.goalKey !== input.goal.goalKey) {
+        canonical.goal.goalKey = input.goal.goalKey
+        changed = true
+    }
+    if (canonical.goal.goalId !== input.goal.id) {
+        canonical.goal.goalId = input.goal.id
+        changed = true
+    }
+    if (canonical.goal.title !== input.goal.title) {
+        canonical.goal.title = input.goal.title
+        changed = true
+    }
+    if (!changed && existsSync(writable.path)) return false
+    writeFileSync(writable.path, stringifyCanonicalYamlDocument(canonical), 'utf8')
+    return true
 }
 
 export function upsertGoalTodoTaskState(input: {
@@ -859,9 +900,11 @@ export function upsertGoalTodoTaskState(input: {
     taskId: string
     status: GoalTodoStatus
     tag?: string | null
+    taskKind?: GoalTodoTaskKind | null
     title?: string | null
     body?: string | null
     blocked?: GoalTodoBlocked | null
+    event?: GoalTodoEventOptions
 }): boolean {
     const taskId = input.taskId.trim()
     if (!taskId) return false
@@ -876,54 +919,136 @@ export function upsertGoalTodoTaskState(input: {
         goalTitle: input.goal.title
     })
     if (!writable) return false
-
-    const document = parseYamlDocument(writable.rawYaml)
-    const goal = findOrCreateYamlGoal(document, {
+    const docsRoot = getDocsRoot(input.defaultWorkspace)
+    const beforeParsed = parseGoalTodoYaml(writable.rawYaml, {
         ...scope,
         goalTitle: input.goal.title
     })
-    let item = findYamlItem(goal, taskId, taskId)
+    const beforeItem = findGoalTodoBoardItemForEvent(beforeParsed.board, taskId, taskId)
+
+    const canonical = parseCanonicalGoalTodoYamlDocument(writable.rawYaml)
+    canonical.goal.goalKey = canonical.goal.goalKey ?? input.goal.goalKey
+    canonical.goal.goalId = canonical.goal.goalId ?? input.goal.id
+    canonical.goal.title = canonical.goal.title ?? input.goal.title
+    let item = findCanonicalYamlItem(canonical, taskId, taskId)
+    const previousStatus = item?.status ?? null
     if (!item) {
         item = {
-            id: taskId,
-            status: input.status,
-            tag: input.tag ?? defaultTagForStatus(input.status),
-            title: input.title?.trim() || taskId
+            ref: taskId,
+            kind: input.taskKind ?? ((input.tag === 'candidate' || input.tag === 'deferred') ? 'planning' : 'engineering'),
+            status: resolveCanonicalStatusForTaskWrite({
+                previousStatus: null,
+                status: input.status,
+                tag: input.tag,
+                title: input.title?.trim() || taskId
+            }),
+            tag: normalizePlanningCompatTag(input.tag),
+            title: input.title?.trim() || taskId,
+            description: input.body?.trim() || null,
+            acceptanceCriteria: [],
+            dependencyTaskList: [],
+            blockedBy: [],
+            taskId
         }
-        goal.items.push(item)
+        canonical.items.push(item)
     }
-    item.id = taskId
-    item.status = input.status
-    item.tag = input.tag !== undefined ? input.tag : item.tag ?? defaultTagForStatus(input.status)
+    item.ref = taskId
+    item.kind = input.taskKind ?? item.kind ?? ((input.tag === 'candidate' || input.tag === 'deferred') ? 'planning' : 'engineering')
+    item.status = resolveCanonicalStatusForTaskWrite({
+        previousStatus,
+        status: input.status,
+        tag: input.tag,
+        title: input.title?.trim() || item.title || taskId
+    })
+    item.taskId = item.taskId?.trim() || taskId
     if (input.title !== undefined && input.title !== null && input.title.trim()) {
         item.title = input.title.trim()
     }
     if (input.body !== undefined) {
-        item.body = input.body?.trim() || null
+        item.description = input.body?.trim() || null
     }
-    item.blocked = input.status === 'blocked'
-        ? input.blocked ?? item.blocked ?? null
-        : null
+    const compatTag = normalizePlanningCompatTag(input.tag)
+    if (item.status !== 'planned' || item.kind !== 'planning') {
+        item.tag = null
+    } else if (compatTag) {
+        item.tag = compatTag
+    } else if (!(input.status === 'blocked' && input.tag === undefined)) {
+        item.tag = null
+    }
+    item.blockedBy = input.blocked
+        ? [{
+            kind: normalizeCanonicalBlockedKind(input.blocked.kind) ?? 'intervention',
+            ref: null,
+            summary: input.blocked.summary
+        }]
+        : input.status === 'blocked'
+            ? item.blockedBy ?? []
+            : []
 
-    const docsRoot = getDocsRoot(input.defaultWorkspace)
+    const next = stringifyCanonicalYamlDocument(canonical)
+    if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) {
+        if (!input.event || !docsRoot) {
+            return false
+        }
+        appendGoalTodoWorkflowEvent({
+            docsRoot,
+            goalKey: input.goal.goalKey,
+            entityId: beforeItem?.ref ?? taskId,
+            before: beforeItem,
+            after: beforeItem,
+            defaultAction: beforeItem ? 'todo_item_synced' : 'todo_item_created',
+            defaultReason: beforeItem
+                ? 'Recorded todo item workflow activity without changing durable state.'
+                : 'Recorded todo item workflow activity without changing durable state.',
+            metadata: {
+                goalId: input.goal.id,
+                projectId: input.project.id,
+                taskId,
+                source: 'upsertGoalTodoTaskState'
+            },
+            event: input.event
+        })
+        return true
+    }
     if (docsRoot) mkdirSync(getGoalDocsDir(docsRoot, input.goal.goalKey), { recursive: true })
-    const next = stringifyYamlDocument(document)
-    if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) return false
     writeFileSync(writable.path, next, 'utf8')
+    const afterParsed = parseGoalTodoYaml(next, {
+        ...scope,
+        goalTitle: input.goal.title
+    })
+    const afterItem = findGoalTodoBoardItemForEvent(afterParsed.board, taskId, taskId)
+    appendGoalTodoWorkflowEvent({
+        docsRoot,
+        goalKey: input.goal.goalKey,
+        entityId: afterItem?.ref ?? beforeItem?.ref ?? taskId,
+        before: beforeItem,
+        after: afterItem,
+        defaultAction: beforeItem ? 'todo_item_synced' : 'todo_item_created',
+        defaultReason: beforeItem
+            ? 'Updated todo item from current task state.'
+            : 'Created todo item from current task state.',
+        metadata: {
+            goalId: input.goal.id,
+            projectId: input.project.id,
+            taskId,
+            source: 'upsertGoalTodoTaskState'
+        },
+        event: input.event
+    })
     return true
 }
 
-export function updateGoalTodoTaskState(input: {
+export function removeGoalTodoTaskState(input: {
     project: StoredProject
     goal: StoredGoal
     defaultWorkspace: StoredWorkspace | null
-    todoRef: string | null | undefined
+    todoRef?: string | null
     taskId: string
-    kind: GoalTodoUpdateKind
-    title?: string | null
+    event?: GoalTodoEventOptions
 }): boolean {
-    const todoRef = input.todoRef?.trim()
-    if (!todoRef) return false
+    const taskId = input.taskId.trim()
+    const todoRef = input.todoRef?.trim() || taskId
+    if (!taskId || !todoRef) return false
 
     const scope = {
         goalId: input.goal.id,
@@ -937,17 +1062,49 @@ export function updateGoalTodoTaskState(input: {
     if (!writable) return false
 
     const docsRoot = getDocsRoot(input.defaultWorkspace)
-    if (docsRoot) mkdirSync(getGoalDocsDir(docsRoot, input.goal.goalKey), { recursive: true })
-    const next = updateGoalTodoYaml(writable.rawYaml, {
+    const beforeParsed = parseGoalTodoYaml(writable.rawYaml, {
         ...scope,
-        goalTitle: input.goal.title,
-        todoRef,
-        taskId: input.taskId,
-        kind: input.kind,
-        title: input.title
+        goalTitle: input.goal.title
     })
+    const beforeItem = findGoalTodoBoardItemForEvent(beforeParsed.board, todoRef, taskId)
+    if (!beforeItem) {
+        return false
+    }
+
+    const canonical = parseCanonicalGoalTodoYamlDocument(writable.rawYaml)
+    const nextItems = canonical.items.filter((item) => !(
+        normalizeKey(item.ref) === normalizeKey(todoRef)
+        || Boolean(item.taskId && item.taskId === taskId)
+    ))
+    if (nextItems.length === canonical.items.length) {
+        return false
+    }
+    canonical.items = nextItems
+    if (docsRoot) mkdirSync(getGoalDocsDir(docsRoot, input.goal.goalKey), { recursive: true })
+    const next = stringifyCanonicalYamlDocument(canonical)
     if (next === normalizeNewlines(writable.rawYaml) && existsSync(writable.path)) return false
     writeFileSync(writable.path, next, 'utf8')
+    const afterParsed = parseGoalTodoYaml(next, {
+        ...scope,
+        goalTitle: input.goal.title
+    })
+    const afterItem = findGoalTodoBoardItemForEvent(afterParsed.board, todoRef, taskId)
+    appendGoalTodoWorkflowEvent({
+        docsRoot,
+        goalKey: input.goal.goalKey,
+        entityId: beforeItem.ref,
+        before: beforeItem,
+        after: afterItem,
+        defaultAction: 'todo_item_removed',
+        defaultReason: 'Removed todo item from current task state.',
+        metadata: {
+            goalId: input.goal.id,
+            projectId: input.project.id,
+            taskId,
+            source: 'removeGoalTodoTaskState'
+        },
+        event: input.event
+    })
     return true
 }
 
@@ -955,45 +1112,33 @@ export function readGoalTodo(input: {
     project: StoredProject
     goal: StoredGoal
     defaultWorkspace: StoredWorkspace | null
-}): GoalTodoResponse {
+}): GoalTodoReadResult {
     const scope = {
         goalId: input.goal.id,
         goalKey: input.goal.goalKey
     }
     const canonicalPath = getCanonicalGoalTodoYamlPath(input.defaultWorkspace, scope)
     if (canonicalPath && existsSync(canonicalPath)) {
-        const rawYaml = readFileSync(canonicalPath, 'utf8')
-        const parsed = parseGoalTodoYaml(rawYaml, scope)
+        const ensured = ensureCanonicalGoalTodoYamlFile({
+            defaultWorkspace: input.defaultWorkspace,
+            scope,
+            goalTitle: input.goal.title
+        })
+        const rawYaml = ensured?.rawYaml ?? readFileSync(canonicalPath, 'utf8')
+        const parsed = parseGoalTodoYaml(rawYaml, {
+            ...scope,
+            goalTitle: input.goal.title
+        })
         return {
-            exists: true,
-            path: canonicalPath,
-            rawYaml: parsed.rawYaml,
-            sections: parsed.sections,
+            board: parsed.board,
             updatedAt: Math.round(statSync(canonicalPath).mtimeMs)
         }
     }
-
-    const legacy = readLegacyGoalTodoYaml({
-        defaultWorkspace: input.defaultWorkspace,
-        scope,
-        goalTitle: input.goal.title
-    })
-    if (!legacy) {
-        return {
-            exists: false,
-            path: canonicalPath,
-            rawYaml: null,
-            sections: [],
-            updatedAt: null
-        }
-    }
-
-    const parsed = parseGoalTodoYaml(legacy.rawYaml, scope)
     return {
-        exists: true,
-        path: legacy.path,
-        rawYaml: parsed.rawYaml,
-        sections: parsed.sections,
-        updatedAt: legacy.updatedAt
+        board: buildFallbackBoard({
+            ...scope,
+            goalTitle: input.goal.title
+        }),
+        updatedAt: null
     }
 }

@@ -7,11 +7,9 @@ import type { Store, StoredGoal, StoredProject, StoredWorkspace } from '../../st
 import {
     getDocsRoot,
     getGoalTodoPath,
-    getGoalsRoot,
-    getLegacyTodoMarkdownPath,
-    getLegacyTodoYamlPath
+    getGoalsRoot
 } from './goalDocPaths'
-import { parseGoalTodoMarkdown, parseGoalTodoYaml } from './goalTodo'
+import { ensureCanonicalGoalTodoYamlAtPath, parseGoalTodoYaml } from './goalTodo'
 
 export type ParsedGoalDoc = {
     goalKey: string
@@ -219,32 +217,44 @@ function readGoalTodoForPreview(input: {
     docsRoot: string
     parsed: ParsedGoalDoc
     existing: GoalDocExistingMatch | null
-}): ReturnType<typeof parseGoalTodoYaml> | Pick<ReturnType<typeof parseGoalTodoYaml>, 'sections'> {
+}): Pick<ReturnType<typeof parseGoalTodoYaml>, 'board'> {
     const goalTodoPath = getGoalTodoPath(input.docsRoot, input.parsed.goalKey)
     if (existsSync(goalTodoPath)) {
-        return parseGoalTodoYaml(readFileSync(goalTodoPath, 'utf8'), {
+        const ensured = ensureCanonicalGoalTodoYamlAtPath({
+            path: goalTodoPath,
+            scope: {
+                goalId: input.existing?.goal.id ?? input.parsed.goalKey,
+                goalKey: input.parsed.goalKey
+            },
+            goalTitle: input.parsed.title
+        })
+        return parseGoalTodoYaml(ensured?.rawYaml ?? readFileSync(goalTodoPath, 'utf8'), {
             goalId: input.existing?.goal.id ?? input.parsed.goalKey,
             goalKey: input.parsed.goalKey
         })
     }
 
-    const todoYamlPath = getLegacyTodoYamlPath(input.docsRoot)
-    if (existsSync(todoYamlPath)) {
-        return parseGoalTodoYaml(readFileSync(todoYamlPath, 'utf8'), {
-            goalId: input.existing?.goal.id ?? input.parsed.goalKey,
-            goalKey: input.parsed.goalKey
-        })
+    return {
+        board: {
+            goal: {
+                goalKey: input.parsed.goalKey,
+                goalId: input.existing?.goal.id ?? input.parsed.goalKey,
+                title: input.parsed.title
+            },
+            items: []
+        }
     }
+}
 
-    const todoMarkdownPath = getLegacyTodoMarkdownPath(input.docsRoot)
-    if (existsSync(todoMarkdownPath)) {
-        return parseGoalTodoMarkdown(readFileSync(todoMarkdownPath, 'utf8'), {
-            goalId: input.existing?.goal.id ?? input.parsed.goalKey,
-            goalKey: input.parsed.goalKey
-        })
+function countPreviewTodoItems(todo: Pick<ReturnType<typeof parseGoalTodoYaml>, 'board'>): {
+    readyCount: number
+    candidateCount: number
+} {
+    const isReservoirItem = (item: { tag?: string | null }) => item.tag === 'candidate' || item.tag === 'deferred'
+    return {
+        readyCount: todo.board.items.filter((item) => item.status === 'planned' && !isReservoirItem(item)).length,
+        candidateCount: todo.board.items.filter((item) => isReservoirItem(item)).length
     }
-
-    return { sections: [] }
 }
 
 export function parseGoalDoc(path: string): ParsedGoalDoc {
@@ -313,13 +323,14 @@ export function buildGoalDocsImportPreview(input: {
                 goalKey: parsed.goalKey
             })
             const todo = readGoalTodoForPreview({ docsRoot, parsed, existing })
+            const counts = countPreviewTodoItems(todo)
             goals.push({
                 goalKey: parsed.goalKey,
                 title: parsed.title,
                 path,
                 existsInDb: Boolean(existing),
-                readyCount: todo.sections.filter((section) => section.kind === 'ready').length,
-                candidateCount: todo.sections.filter((section) => section.kind === 'candidate').length,
+                readyCount: counts.readyCount,
+                candidateCount: counts.candidateCount,
                 warning: existing?.matchType === 'legacy_goal_id'
                     ? 'Matched an existing local Goal by legacy document id; local Goal fields will not be overwritten.'
                     : null,

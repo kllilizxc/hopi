@@ -40,6 +40,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                 mcpServers: session.mcpServers,
                 allowedTools: session.allowedTools,
                 hookSettingsPath: session.hookSettingsPath,
+                appendSystemPrompt: session.profileAppendSystemPrompt
             });
         },
         onLaunchSuccess: () => {

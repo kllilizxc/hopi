@@ -20,6 +20,7 @@ export async function claudeLocal(opts: {
     claudeArgs?: string[]
     allowedTools?: string[]
     hookSettingsPath: string
+    appendSystemPrompt?: string
 }) {
 
     // Ensure project directory exists
@@ -52,8 +53,12 @@ export async function claudeLocal(opts: {
         args.push('--resume', startFrom);
     }
 
-    if (systemPrompt) {
-        args.push('--append-system-prompt', stripNewlinesForWindowsShellArg(systemPrompt));
+    const appendSystemPrompt = [opts.appendSystemPrompt, systemPrompt]
+        .map((part) => typeof part === 'string' ? part.trim() : '')
+        .filter((part) => part.length > 0)
+        .join('\n\n');
+    if (appendSystemPrompt) {
+        args.push('--append-system-prompt', stripNewlinesForWindowsShellArg(appendSystemPrompt));
     }
 
     const cleanupMcpConfig = appendMcpConfigArg(args, opts.mcpServers, {

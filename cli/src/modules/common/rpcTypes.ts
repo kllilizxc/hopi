@@ -1,3 +1,5 @@
+import type { SessionProfile } from '@hopi/protocol/goal-assistant'
+
 export interface SpawnSessionOptions {
     machineId?: string
     directory: string
@@ -12,6 +14,7 @@ export interface SpawnSessionOptions {
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
     worktreeTargetBranch?: string
+    sessionProfile?: SessionProfile
 }
 
 export type SpawnSessionResult =

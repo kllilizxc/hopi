@@ -31,6 +31,7 @@ import type {
     AutomationBackstopPolicy,
     AutomationLaneLimits
 } from '@hopi/protocol/types'
+import type { GoalAssistantTaskLane } from '@hopi/protocol/goal-assistant'
 
 export type StoredSession = {
     id: string
@@ -153,9 +154,11 @@ export type StoredGoalDecisionTopic = {
     id: string
     projectId: string
     goalId: string
+    scope?: 'goal' | 'task'
     taskId: string | null
     title: string
     body: string
+    prompt?: string | null
     status: 'waiting' | 'resolved'
     blocking: boolean
     resolution: string | null

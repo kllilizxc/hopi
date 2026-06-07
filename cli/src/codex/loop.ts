@@ -8,6 +8,7 @@ import { ApiClient, ApiSessionClient } from '@/lib';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { CodexPermissionMode } from '@hopi/protocol/types';
 import type { CollaborationMode } from './appServerTypes';
+import type { SessionProfileMcpConfig } from '@/sessionProfiles';
 
 export type PermissionMode = CodexPermissionMode;
 
@@ -29,6 +30,8 @@ interface LoopOptions {
     codexCliOverrides?: CodexCliOverrides;
     permissionMode?: PermissionMode;
     resumeSessionId?: string;
+    mcpServers?: SessionProfileMcpConfig;
+    developerInstructions?: string;
     onSessionReady?: (session: CodexSession) => void;
 }
 
@@ -49,7 +52,9 @@ export async function loop(opts: LoopOptions): Promise<void> {
         startingMode,
         codexArgs: opts.codexArgs,
         codexCliOverrides: opts.codexCliOverrides,
-        permissionMode: opts.permissionMode ?? 'default'
+        permissionMode: opts.permissionMode ?? 'default',
+        mcpServers: opts.mcpServers,
+        developerInstructions: opts.developerInstructions
     });
 
     await runLocalRemoteSession({
